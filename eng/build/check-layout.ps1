@@ -17,4 +17,6 @@ if ($shimDirectories.Count -ne 6) { throw "Expected six native ABI directories, 
 if (Test-Path (Join-Path $repoRoot 'vcpkg.json')) { throw 'A root vcpkg.json would create an unauthorized fourth dependency graph.' }
 $cpp23 = @(Get-ChildItem -LiteralPath $repoRoot -Recurse -File -Include '*.cmake','CMakeLists.txt','*.vcxproj','.clangd' | Where-Object FullName -NotMatch '[\\/](bin|obj|artifacts)[\\/]' | Select-String -Pattern 'c\+\+23|std:c\+\+latest|c\+\+2b')
 if ($cpp23.Count) { throw "C++23/latest is forbidden: $($cpp23.Path -join ', ')" }
+$nativeWildcards = @($native | Select-String -Pattern '<(?:ClCompile|ClInclude)\s+Include="[^"]*[?*]')
+if ($nativeWildcards.Count) { throw "Visual Studio C++ project items must be explicit: $($nativeWildcards.Path -join ', ')" }
 Write-Host 'Repository layout verified: 166 managed projects, five Windows native projects, six ABI shims.'

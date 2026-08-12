@@ -9,4 +9,7 @@ shims="$(find "$repo_root/native" -mindepth 1 -maxdepth 1 -type d -name '*-abi' 
   echo "Layout mismatch: managed=$managed native=$native shims=$shims" >&2; exit 1;
 }
 [[ ! -e "$repo_root/vcpkg.json" ]] || { echo 'Root vcpkg.json is forbidden.' >&2; exit 1; }
+if grep -REn '<(ClCompile|ClInclude)[[:space:]]+Include="[^"]*[?*]' "$repo_root/native" --include='*.vcxproj'; then
+  echo 'Visual Studio C++ project items must be explicit.' >&2; exit 1
+fi
 echo 'Repository layout verified.'
