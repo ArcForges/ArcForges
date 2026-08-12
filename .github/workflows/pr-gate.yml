@@ -21,7 +21,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
           cache: true
@@ -33,7 +33,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
@@ -45,7 +45,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
@@ -55,7 +55,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
@@ -99,7 +99,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - run: dotnet workload install wasm-tools --skip-manifest-update
@@ -121,7 +121,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: Layout, SDK, SPDX, packages, and suppressions
