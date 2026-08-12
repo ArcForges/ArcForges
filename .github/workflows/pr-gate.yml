@@ -26,7 +26,7 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: '**/packages.lock.json'
-      - run: dotnet workload install maui-android --skip-manifest-update
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
 
   build:
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-      - run: dotnet workload install maui-android --skip-manifest-update
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet build ArcForges.slnx -c Release --no-restore
       - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-      - run: dotnet workload install maui-android --skip-manifest-update
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet test ArcForges.slnx -c Release --filter Category=Unit
 
   integration-tests:
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-      - run: dotnet workload install maui-android --skip-manifest-update
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet test ArcForges.slnx -c Release --filter Category=Integration
 
   architecture-tests:
@@ -136,7 +136,7 @@ jobs:
           ./eng/build/check-licenses.ps1
       - name: Dependency audit
         run: |
-          dotnet workload install maui-android --skip-manifest-update
+          dotnet workload install maui-android wasm-tools --skip-manifest-update
           dotnet list ArcForges.slnx package --vulnerable --include-transitive
 
   supply-chain:
