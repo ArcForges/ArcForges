@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <Import Project="..\..\..\eng\build\web-wasm.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Web.App</AssemblyName>
+    <RootNamespace>ArcForges.Web</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <PublishTrimmed>true</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Web.Application\ArcForges.Web.Application.csproj" />
+    <ProjectReference Include="..\ArcForges.Web.Components\ArcForges.Web.Components.csproj" />
+    <ProjectReference Include="..\ArcForges.Web.Infrastructure\ArcForges.Web.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

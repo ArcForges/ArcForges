@@ -1,0 +1,89 @@
+{
+  "version": 10,
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 3,
+    "patch": 3
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "cacheVariables": {
+        "ARCFORGES_BUILD_TESTS": "ON",
+        "CMAKE_C_STANDARD": "17",
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc-x64",
+      "displayName": "Windows MSVC x64",
+      "inherits": "base",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/artifacts/cmake/windows-msvc-x64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-msvc-arm64",
+      "displayName": "Windows MSVC ARM64",
+      "inherits": "base",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/artifacts/cmake/windows-msvc-arm64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux-clang-x64",
+      "displayName": "Linux Clang x64",
+      "inherits": "base",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/artifacts/cmake/linux-clang-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "macos-clang-x64",
+      "displayName": "macOS Clang x64",
+      "inherits": "base",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "x86_64"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "macos-clang-arm64",
+      "displayName": "macOS Clang arm64",
+      "inherits": "base",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc-x64-debug", "configurePreset": "windows-msvc-x64", "configuration": "Debug" },
+    { "name": "windows-msvc-x64-release", "configurePreset": "windows-msvc-x64", "configuration": "Release" },
+    { "name": "windows-msvc-arm64-release", "configurePreset": "windows-msvc-arm64", "configuration": "Release" },
+    { "name": "linux-clang-x64-release", "configurePreset": "linux-clang-x64" },
+    { "name": "macos-clang-x64-release", "configurePreset": "macos-clang-x64" },
+    { "name": "macos-clang-arm64-release", "configurePreset": "macos-clang-arm64" }
+  ],
+  "testPresets": [
+    { "name": "windows-msvc-x64", "configurePreset": "windows-msvc-x64", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-x64", "configurePreset": "linux-clang-x64", "output": { "outputOnFailure": true } },
+    { "name": "macos-clang-x64", "configurePreset": "macos-clang-x64", "output": { "outputOnFailure": true } },
+    { "name": "macos-clang-arm64", "configurePreset": "macos-clang-arm64", "output": { "outputOnFailure": true } }
+  ]
+}

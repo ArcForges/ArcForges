@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\..\eng\build\desktop-aot.props" />
+  <Import Project="..\..\..\eng\build\desktop-rids.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcScope.Desktop</AssemblyName>
+    <RootNamespace>ArcScope.Desktop</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Observability\ArcForges.Observability.csproj" />
+    <ProjectReference Include="..\ArcScope.Application\ArcScope.Application.csproj" />
+    <ProjectReference Include="..\ArcScope.CloudClient\ArcScope.CloudClient.csproj" />
+    <ProjectReference Include="..\ArcScope.Infrastructure\ArcScope.Infrastructure.csproj" />
+    <ProjectReference Include="..\ArcScope.LocalRpc\ArcScope.LocalRpc.csproj" />
+    <ProjectReference Include="..\ArcScope.Presentation\ArcScope.Presentation.csproj" />
+  </ItemGroup>
+</Project>

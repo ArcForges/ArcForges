@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+add_subdirectory(arcmedia-ffmpeg-abi)
+add_subdirectory(arcscope-mdf-abi)
+add_subdirectory(arcslate-otio-abi)
+add_subdirectory(arcslate-color-abi)
+add_subdirectory(arcslate-image-abi)
+add_subdirectory(arcgraphics-metal-abi)

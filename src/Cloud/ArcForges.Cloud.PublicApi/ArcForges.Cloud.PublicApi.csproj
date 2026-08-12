@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Cloud.PublicApi</AssemblyName>
+    <RootNamespace>ArcForges.Cloud.PublicApi</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Agent\ArcForges.Cloud.Modules.Agent.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.AI\ArcForges.Cloud.Modules.AI.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Billing\ArcForges.Cloud.Modules.Billing.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Catalog\ArcForges.Cloud.Modules.Catalog.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Chat\ArcForges.Cloud.Modules.Chat.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Configuration\ArcForges.Cloud.Modules.Configuration.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Entitlement\ArcForges.Cloud.Modules.Entitlement.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Identity\ArcForges.Cloud.Modules.Identity.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Notes\ArcForges.Cloud.Modules.Notes.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Notification\ArcForges.Cloud.Modules.Notification.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Operations\ArcForges.Cloud.Modules.Operations.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Policy\ArcForges.Cloud.Modules.Policy.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Resource\ArcForges.Cloud.Modules.Resource.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Scope\ArcForges.Cloud.Modules.Scope.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Search\ArcForges.Cloud.Modules.Search.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Slate\ArcForges.Cloud.Modules.Slate.csproj" />
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Sync\ArcForges.Cloud.Modules.Sync.csproj" />
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.PublicApi\ArcForges.Contracts.PublicApi.csproj" />
+  </ItemGroup>
+</Project>

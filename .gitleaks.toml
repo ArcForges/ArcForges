@@ -1,0 +1,12 @@
+title = "ArcForges gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated outputs and public test fixtures"
+paths = [
+  '''(^|/)artifacts/''',
+  '''(^|/)(bin|obj)/''',
+  '''(^|/)tests/.*/Fixtures/'''
+]

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcScope.Infrastructure</AssemblyName>
+    <RootNamespace>ArcScope.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.NativeInterop\ArcForges.NativeInterop.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Persistence.Sqlite\ArcForges.Persistence.Sqlite.csproj" />
+    <ProjectReference Include="..\ArcScope.Domain\ArcScope.Domain.csproj" />
+  </ItemGroup>
+</Project>

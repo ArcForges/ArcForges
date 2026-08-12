@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+set(VCPKG_TARGET_ARCHITECTURE x64)
+set(VCPKG_CMAKE_SYSTEM_NAME Linux)
+set(VCPKG_LIBRARY_LINKAGE dynamic)

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\..\eng\build\desktop-aot.props" />
+  <Import Project="..\..\..\eng\build\desktop-rids.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcNotes.Desktop</AssemblyName>
+    <RootNamespace>ArcNotes.Desktop</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Observability\ArcForges.Observability.csproj" />
+    <ProjectReference Include="..\ArcNotes.Application\ArcNotes.Application.csproj" />
+    <ProjectReference Include="..\ArcNotes.CloudClient\ArcNotes.CloudClient.csproj" />
+    <ProjectReference Include="..\ArcNotes.Infrastructure\ArcNotes.Infrastructure.csproj" />
+    <ProjectReference Include="..\ArcNotes.LocalRpc\ArcNotes.LocalRpc.csproj" />
+    <ProjectReference Include="..\ArcNotes.Presentation\ArcNotes.Presentation.csproj" />
+  </ItemGroup>
+</Project>

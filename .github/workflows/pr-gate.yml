@@ -1,0 +1,165 @@
+name: PR gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  locked-restore:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - run: dotnet build ArcForges.slnx -c Release --no-restore
+      - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
+
+  unit-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet test ArcForges.slnx -c Release --filter Category=Unit
+
+  integration-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet test ArcForges.slnx -c Release --filter Category=Integration
+
+  architecture-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
+      - run: dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --filter Category=Architecture
+
+  native-cmake:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            configure: windows-msvc-x64
+            build: windows-msvc-x64-release
+            test: windows-msvc-x64
+          - os: ubuntu-latest
+            configure: linux-clang-x64
+            build: linux-clang-x64-release
+            test: linux-clang-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: lukka/get-cmake@v4.4.2
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
+      - run: cmake --preset ${{ matrix.configure }}
+      - run: cmake --build --preset ${{ matrix.build }}
+      - run: ctest --preset ${{ matrix.test }}
+
+  android:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install maui-android --skip-manifest-update
+      - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
+      - run: dotnet build src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -c Release --no-restore
+
+  web-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install wasm-tools --skip-manifest-update
+      - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
+      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore
+
+  policy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Layout, SDK, SPDX, packages, and suppressions
+        shell: pwsh
+        run: |
+          ./eng/build/check-sdk.ps1
+          ./eng/build/check-layout.ps1
+          ./eng/build/check-headers.ps1
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          ./eng/build/audit-suppressions.ps1
+          ./eng/build/check-no-preview-packages.ps1
+          ./eng/build/check-licenses.ps1
+      - name: Dependency audit
+        run: |
+          dotnet workload install maui-android wasm-tools --skip-manifest-update
+          dotnet list ArcForges.slnx package --vulnerable --include-transitive
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/repo" \
+            "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" \
+            detect --source=/repo --no-banner --redact --config=/repo/.gitleaks.toml
+      - name: Prepare SBOM output
+        run: mkdir -p artifacts
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: artifacts/arcforges.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arcforges-sbom
+          path: artifacts/arcforges.spdx.json

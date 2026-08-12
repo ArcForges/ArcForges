@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcNotes.Infrastructure</AssemblyName>
+    <RootNamespace>ArcNotes.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Persistence.Sqlite\ArcForges.Persistence.Sqlite.csproj" />
+    <ProjectReference Include="..\ArcNotes.Domain\ArcNotes.Domain.csproj" />
+  </ItemGroup>
+</Project>

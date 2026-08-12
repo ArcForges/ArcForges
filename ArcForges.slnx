@@ -1,0 +1,247 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+  </Configurations>
+  <Folder Name="/src/" />
+  <Folder Name="/src/ArcChat/">
+    <Project Path="src/ArcChat/ArcChat.Application/ArcChat.Application.csproj" />
+    <Project Path="src/ArcChat/ArcChat.CloudClient/ArcChat.CloudClient.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Desktop/ArcChat.Desktop.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Domain/ArcChat.Domain.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Infrastructure/ArcChat.Infrastructure.csproj" />
+    <Project Path="src/ArcChat/ArcChat.LocalHub/ArcChat.LocalHub.csproj" />
+    <Project Path="src/ArcChat/ArcChat.LocalRpc/ArcChat.LocalRpc.csproj" />
+    <Project Path="src/ArcChat/ArcChat.LocalTools/ArcChat.LocalTools.csproj" />
+    <Project Path="src/ArcChat/ArcChat.McpClient/ArcChat.McpClient.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Presentation/ArcChat.Presentation.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Tests.Integration/ArcChat.Tests.Integration.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Tests.Ui/ArcChat.Tests.Ui.csproj" />
+    <Project Path="src/ArcChat/ArcChat.Tests.Unit/ArcChat.Tests.Unit.csproj" />
+  </Folder>
+  <Folder Name="/src/ArcNotes/">
+    <Project Path="src/ArcNotes/ArcNotes.Application/ArcNotes.Application.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.CloudClient/ArcNotes.CloudClient.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Database/ArcNotes.Database.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Desktop/ArcNotes.Desktop.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Domain/ArcNotes.Domain.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Edgeless/ArcNotes.Edgeless.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Editor/ArcNotes.Editor.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.ImportExport/ArcNotes.ImportExport.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Infrastructure/ArcNotes.Infrastructure.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.LocalRpc/ArcNotes.LocalRpc.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Presentation/ArcNotes.Presentation.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Search/ArcNotes.Search.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Slides/ArcNotes.Slides.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Tests.Integration/ArcNotes.Tests.Integration.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Tests.Ui/ArcNotes.Tests.Ui.csproj" />
+    <Project Path="src/ArcNotes/ArcNotes.Tests.Unit/ArcNotes.Tests.Unit.csproj" />
+  </Folder>
+  <Folder Name="/src/ArcScope/">
+    <Project Path="src/ArcScope/ArcScope.Acquisition/ArcScope.Acquisition.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Analysis/ArcScope.Analysis.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Application/ArcScope.Application.csproj" />
+    <Project Path="src/ArcScope/ArcScope.CloudClient/ArcScope.CloudClient.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Decoders/ArcScope.Decoders.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Desktop/ArcScope.Desktop.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Domain/ArcScope.Domain.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Infrastructure/ArcScope.Infrastructure.csproj" />
+    <Project Path="src/ArcScope/ArcScope.LocalRpc/ArcScope.LocalRpc.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Native/ArcScope.Native.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Presentation/ArcScope.Presentation.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Recording/ArcScope.Recording.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Reporting/ArcScope.Reporting.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Tests.Integration/ArcScope.Tests.Integration.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Tests.Ui/ArcScope.Tests.Ui.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Tests.Unit/ArcScope.Tests.Unit.csproj" />
+    <Project Path="src/ArcScope/ArcScope.Visualization/ArcScope.Visualization.csproj" />
+  </Folder>
+  <Folder Name="/src/ArcSlate/">
+    <Project Path="src/ArcSlate/ArcSlate.Application/ArcSlate.Application.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Audio/ArcSlate.Audio.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.CloudClient/ArcSlate.CloudClient.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Color/ArcSlate.Color.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Desktop/ArcSlate.Desktop.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Domain/ArcSlate.Domain.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.ImportExport/ArcSlate.ImportExport.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Infrastructure/ArcSlate.Infrastructure.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.LocalRpc/ArcSlate.LocalRpc.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Media/ArcSlate.Media.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Native/ArcSlate.Native.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Playback/ArcSlate.Playback.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Presentation/ArcSlate.Presentation.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Processing/ArcSlate.Processing.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Rendering/ArcSlate.Rendering.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Subtitles/ArcSlate.Subtitles.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Tests.Integration/ArcSlate.Tests.Integration.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Tests.Ui/ArcSlate.Tests.Ui.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Tests.Unit/ArcSlate.Tests.Unit.csproj" />
+    <Project Path="src/ArcSlate/ArcSlate.Timeline/ArcSlate.Timeline.csproj" />
+  </Folder>
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Desktop.Preview/ArcForges.Desktop.Preview.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Desktop.RichContent/ArcForges.Desktop.RichContent.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Persistence.Postgres/ArcForges.Persistence.Postgres.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Testing/ArcForges.Testing.csproj" />
+  </Folder>
+  <Folder Name="/src/Cloud/">
+    <Project Path="src/Cloud/ArcForges.Cloud.AgentRuntime/ArcForges.Cloud.AgentRuntime.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.AppHost/ArcForges.Cloud.AppHost.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.BackgroundJobs/ArcForges.Cloud.BackgroundJobs.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Infrastructure/ArcForges.Cloud.Infrastructure.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Migrations/ArcForges.Cloud.Migrations.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Agent/ArcForges.Cloud.Modules.Agent.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.AI/ArcForges.Cloud.Modules.AI.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Billing/ArcForges.Cloud.Modules.Billing.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Catalog/ArcForges.Cloud.Modules.Catalog.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Chat/ArcForges.Cloud.Modules.Chat.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Configuration/ArcForges.Cloud.Modules.Configuration.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Entitlement/ArcForges.Cloud.Modules.Entitlement.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Identity/ArcForges.Cloud.Modules.Identity.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Notes/ArcForges.Cloud.Modules.Notes.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Notification/ArcForges.Cloud.Modules.Notification.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Operations/ArcForges.Cloud.Modules.Operations.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Policy/ArcForges.Cloud.Modules.Policy.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Resource/ArcForges.Cloud.Modules.Resource.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Scope/ArcForges.Cloud.Modules.Scope.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Search/ArcForges.Cloud.Modules.Search.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Slate/ArcForges.Cloud.Modules.Slate.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Modules.Sync/ArcForges.Cloud.Modules.Sync.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.PublicApi/ArcForges.Cloud.PublicApi.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Realtime/ArcForges.Cloud.Realtime.csproj" />
+    <Project Path="src/Cloud/ArcForges.Cloud.Tests/ArcForges.Cloud.Tests.csproj" />
+    <Project Path="src/Cloud/ArcForges.ServiceDefaults/ArcForges.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/src/Contracts/">
+    <Project Path="src/Contracts/ArcForges.Contracts.Agent/ArcForges.Contracts.Agent.csproj" />
+    <Project Path="src/Contracts/ArcForges.Contracts.Foundation/ArcForges.Contracts.Foundation.csproj" />
+    <Project Path="src/Contracts/ArcForges.Contracts.LocalRpc/ArcForges.Contracts.LocalRpc.csproj" />
+    <Project Path="src/Contracts/ArcForges.Contracts.PublicApi/ArcForges.Contracts.PublicApi.csproj" />
+    <Project Path="src/Contracts/ArcForges.Contracts.Realtime/ArcForges.Contracts.Realtime.csproj" />
+    <Project Path="src/Contracts/ArcForges.Contracts.Serialization/ArcForges.Contracts.Serialization.csproj" />
+    <Project Path="src/Contracts/ArcForges.Contracts.Sync/ArcForges.Contracts.Sync.csproj" />
+  </Folder>
+  <Folder Name="/src/DesktopHelpers/">
+    <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj" />
+  </Folder>
+  <Folder Name="/src/Extensions/">
+    <Project Path="src/Extensions/ArcForges.Extensions.Contracts/ArcForges.Extensions.Contracts.csproj" />
+    <Project Path="src/Extensions/ArcForges.Extensions.Packaging/ArcForges.Extensions.Packaging.csproj" />
+    <Project Path="src/Extensions/ArcForges.Extensions.Registry/ArcForges.Extensions.Registry.csproj" />
+    <Project Path="src/Extensions/ArcForges.Extensions.Runtime/ArcForges.Extensions.Runtime.csproj" />
+  </Folder>
+  <Folder Name="/src/Mobile/">
+    <Project Path="src/Mobile/ArcChat.Mobile.Application/ArcChat.Mobile.Application.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.CloudClient/ArcChat.Mobile.CloudClient.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.Contracts/ArcChat.Mobile.Contracts.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.ContractTests/ArcChat.Mobile.ContractTests.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.Domain/ArcChat.Mobile.Domain.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.Persistence/ArcChat.Mobile.Persistence.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.Presentation/ArcChat.Mobile.Presentation.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.Realtime/ArcChat.Mobile.Realtime.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.Tests/ArcChat.Mobile.Tests.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile.UiTests/ArcChat.Mobile.UiTests.csproj" />
+    <Project Path="src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj" />
+  </Folder>
+  <Folder Name="/src/SDK/">
+    <Project Path="src/SDK/ArcForges.Cli/ArcForges.Cli.csproj" />
+    <Project Path="src/SDK/ArcForges.SDK.Foundation/ArcForges.SDK.Foundation.csproj" />
+    <Project Path="src/SDK/ArcForges.SDK.SourceGenerators/ArcForges.SDK.SourceGenerators.csproj" />
+    <Project Path="src/SDK/ArcForges.SDK.Testing/ArcForges.SDK.Testing.csproj" />
+  </Folder>
+  <Folder Name="/src/Web/">
+    <Project Path="src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj" />
+    <Project Path="src/Web/ArcForges.Web.Application/ArcForges.Web.Application.csproj" />
+    <Project Path="src/Web/ArcForges.Web.Components/ArcForges.Web.Components.csproj" />
+    <Project Path="src/Web/ArcForges.Web.Infrastructure/ArcForges.Web.Infrastructure.csproj" />
+    <Project Path="src/Web/ArcForges.Web.SiteGenerator/ArcForges.Web.SiteGenerator.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/AndroidUiTests/">
+    <Project Path="tests/AndroidUiTests/ArcForges.Tests.AndroidUiTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/ArchitectureTests/">
+    <Project Path="tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/ArcScopePipelineTests/">
+    <Project Path="tests/ArcScopePipelineTests/ArcForges.Tests.ArcScopePipelineTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/ArcSlateMediaTests/">
+    <Project Path="tests/ArcSlateMediaTests/ArcForges.Tests.ArcSlateMediaTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/CloudIntegrationTests/">
+    <Project Path="tests/CloudIntegrationTests/ArcForges.Tests.CloudIntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/ContractCompatibilityTests/">
+    <Project Path="tests/ContractCompatibilityTests/ArcForges.Tests.ContractCompatibilityTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/ContractSchemaTests/">
+    <Project Path="tests/ContractSchemaTests/ArcForges.Tests.ContractSchemaTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/DesktopExperienceGallery/">
+    <Project Path="tests/DesktopExperienceGallery/ArcForges.Tests.DesktopExperienceGallery.csproj" />
+  </Folder>
+  <Folder Name="/tests/DesktopExperienceTests/">
+    <Project Path="tests/DesktopExperienceTests/ArcForges.Tests.DesktopExperienceTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/DesktopUiTests/">
+    <Project Path="tests/DesktopUiTests/ArcForges.Tests.DesktopUiTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/EndToEndTests/">
+    <Project Path="tests/EndToEndTests/ArcForges.Tests.EndToEndTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/GraphicsInteropTests/">
+    <Project Path="tests/GraphicsInteropTests/ArcForges.Tests.GraphicsInteropTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/LocalRpcAotTests/">
+    <Project Path="tests/LocalRpcAotTests/ArcForges.Tests.LocalRpcAotTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/McpAotTests/">
+    <Project Path="tests/McpAotTests/ArcForges.Tests.McpAotTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/MobileContractTests/">
+    <Project Path="tests/MobileContractTests/ArcForges.Tests.MobileContractTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/NativeAbiTests/">
+    <Project Path="tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/NativeContentTests/">
+    <Project Path="tests/NativeContentTests/ArcForges.Tests.NativeContentTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/PersistenceRecoveryTests/">
+    <Project Path="tests/PersistenceRecoveryTests/ArcForges.Tests.PersistenceRecoveryTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/PublicApiContractTests/">
+    <Project Path="tests/PublicApiContractTests/ArcForges.Tests.PublicApiContractTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/RealtimeReconnectTests/">
+    <Project Path="tests/RealtimeReconnectTests/ArcForges.Tests.RealtimeReconnectTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/ReleaseArtifactTests/">
+    <Project Path="tests/ReleaseArtifactTests/ArcForges.Tests.ReleaseArtifactTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/RemoteToolBridgeTests/">
+    <Project Path="tests/RemoteToolBridgeTests/ArcForges.Tests.RemoteToolBridgeTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/SyncConflictTests/">
+    <Project Path="tests/SyncConflictTests/ArcForges.Tests.SyncConflictTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/VirtualizationTests/">
+    <Project Path="tests/VirtualizationTests/ArcForges.Tests.VirtualizationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Web/">
+    <Project Path="tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj" />
+    <Project Path="tests/Web/ArcForges.Web.ComponentTests/ArcForges.Web.ComponentTests.csproj" />
+    <Project Path="tests/Web/ArcForges.Web.ContractTests/ArcForges.Web.ContractTests.csproj" />
+    <Project Path="tests/Web/ArcForges.Web.UnitTests/ArcForges.Web.UnitTests.csproj" />
+  </Folder>
+</Solution>

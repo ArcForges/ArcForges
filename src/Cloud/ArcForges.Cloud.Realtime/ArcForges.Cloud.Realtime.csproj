@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Cloud.Realtime</AssemblyName>
+    <RootNamespace>ArcForges.Cloud.Realtime</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Agent\ArcForges.Cloud.Modules.Agent.csproj" />
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Realtime\ArcForges.Contracts.Realtime.csproj" />
+  </ItemGroup>
+</Project>

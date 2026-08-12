@@ -1,0 +1,7 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <ItemGroup Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" PrivateAssets="all" />
+  </ItemGroup>
+  <Import Project="eng\build\NoInlineVersions.targets" />
+</Project>

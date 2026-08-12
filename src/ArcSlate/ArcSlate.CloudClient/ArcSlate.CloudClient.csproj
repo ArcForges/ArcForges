@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcSlate.CloudClient</AssemblyName>
+    <RootNamespace>ArcSlate.CloudClient</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.PublicApi\ArcForges.Contracts.PublicApi.csproj" />
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Realtime\ArcForges.Contracts.Realtime.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,7 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

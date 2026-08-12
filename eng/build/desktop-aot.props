@@ -1,0 +1,10 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <IsAotCompatible>true</IsAotCompatible>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL3050</WarningsAsErrors>
+  </PropertyGroup>
+</Project>

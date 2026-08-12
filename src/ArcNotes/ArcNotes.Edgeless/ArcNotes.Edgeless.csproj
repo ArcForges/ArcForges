@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcNotes.Edgeless</AssemblyName>
+    <RootNamespace>ArcNotes.Edgeless</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcNotes.Application\ArcNotes.Application.csproj" />
+    <ProjectReference Include="..\ArcNotes.Domain\ArcNotes.Domain.csproj" />
+  </ItemGroup>
+</Project>

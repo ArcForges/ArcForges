@@ -1,0 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+LIBRARY "ArcMediaNative"
+EXPORTS
+    arc_media_abi_version
+    arc_media_hello

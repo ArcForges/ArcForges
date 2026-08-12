@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcChat.McpClient</AssemblyName>
+    <RootNamespace>ArcChat.McpClient</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Foundation\ArcForges.Foundation.csproj" />
+  </ItemGroup>
+</Project>

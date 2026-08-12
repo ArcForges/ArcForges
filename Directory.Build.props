@@ -1,0 +1,34 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <LangVersion>14</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <Authors>ArcForges</Authors>
+    <Company>ArcForges</Company>
+    <Copyright>Copyright © ArcForges contributors</Copyright>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/ArcForges/ArcForges</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/ArcForges/ArcForges</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <AnalysisLevel>latest-all</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+    <!-- Workload library packs are host-specific; restore NuGet packages from the pinned feed so one lock is portable. -->
+    <DisableImplicitLibraryPacksFolder>true</DisableImplicitLibraryPacksFolder>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1605;IL2026;IL3050</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Wave 1: foundations, contracts, domains, and production heads. Wave 2 expands repo-wide after Step 05. -->
+  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('ArcForges.Contracts.')) Or $(MSBuildProjectName.EndsWith('.Domain')) Or '$(MSBuildProjectName)' == 'ArcForges.Foundation'">
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

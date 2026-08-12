@@ -1,0 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+LIBRARY "ArcScopeMdfNative"
+EXPORTS
+    arc_scope_mdf_abi_version
+    arc_scope_mdf_hello

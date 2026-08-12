@@ -1,0 +1,63 @@
+name: Release train
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  train-desktop-aot:
+    uses: ./.github/workflows/aot-publish-smoke.yml
+
+  train-blazor-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install wasm-tools --skip-manifest-update
+      - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
+      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore
+
+  train-maui-android:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet workload install maui-android --skip-manifest-update
+      - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
+      - run: dotnet build src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -c Release --no-restore
+
+  train-cloud-jit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
+      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore
+
+  train-ios-deferred:
+    if: ${{ vars.ENABLE_IOS_RELEASE == 'true' }}
+    runs-on: macos-15
+    steps:
+      - run: echo 'iOS release is owned by Step 20 and is not implemented.' && exit 1
+
+  train-native-dependency-closure:
+    if: ${{ vars.ENABLE_NATIVE_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Full native dependency ABI closure is owned by Steps 07, 22, and 24.' && exit 1
+
+  train-installers-deferred:
+    if: ${{ vars.ENABLE_INSTALLER_RELEASE == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - run: echo 'Install, upgrade, and rollback are owned by Step 31.' && exit 1

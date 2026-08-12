@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Web.SiteGenerator</AssemblyName>
+    <RootNamespace>ArcForges.Web.SiteGenerator</RootNamespace>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Web.Components\ArcForges.Web.Components.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Cloud.Modules.Policy</AssemblyName>
+    <RootNamespace>ArcForges.Cloud.Modules.Policy</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Cloud.Infrastructure\ArcForges.Cloud.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Foundation\ArcForges.Contracts.Foundation.csproj" />
+  </ItemGroup>
+</Project>

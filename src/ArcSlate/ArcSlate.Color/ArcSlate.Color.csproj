@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcSlate.Color</AssemblyName>
+    <RootNamespace>ArcSlate.Color</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcSlate.Application\ArcSlate.Application.csproj" />
+    <ProjectReference Include="..\ArcSlate.Domain\ArcSlate.Domain.csproj" />
+  </ItemGroup>
+</Project>

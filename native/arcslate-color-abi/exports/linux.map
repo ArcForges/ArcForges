@@ -1,0 +1,7 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+ARCFORGES_1.0 {
+    global:
+        arc_slate_color_abi_version;
+        arc_slate_color_hello;
+    local: *;
+};

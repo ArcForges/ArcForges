@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcSlate.Presentation</AssemblyName>
+    <RootNamespace>ArcSlate.Presentation</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Desktop.Experience\ArcForges.Desktop.Experience.csproj" />
+    <ProjectReference Include="..\ArcSlate.Application\ArcSlate.Application.csproj" />
+  </ItemGroup>
+</Project>

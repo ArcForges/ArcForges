@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Contracts.Realtime</AssemblyName>
+    <RootNamespace>ArcForges.Contracts.Realtime</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Contracts.Agent\ArcForges.Contracts.Agent.csproj" />
+    <ProjectReference Include="..\ArcForges.Contracts.Foundation\ArcForges.Contracts.Foundation.csproj" />
+    <ProjectReference Include="..\ArcForges.Contracts.Sync\ArcForges.Contracts.Sync.csproj" />
+  </ItemGroup>
+</Project>
