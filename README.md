@@ -27,7 +27,7 @@ There is exactly **one Mobile app** (`ArcChat.Mobile`) and exactly **one Web app
 
 ## Build
 
-Prerequisites are .NET SDK 10.0.302, CMake 4.3+, a C++20 compiler, and the `maui-android`
+Prerequisites are .NET SDK 10.0.400, CMake 4.3+, a C++20 compiler, and the `maui-android`
 and `wasm-tools` workloads.
 
 ```powershell

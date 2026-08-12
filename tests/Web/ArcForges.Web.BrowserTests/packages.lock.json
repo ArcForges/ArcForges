@@ -10,9 +10,9 @@
       },
       "Microsoft.CodeAnalysis.NetAnalyzers": {
         "type": "Direct",
-        "requested": "[10.0.302, )",
-        "resolved": "10.0.302",
-        "contentHash": "mbJSf5EOYkgnPQ0jO0qo4AByQYDGbBZDs0+23xdkK2ckuvYJGlPT1nPR0WCSnzwXdiVypOTZ4ArcT4H/X/f1mQ=="
+        "requested": "[10.0.400, )",
+        "resolved": "10.0.400",
+        "contentHash": "Uogs/xCuSxYuEYAU7oUPddK3MFcT3A+FkrBcx/wVse6P4joptMAfh/H9jtIhl9IkHARCvJHFjL3jhKFs9YMktA=="
       },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
@@ -400,7 +400,7 @@
           "ArcForges.Web.Components": "[1.0.0, )",
           "ArcForges.Web.Infrastructure": "[1.0.0, )",
           "Microsoft.AspNetCore.Components.WebAssembly": "[10.0.10, )",
-          "Microsoft.AspNetCore.Components.WebAssembly.DevServer": "[10.0.10, )"
+          "Microsoft.AspNetCore.Components.WebAssembly.DevServer": "[10.0.11, )"
         }
       },
       "arcforges.web.application": {
@@ -454,9 +454,9 @@
       },
       "Microsoft.AspNetCore.Components.WebAssembly.DevServer": {
         "type": "CentralTransitive",
-        "requested": "[10.0.10, )",
-        "resolved": "10.0.10",
-        "contentHash": "Wv703dydlsSpIL5JdauIjgZ8Qu2HZcoakAcBoaxGQd42miEPlM9HRgfmS9Vs401kL4HFqcxWObqMhT8Gx/3gZQ=="
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "O5hNgEMk52YgLPBoQ4bxkEf0IeBFI0f+ofGj05UdJkJtcUoQSDpUFww9ocQIViKckmKU+8KOGuer5/dtIREyNQ=="
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "CentralTransitive",

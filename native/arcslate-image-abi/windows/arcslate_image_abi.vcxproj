@@ -31,7 +31,7 @@
     </ClCompile>
     <Link><ModuleDefinitionFile>$(ProjectDir)..\exports\windows.def</ModuleDefinitionFile><GenerateDebugInformation>true</GenerateDebugInformation></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="..\src\**\*.cpp" /></ItemGroup>
-  <ItemGroup><ClInclude Include="..\include\**\*.h" /><ClInclude Include="..\..\shared\include\**\*.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="..\src\arcslate_image_abi.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="..\include\arc\arc_slate_image_abi.h" /><ClInclude Include="..\..\shared\include\arc\arc_native_abi.h" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
