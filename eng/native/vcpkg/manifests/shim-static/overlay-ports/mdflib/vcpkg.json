@@ -1,0 +1,14 @@
+{
+  "name": "mdflib",
+  "version-semver": "2.3.0",
+  "description": "ASAM MDF 3/4 C++ library",
+  "homepage": "https://github.com/ihedvall/mdflib",
+  "license": "MIT",
+  "supports": "!uwp",
+  "dependencies": [
+    "expat",
+    "zlib",
+    { "name": "vcpkg-cmake", "host": true },
+    { "name": "vcpkg-cmake-config", "host": true }
+  ]
+}

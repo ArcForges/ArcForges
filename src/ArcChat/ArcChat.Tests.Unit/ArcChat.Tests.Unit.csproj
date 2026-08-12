@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcChat.Tests.Unit</AssemblyName>
+    <RootNamespace>ArcChat.Tests.Unit</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcChat.Application\ArcChat.Application.csproj" />
+    <ProjectReference Include="..\ArcChat.Domain\ArcChat.Domain.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Testing\ArcForges.Testing.csproj" />
+  </ItemGroup>
+</Project>

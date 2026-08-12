@@ -1,0 +1,23 @@
+diff --git a/src/deps/CMakeLists.txt b/src/deps/CMakeLists.txt
+--- a/src/deps/CMakeLists.txt
++++ b/src/deps/CMakeLists.txt
+@@ -4,10 +4,14 @@
+ #----- Other dependencies
+-
++
+ # detect if the submodules haven't been updated
+-set(DEPS_SUBMODULES pybind11)
++set(DEPS_SUBMODULES)
++
++if(OTIO_PYTHON_INSTALL)
++    list(APPEND DEPS_SUBMODULES pybind11)
++endif()
+-
++
+ if(NOT OTIO_FIND_RAPIDJSON)
+-    set(DEPS_SUBMODULES ${DEPS_SUBMODULES} rapidjson)
++    list(APPEND DEPS_SUBMODULES rapidjson)
+ endif()
+-
++
+ foreach(submodule IN LISTS DEPS_SUBMODULES)

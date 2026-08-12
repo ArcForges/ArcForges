@@ -1,0 +1,3 @@
+# xUnit discovers these test classes through their public surface.
+[ArchitectureRuleTests.cs]
+dotnet_diagnostic.CA1515.severity = none

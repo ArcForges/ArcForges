@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\..\eng\build\desktop-aot.props" />
+  <Import Project="..\..\..\eng\build\desktop-rids.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcChat.Desktop</AssemblyName>
+    <RootNamespace>ArcChat.Desktop</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcChat.Application\ArcChat.Application.csproj" />
+    <ProjectReference Include="..\ArcChat.CloudClient\ArcChat.CloudClient.csproj" />
+    <ProjectReference Include="..\ArcChat.Infrastructure\ArcChat.Infrastructure.csproj" />
+    <ProjectReference Include="..\ArcChat.LocalRpc\ArcChat.LocalRpc.csproj" />
+    <ProjectReference Include="..\ArcChat.Presentation\ArcChat.Presentation.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Observability\ArcForges.Observability.csproj" />
+  </ItemGroup>
+</Project>

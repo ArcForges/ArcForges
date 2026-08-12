@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcChat.Mobile.Application</AssemblyName>
+    <RootNamespace>ArcChat.Mobile.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcChat.Mobile.Domain\ArcChat.Mobile.Domain.csproj" />
+  </ItemGroup>
+</Project>

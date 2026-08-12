@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Extensions.Contracts</AssemblyName>
+    <RootNamespace>ArcForges.Extensions.Contracts</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Foundation\ArcForges.Contracts.Foundation.csproj" />
+    <ProjectReference Include="..\..\SDK\ArcForges.SDK.Foundation\ArcForges.SDK.Foundation.csproj" />
+  </ItemGroup>
+</Project>

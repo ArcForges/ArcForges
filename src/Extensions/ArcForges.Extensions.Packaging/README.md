@@ -1,0 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+# ArcForges.Extensions.Packaging
+
+Compile-ready Step 01 skeleton for **ArcForges Extensions Packaging**. Business behavior belongs to its owning numbered step.

@@ -1,0 +1,70 @@
+name: AOT publish smoke
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'eng/build/**'
+      - 'Directory.*'
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-native-aot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: macos-15
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Install Linux Native AOT prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev libbrotli-dev
+      - name: Publish all desktop heads
+        shell: pwsh
+        run: ./eng/build/publish-aot-smoke.ps1 -RuntimeIdentifier '${{ matrix.rid }}'
+
+  cloud-jit:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-15
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - run: dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
+      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release -r ${{ matrix.rid }} --self-contained false --no-restore
+
+  win-arm64-compile:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - shell: pwsh
+        run: ./eng/build/publish-aot-smoke.ps1 -RuntimeIdentifier win-arm64 -PublishOnly

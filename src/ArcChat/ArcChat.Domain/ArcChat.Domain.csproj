@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcChat.Domain</AssemblyName>
+    <RootNamespace>ArcChat.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

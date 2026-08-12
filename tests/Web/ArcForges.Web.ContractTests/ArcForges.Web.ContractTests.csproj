@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Web.ContractTests</AssemblyName>
+    <RootNamespace>ArcForges.Web.ContractTests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Contracts\ArcForges.Contracts.PublicApi\ArcForges.Contracts.PublicApi.csproj" />
+    <ProjectReference Include="..\..\..\src\Contracts\ArcForges.Contracts.Realtime\ArcForges.Contracts.Realtime.csproj" />
+  </ItemGroup>
+</Project>

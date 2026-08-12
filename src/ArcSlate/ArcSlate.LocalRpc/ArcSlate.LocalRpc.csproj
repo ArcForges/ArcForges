@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcSlate.LocalRpc</AssemblyName>
+    <RootNamespace>ArcSlate.LocalRpc</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.LocalRpc\ArcForges.Contracts.LocalRpc.csproj" />
+    <ProjectReference Include="..\ArcSlate.Application\ArcSlate.Application.csproj" />
+  </ItemGroup>
+</Project>

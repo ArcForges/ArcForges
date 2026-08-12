@@ -1,0 +1,15 @@
+name: Bug report
+description: Report a reproducible ArcForges defect
+body:
+  - type: textarea
+    id: description
+    attributes: { label: Description, description: What happened and what did you expect? }
+    validations: { required: true }
+  - type: textarea
+    id: reproduction
+    attributes: { label: Reproduction, description: Include minimal steps and non-sensitive logs. }
+    validations: { required: true }
+  - type: input
+    id: environment
+    attributes: { label: Environment, description: Product, version, OS, architecture, and GPU if relevant. }
+    validations: { required: true }

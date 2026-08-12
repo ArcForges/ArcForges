@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Cli</AssemblyName>
+    <RootNamespace>ArcForges.Cli</RootNamespace>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Extensions\ArcForges.Extensions.Contracts\ArcForges.Extensions.Contracts.csproj" />
+    <ProjectReference Include="..\..\Extensions\ArcForges.Extensions.Packaging\ArcForges.Extensions.Packaging.csproj" />
+    <ProjectReference Include="..\ArcForges.SDK.Foundation\ArcForges.SDK.Foundation.csproj" />
+  </ItemGroup>
+</Project>

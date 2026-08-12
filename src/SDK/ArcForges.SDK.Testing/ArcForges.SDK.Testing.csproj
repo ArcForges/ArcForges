@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.SDK.Testing</AssemblyName>
+    <RootNamespace>ArcForges.SDK.Testing</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Extensions\ArcForges.Extensions.Contracts\ArcForges.Extensions.Contracts.csproj" />
+    <ProjectReference Include="..\ArcForges.SDK.Foundation\ArcForges.SDK.Foundation.csproj" />
+  </ItemGroup>
+</Project>

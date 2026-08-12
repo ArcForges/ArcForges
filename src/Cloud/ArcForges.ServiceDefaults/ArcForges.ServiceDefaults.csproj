@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.ServiceDefaults</AssemblyName>
+    <RootNamespace>ArcForges.ServiceDefaults</RootNamespace>
+  </PropertyGroup>
+</Project>

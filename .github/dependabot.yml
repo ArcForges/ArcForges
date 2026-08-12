@@ -1,0 +1,24 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      dotnet-foundation:
+        patterns: ['Microsoft.*', 'System.*']
+      avalonia:
+        patterns: ['Avalonia*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: vcpkg
+    directory: /eng/native/vcpkg/manifests/runtime-shared
+    schedule:
+      interval: monthly
+  - package-ecosystem: vcpkg
+    directory: /eng/native/vcpkg/manifests/shim-static
+    schedule:
+      interval: monthly

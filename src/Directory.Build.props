@@ -1,0 +1,9 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <Import Project="..\Directory.Build.props" />
+  <PropertyGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp' and '$(IsTestProject)' != 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+</Project>

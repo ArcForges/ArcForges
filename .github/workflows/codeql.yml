@@ -1,0 +1,43 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '19 3 * * 2'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: codeql-${{ matrix.language }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [csharp, cpp]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: manual
+      - uses: actions/setup-dotnet@v5
+        if: matrix.language == 'csharp'
+        with:
+          global-json-file: global.json
+      - name: Build C#
+        if: matrix.language == 'csharp'
+        run: |
+          dotnet workload install maui-android --skip-manifest-update
+          dotnet restore ArcForges.slnx --locked-mode
+          dotnet build ArcForges.slnx -c Release --no-restore
+      - name: Build C++
+        if: matrix.language == 'cpp'
+        run: |
+          cmake --preset windows-msvc-x64
+          cmake --build --preset windows-msvc-x64-release
+      - uses: github/codeql-action/analyze@v4

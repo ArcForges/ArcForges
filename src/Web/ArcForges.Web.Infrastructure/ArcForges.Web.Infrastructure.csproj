@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Web.Infrastructure</AssemblyName>
+    <RootNamespace>ArcForges.Web.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.PublicApi\ArcForges.Contracts.PublicApi.csproj" />
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Realtime\ArcForges.Contracts.Realtime.csproj" />
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Serialization\ArcForges.Contracts.Serialization.csproj" />
+    <ProjectReference Include="..\ArcForges.Web.Application\ArcForges.Web.Application.csproj" />
+  </ItemGroup>
+</Project>

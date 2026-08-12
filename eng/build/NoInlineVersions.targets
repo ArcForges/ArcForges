@@ -1,0 +1,11 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <Target Name="VerifyNoInlinePackageVersions" BeforeTargets="CollectPackageReferences">
+    <ItemGroup>
+      <_InlinePackageVersion Include="@(PackageReference)"
+                             Condition="('%(PackageReference.Version)' != '' Or '%(PackageReference.VersionOverride)' != '') And '%(PackageReference.IsImplicitlyDefined)' != 'true'" />
+    </ItemGroup>
+    <Error Condition="'@(_InlinePackageVersion)' != ''"
+           Text="Inline NuGet versions are forbidden. Move these packages to Directory.Packages.props: @(_InlinePackageVersion)" />
+  </Target>
+</Project>

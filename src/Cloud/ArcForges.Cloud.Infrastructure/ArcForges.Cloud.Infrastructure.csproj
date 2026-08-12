@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Cloud.Infrastructure</AssemblyName>
+    <RootNamespace>ArcForges.Cloud.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Contracts\ArcForges.Contracts.Foundation\ArcForges.Contracts.Foundation.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Persistence.Postgres\ArcForges.Persistence.Postgres.csproj" />
+  </ItemGroup>
+</Project>

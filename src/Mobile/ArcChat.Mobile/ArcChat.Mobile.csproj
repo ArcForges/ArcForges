@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\..\eng\build\mobile.props" />
+  <Import Project="..\..\..\eng\build\Android.aot.props" />
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android</TargetFrameworks>
+    <AssemblyName>ArcChat.Mobile</AssemblyName>
+    <RootNamespace>ArcChat.Mobile</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks Condition="'$(EnableIosTarget)' == 'true'">$(TargetFrameworks);net10.0-ios</TargetFrameworks>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ApplicationTitle>ArcChat Mobile</ApplicationTitle>
+    <ApplicationId>com.arcforges.arcchat</ApplicationId>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <SupportedOSPlatformVersion Condition="'$(TargetFrameworkIdentifier)' == 'android'">24.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcChat.Mobile.Application\ArcChat.Mobile.Application.csproj" />
+    <ProjectReference Include="..\ArcChat.Mobile.CloudClient\ArcChat.Mobile.CloudClient.csproj" />
+    <ProjectReference Include="..\ArcChat.Mobile.Contracts\ArcChat.Mobile.Contracts.csproj" />
+    <ProjectReference Include="..\ArcChat.Mobile.Domain\ArcChat.Mobile.Domain.csproj" />
+    <ProjectReference Include="..\ArcChat.Mobile.Persistence\ArcChat.Mobile.Persistence.csproj" />
+    <ProjectReference Include="..\ArcChat.Mobile.Presentation\ArcChat.Mobile.Presentation.csproj" />
+    <ProjectReference Include="..\ArcChat.Mobile.Realtime\ArcChat.Mobile.Realtime.csproj" />
+  </ItemGroup>
+</Project>

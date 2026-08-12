@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Cloud.BackgroundJobs</AssemblyName>
+    <RootNamespace>ArcForges.Cloud.BackgroundJobs</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArcForges.Cloud.Modules.Agent\ArcForges.Cloud.Modules.Agent.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcNotes.Presentation</AssemblyName>
+    <RootNamespace>ArcNotes.Presentation</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Desktop.Experience\ArcForges.Desktop.Experience.csproj" />
+    <ProjectReference Include="..\ArcNotes.Application\ArcNotes.Application.csproj" />
+  </ItemGroup>
+</Project>

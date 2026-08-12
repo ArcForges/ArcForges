@@ -1,0 +1,41 @@
+{
+  "name": "arcforges-runtime-shared",
+  "version-string": "0.1.0",
+  "builtin-baseline": "40f3c709db80acf154ac4b17a1f83c564ebd022e",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avfilter", "avformat", "swresample", "swscale"]
+    },
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["vulkan"],
+      "platform": "windows | linux"
+    },
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["qsv", "nvcodec"],
+      "platform": "x64 & (windows | linux)"
+    },
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["amf"],
+      "platform": "x64 & windows"
+    },
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["vaapi"],
+      "platform": "x64 & linux"
+    },
+    { "name": "libusb", "default-features": false },
+    { "name": "miniaudio", "default-features": false }
+  ],
+  "overrides": [
+    { "name": "ffmpeg", "version": "8.1.2#3" }
+  ]
+}

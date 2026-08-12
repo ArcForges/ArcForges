@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.ContentSandbox</AssemblyName>
+    <RootNamespace>ArcForges.ContentSandbox</RootNamespace>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Desktop.RichContent\ArcForges.Desktop.RichContent.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Foundation\ArcForges.Foundation.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.NativeInterop\ArcForges.NativeInterop.csproj" />
+  </ItemGroup>
+</Project>
