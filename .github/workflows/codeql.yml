@@ -15,6 +15,9 @@ jobs:
   analyze:
     name: codeql-${{ matrix.language }}
     runs-on: windows-latest
+    env:
+      # Keep restored third-party source outside the checkout so CodeQL reports only ArcForges-owned files.
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
     strategy:
       fail-fast: false
       matrix:

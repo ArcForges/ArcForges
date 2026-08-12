@@ -132,16 +132,10 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - name: Layout, SDK, SPDX, packages, and suppressions
-        shell: pwsh
+      - name: Repository policy tests
         run: |
-          ./eng/build/check-sdk.ps1
-          ./eng/build/check-layout.ps1
-          ./eng/build/check-headers.ps1
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          ./eng/build/audit-suppressions.ps1
-          ./eng/build/check-no-preview-packages.ps1
-          ./eng/build/check-licenses.ps1
+          dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
+          dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --filter Category=Architecture
       - name: Dependency audit
         run: |
           dotnet workload install maui-android wasm-tools --skip-manifest-update

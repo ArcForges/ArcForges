@@ -3,5 +3,7 @@
 
 int main()
 {
-    return (arc_graphics_metal_abi_version() == ARC_NATIVE_ABI_VERSION && arc_graphics_metal_hello() == ARC_STATUS_OK) ? 0 : 1;
+    return (arc_graphics_metal_abi_version() == ARC_NATIVE_ABI_VERSION && arc_graphics_metal_hello() == ARC_STATUS_OK)
+               ? 0
+               : 1;
 }

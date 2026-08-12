@@ -1,0 +1,58 @@
+name: Open-source code quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: code-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  managed-analyzers:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - run: dotnet format ArcForges.slnx whitespace --verify-no-changes --no-restore
+      - run: dotnet format ArcForges.slnx style --verify-no-changes --severity warn --no-restore
+      - run: dotnet format ArcForges.slnx analyzers --verify-no-changes --severity warn --no-restore
+
+  native-clang-tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: lukka/get-cmake@v4.4.2
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
+      - run: sudo apt-get update && sudo apt-get install --yes clang-tidy
+      - run: cmake --preset linux-clang-x64 '-DCMAKE_CXX_CLANG_TIDY=clang-tidy;--warnings-as-errors=*'
+      - run: cmake --build --preset linux-clang-x64-release
+
+  repository-linters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: super-linter/super-linter/slim@9e863354e3ff62e0727d37183162c4a88873df41 # v8.6.0
+        env:
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_ALL_CODEBASE: true
+          VALIDATE_CLANG_FORMAT: true
+          VALIDATE_GITHUB_ACTIONS: true
+          VALIDATE_GIT_MERGE_CONFLICT_MARKERS: true

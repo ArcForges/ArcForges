@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 BasedOnStyle: LLVM
-Language: Cpp
 Standard: c++20
 IndentWidth: 4
 ColumnLimit: 120
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterEnum: false
+  AfterExternBlock: false
+  AfterFunction: true
+  AfterStruct: false
+AllowShortFunctionsOnASingleLine: None
+IndentExternBlock: NoIndent
 DerivePointerAlignment: false
 PointerAlignment: Left
 SortIncludes: CaseSensitive
