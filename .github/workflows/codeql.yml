@@ -35,6 +35,11 @@ jobs:
           dotnet workload install maui-android --skip-manifest-update
           dotnet restore ArcForges.slnx --locked-mode
           dotnet build ArcForges.slnx -c Release --no-restore
+      - uses: lukka/get-cmake@v4.4.2
+        if: matrix.language == 'cpp'
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
       - name: Build C++
         if: matrix.language == 'cpp'
         run: |
