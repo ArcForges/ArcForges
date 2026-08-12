@@ -159,7 +159,7 @@ jobs:
           path: .
           format: spdx-json
           output-file: artifacts/arcforges.spdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arcforges-sbom
           path: artifacts/arcforges.spdx.json
