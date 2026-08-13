@@ -15,6 +15,7 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
 
 jobs:
   managed:
@@ -58,7 +59,7 @@ jobs:
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-classic-Windows-x64-${{ hashFiles('eng/native/vcpkg/ports/**') }}
+          key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}
       - name: Install native dependencies and enable MSBuild integration
         shell: pwsh
         run: |
