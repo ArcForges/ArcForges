@@ -3,5 +3,6 @@
 
 int main()
 {
-    return (arc_slate_image_abi_version() == ARC_NATIVE_ABI_VERSION && arc_slate_image_hello() == ARC_STATUS_OK) ? 0 : 1;
+    return (arc_slate_image_abi_version() == ARC_NATIVE_ABI_VERSION && arc_slate_image_hello() == ARC_STATUS_OK) ? 0
+                                                                                                                 : 1;
 }

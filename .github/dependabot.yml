@@ -14,11 +14,3 @@ updates:
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: vcpkg
-    directory: /eng/native/vcpkg/manifests/runtime-shared
-    schedule:
-      interval: monthly
-  - package-ecosystem: vcpkg
-    directory: /eng/native/vcpkg/manifests/shim-static
-    schedule:
-      interval: monthly
