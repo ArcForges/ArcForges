@@ -200,6 +200,9 @@
           "ArcForges.Contracts.Foundation": "[1.0.0, )"
         }
       },
+      "arcforges.testing": {
+        "type": "Project"
+      },
       "arcforges.web.application": {
         "type": "Project",
         "dependencies": {

@@ -12,6 +12,13 @@
       "default-features": false
     },
     {
+      "name": "minizip-ng",
+      "default-features": false,
+      "features": [
+        "zlib"
+      ]
+    },
+    {
       "name": "opencolorio",
       "default-features": false
     },
@@ -25,6 +32,10 @@
     },
     {
       "name": "opentimelineio",
+      "default-features": false
+    },
+    {
+      "name": "tiff",
       "default-features": false
     }
   ]

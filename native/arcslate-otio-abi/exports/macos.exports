@@ -1,3 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-_arc_slate_otio_abi_version
-_arc_slate_otio_hello
+_arc_otio_get_abi_version
+_arc_otio_get_build_info
+_arc_otio_get_last_error

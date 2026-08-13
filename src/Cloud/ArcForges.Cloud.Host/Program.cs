@@ -11,3 +11,5 @@ app.MapGet("/", () => Results.Json(new { app = "arcforges-cloud", ok = true }));
 app.MapGet("/health", () => Results.Json(new { status = "ok" }));
 app.MapHub<ArcForgesEventHub>("/hubs/v1/events");
 app.Run();
+
+internal partial class Program;

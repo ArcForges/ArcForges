@@ -6,8 +6,9 @@ public sealed class SkeletonTests
 {
     [Xunit.Fact]
     [Xunit.Trait("Category", "Unit")]
-    public void ProjectIsDiscoverable()
+    public void ReferencedProductionModulesExecuteTheirDeclaredContract()
     {
-        Xunit.Assert.NotEmpty(typeof(SkeletonTests).Assembly.GetName().Name!);
+        IReadOnlyList<string> modules = ArcForges.Testing.ReferencedModuleContract.Verify(typeof(SkeletonTests).Assembly);
+        Xunit.Assert.NotEmpty(modules);
     }
 }

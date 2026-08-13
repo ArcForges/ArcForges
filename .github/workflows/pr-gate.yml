@@ -1,4 +1,4 @@
-name: PR gate
+name: CI
 
 on:
   pull_request:
@@ -9,159 +9,217 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr-gate-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
 
 jobs:
-  locked-restore:
+  managed:
     runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
           cache: true
-          cache-dependency-path: '**/packages.lock.json'
+          cache-dependency-path: '**/packages*.lock.json'
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
-      - name: Verify restore leaves the checkout clean
+      - name: Verify deterministic restore
         shell: pwsh
         run: |
           $dirty = @(git status --porcelain --untracked-files=all)
           if ($dirty.Count) {
             $dirty | Write-Host
-            throw 'Locked restore changed tracked files or created untracked files.'
+            throw 'Locked restore changed the checkout.'
           }
-
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet restore ArcForges.slnx --locked-mode
-      - run: dotnet build ArcForges.slnx -c Release --no-restore
       - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
+      - run: dotnet build ArcForges.slnx -c Release --no-restore
+      - name: Run the complete managed test taxonomy
+        run: dotnet test ArcForges.slnx -c Release --no-build --no-restore --filter "Category=Unit|Category=Integration|Category=Contract|Category=Ui|Category=Architecture"
 
-  unit-tests:
+  native-win-x64:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet test ArcForges.slnx -c Release --filter Category=Unit
-
-  integration-tests:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet test ArcForges.slnx -c Release --filter Category=Integration
-
-  architecture-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
-      - run: dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --filter Category=Architecture
-
-  native-cmake:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            configure: windows-msvc-x64
-            build: windows-msvc-x64-release
-            test: windows-msvc-x64
-          - os: ubuntu-latest
-            configure: linux-clang-x64
-            build: linux-clang-x64-release
-            test: linux-clang-x64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: lukka/get-cmake@v4.4.2
+      - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
         with:
           cmakeVersion: '4.3.3'
           ninjaVersion: '1.13.1'
-      - run: cmake --preset ${{ matrix.configure }}
-      - run: cmake --build --preset ${{ matrix.build }}
-      - run: ctest --preset ${{ matrix.test }}
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/vcpkg-archives
+          key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP vcpkg
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
+          git -C $root checkout --detach $env:VCPKG_COMMIT
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
+          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
+          New-Item -ItemType Directory -Force -Path $archives | Out-Null
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - name: Build, test, and stage both CMake profiles
+        shell: pwsh
+        run: |
+          foreach ($profile in 'runtime-shared', 'shim-static') {
+            $preset = "windows-msvc-x64-$profile"
+            cmake --preset $preset
+            if ($LASTEXITCODE) { throw "$preset configure failed." }
+            cmake --build --preset "$preset-release"
+            if ($LASTEXITCODE) { throw "$preset build failed." }
+            ctest --preset $preset
+            if ($LASTEXITCODE) { throw "$preset tests failed." }
+            cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
+            if ($LASTEXITCODE) { throw "$preset install failed." }
+          }
+      - name: Run managed P/Invoke over CMake artifacts
+        shell: pwsh
+        run: |
+          $env:ARCFORGES_NATIVE_BUILD_MODE = 'cmake'
+          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/stage/native/win-x64/native"
+          dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
+      - name: Build the independent Windows solution
+        run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=x64
+      - name: Run managed P/Invoke over pure MSBuild artifacts
+        shell: pwsh
+        run: |
+          $env:ARCFORGES_NATIVE_BUILD_MODE = 'msbuild'
+          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/msbuild/native/win-x64/Release"
+          dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
 
-  android:
+  app-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev libbrotli-dev xvfb
+      - run: dotnet workload install wasm-tools --skip-manifest-update
+      - name: Publish and initialize one real Avalonia window
+        run: |
+          dotnet restore src/ArcChat/ArcChat.Desktop/ArcChat.Desktop.csproj --locked-mode
+          dotnet publish src/ArcChat/ArcChat.Desktop/ArcChat.Desktop.csproj -c Release -r linux-x64 --self-contained true --no-restore -o artifacts/desktop
+          xvfb-run --auto-servernum artifacts/desktop/ArcChat.Desktop --smoke | grep -F 'ok arcforges-smoke avalonia-window'
+      - name: Publish and probe Cloud HTTP plus SignalR
+        shell: pwsh
+        run: |
+          $project = 'src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj'
+          dotnet restore $project --locked-mode
+          dotnet publish $project -c Release --self-contained false --no-restore -o artifacts/cloud
+          $process = Start-Process dotnet -ArgumentList @('artifacts/cloud/ArcForges.Cloud.Host.dll', '--urls', 'http://127.0.0.1:5087') -PassThru
+          try {
+            $ready = $false
+            foreach ($attempt in 1..30) {
+              try {
+                $health = Invoke-RestMethod http://127.0.0.1:5087/health
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Cloud /health never became ready.' }
+            $root = Invoke-RestMethod http://127.0.0.1:5087/
+            if (-not $root.ok -or $root.app -ne 'arcforges-cloud') { throw 'Cloud root contract failed.' }
+            $negotiate = Invoke-RestMethod -Method Post 'http://127.0.0.1:5087/hubs/v1/events/negotiate?negotiateVersion=1'
+            if ([string]::IsNullOrWhiteSpace($negotiate.connectionToken)) { throw 'SignalR negotiate returned no token.' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: Publish Web and build Browser tests
+        run: |
+          dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
+          dotnet restore tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj --locked-mode
+          dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/web
+          dotnet build tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-restore
+      - name: Install Chromium
+        shell: pwsh
+        run: |
+          $script = Get-ChildItem artifacts/bin/dotnet -Recurse -Filter playwright.ps1 | Select-Object -First 1
+          if (-not $script) { throw 'Playwright installation script was not produced.' }
+          & $script.FullName install --with-deps chromium
+      - name: Serve and probe Web in Chromium
+        shell: pwsh
+        run: |
+          $server = Start-Process python3 -ArgumentList @('-m', 'http.server', '8080', '--directory', 'artifacts/web/wwwroot') -PassThru
+          try {
+            $env:ARCFORGES_WEB_BASE_URL = 'http://127.0.0.1:8080'
+            dotnet test tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-build --filter Category=Browser
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+
+  android-package:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - run: dotnet build src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -c Release --no-restore
-
-  web-publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - run: dotnet workload install wasm-tools --skip-manifest-update
-      - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
-      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore
-
-  policy:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - name: Repository policy tests
+      - name: Publish one production Android APK
+        run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-arm64 --no-restore -p:AndroidPackageFormats=apk
+      - name: Stage the signed APK
+        shell: pwsh
         run: |
-          dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
-          dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --filter Category=Architecture
-      - name: Dependency audit
-        run: |
-          dotnet workload install maui-android wasm-tools --skip-manifest-update
-          dotnet list ArcForges.slnx package --vulnerable --include-transitive
+          New-Item -ItemType Directory -Force artifacts/android | Out-Null
+          $apk = Get-ChildItem artifacts/bin/dotnet/windows/ArcChat.Mobile/Release/net10.0-android/android-arm64 -File -Filter '*-Signed.apk' | Select-Object -First 1
+          if (-not $apk) { throw 'The signed Android APK was not produced.' }
+          Copy-Item -LiteralPath $apk.FullName artifacts/android/ArcChat.Mobile-arm64-Signed.apk
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcchat-android-arm64
+          path: artifacts/android/ArcChat.Mobile-arm64-Signed.apk
 
-  supply-chain:
+  security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - name: Secret scan
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          fail-on-severity: high
+          license-check: true
+          vulnerability-check: true
+          show-openssf-scorecard: true
+      - name: Scan the repository for secrets
         run: |
           docker run --rm \
             --volume "${GITHUB_WORKSPACE}:/repo" \
             "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" \
             detect --source=/repo --no-banner --redact --config=/repo/.gitleaks.toml
-      - name: Prepare SBOM output
-        run: mkdir -p artifacts
-      - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: .
-          format: spdx-json
-          output-file: artifacts/arcforges.spdx.json
-      - uses: actions/upload-artifact@v7
-        with:
-          name: arcforges-sbom
-          path: artifacts/arcforges.spdx.json
+
+  ci:
+    if: always()
+    needs: [managed, native-win-x64, app-smoke, android-package, security]
+    runs-on: ubuntu-latest
+    env:
+      CI_NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require every CI job
+        shell: pwsh
+        run: |
+          $jobs = $env:CI_NEEDS | ConvertFrom-Json
+          $failed = @($jobs.PSObject.Properties | Where-Object { $_.Value.result -ne 'success' })
+          if ($failed.Count) {
+            $failed | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Value.result } | Write-Host
+            throw 'One or more CI jobs did not succeed.'
+          }

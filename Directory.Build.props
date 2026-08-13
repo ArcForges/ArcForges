@@ -25,10 +25,16 @@
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
     <WarningsAsErrors>$(WarningsAsErrors);NU1605;IL2026;IL3050</WarningsAsErrors>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ArcForgesBuildHost Condition="$([MSBuild]::IsOSPlatform('Windows'))">windows</ArcForgesBuildHost>
+    <ArcForgesBuildHost Condition="$([MSBuild]::IsOSPlatform('Linux'))">linux</ArcForgesBuildHost>
+    <ArcForgesBuildHost Condition="$([MSBuild]::IsOSPlatform('OSX'))">macos</ArcForgesBuildHost>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts/bin/dotnet/$(ArcForgesBuildHost)/$(MSBuildProjectName)/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts/obj/dotnet/$(ArcForgesBuildHost)/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <!-- Keep both legacy project-local output and repository-scoped output out of SDK source globs. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**;$(MSBuildThisFileDirectory)artifacts/**</DefaultItemExcludes>
+    <DefaultExcludesInProjectFolder>$(DefaultExcludesInProjectFolder);**/bin/**;**/obj/**;$(MSBuildThisFileDirectory)artifacts/**</DefaultExcludesInProjectFolder>
   </PropertyGroup>
 
-  <!-- Wave 1: foundations, contracts, domains, and production heads. Wave 2 expands repo-wide after Step 05. -->
-  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('ArcForges.Contracts.')) Or $(MSBuildProjectName.EndsWith('.Domain')) Or '$(MSBuildProjectName)' == 'ArcForges.Foundation'">
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-  </PropertyGroup>
 </Project>

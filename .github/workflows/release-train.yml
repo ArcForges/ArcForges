@@ -1,4 +1,4 @@
-name: Release train
+name: Release
 
 on:
   workflow_dispatch:
@@ -8,56 +8,148 @@ on:
 permissions:
   contents: read
 
-jobs:
-  train-desktop-aot:
-    uses: ./.github/workflows/aot-publish-smoke.yml
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
-  train-blazor-web:
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+
+jobs:
+  desktop-win-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Publish and smoke the desktop family
+        shell: pwsh
+        run: |
+          foreach ($product in 'ArcChat', 'ArcNotes', 'ArcScope', 'ArcSlate') {
+            $project = "src/$product/$product.Desktop/$product.Desktop.csproj"
+            $output = "artifacts/release/desktop-win-x64/$product"
+            dotnet restore $project --locked-mode
+            if ($LASTEXITCODE) { throw "[$product,restore] failed." }
+            dotnet publish $project -c Release -r win-x64 --self-contained true --no-restore -o $output
+            if ($LASTEXITCODE) { throw "[$product,publish] failed." }
+            $result = & "$output/$product.Desktop.exe" --smoke
+            if ($LASTEXITCODE -or $result -notmatch 'ok arcforges-smoke avalonia-window') {
+              throw "[$product,smoke] failed: $result"
+            }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-desktop-win-x64
+          path: artifacts/release/desktop-win-x64
+
+  web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet workload install wasm-tools --skip-manifest-update
       - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
-      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore
+      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/release/web
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-web
+          path: artifacts/release/web
 
-  train-maui-android:
+  android:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - run: dotnet build src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -c Release --no-restore
+      - run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-arm64 --no-restore -p:AndroidPackageFormats=apk
+      - name: Stage the signed APK
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/release/android | Out-Null
+          $apk = Get-ChildItem artifacts/bin/dotnet/windows/ArcChat.Mobile/Release/net10.0-android/android-arm64 -File -Filter '*-Signed.apk' | Select-Object -First 1
+          if (-not $apk) { throw 'The signed Android APK was not produced.' }
+          Copy-Item -LiteralPath $apk.FullName artifacts/release/android/ArcChat.Mobile-arm64-Signed.apk
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcchat-android-arm64
+          path: artifacts/release/android/ArcChat.Mobile-arm64-Signed.apk
 
-  train-cloud-jit:
+  cloud:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
-      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore
+      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore -o artifacts/release/cloud
+      - run: tar -C artifacts/release/cloud -czf artifacts/arcforges-cloud-linux-x64.tar.gz .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-cloud-linux-x64
+          path: artifacts/arcforges-cloud-linux-x64.tar.gz
 
-  train-ios-deferred:
-    if: ${{ vars.ENABLE_IOS_RELEASE == 'true' }}
-    runs-on: macos-15
-    steps:
-      - run: echo 'iOS release is owned by Step 20 and is not implemented.' && exit 1
-
-  train-native-dependency-closure:
-    if: ${{ vars.ENABLE_NATIVE_RELEASE == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo 'Full native dependency ABI closure is owned by Steps 07, 22, and 24.' && exit 1
-
-  train-installers-deferred:
-    if: ${{ vars.ENABLE_INSTALLER_RELEASE == 'true' }}
+  native-win-x64:
     runs-on: windows-latest
     steps:
-      - run: echo 'Install, upgrade, and rollback are owned by Step 31.' && exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/vcpkg-archives
+          key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP vcpkg
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
+          git -C $root checkout --detach $env:VCPKG_COMMIT
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
+          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
+          New-Item -ItemType Directory -Force -Path $archives | Out-Null
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+      - name: Build and stage both native profiles
+        shell: pwsh
+        run: |
+          foreach ($profile in 'runtime-shared', 'shim-static') {
+            $preset = "windows-msvc-x64-$profile"
+            cmake --preset $preset
+            if ($LASTEXITCODE) { throw "$preset configure failed." }
+            cmake --build --preset "$preset-release"
+            if ($LASTEXITCODE) { throw "$preset build failed." }
+            cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
+            if ($LASTEXITCODE) { throw "$preset install failed." }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-native-win-x64
+          path: artifacts/stage/native/win-x64
+
+  release-sbom:
+    needs: [desktop-win-x64, web, android, cloud, native-win-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts/release-bundle
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: artifacts/release-bundle
+          format: spdx-json
+          output-file: artifacts/arcforges-release.spdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-release-sbom
+          path: artifacts/arcforges-release.spdx.json

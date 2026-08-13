@@ -183,6 +183,9 @@
         "dependencies": {
           "ArcChat.Mobile.Application": "[1.0.0, )"
         }
+      },
+      "arcforges.testing": {
+        "type": "Project"
       }
     }
   }

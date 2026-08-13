@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 
 namespace ArcScope.Desktop;
 
@@ -31,6 +32,18 @@ internal sealed class App : Avalonia.Application
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
+
+            if (Program.IsSmoke)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    bool initialized = desktop.MainWindow.Content is TextBlock text &&
+                        string.Equals(text.Text, "Hello from ArcScope Desktop", StringComparison.Ordinal) &&
+                        Styles.Count > 0;
+                    Console.WriteLine("arcscope {0} arcforges-smoke avalonia-window", initialized ? "ok" : "failed");
+                    desktop.Shutdown(initialized ? 0 : 1);
+                }, DispatcherPriority.Loaded);
+            }
         }
 
         base.OnFrameworkInitializationCompleted();

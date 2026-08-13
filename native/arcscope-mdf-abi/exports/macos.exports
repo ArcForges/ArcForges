@@ -1,3 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-_arc_scope_mdf_abi_version
-_arc_scope_mdf_hello
+_arc_mdf_get_abi_version
+_arc_mdf_get_build_info
+_arc_mdf_get_last_error

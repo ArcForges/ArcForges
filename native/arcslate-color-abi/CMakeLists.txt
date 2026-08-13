@@ -4,7 +4,7 @@ file(GLOB_RECURSE ARCFORGES_SHIM_SOURCES CONFIGURE_DEPENDS
 file(GLOB_RECURSE ARCFORGES_SHIM_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h")
 
-add_library(arcslate_color_abi SHARED ${ARCFORGES_SHIM_SOURCES} ${ARCFORGES_SHIM_HEADERS})
+add_library(arcslate_color_abi SHARED ${ARCFORGES_SHIM_SOURCES} ${ARCFORGES_SHIM_HEADERS} ${ARCFORGES_SHARED_ABI_SOURCE})
 target_compile_features(arcslate_color_abi PRIVATE cxx_std_20)
 set_target_properties(arcslate_color_abi PROPERTIES
     CXX_EXTENSIONS OFF
@@ -15,17 +15,27 @@ target_include_directories(arcslate_color_abi
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/../shared/include")
+target_include_directories(arcslate_color_abi PRIVATE "${ARCFORGES_SHARED_ABI_PRIVATE_INCLUDE}")
+target_link_libraries(arcslate_color_abi PRIVATE OpenColorIO::OpenColorIO)
+target_compile_definitions(arcslate_color_abi PRIVATE ARCFORGES_SHIM_STATIC_GRAPH=1)
 
 if(MSVC)
-    target_compile_options(arcslate_color_abi PRIVATE /W4 /permissive- /EHsc /GR-)
+    target_compile_options(arcslate_color_abi PRIVATE /W4 /WX /permissive- /EHsc /GR-)
     target_link_options(arcslate_color_abi PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/exports/windows.def")
 elseif(APPLE)
-    target_compile_options(arcslate_color_abi PRIVATE -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+    target_compile_options(arcslate_color_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
     target_link_options(arcslate_color_abi PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports/macos.exports")
 else()
-    target_compile_options(arcslate_color_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-exceptions -fno-rtti)
+    target_compile_options(arcslate_color_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
     target_link_options(arcslate_color_abi PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports/linux.map")
 endif()
+
+arcforges_add_abi_fuzzer(arcslate_color_abi_fuzzer arcslate_color_abi arc_color)
+
+install(TARGETS arcslate_color_abi
+    RUNTIME DESTINATION native
+    LIBRARY DESTINATION native
+    ARCHIVE DESTINATION lib)
 
 if(ARCFORGES_BUILD_TESTS)
     add_executable(arcslate_color_abi_tests "tests/arcslate_color_abi_tests.cpp")

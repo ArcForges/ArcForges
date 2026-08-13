@@ -1,5 +1,6 @@
 ; SPDX-License-Identifier: AGPL-3.0-only
 LIBRARY "ArcSlateColorNative"
 EXPORTS
-    arc_slate_color_abi_version
-    arc_slate_color_hello
+    arc_color_get_abi_version
+    arc_color_get_build_info
+    arc_color_get_last_error

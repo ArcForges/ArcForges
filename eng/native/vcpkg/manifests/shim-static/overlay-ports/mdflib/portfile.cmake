@@ -23,6 +23,10 @@ find_dependency(ZLIB)
 find_dependency(expat CONFIG)
 
 include("${CMAKE_CURRENT_LIST_DIR}/MdfLibTargets.cmake")]=])
+vcpkg_replace_string("${SOURCE_PATH}/include/mdf/itimestamp.h"
+    [=[#include <string>]=]
+    [=[#include <cstdint>
+#include <string>]=])
 vcpkg_replace_string("${SOURCE_PATH}/mdflib/CMakeLists.txt"
     [=[  mdf PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>)]=]
     [=[  mdf PUBLIC
@@ -49,5 +53,7 @@ vcpkg_cmake_configure(
 vcpkg_cmake_install()
 vcpkg_copy_pdbs()
 vcpkg_cmake_config_fixup(PACKAGE_NAME mdflib CONFIG_PATH lib/cmake/mdflib)
+file(INSTALL "${SOURCE_PATH}/include/mdf/" DESTINATION "${CURRENT_PACKAGES_DIR}/include/mdf"
+    FILES_MATCHING PATTERN "*.h")
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE" "${SOURCE_PATH}/LICENSE-3RD-PARTY.md")

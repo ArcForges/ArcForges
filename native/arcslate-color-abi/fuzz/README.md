@@ -1,3 +1,4 @@
 # Fuzzing
 
-The owning implementation step adds bounded fuzz targets for this ABI.
+`arcslate_color_abi_fuzzer` exercises version negotiation, two-stage buffers,
+and thread-local error retrieval under libFuzzer, ASan, and UBSan.

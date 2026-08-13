@@ -6,6 +6,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.NativeInterop\ArcForges.NativeInterop.csproj" />
     <ProjectReference Include="..\ArcSlate.Application\ArcSlate.Application.csproj" />
     <ProjectReference Include="..\ArcSlate.Domain\ArcSlate.Domain.csproj" />
   </ItemGroup>

@@ -1,0 +1,7 @@
+# Repository-wide ownership; product-specific teams can narrow this as maintainers grow.
+* @deku2026
+
+/.github/ @deku2026
+/eng/native/ @deku2026
+/native/ @deku2026
+/docs/compliance/ @deku2026
