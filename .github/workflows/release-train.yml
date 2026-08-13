@@ -8,56 +8,182 @@ on:
 permissions:
   contents: read
 
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+
 jobs:
-  train-desktop-aot:
+  desktop-native-aot:
     uses: ./.github/workflows/aot-publish-smoke.yml
 
-  train-blazor-web:
+  web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet workload install wasm-tools --skip-manifest-update
       - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
-      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore
+      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/release/web
+      - name: Record checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/release/web -File -Recurse | Sort-Object FullName | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.FullName.Substring((Resolve-Path 'artifacts/release/web').Path.Length + 1).Replace('\\','/'))"
+          } | Set-Content artifacts/release/web/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-web
+          path: artifacts/release/web
 
-  train-maui-android:
+  android:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - run: dotnet build src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -c Release --no-restore
+      - run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release --no-restore -p:AndroidPackageFormats='apk;aab' -o artifacts/release/android
+      - name: Record checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/release/android -File -Recurse | Sort-Object FullName | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content artifacts/release/android/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcchat-android
+          path: artifacts/release/android
 
-  train-cloud-jit:
+  cloud:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - run: dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
-      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore
+      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore -o artifacts/release/cloud
+      - name: Package and checksum
+        run: |
+          tar -C artifacts/release/cloud -czf artifacts/arcforges-cloud.tar.gz .
+          sha256sum artifacts/arcforges-cloud.tar.gz > artifacts/arcforges-cloud.tar.gz.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-cloud
+          path: |
+            artifacts/arcforges-cloud.tar.gz
+            artifacts/arcforges-cloud.tar.gz.sha256
 
-  train-ios-deferred:
-    if: ${{ vars.ENABLE_IOS_RELEASE == 'true' }}
-    runs-on: macos-15
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            runtime: windows-msvc-x64-runtime-shared
+            runtimeBuild: windows-msvc-x64-runtime-shared-release
+            shim: windows-msvc-x64-shim-static
+            shimBuild: windows-msvc-x64-shim-static-release
+            binary: windows-msvc-x64
+          - os: windows-latest
+            rid: win-arm64
+            runtime: windows-msvc-arm64-runtime-shared
+            runtimeBuild: windows-msvc-arm64-runtime-shared-release
+            shim: windows-msvc-arm64-shim-static
+            shimBuild: windows-msvc-arm64-shim-static-release
+            binary: windows-msvc-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+            runtime: linux-clang-x64-runtime-shared
+            runtimeBuild: linux-clang-x64-runtime-shared-release
+            shim: linux-clang-x64-shim-static
+            shimBuild: linux-clang-x64-shim-static-release
+            binary: linux-clang-x64
+          - os: macos-15-intel
+            rid: osx-x64
+            runtime: macos-clang-x64-runtime-shared
+            runtimeBuild: macos-clang-x64-runtime-shared-release
+            shim: macos-clang-x64-shim-static
+            shimBuild: macos-clang-x64-shim-static-release
+            binary: macos-clang-x64
+          - os: macos-15
+            rid: osx-arm64
+            runtime: macos-clang-arm64-runtime-shared
+            runtimeBuild: macos-clang-arm64-runtime-shared-release
+            shim: macos-clang-arm64-shim-static
+            shimBuild: macos-clang-arm64-shim-static-release
+            binary: macos-clang-arm64
+    runs-on: ${{ matrix.os }}
     steps:
-      - run: echo 'iOS release is owned by Step 20 and is not implemented.' && exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/vcpkg-archives
+          key: release-vcpkg-${{ runner.os }}-${{ matrix.rid }}-${{ env.VCPKG_COMMIT }}
+      - name: Install Linux native prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake libtool libdrm-dev nasm yasm
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP vcpkg
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
+          git -C $root checkout --detach $env:VCPKG_COMMIT
+          if ($IsWindows) { & "$root/bootstrap-vcpkg.bat" -disableMetrics } else { & "$root/bootstrap-vcpkg.sh" -disableMetrics }
+          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
+          New-Item -ItemType Directory -Force -Path $archives | Out-Null
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+      - name: Build, test, and stage both native profiles
+        shell: pwsh
+        run: |
+          cmake --preset '${{ matrix.runtime }}'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build --preset '${{ matrix.runtimeBuild }}'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --preset '${{ matrix.shim }}'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build --preset '${{ matrix.shimBuild }}'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $config = if ($IsWindows) { @('--config', 'Release') } else { @() }
+          cmake --install "artifacts/cmake/${{ matrix.binary }}/runtime-shared" @config
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --install "artifacts/cmake/${{ matrix.binary }}/shim-static" @config
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem "artifacts/stage/native/${{ matrix.rid }}" -File -Recurse | Sort-Object FullName | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.FullName.Substring((Resolve-Path "artifacts/stage/native/${{ matrix.rid }}").Path.Length + 1).Replace('\\','/'))"
+          } | Set-Content "artifacts/stage/native/${{ matrix.rid }}/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-native-${{ matrix.rid }}
+          path: artifacts/stage/native/${{ matrix.rid }}
 
-  train-native-dependency-closure:
-    if: ${{ vars.ENABLE_NATIVE_RELEASE == 'true' }}
+  release-sbom:
+    needs: [desktop-native-aot, web, android, cloud, native]
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'Full native dependency ABI closure is owned by Steps 07, 22, and 24.' && exit 1
-
-  train-installers-deferred:
-    if: ${{ vars.ENABLE_INSTALLER_RELEASE == 'true' }}
-    runs-on: windows-latest
-    steps:
-      - run: echo 'Install, upgrade, and rollback are owned by Step 31.' && exit 1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts/release-bundle
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: artifacts/release-bundle
+          format: spdx-json
+          output-file: artifacts/arcforges-release.spdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-release-sbom
+          path: artifacts/arcforges-release.spdx.json

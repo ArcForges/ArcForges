@@ -20,13 +20,58 @@ internal static class ArchitectureRules
         var fixtureRoot = Path.Combine(RepositoryRoot.Value, "tests", "ArchitectureTests", "Fixtures");
         var valid = File.ReadAllText(Path.Combine(fixtureRoot, $"{id.Replace("-", string.Empty, StringComparison.Ordinal)}Valid.cs"));
         var invalid = File.ReadAllText(Path.Combine(fixtureRoot, $"{id.Replace("-", string.Empty, StringComparison.Ordinal)}Violation.cs.txt"));
-        Xunit.Assert.False(IsFixtureViolation(id, valid), $"[{id}] valid fixture was rejected");
-        Xunit.Assert.True(IsFixtureViolation(id, invalid), $"[{id}] violation fixture was not rejected");
+        Xunit.Assert.Empty(ValidateFixture(id, valid));
+        Xunit.Assert.NotEmpty(ValidateFixture(id, invalid));
     }
 
-    private static IEnumerable<string> ValidateProduction(string id)
+    private static string[] ValidateFixture(string id, string content)
     {
-        var root = RepositoryRoot.Value;
+        string root = Path.Combine(Path.GetTempPath(), "arcforges-architecture-fixture", Guid.NewGuid().ToString("N"));
+        try
+        {
+            string relativePath = FixtureRelativePath(id);
+            string path = Path.Combine(root, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, id == "ARC-012" ? CloudModuleFixture(content) : content);
+            return ValidateProduction(id, root).ToArray();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    private static string FixtureRelativePath(string id) => id switch
+    {
+        "ARC-001" => Path.Combine("src", "ArcChat", "ArcChat.Domain", "ArcChat.Domain.csproj"),
+        "ARC-002" => Path.Combine("src", "ArcChat", "ArcChat.Presentation", "FixtureViewModel.cs"),
+        "ARC-003" => Path.Combine("src", "ArcChat", "ArcChat.LocalRpc", "ArcChat.LocalRpc.csproj"),
+        "ARC-004" => Path.Combine("src", "ArcChat", "ArcChat.Domain", "ArcChat.Domain.csproj"),
+        "ARC-005" => Path.Combine("src", "Contracts", "ArcForges.Contracts.Foundation", "Fixture.cs"),
+        "ARC-006" => Path.Combine("src", "Cloud", "Fixture.csproj"),
+        "ARC-007" or "ARC-009" => Path.Combine("src", "Contracts", "ArcForges.Contracts.LocalRpc", "Fixture.cs"),
+        "ARC-008" or "ARC-011" => Path.Combine("src", "Fixture.cs"),
+        "ARC-010" => Path.Combine("src", "BuildingBlocks", "ArcForges.Foundation", "Fixture.cs"),
+        "ARC-012" => Path.Combine("src", "Cloud", "ArcForges.Cloud.Modules.Chat", "ArcForges.Cloud.Modules.Chat.csproj"),
+        "ARC-013" => Path.Combine("src", "ArcChat", "ArcChat.Desktop", "Fixture.cs"),
+        _ => throw new ArgumentOutOfRangeException(nameof(id), id, "Unknown architecture fixture."),
+    };
+
+    private static string CloudModuleFixture(string content)
+    {
+        bool violates = content.Contains("ArcForges.Cloud.Modules.Notes", StringComparison.Ordinal);
+        string reference = violates
+            ? "<ProjectReference Include=\"../ArcForges.Cloud.Modules.Notes/ArcForges.Cloud.Modules.Notes.csproj\" />"
+            : string.Empty;
+        return $"<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>{reference}</ItemGroup></Project>";
+    }
+
+    private static IEnumerable<string> ValidateProduction(string id, string? repositoryRoot = null)
+    {
+        var root = repositoryRoot ?? RepositoryRoot.Value;
         var sourceRoot = Path.Combine(root, "src");
         var projects = Directory.EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories).ToArray();
         var sources = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
@@ -131,7 +176,8 @@ internal static class ArchitectureRules
             Path.Combine(root, "src", "ArcSlate", "ArcSlate.Desktop"),
             Path.Combine(root, "src", "DesktopHelpers", "ArcForges.ContentSandbox"),
         };
-        var files = directories.SelectMany(directory => Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        var files = directories.Where(Directory.Exists)
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
         return FindTokens(files, ["WebView", "WebView2", "CEF", "Chromium", "Electron", "WKWebView", "HybridWebView", "BlazorWebView", "JavaScript", "iframe", "localhost", "src\\Web", "src/Web"]);
@@ -162,7 +208,8 @@ internal static class ArchitectureRules
         return document.Descendants("ProjectReference")
             .Select(element => element.Attribute("Include")?.Value)
             .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => Path.GetFileNameWithoutExtension(value!));
+            .Select(value => value!.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar))
+            .Select(value => Path.GetFileNameWithoutExtension(value)!);
     }
 
     private static IEnumerable<string> ProjectAndSourceFiles(string root, params string[] parts)
@@ -172,24 +219,6 @@ internal static class ArchitectureRules
             .Where(path => (path.EndsWith(".cs", StringComparison.Ordinal) || path.EndsWith(".csproj", StringComparison.Ordinal))
                 && !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
     }
-
-    private static bool IsFixtureViolation(string id, string content) => id switch
-    {
-        "ARC-001" => content.Contains("Microsoft.Data.Sqlite", StringComparison.Ordinal),
-        "ARC-002" => content.Contains("ViewModelUsesNativeHandle", StringComparison.Ordinal),
-        "ARC-003" => content.Contains("Avalonia.Controls", StringComparison.Ordinal),
-        "ARC-004" => content.Contains("ArcNotes.Domain", StringComparison.Ordinal),
-        "ARC-005" => content.Contains("Android.App", StringComparison.Ordinal),
-        "ARC-006" => content.Contains("ArcForges.Contracts.LocalRpc", StringComparison.Ordinal),
-        "ARC-007" => content.Contains("object InvokeAsync", StringComparison.Ordinal),
-        "ARC-008" => content.Contains("RestService.For<", StringComparison.Ordinal),
-        "ARC-009" => content.Contains("JsonRpcContractWithoutGeneratedShape", StringComparison.Ordinal),
-        "ARC-010" => content.Contains("class VideoTimeline", StringComparison.Ordinal),
-        "ARC-011" => content.Contains("AVFrame", StringComparison.Ordinal),
-        "ARC-012" => content.Contains("ArcForges.Cloud.Modules.Notes.Persistence", StringComparison.Ordinal),
-        "ARC-013" => content.Contains("WebView2", StringComparison.Ordinal),
-        _ => false,
-    };
 
     private static string FindRepositoryRoot()
     {

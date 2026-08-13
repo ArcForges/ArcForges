@@ -1,17 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
+using ArcForges.NativeInterop;
 
 namespace ArcScope.Native;
 
-internal static partial class MdfNative
+public static class MdfNativeSmoke
 {
-    [LibraryImport("ArcScopeMdfNative", EntryPoint = "arc_scope_mdf_abi_version")]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial uint GetAbiVersion();
-
-    [LibraryImport("ArcScopeMdfNative", EntryPoint = "arc_scope_mdf_hello")]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int Hello();
+    public static NativeProbeResult Verify() => NativeSmoke.VerifyMdf();
 }

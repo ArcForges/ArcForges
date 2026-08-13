@@ -1,3 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-_arc_graphics_metal_abi_version
-_arc_graphics_metal_hello
+_arc_metal_get_abi_version
+_arc_metal_get_build_info
+_arc_metal_get_last_error

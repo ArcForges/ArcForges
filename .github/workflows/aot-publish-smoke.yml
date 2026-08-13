@@ -1,4 +1,4 @@
-name: AOT publish smoke
+name: Runtime publish smoke
 
 on:
   workflow_call:
@@ -8,6 +8,7 @@ on:
       - 'src/**'
       - 'eng/build/**'
       - 'Directory.*'
+      - '.github/workflows/aot-publish-smoke.yml'
 
 permissions:
   contents: read
@@ -28,14 +29,14 @@ jobs:
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
-      - name: Install Linux Native AOT prerequisites
+      - name: Install Linux runtime prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev libbrotli-dev
-      - name: Publish all desktop heads
+        run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev libbrotli-dev xvfb
+      - name: Publish and initialize real Avalonia windows
         shell: pwsh
         run: |
           $rid = '${{ matrix.rid }}'
@@ -46,12 +47,17 @@ jobs:
             if ($LASTEXITCODE) { throw "[$rid,$product,restore] failed." }
             dotnet publish $project -c Release -r $rid --self-contained true --no-restore -o $output
             if ($LASTEXITCODE) { throw "[$rid,$product,publish] failed." }
-            $extension = if ($rid.StartsWith('win-', [StringComparison]::Ordinal)) { '.exe' } else { '' }
-            $result = & (Join-Path $output "$product.Desktop$extension") --smoke
-            if ($LASTEXITCODE -or $result -notmatch 'ok arcforges-smoke') {
-              throw "[$rid,$product,run] failed: $result"
+            $extension = if ($IsWindows) { '.exe' } else { '' }
+            $executable = Join-Path $output "$product.Desktop$extension"
+            $result = if ($IsLinux) { & xvfb-run --auto-servernum $executable --smoke } else { & $executable --smoke }
+            if ($LASTEXITCODE -or $result -notmatch 'ok arcforges-smoke avalonia-window') {
+              throw "[$rid,$product,avalonia-window] failed: $result"
             }
           }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-${{ matrix.rid }}
+          path: artifacts/smoke/${{ matrix.rid }}
 
   cloud-jit:
     strategy:
@@ -66,18 +72,41 @@ jobs:
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
-      - run: dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
-      - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release -r ${{ matrix.rid }} --self-contained false --no-restore
+      - name: Publish, start, and exercise HTTP plus SignalR negotiate
+        shell: pwsh
+        run: |
+          $project = 'src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj'
+          $output = 'artifacts/cloud/${{ matrix.rid }}'
+          dotnet restore $project --locked-mode
+          dotnet publish $project -c Release -r '${{ matrix.rid }}' --self-contained false --no-restore -o $output
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $process = Start-Process dotnet -ArgumentList @((Join-Path $output 'ArcForges.Cloud.Host.dll'), '--urls', 'http://127.0.0.1:5087') -PassThru
+          try {
+            $ready = $false
+            foreach ($attempt in 1..30) {
+              try {
+                $health = Invoke-RestMethod http://127.0.0.1:5087/health
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Cloud /health never became ready.' }
+            $root = Invoke-RestMethod http://127.0.0.1:5087/
+            if (-not $root.ok -or $root.app -ne 'arcforges-cloud') { throw 'Cloud root contract failed.' }
+            $negotiate = Invoke-RestMethod -Method Post 'http://127.0.0.1:5087/hubs/v1/events/negotiate?negotiateVersion=1'
+            if ([string]::IsNullOrWhiteSpace($negotiate.connectionToken)) { throw 'SignalR negotiate returned no connection token.' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          }
 
   win-arm64-compile:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - shell: pwsh
@@ -87,7 +116,6 @@ jobs:
             $project = "src/$product/$product.Desktop/$product.Desktop.csproj"
             $output = "artifacts/smoke/$rid/$product"
             dotnet restore $project --locked-mode
-            if ($LASTEXITCODE) { throw "[$rid,$product,restore] failed." }
             dotnet publish $project -c Release -r $rid --self-contained true --no-restore -o $output
             if ($LASTEXITCODE) { throw "[$rid,$product,publish] failed." }
           }

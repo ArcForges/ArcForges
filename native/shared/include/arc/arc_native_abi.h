@@ -17,27 +17,90 @@
 extern "C" {
 #endif
 
-#define ARC_NATIVE_ABI_VERSION UINT32_C(1)
+#define ARC_NATIVE_ABI_MAJOR UINT32_C(1)
+#define ARC_NATIVE_ABI_MINOR UINT32_C(0)
 
-typedef enum arc_status {
-    ARC_STATUS_OK = 0,
-    ARC_STATUS_INVALID_ARGUMENT = 1,
-    ARC_STATUS_NOT_SUPPORTED = 2,
-    ARC_STATUS_INTERNAL_ERROR = 3
-} arc_status;
+typedef int32_t arc_status_t;
+enum {
+    ARC_OK = 0,
+    ARC_BUFFER_TOO_SMALL = 1,
+    ARC_INVALID_ARGUMENT = -1,
+    ARC_NOT_FOUND = -2,
+    ARC_UNSUPPORTED = -3,
+    ARC_IO = -4,
+    ARC_CANCELLED = -5,
+    ARC_VERSION_MISMATCH = -6,
+    ARC_CORRUPT = -7,
+    ARC_OUT_OF_MEMORY = -8,
+    ARC_RESOURCE_LIMIT = -9,
+    ARC_CLOSED = -10,
+    ARC_BUSY = -11,
+    ARC_PERMISSION_DENIED = -12,
+    ARC_INTERNAL = -13
+};
 
-typedef struct arc_read_only_buffer {
-    const uint8_t* data;
-    size_t size;
-} arc_read_only_buffer;
+typedef uint8_t arc_bool_t;
 
-typedef struct arc_mutable_buffer {
-    uint8_t* data;
-    size_t capacity;
-} arc_mutable_buffer;
+#pragma pack(push, 8)
+typedef struct arc_string_view_t {
+    const char* data;
+    uint64_t size;
+} arc_string_view_t;
+
+typedef struct arc_byte_view_t {
+    const void* data;
+    uint64_t size;
+} arc_byte_view_t;
+
+typedef struct arc_mut_buffer_t {
+    void* data;
+    uint64_t capacity;
+    uint64_t required;
+} arc_mut_buffer_t;
+
+typedef struct arc_rational_t {
+    int64_t numerator;
+    int64_t denominator;
+} arc_rational_t;
+
+typedef struct arc_time_range_t {
+    arc_rational_t start;
+    arc_rational_t duration;
+} arc_time_range_t;
+
+typedef struct arc_error_info_t {
+    uint32_t struct_size;
+    uint32_t struct_version;
+    int32_t status;
+    uint32_t domain;
+    uint64_t correlation_id;
+    arc_mut_buffer_t message_utf8;
+} arc_error_info_t;
+
+typedef arc_bool_t(ARC_ABI_CALL* arc_is_cancelled_fn)(void* user_data);
+
+typedef struct arc_cancel_token_t {
+    uint32_t struct_size;
+    uint32_t struct_version;
+    arc_is_cancelled_fn is_cancelled;
+    void* user_data;
+} arc_cancel_token_t;
+#pragma pack(pop)
 
 #ifdef __cplusplus
 }
+
+static_assert(sizeof(arc_status_t) == 4);
+static_assert(sizeof(arc_bool_t) == 1);
+#if INTPTR_MAX == INT64_MAX
+static_assert(sizeof(arc_string_view_t) == 16 && alignof(arc_string_view_t) == 8);
+static_assert(sizeof(arc_byte_view_t) == 16 && alignof(arc_byte_view_t) == 8);
+static_assert(sizeof(arc_mut_buffer_t) == 24 && alignof(arc_mut_buffer_t) == 8);
+static_assert(sizeof(arc_rational_t) == 16 && alignof(arc_rational_t) == 8);
+static_assert(sizeof(arc_time_range_t) == 32 && alignof(arc_time_range_t) == 8);
+static_assert(sizeof(arc_error_info_t) == 48 && alignof(arc_error_info_t) == 8);
+static_assert(sizeof(arc_cancel_token_t) == 24 && alignof(arc_cancel_token_t) == 8);
+#endif
 #endif
 
 #endif

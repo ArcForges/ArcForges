@@ -167,13 +167,64 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
-    public void WindowsNativeProjectsMatchOwnedSourceTrees()
+    public void NativeDirectDependenciesAreRegisteredAndSupplyChainGatesStayEnabled()
+    {
+        var root = RepositoryRoot.Value;
+        var nativeRoot = Path.Combine(root, "eng", "native", "vcpkg");
+        var register = File.ReadAllText(Path.Combine(root, "docs", "compliance", "third-party-license-register.md"));
+        var notice = File.ReadAllText(Path.Combine(root, "NOTICE.md"));
+        var inventory = string.Concat(register, Environment.NewLine, notice);
+        var missing = new List<string>();
+
+        foreach (var manifest in Directory.EnumerateFiles(Path.Combine(nativeRoot, "manifests"), "vcpkg.json", SearchOption.AllDirectories))
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(manifest));
+            foreach (var dependency in document.RootElement.GetProperty("dependencies").EnumerateArray())
+            {
+                var name = dependency.ValueKind == JsonValueKind.String
+                    ? dependency.GetString()
+                    : dependency.GetProperty("name").GetString();
+                if (name is not null && !inventory.Contains(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    missing.Add(name);
+                }
+            }
+        }
+
+        Xunit.Assert.True(missing.Count == 0, $"Unregistered direct native dependencies: {string.Join(", ", missing.Distinct())}");
+
+        var workflows = Directory.EnumerateFiles(Path.Combine(root, ".github", "workflows"), "*.yml")
+            .Select(File.ReadAllText)
+            .ToArray();
+        Xunit.Assert.Contains(workflows, text => text.Contains("anchore/sbom-action@", StringComparison.Ordinal));
+        Xunit.Assert.Contains(workflows, text => text.Contains("actions/dependency-review-action@", StringComparison.Ordinal));
+        Xunit.Assert.Contains(workflows, text => text.Contains("package --vulnerable --include-transitive", StringComparison.Ordinal));
+
+        var helperScripts = EnumerateRepositoryFiles("*")
+            .Where(path => Path.GetExtension(path) is ".ps1" or ".sh")
+            .Select(path => Path.GetRelativePath(root, path))
+            .ToArray();
+        Xunit.Assert.True(helperScripts.Length == 0, $"Tracked helper scripts are forbidden: {string.Join(", ", helperScripts)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void NativeBuildEntrypointsMatchOwnedSourcesHeadersExportsAndProfiles()
     {
         var nativeRoot = Path.Combine(RepositoryRoot.Value, "native");
+        var solution = XDocument.Load(Path.Combine(RepositoryRoot.Value, "win.slnx"));
+        var solutionProjects = solution.Descendants("Project")
+            .Select(element => element.Attribute("Path")?.Value?.Replace('/', Path.DirectorySeparatorChar))
+            .Where(path => path is not null)
+            .Select(path => Path.GetFullPath(Path.Combine(RepositoryRoot.Value, path!)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var project in Directory.EnumerateFiles(nativeRoot, "*.vcxproj", SearchOption.AllDirectories))
         {
             var shimRoot = Directory.GetParent(Path.GetDirectoryName(project)!)!.FullName;
             var document = XDocument.Load(project);
+            Xunit.Assert.Contains(Path.GetFullPath(project), solutionProjects);
+
             var projectSources = document.Descendants()
                 .Where(element => element.Name.LocalName == "ClCompile" && element.Attribute("Include") is not null)
                 .Select(element => ResolveProjectItem(project, element.Attribute("Include")!.Value))
@@ -181,6 +232,7 @@ public sealed class RepositoryPolicyTests
                 .ToArray();
             var ownedSources = Directory.EnumerateFiles(Path.Combine(shimRoot, "src"), "*", SearchOption.AllDirectories)
                 .Where(path => Path.GetExtension(path) is ".cpp" or ".cc" or ".cxx")
+                .Append(Path.Combine(nativeRoot, "shared", "src", "arc_native_abi.cpp"))
                 .Select(Path.GetFullPath)
                 .Order(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -188,7 +240,68 @@ public sealed class RepositoryPolicyTests
             Xunit.Assert.True(
                 ownedSources.SequenceEqual(projectSources, StringComparer.OrdinalIgnoreCase),
                 $"{Path.GetRelativePath(RepositoryRoot.Value, project)} source list differs from its owned src tree.");
+
+            var projectHeaders = document.Descendants()
+                .Where(element => element.Name.LocalName == "ClInclude" && element.Attribute("Include") is not null)
+                .Select(element => ResolveProjectItem(project, element.Attribute("Include")!.Value))
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var ownedHeaders = Directory.EnumerateFiles(Path.Combine(shimRoot, "include"), "*.h", SearchOption.AllDirectories)
+                .Append(Path.Combine(nativeRoot, "shared", "include", "arc", "arc_native_abi.h"))
+                .Append(Path.Combine(nativeRoot, "shared", "src", "arc_native_abi_internal.hpp"))
+                .Select(Path.GetFullPath)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            Xunit.Assert.True(
+                ownedHeaders.SequenceEqual(projectHeaders, StringComparer.OrdinalIgnoreCase),
+                $"{Path.GetRelativePath(RepositoryRoot.Value, project)} header list differs from its owned include tree.");
+
+            var headerExports = ownedHeaders
+                .SelectMany(File.ReadLines)
+                .Where(line => line.TrimStart().StartsWith("ARC_ABI_EXPORT ", StringComparison.Ordinal))
+                .Select(ExtractExportName)
+                .Where(name => name is not null)
+                .Select(name => name!)
+                .ToHashSet(StringComparer.Ordinal);
+            var windowsExports = File.ReadLines(Path.Combine(shimRoot, "exports", "windows.def"))
+                .Select(line => line.Trim())
+                .Where(line => line.StartsWith("arc_", StringComparison.Ordinal))
+                .ToHashSet(StringComparer.Ordinal);
+            var macExports = File.ReadLines(Path.Combine(shimRoot, "exports", "macos.exports"))
+                .Select(line => line.Trim().TrimStart('_'))
+                .Where(line => line.StartsWith("arc_", StringComparison.Ordinal))
+                .ToHashSet(StringComparer.Ordinal);
+            var linuxExports = File.ReadAllText(Path.Combine(shimRoot, "exports", "linux.map"))
+                .Split([';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.StartsWith("arc_", StringComparison.Ordinal))
+                .ToHashSet(StringComparer.Ordinal);
+            Xunit.Assert.True(headerExports.SetEquals(windowsExports), $"{Path.GetFileName(shimRoot)} Windows export allowlist differs from its C header.");
+            Xunit.Assert.True(headerExports.SetEquals(macExports), $"{Path.GetFileName(shimRoot)} macOS export allowlist differs from its C header.");
+            Xunit.Assert.True(headerExports.SetEquals(linuxExports), $"{Path.GetFileName(shimRoot)} Linux export allowlist differs from its C header.");
+
+            string expectedProfile = Path.GetFileName(shimRoot) == "arcmedia-ffmpeg-abi" ? "runtime-shared" : "shim-static";
+            string profile = document.Descendants().Single(element => element.Name.LocalName == "ArcForgesNativeProfile").Value;
+            Xunit.Assert.Equal(expectedProfile, profile);
         }
+
+        var rootCmake = File.ReadAllText(Path.Combine(nativeRoot, "CMakeLists.txt"));
+        foreach (string shim in Directory.EnumerateDirectories(nativeRoot, "*-abi").Select(Path.GetFileName)!)
+        {
+            Xunit.Assert.Contains($"add_subdirectory({shim})", rootCmake, StringComparison.Ordinal);
+        }
+    }
+
+    private static string? ExtractExportName(string declaration)
+    {
+        int open = declaration.IndexOf('(', StringComparison.Ordinal);
+        if (open < 0)
+        {
+            return null;
+        }
+
+        string prefix = declaration[..open].Trim();
+        int separator = prefix.LastIndexOf(' ');
+        return separator >= 0 ? prefix[(separator + 1)..] : null;
     }
 
     private static IEnumerable<string> EnumerateRepositoryFiles(string pattern) =>

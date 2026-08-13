@@ -8,7 +8,7 @@ file(GLOB_RECURSE ARCFORGES_SHIM_SOURCES CONFIGURE_DEPENDS
 file(GLOB_RECURSE ARCFORGES_SHIM_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h")
 
-add_library(arcgraphics_metal_abi SHARED ${ARCFORGES_SHIM_SOURCES} ${ARCFORGES_SHIM_HEADERS})
+add_library(arcgraphics_metal_abi SHARED ${ARCFORGES_SHIM_SOURCES} ${ARCFORGES_SHIM_HEADERS} ${ARCFORGES_SHARED_ABI_SOURCE})
 target_compile_features(arcgraphics_metal_abi PRIVATE cxx_std_20)
 set_target_properties(arcgraphics_metal_abi PROPERTIES
     CXX_EXTENSIONS OFF
@@ -19,17 +19,25 @@ target_include_directories(arcgraphics_metal_abi
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/../shared/include")
+target_include_directories(arcgraphics_metal_abi PRIVATE "${ARCFORGES_SHARED_ABI_PRIVATE_INCLUDE}")
 
 if(MSVC)
-    target_compile_options(arcgraphics_metal_abi PRIVATE /W4 /permissive- /EHsc /GR-)
+    target_compile_options(arcgraphics_metal_abi PRIVATE /W4 /WX /permissive- /EHsc /GR-)
     target_link_options(arcgraphics_metal_abi PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/exports/windows.def")
 elseif(APPLE)
-    target_compile_options(arcgraphics_metal_abi PRIVATE -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+    target_compile_options(arcgraphics_metal_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
     target_link_options(arcgraphics_metal_abi PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports/macos.exports")
 else()
-    target_compile_options(arcgraphics_metal_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-exceptions -fno-rtti)
+    target_compile_options(arcgraphics_metal_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
     target_link_options(arcgraphics_metal_abi PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports/linux.map")
 endif()
+
+arcforges_add_abi_fuzzer(arcgraphics_metal_abi_fuzzer arcgraphics_metal_abi arc_metal)
+
+install(TARGETS arcgraphics_metal_abi
+    RUNTIME DESTINATION native
+    LIBRARY DESTINATION native
+    ARCHIVE DESTINATION lib)
 
 if(ARCFORGES_BUILD_TESTS)
     add_executable(arcgraphics_metal_abi_tests "tests/arcgraphics_metal_abi_tests.cpp")

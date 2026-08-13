@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 ARCFORGES_1.0 {
     global:
-        arc_slate_image_abi_version;
-        arc_slate_image_hello;
+        arc_image_get_abi_version;
+        arc_image_get_build_info;
+        arc_image_get_last_error;
     local: *;
 };

@@ -23,15 +23,18 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v145</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup><ArcForgesNativeProfile>shim-static</ArcForgesNativeProfile></PropertyGroup>
+  <Import Project="..\..\windows\ArcForges.Native.props" />
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError><LanguageStandard>stdcpp20</LanguageStandard><ConformanceMode>true</ConformanceMode>
-      <ExceptionHandling>false</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>Sync</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\..\shared\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link><ModuleDefinitionFile>$(ProjectDir)..\exports\windows.def</ModuleDefinitionFile><GenerateDebugInformation>true</GenerateDebugInformation></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="..\src\arcslate_color_abi.cpp" /></ItemGroup>
-  <ItemGroup><ClInclude Include="..\include\arc\arc_slate_color_abi.h" /><ClInclude Include="..\..\shared\include\arc\arc_native_abi.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="..\src\arcslate_color_abi.cpp" /><ClCompile Include="..\..\shared\src\arc_native_abi.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="..\include\arc\arc_slate_color_abi.h" /><ClInclude Include="..\..\shared\include\arc\arc_native_abi.h" /><ClInclude Include="..\..\shared\src\arc_native_abi_internal.hpp" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="..\..\windows\ArcForges.Native.targets" />
 </Project>

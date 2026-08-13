@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 ARCFORGES_1.0 {
     global:
-        arc_graphics_metal_abi_version;
-        arc_graphics_metal_hello;
+        arc_metal_get_abi_version;
+        arc_metal_get_build_info;
+        arc_metal_get_last_error;
     local: *;
 };

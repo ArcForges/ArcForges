@@ -8,8 +8,9 @@
 extern "C" {
 #endif
 
-ARC_ABI_EXPORT uint32_t ARC_ABI_CALL arc_graphics_metal_abi_version(void);
-ARC_ABI_EXPORT arc_status ARC_ABI_CALL arc_graphics_metal_hello(void);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_metal_get_abi_version(uint32_t* out_major, uint32_t* out_minor);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_metal_get_build_info(arc_mut_buffer_t* out_utf8);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_metal_get_last_error(arc_error_info_t* out_error);
 
 #ifdef __cplusplus
 }

@@ -384,6 +384,9 @@
       },
       "arcforges.servicedefaults": {
         "type": "Project"
+      },
+      "arcforges.testing": {
+        "type": "Project"
       }
     }
   }

@@ -169,11 +169,50 @@
           "xunit.v3.runner.common": "[3.2.2]"
         }
       },
+      "arcforges.application.abstractions": {
+        "type": "Project"
+      },
       "arcforges.nativeinterop": {
         "type": "Project"
       },
       "arcforges.testing": {
         "type": "Project"
+      },
+      "arcscope.application": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Application.Abstractions": "[1.0.0, )",
+          "ArcScope.Domain": "[1.0.0, )"
+        }
+      },
+      "arcscope.domain": {
+        "type": "Project"
+      },
+      "arcscope.native": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.NativeInterop": "[1.0.0, )",
+          "ArcScope.Application": "[1.0.0, )",
+          "ArcScope.Domain": "[1.0.0, )"
+        }
+      },
+      "arcslate.application": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Application.Abstractions": "[1.0.0, )",
+          "ArcSlate.Domain": "[1.0.0, )"
+        }
+      },
+      "arcslate.domain": {
+        "type": "Project"
+      },
+      "arcslate.native": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.NativeInterop": "[1.0.0, )",
+          "ArcSlate.Application": "[1.0.0, )",
+          "ArcSlate.Domain": "[1.0.0, )"
+        }
       }
     }
   }

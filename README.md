@@ -38,16 +38,21 @@ dotnet restore ArcForges.slnx --locked-mode
 dotnet build ArcForges.slnx -c Release --no-restore
 dotnet test ArcForges.slnx -c Release --no-build
 
-cmake --preset windows-msvc-x64
-cmake --build --preset windows-msvc-x64-release
-ctest --preset windows-msvc-x64
+cmake --preset windows-msvc-x64-runtime-shared
+cmake --build --preset windows-msvc-x64-runtime-shared-release
+ctest --preset windows-msvc-x64-runtime-shared
+
+cmake --preset windows-msvc-x64-shim-static
+cmake --build --preset windows-msvc-x64-shim-static-release
+ctest --preset windows-msvc-x64-shim-static
 ```
 
 Windows contributors can also open `win.slnx`; its native projects are independent MSBuild `.vcxproj`
 definitions and do not call CMake. Build `Release|x64` or `Release|ARM64` directly in Visual Studio.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full verification flow.
 
-Pull requests are checked with the .NET SDK analyzers, clang-tidy, Super-Linter, dependency review, and CodeQL.
+Pull requests are checked with real app/browser/device smoke tests, both native build paths, sanitizers, fuzzing,
+the .NET SDK analyzers, clang-tidy, Super-Linter, dependency review, and CodeQL.
 These are open-source CI gates and do not depend on GitHub's paid Code Quality feature.
 
 ## Architecture

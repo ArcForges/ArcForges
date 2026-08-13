@@ -16,5 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\ArcForges.NativeInterop\ArcForges.NativeInterop.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\ArcForges.Testing\ArcForges.Testing.csproj" />
+    <ProjectReference Include="..\..\src\ArcScope\ArcScope.Native\ArcScope.Native.csproj" />
+    <ProjectReference Include="..\..\src\ArcSlate\ArcSlate.Native\ArcSlate.Native.csproj" />
   </ItemGroup>
 </Project>

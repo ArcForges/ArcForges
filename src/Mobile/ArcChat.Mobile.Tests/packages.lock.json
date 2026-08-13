@@ -177,6 +177,9 @@
       },
       "arcchat.mobile.domain": {
         "type": "Project"
+      },
+      "arcforges.testing": {
+        "type": "Project"
       }
     }
   }

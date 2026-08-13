@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="ValidateArcForgesNativeBuild" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(ArcForgesNativeProfile)' != 'runtime-shared' and '$(ArcForgesNativeProfile)' != 'shim-static'"
+           Text="ArcForgesNativeProfile must be runtime-shared or shim-static." />
+    <Error Condition="'$(ArcForgesTargetRid)' == ''" Text="Only Windows x64 and ARM64 native platforms are supported." />
+    <Error Condition="!Exists('$(VcpkgRoot)vcpkg.exe')" Text="Pinned vcpkg.exe was not found under VCPKG_ROOT='$(VcpkgRoot)'." />
+    <Error Condition="!Exists('$(VcpkgManifestRoot)vcpkg.json')" Text="The isolated $(ArcForgesNativeProfile) manifest is missing." />
+  </Target>
+  <Import Project="$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets" />
+</Project>

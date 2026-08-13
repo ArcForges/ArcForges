@@ -11,6 +11,9 @@
       "arcforges.application.abstractions": {
         "type": "Project"
       },
+      "arcforges.nativeinterop": {
+        "type": "Project"
+      },
       "arcslate.application": {
         "type": "Project",
         "dependencies": {

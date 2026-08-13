@@ -6,17 +6,14 @@ namespace ArcSlate.Desktop;
 
 internal static class Program
 {
+    internal static bool IsSmoke { get; private set; }
+
     [STAThread]
     public static int Main(string[] args)
     {
-        if (args.Contains("--smoke", StringComparer.Ordinal))
-        {
-            Console.WriteLine(string.Join(' ', "arcslate", "ok", "arcforges-smoke", "hello"));
-            return 0;
-        }
-
+        IsSmoke = args.Contains("--smoke", StringComparer.Ordinal);
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
-        return 0;
+        return Environment.ExitCode;
     }
 
     public static AppBuilder BuildAvaloniaApp() =>
