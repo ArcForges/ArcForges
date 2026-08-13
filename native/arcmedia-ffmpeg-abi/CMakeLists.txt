@@ -40,10 +40,23 @@ endif()
 
 arcforges_add_abi_fuzzer(arcmedia_ffmpeg_abi_fuzzer arcmedia_ffmpeg_abi arc_media)
 
-install(TARGETS arcmedia_ffmpeg_abi
-    RUNTIME DESTINATION native
-    LIBRARY DESTINATION native
-    ARCHIVE DESTINATION lib)
+if(WIN32)
+    install(TARGETS arcmedia_ffmpeg_abi
+        RUNTIME DESTINATION native
+        ARCHIVE DESTINATION lib)
+    install(DIRECTORY "$<TARGET_FILE_DIR:arcmedia_ffmpeg_abi>/"
+        DESTINATION native
+        FILES_MATCHING
+        PATTERN "*.dll"
+        PATTERN "ArcMediaNative.dll" EXCLUDE)
+else()
+    install(TARGETS arcmedia_ffmpeg_abi
+        RUNTIME_DEPENDENCIES
+            PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
+            POST_EXCLUDE_REGEXES "^/lib/.*" "^/usr/lib/.*" "^/System/Library/.*"
+        LIBRARY DESTINATION native
+        ARCHIVE DESTINATION lib)
+endif()
 
 if(ARCFORGES_BUILD_TESTS)
     add_executable(arcmedia_ffmpeg_abi_tests "tests/arcmedia_ffmpeg_abi_tests.cpp")

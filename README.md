@@ -28,7 +28,8 @@ There is exactly **one Mobile app** (`ArcChat.Mobile`) and exactly **one Web app
 ## Build
 
 Prerequisites are .NET SDK 10.0.400, CMake 4.3+, a C++20 compiler, and the `maui-android`
-and `wasm-tools` workloads.
+and `wasm-tools` workloads. Native dependencies use a standard vcpkg installation; install and integration
+commands are documented in [deploy/README.md](deploy/README.md).
 
 NuGet uses its standard per-user cache outside the checkout. Keeping dependency sources outside the repository
 prevents generated package files from being mistaken for ArcForges-owned source by static analysis.
@@ -47,13 +48,14 @@ cmake --build --preset windows-msvc-x64-shim-static-release
 ctest --preset windows-msvc-x64-shim-static
 ```
 
-Windows contributors can also open `win.slnx`; its native projects are independent MSBuild `.vcxproj`
-definitions and do not call CMake. Build `Release|x64` or `Release|ARM64` directly in Visual Studio.
+Windows contributors can run `vcpkg integrate install` once and open `win.slnx`; its native projects are
+independent MSBuild `.vcxproj` definitions and do not call CMake. Build `Release|x64` or `Release|ARM64`
+directly in Visual Studio.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full verification flow.
 
-Pull requests are checked with real app/browser/device smoke tests, both native build paths, sanitizers, fuzzing,
-the .NET SDK analyzers, clang-tidy, Super-Linter, dependency review, and CodeQL.
-These are open-source CI gates and do not depend on GitHub's paid Code Quality feature.
+Pull requests check the managed solution, both Windows native build paths, real application/browser smoke tests,
+one Android package, dependency review, and secret scanning. CodeQL, clang-tidy, sanitizers, and fuzzing run in
+the weekly/manual deep check. These gates do not depend on GitHub's paid Code Quality feature.
 
 ## Architecture
 

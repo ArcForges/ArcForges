@@ -17,6 +17,6 @@ Third-party code and assets must be recorded here and in `docs/compliance/` befo
 | OpenImageIO | 3.1.14.0#1 | Apache-2.0 | Statically linked image shim | Upstream notice preserved |
 | mdflib | 2.3.0 | MIT | Statically linked MDF shim | License and third-party notice are copied from the locked source |
 
-The resolved transitive inventory and license texts are emitted as SPDX JSON by the release and pull-request
-SBOM jobs. Exact managed versions are locked in `packages.lock.json`; exact native versions and build features
-are locked in the three vcpkg manifests and overlay ports.
+The resolved transitive inventory and license texts are emitted as SPDX JSON by the release workflow. Exact
+managed versions are locked in `packages.lock.json`; reviewed native versions and install features are recorded
+in `deploy/README.md`, with the two custom ports retained under `eng/native/vcpkg/ports`.

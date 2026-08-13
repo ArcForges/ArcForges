@@ -34,7 +34,7 @@ public sealed class RepositoryPolicyTests
         Xunit.Assert.Equal(166, managed);
         Xunit.Assert.Equal(5, native);
         Xunit.Assert.Equal(6, shims);
-        Xunit.Assert.False(File.Exists(Path.Combine(root, "vcpkg.json")), "A root vcpkg.json creates an unauthorized dependency graph.");
+        Xunit.Assert.False(File.Exists(Path.Combine(root, "vcpkg.json")), "Native dependencies use the documented classic vcpkg installation.");
 
         var nativeProjects = Directory.EnumerateFiles(Path.Combine(root, "native"), "*.vcxproj", SearchOption.AllDirectories);
         foreach (var project in nativeProjects)
@@ -146,23 +146,33 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
-    public void VcpkgProfilesShareCanonicalBaseline()
+    public void VcpkgIntegrationUsesClassicInstalledPackagesWithoutRepositoryPaths()
     {
-        var nativeRoot = Path.Combine(RepositoryRoot.Value, "eng", "native", "vcpkg");
-        using var registry = JsonDocument.Parse(File.ReadAllText(Path.Combine(nativeRoot, "registry.lock.v1.json")));
-        var expected = registry.RootElement.GetProperty("commit").GetString();
-        var manifests = Directory.EnumerateFiles(Path.Combine(nativeRoot, "manifests"), "vcpkg.json", SearchOption.AllDirectories)
-            .Where(path => string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), "host-tools", StringComparison.Ordinal)
-                || string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), "runtime-shared", StringComparison.Ordinal)
-                || string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), "shim-static", StringComparison.Ordinal))
-            .ToArray();
+        var root = RepositoryRoot.Value;
+        var nativeVcpkg = Path.Combine(root, "eng", "native", "vcpkg");
+        Xunit.Assert.Empty(Directory.Exists(Path.Combine(nativeVcpkg, "manifests"))
+            ? Directory.EnumerateFiles(Path.Combine(nativeVcpkg, "manifests"), "*", SearchOption.AllDirectories)
+            : Enumerable.Empty<string>());
+        Xunit.Assert.Empty(Directory.Exists(Path.Combine(nativeVcpkg, "triplets"))
+            ? Directory.EnumerateFiles(Path.Combine(nativeVcpkg, "triplets"), "*", SearchOption.AllDirectories)
+            : Enumerable.Empty<string>());
+        Xunit.Assert.False(File.Exists(Path.Combine(nativeVcpkg, "registry.lock.v1.json")));
 
-        Xunit.Assert.Equal(3, manifests.Length);
-        foreach (var manifest in manifests)
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(manifest));
-            Xunit.Assert.Equal(expected, document.RootElement.GetProperty("builtin-baseline").GetString());
-        }
+        var presets = File.ReadAllText(Path.Combine(root, "CMakePresets.json"));
+        Xunit.Assert.Contains("$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake", presets, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("VCPKG_MANIFEST", presets, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("VCPKG_INSTALLED_DIR", presets, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("arc-runtime-", presets, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("arc-shim-", presets, StringComparison.Ordinal);
+
+        var msbuild = File.ReadAllText(Path.Combine(root, "native", "windows", "ArcForges.Native.props"));
+        Xunit.Assert.DoesNotContain("VcpkgRoot", msbuild, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("VcpkgManifest", msbuild, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("VcpkgInstalled", msbuild, StringComparison.Ordinal);
+
+        var deployment = File.ReadAllText(Path.Combine(root, "deploy", "README.md"));
+        Xunit.Assert.Matches("commit\\s+`[0-9a-f]{40}`", deployment);
+        Xunit.Assert.Contains("vcpkg.exe integrate install", deployment, StringComparison.Ordinal);
     }
 
     [Xunit.Fact]
@@ -170,24 +180,23 @@ public sealed class RepositoryPolicyTests
     public void NativeDirectDependenciesAreRegisteredAndSupplyChainGatesStayEnabled()
     {
         var root = RepositoryRoot.Value;
-        var nativeRoot = Path.Combine(root, "eng", "native", "vcpkg");
         var register = File.ReadAllText(Path.Combine(root, "docs", "compliance", "third-party-license-register.md"));
         var notice = File.ReadAllText(Path.Combine(root, "NOTICE.md"));
+        var setup = File.ReadAllText(Path.Combine(root, "deploy", "README.md"));
         var inventory = string.Concat(register, Environment.NewLine, notice);
         var missing = new List<string>();
 
-        foreach (var manifest in Directory.EnumerateFiles(Path.Combine(nativeRoot, "manifests"), "vcpkg.json", SearchOption.AllDirectories))
+        string[] directNativeDependencies =
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(manifest));
-            foreach (var dependency in document.RootElement.GetProperty("dependencies").EnumerateArray())
+            "ffmpeg", "libusb", "miniaudio", "opentimelineio", "opencolorio",
+            "openimageio", "openexr", "imath", "mdflib",
+        };
+        foreach (var dependency in directNativeDependencies)
+        {
+            if (!inventory.Contains(dependency, StringComparison.OrdinalIgnoreCase)
+                || !setup.Contains(dependency, StringComparison.OrdinalIgnoreCase))
             {
-                var name = dependency.ValueKind == JsonValueKind.String
-                    ? dependency.GetString()
-                    : dependency.GetProperty("name").GetString();
-                if (name is not null && !inventory.Contains(name, StringComparison.OrdinalIgnoreCase))
-                {
-                    missing.Add(name);
-                }
+                missing.Add(dependency);
             }
         }
 
@@ -281,9 +290,9 @@ public sealed class RepositoryPolicyTests
             Xunit.Assert.True(headerExports.SetEquals(macExports), $"{Path.GetFileName(shimRoot)} macOS export allowlist differs from its C header.");
             Xunit.Assert.True(headerExports.SetEquals(linuxExports), $"{Path.GetFileName(shimRoot)} Linux export allowlist differs from its C header.");
 
-            string expectedProfile = Path.GetFileName(shimRoot) == "arcmedia-ffmpeg-abi" ? "runtime-shared" : "shim-static";
-            string profile = document.Descendants().Single(element => element.Name.LocalName == "ArcForgesNativeProfile").Value;
-            Xunit.Assert.Equal(expectedProfile, profile);
+            bool expectedStatic = Path.GetFileName(shimRoot) != "arcmedia-ffmpeg-abi";
+            bool usesStatic = bool.Parse(document.Descendants().Single(element => element.Name.LocalName == "VcpkgUseStatic").Value);
+            Xunit.Assert.Equal(expectedStatic, usesStatic);
         }
 
         var rootCmake = File.ReadAllText(Path.Combine(nativeRoot, "CMakeLists.txt"));

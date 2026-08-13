@@ -1,6 +1,7 @@
 {
   "name": "mdflib",
   "version-semver": "2.3.0",
+  "port-version": 1,
   "description": "ASAM MDF 3/4 C++ library",
   "homepage": "https://github.com/ihedvall/mdflib",
   "license": "MIT",
