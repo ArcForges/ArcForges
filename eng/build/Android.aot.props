@@ -1,7 +1,9 @@
 <Project>
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!-- Android production uses MAUI Mono AOT. CoreCLR Native AOT is not the product baseline. -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Release' and '$(TargetFrameworkIdentifier)' == 'android'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' and $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <!-- Backport the Android workload guard that prevents the .NET SDK from appending the build-host RID. -->
+    <UseDefaultPublishRuntimeIdentifier>false</UseDefaultPublishRuntimeIdentifier>
     <RunAOTCompilation>true</RunAOTCompilation>
   </PropertyGroup>
 </Project>

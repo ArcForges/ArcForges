@@ -48,7 +48,15 @@ jobs:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release --no-restore -p:AndroidPackageFormats='apk;aab' -o artifacts/release/android
+      - name: Publish the ARM64 Android packages with Mono AOT
+        run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-arm64 --no-restore -p:AndroidPackageFormats=apk%3Baab
+      - name: Stage the signed Android packages
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/release/android | Out-Null
+          $packages = @(Get-ChildItem artifacts/bin/dotnet/windows/ArcChat.Mobile/Release/net10.0-android/android-arm64 -File | Where-Object { $_.Name -like '*-Signed.apk' -or $_.Name -like '*-Signed.aab' })
+          if ($packages.Count -lt 2) { throw "Expected a signed APK and an AAB, found $($packages.Count)." }
+          $packages | Copy-Item -Destination artifacts/release/android
       - name: Record checksums
         shell: pwsh
         run: |
@@ -135,6 +143,11 @@ jobs:
       - name: Install Linux native prerequisites
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake libtool libdrm-dev nasm yasm
+      - name: Install macOS native prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install autoconf autoconf-archive automake libtool nasm yasm
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
       - name: Bootstrap pinned vcpkg
         shell: pwsh
         run: |

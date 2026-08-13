@@ -185,7 +185,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake libtool libdrm-dev nasm yasm
       - name: Install macOS native prerequisites
         if: runner.os == 'macOS'
-        run: brew install nasm yasm
+        run: |
+          brew install autoconf autoconf-archive automake libtool nasm yasm
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
       - name: Bootstrap pinned vcpkg
         shell: pwsh
         run: |
@@ -350,7 +352,14 @@ jobs:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-x64 --no-restore -p:AndroidPackageFormat=apk -o artifacts/android
+      - name: Publish the x64 Android package with Mono AOT
+        run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-x64 --no-restore -p:AndroidPackageFormats=apk
+      - name: Stage the signed APK
+        run: |
+          mkdir -p artifacts/android
+          apk=$(find artifacts/bin/dotnet/linux/ArcChat.Mobile/Release/net10.0-android/android-x64 -maxdepth 1 -type f -name '*-Signed.apk' | head -n 1)
+          test -n "$apk"
+          install -m 0644 "$apk" artifacts/android/ArcChat.Mobile-Signed.apk
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -363,9 +372,7 @@ jobs:
           arch: x86_64
           target: google_apis
           script: |
-            apk=$(find artifacts/android \( -name '*-Signed.apk' -o -name '*.apk' \) | head -n 1)
-            test -n "$apk"
-            adb install -r "$apk"
+            adb install -r artifacts/android/ArcChat.Mobile-Signed.apk
             adb shell am force-stop com.arcforges.arcchat
             adb shell monkey -p com.arcforges.arcchat -c android.intent.category.LAUNCHER 1
             sleep 8
