@@ -7,6 +7,7 @@ emit the resolved transitive graph as SPDX JSON rather than maintaining a second
 | Dependency family | Version/source | SPDX/license | Compatibility/use | Owner |
 |---|---|---|---|---|
 | Avalonia | 12.1.1 | MIT | Native desktop UI | Step 01/06 |
+| SkiaSharp and native assets | 4.151.1 | MIT | Cross-platform Avalonia rendering backend | Step 01/06 |
 | .NET / ASP.NET Core / MAUI | 10.0.x | MIT | Managed hosts | Step 01 |
 | xUnit v3 and Microsoft.NET.Test.Sdk | 3.2.2 / 18.8.1 | Apache-2.0 / MIT | Tests only | Step 01 |
 | OpenTimelineIO | 0.18.1#2, locked overlay | Apache-2.0 | Static inside owned shim | Step 24 |
