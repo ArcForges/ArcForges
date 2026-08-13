@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 
 namespace ArcForges.NativeInterop;
 
@@ -18,8 +16,6 @@ public static unsafe class NativeSmoke
 {
     private const int BufferTooSmall = 1;
     private const int InvalidArgument = -1;
-
-    static NativeSmoke() => NativeLibraryResolver.Install();
 
     public static NativeProbeResult VerifyMedia() => Verify(
         "ArcMediaNative", ArcMediaNative.GetAbiVersion, ArcMediaNative.GetBuildInfo, ArcMediaNative.GetLastError);
@@ -114,58 +110,4 @@ public static unsafe class NativeSmoke
     private unsafe delegate int VersionProbe(uint* major, uint* minor);
     private delegate int BufferProbe(ref ArcMutableBuffer output);
     private delegate int ErrorProbe(ref ArcErrorInfo output);
-}
-
-internal static class NativeLibraryResolver
-{
-    private static int installed;
-
-    internal static void Install()
-    {
-        if (Interlocked.Exchange(ref installed, 1) == 0)
-        {
-            NativeLibrary.SetDllImportResolver(typeof(NativeSmoke).Assembly, Resolve);
-        }
-    }
-
-    private static nint Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
-    {
-        foreach (string directory in CandidateDirectories())
-        {
-            string path = Path.Combine(directory, PlatformLibraryName(libraryName));
-            if (NativeLibrary.TryLoad(path, assembly, searchPath, out nint handle))
-            {
-                return handle;
-            }
-        }
-
-        return nint.Zero;
-    }
-
-    private static IEnumerable<string> CandidateDirectories()
-    {
-        string? configured = Environment.GetEnvironmentVariable("ARCFORGES_NATIVE_DIR");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            yield return Path.GetFullPath(configured);
-        }
-
-        yield return AppContext.BaseDirectory;
-        yield return Path.Combine(AppContext.BaseDirectory, "runtimes", RuntimeInformation.RuntimeIdentifier, "native");
-    }
-
-    private static string PlatformLibraryName(string libraryName)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return $"{libraryName}.dll";
-        }
-
-        if (OperatingSystem.IsMacOS())
-        {
-            return $"lib{libraryName}.dylib";
-        }
-
-        return $"lib{libraryName}.so";
-    }
 }

@@ -98,20 +98,30 @@ jobs:
             cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
             if ($LASTEXITCODE) { throw "$preset install failed." }
           }
-      - name: Run managed P/Invoke over CMake artifacts
+      - name: Run managed P/Invoke over app-local CMake artifacts
         shell: pwsh
         run: |
-          $env:ARCFORGES_NATIVE_BUILD_MODE = 'cmake'
-          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/stage/native/win-x64/native"
-          dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
+          dotnet build tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore
+          if ($LASTEXITCODE) { throw 'Managed native ABI test build failed.' }
+          $runtime = Join-Path '${{ github.workspace }}' 'artifacts/stage/native/win-x64/native'
+          $testOutput = Join-Path '${{ github.workspace }}' 'artifacts/bin/dotnet/windows/ArcForges.Tests.NativeAbiTests/Release/net10.0'
+          $nativeDlls = @(Get-ChildItem -LiteralPath $runtime -File -Filter '*.dll')
+          if (-not $nativeDlls.Count) { throw 'CMake staged no native runtime DLLs.' }
+          try {
+            Copy-Item -LiteralPath $nativeDlls.FullName -Destination $testOutput
+            & (Join-Path $testOutput 'ArcForges.Tests.NativeAbiTests.exe')
+            if ($LASTEXITCODE) { throw 'Managed P/Invoke over CMake artifacts failed.' }
+          } finally {
+            $nativeDlls | ForEach-Object { Remove-Item -LiteralPath (Join-Path $testOutput $_.Name) -Force -ErrorAction SilentlyContinue }
+          }
       - name: Build the independent Windows solution
         run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=x64
-      - name: Run managed P/Invoke over pure MSBuild artifacts
+      - name: Run the app-local native ABI test executable
         shell: pwsh
         run: |
-          $env:ARCFORGES_NATIVE_BUILD_MODE = 'msbuild'
-          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/msbuild/native/win-x64/Release"
-          dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
+          $test = Join-Path '${{ github.workspace }}' 'artifacts/bin/dotnet/windows/ArcForges.Tests.NativeAbiTests/Release/net10.0/ArcForges.Tests.NativeAbiTests.exe'
+          & $test
+          if ($LASTEXITCODE) { throw 'Managed P/Invoke over pure MSBuild artifacts failed.' }
 
   app-smoke:
     runs-on: ubuntu-latest

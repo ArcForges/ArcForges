@@ -6,6 +6,7 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>
+    <ArcForgesDeployWindowsNativeRuntime Condition="'$(SolutionFileName)' == 'win.slnx'">true</ArcForgesDeployWindowsNativeRuntime>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />

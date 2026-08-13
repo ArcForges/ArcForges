@@ -178,6 +178,51 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void WindowsNativeRuntimeIsDeployedAppLocalWithoutRuntimeEnvironmentOverrides()
+    {
+        var root = RepositoryRoot.Value;
+        string prefix = "ARCFORGES_NATIVE_";
+        string[] forbiddenVariables = [prefix + "BUILD_MODE", prefix + "DIR"];
+        string[] textExtensions = [".cs", ".csproj", ".props", ".targets", ".yml", ".yaml", ".md"];
+        var offenders = EnumerateRepositoryFiles("*")
+            .Where(path => textExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            .Where(path => forbiddenVariables.Any(variable => File.ReadAllText(path).Contains(variable, StringComparison.Ordinal)))
+            .Select(path => Path.GetRelativePath(root, path))
+            .ToArray();
+        Xunit.Assert.Empty(offenders);
+
+        var buildTargets = File.ReadAllText(Path.Combine(root, "Directory.Build.targets"));
+        Xunit.Assert.Contains("CollectArcForgesWindowsNativeRuntime", buildTargets, StringComparison.Ordinal);
+        Xunit.Assert.Contains("CopyToOutputDirectory", buildTargets, StringComparison.Ordinal);
+        Xunit.Assert.Contains("CopyToPublishDirectory", buildTargets, StringComparison.Ordinal);
+
+        var nativeAbiProject = File.ReadAllText(Path.Combine(root, "tests", "NativeAbiTests", "ArcForges.Tests.NativeAbiTests.csproj"));
+        Xunit.Assert.Contains("ArcForgesDeployWindowsNativeRuntime", nativeAbiProject, StringComparison.Ordinal);
+
+        var solution = XDocument.Load(Path.Combine(root, "win.slnx"));
+        var testProject = solution.Descendants("Project").Single(element =>
+            string.Equals(
+                element.Attribute("Path")?.Value,
+                "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+                StringComparison.Ordinal));
+        var dependencies = testProject.Elements("BuildDependency")
+            .Select(element => element.Attribute("Project")?.Value)
+            .Where(path => path is not null)
+            .Select(path => path!)
+            .ToHashSet(StringComparer.Ordinal);
+        string[] expectedDependencies =
+        [
+            "native/arcmedia-ffmpeg-abi/windows/arcmedia_ffmpeg_abi.vcxproj",
+            "native/arcscope-mdf-abi/windows/arcscope_mdf_abi.vcxproj",
+            "native/arcslate-otio-abi/windows/arcslate_otio_abi.vcxproj",
+            "native/arcslate-color-abi/windows/arcslate_color_abi.vcxproj",
+            "native/arcslate-image-abi/windows/arcslate_image_abi.vcxproj",
+        ];
+        Xunit.Assert.True(dependencies.SetEquals(expectedDependencies), "Native ABI test build dependencies are incomplete.");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void NativeDirectDependenciesAreRegisteredAndSupplyChainGatesStayEnabled()
     {
         var root = RepositoryRoot.Value;
