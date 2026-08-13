@@ -18,5 +18,8 @@
       <PreprocessorDefinitions Condition="'$(VcpkgUseStatic)' != 'true'">ARCFORGES_RUNTIME_SHARED_GRAPH=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(VcpkgUseStatic)' == 'true'">ARCFORGES_SHIM_STATIC_GRAPH=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link Condition="'$(VcpkgUseStatic)' == 'true'">
+      <AdditionalDependencies>bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
 </Project>

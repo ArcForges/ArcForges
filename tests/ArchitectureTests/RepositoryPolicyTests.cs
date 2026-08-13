@@ -169,6 +169,7 @@ public sealed class RepositoryPolicyTests
         Xunit.Assert.DoesNotContain("VcpkgRoot", msbuild, StringComparison.Ordinal);
         Xunit.Assert.DoesNotContain("VcpkgManifest", msbuild, StringComparison.Ordinal);
         Xunit.Assert.DoesNotContain("VcpkgInstalled", msbuild, StringComparison.Ordinal);
+        Xunit.Assert.Contains("bcrypt.lib", msbuild, StringComparison.OrdinalIgnoreCase);
 
         var deployment = File.ReadAllText(Path.Combine(root, "deploy", "README.md"));
         Xunit.Assert.Matches("commit\\s+`[0-9a-f]{40}`", deployment);
