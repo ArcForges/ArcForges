@@ -86,7 +86,7 @@ public sealed class RepositoryPolicyTests
     {
         const string allowedIdentity = "Xamarin.AndroidX.Security.SecurityCrypto/1.1.0.4-alpha07";
         var violations = new List<string>();
-        foreach (var lockFile in EnumerateRepositoryFiles("packages.lock.json"))
+        foreach (var lockFile in EnumerateRepositoryFiles("packages*.lock.json"))
         {
             using var document = JsonDocument.Parse(File.ReadAllText(lockFile));
             foreach (var framework in document.RootElement.GetProperty("dependencies").EnumerateObject())

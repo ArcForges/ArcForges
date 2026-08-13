@@ -4,6 +4,8 @@
     <AssemblyName>ArcForges.Cloud.AppHost</AssemblyName>
     <RootNamespace>ArcForges.Cloud.AppHost</RootNamespace>
     <OutputType>Exe</OutputType>
+    <!-- Aspire injects Dashboard/DCP packages for the build host, so one cross-host lock is impossible. -->
+    <NuGetLockFilePath>packages.$(NETCoreSdkRuntimeIdentifier).lock.json</NuGetLockFilePath>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
