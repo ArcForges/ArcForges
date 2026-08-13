@@ -174,6 +174,11 @@ public sealed class RepositoryPolicyTests
         var deployment = File.ReadAllText(Path.Combine(root, "deploy", "README.md"));
         Xunit.Assert.Matches("commit\\s+`[0-9a-f]{40}`", deployment);
         Xunit.Assert.Contains("vcpkg.exe integrate install", deployment, StringComparison.Ordinal);
+
+        var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "pr-gate.yml"));
+        Xunit.Assert.Contains("key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}", workflow, StringComparison.Ordinal);
+        Xunit.Assert.Contains("git -C $root checkout --detach $env:VCPKG_COMMIT", workflow, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("VCPKG_INSTALLATION_ROOT", workflow, StringComparison.Ordinal);
     }
 
     [Xunit.Fact]

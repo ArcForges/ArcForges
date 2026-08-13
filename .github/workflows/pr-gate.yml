@@ -60,15 +60,24 @@ jobs:
         with:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}
+      - name: Bootstrap cached vcpkg toolchain
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
+          if ($LASTEXITCODE) { throw 'vcpkg clone failed.' }
+          git -C $root checkout --detach $env:VCPKG_COMMIT
+          if ($LASTEXITCODE) { throw 'vcpkg checkout failed.' }
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed.' }
+          $archives = Join-Path $env:RUNNER_TEMP 'vcpkg-archives'
+          New-Item -ItemType Directory -Force $archives | Out-Null
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
       - name: Install native dependencies and enable MSBuild integration
         shell: pwsh
         run: |
-          $root = $env:VCPKG_INSTALLATION_ROOT
-          if ([string]::IsNullOrWhiteSpace($root)) { throw 'Runner vcpkg installation was not found.' }
-          $archives = Join-Path $env:RUNNER_TEMP 'vcpkg-archives'
-          New-Item -ItemType Directory -Force $archives | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$archives,readwrite"
-          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          $root = $env:VCPKG_ROOT
           & "$root/vcpkg.exe" install `
             'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,amf]:x64-windows' `
             'libusb[core]:x64-windows' `
