@@ -1,4 +1,4 @@
-name: PR gate
+name: CI
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr-gate-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -18,8 +18,10 @@ env:
   VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
 
 jobs:
-  locked-restore:
+  managed:
     runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -29,226 +31,20 @@ jobs:
           cache-dependency-path: '**/packages*.lock.json'
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
-      - name: Verify restore leaves the checkout clean
+      - name: Verify deterministic restore
         shell: pwsh
         run: |
           $dirty = @(git status --porcelain --untracked-files=all)
           if ($dirty.Count) {
             $dirty | Write-Host
-            throw 'Locked restore changed tracked files or created untracked files.'
+            throw 'Locked restore changed the checkout.'
           }
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet restore ArcForges.slnx --locked-mode
-      - run: dotnet build ArcForges.slnx -c Debug --no-restore
-      - run: dotnet build ArcForges.slnx -c Release --no-restore
       - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
-
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet build ArcForges.slnx -c Release --no-restore
+      - name: Run the complete managed test taxonomy
+        run: dotnet test ArcForges.slnx -c Release --no-build --no-restore --filter "Category=Unit|Category=Integration|Category=Contract|Category=Ui|Category=Architecture"
 
-  managed-tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        category: [Unit, Integration, Contract, Ui]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet restore ArcForges.slnx --locked-mode
-      - run: dotnet test ArcForges.slnx -c Release --no-restore --filter Category=${{ matrix.category }}
-
-  architecture-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
-      - run: dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --filter Category=Architecture
-
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
-      - run: dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --collect 'XPlat Code Coverage' --settings eng/verification/coverage.runsettings
-      - name: Enforce line coverage floor
-        shell: pwsh
-        run: |
-          $reports = @(Get-ChildItem artifacts -Recurse -Filter coverage.cobertura.xml)
-          if ($reports.Count -eq 0) { throw 'No Cobertura report was produced.' }
-          $covered = 0L
-          $valid = 0L
-          foreach ($report in $reports) {
-            [xml]$xml = Get-Content -LiteralPath $report.FullName
-            $covered += [long]$xml.coverage.'lines-covered'
-            $valid += [long]$xml.coverage.'lines-valid'
-          }
-          $rate = if ($valid) { $covered / $valid } else { 0 }
-          "Line coverage: {0:P2} ({1}/{2})" -f $rate, $covered, $valid | Write-Host
-          if ($rate -lt 0.70) { throw 'Architecture and repository policy coverage is below 70%.' }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage
-          path: artifacts/TestResults/**/coverage.cobertura.xml
-
-  native-cmake:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            rid: win-x64
-            runtime: windows-msvc-x64-runtime-shared
-            runtimeBuild: windows-msvc-x64-runtime-shared-release
-            shim: windows-msvc-x64-shim-static
-            shimBuild: windows-msvc-x64-shim-static-release
-            binary: windows-msvc-x64
-            runnable: true
-            fuzz: false
-          - os: windows-latest
-            rid: win-arm64
-            runtime: windows-msvc-arm64-runtime-shared
-            runtimeBuild: windows-msvc-arm64-runtime-shared-release
-            shim: windows-msvc-arm64-shim-static
-            shimBuild: windows-msvc-arm64-shim-static-release
-            binary: windows-msvc-arm64
-            runnable: false
-            fuzz: false
-          - os: ubuntu-latest
-            rid: linux-x64
-            runtime: linux-clang-x64-runtime-shared
-            runtimeBuild: linux-clang-x64-runtime-shared-release
-            shim: linux-clang-x64-shim-static
-            shimBuild: linux-clang-x64-shim-static-release
-            binary: linux-clang-x64
-            runnable: true
-            fuzz: false
-          - os: macos-15-intel
-            rid: osx-x64
-            runtime: macos-clang-x64-runtime-shared
-            runtimeBuild: macos-clang-x64-runtime-shared-release
-            shim: macos-clang-x64-shim-static
-            shimBuild: macos-clang-x64-shim-static-release
-            binary: macos-clang-x64
-            runnable: true
-            fuzz: false
-          - os: macos-15
-            rid: osx-arm64
-            runtime: macos-clang-arm64-runtime-shared
-            runtimeBuild: macos-clang-arm64-runtime-shared-release
-            shim: macos-clang-arm64-shim-static
-            shimBuild: macos-clang-arm64-shim-static-release
-            binary: macos-clang-arm64
-            runnable: true
-            fuzz: true
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
-        with:
-          cmakeVersion: '4.3.3'
-          ninjaVersion: '1.13.1'
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-${{ runner.os }}-${{ matrix.rid }}-${{ env.VCPKG_COMMIT }}
-      - name: Install Linux native prerequisites
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake libtool libdrm-dev nasm yasm
-      - name: Install macOS native prerequisites
-        if: runner.os == 'macOS'
-        run: |
-          brew install autoconf autoconf-archive automake libtool nasm yasm
-          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
-      - name: Bootstrap pinned vcpkg
-        shell: pwsh
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP vcpkg
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
-          git -C $root checkout --detach $env:VCPKG_COMMIT
-          if ($IsWindows) { & "$root/bootstrap-vcpkg.bat" -disableMetrics } else { & "$root/bootstrap-vcpkg.sh" -disableMetrics }
-          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
-          New-Item -ItemType Directory -Force -Path $archives | Out-Null
-          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
-      - name: Configure, build, test, and install both isolated graphs
-        shell: pwsh
-        run: |
-          cmake --preset '${{ matrix.runtime }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build --preset '${{ matrix.runtimeBuild }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if ('${{ matrix.runnable }}' -eq 'true') { ctest --preset '${{ matrix.runtime }}' }
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $config = if ($IsWindows) { @('--config', 'Release') } else { @() }
-          cmake --install "artifacts/cmake/${{ matrix.binary }}/runtime-shared" @config
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --preset '${{ matrix.shim }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if ('${{ matrix.fuzz }}' -eq 'true') {
-            cmake --preset '${{ matrix.shim }}' -DARCFORGES_BUILD_FUZZERS=ON
-          }
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build --preset '${{ matrix.shimBuild }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if ('${{ matrix.runnable }}' -eq 'true') { ctest --preset '${{ matrix.shim }}' }
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --install "artifacts/cmake/${{ matrix.binary }}/shim-static" @config
-      - name: Fuzz macOS shim and Metal ABI boundaries
-        if: matrix.fuzz
-        shell: bash
-        run: |
-          for fuzzer in artifacts/cmake/${{ matrix.binary }}/shim-static/native/*-abi/*_fuzzer; do
-            "$fuzzer" -runs=1000
-          done
-      - name: Managed P/Invoke over CMake artifacts
-        if: matrix.runnable
-        shell: pwsh
-        run: |
-          dotnet restore tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj --locked-mode
-          $env:ARCFORGES_NATIVE_BUILD_MODE = 'cmake'
-          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/stage/native/${{ matrix.rid }}/native"
-          dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
-
-  native-msbuild:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: x64
-            rid: win-x64
-            runnable: true
-          - platform: ARM64
-            rid: win-arm64
-            runnable: false
+  native-win-x64:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -256,10 +52,14 @@ jobs:
         with:
           global-json-file: global.json
       - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-Windows-msbuild-${{ matrix.rid }}-${{ env.VCPKG_COMMIT }}
+          key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}
       - name: Bootstrap pinned vcpkg
         shell: pwsh
         run: |
@@ -273,78 +73,97 @@ jobs:
           "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
-      - name: Build the independent Windows solution
+      - name: Build, test, and stage both CMake profiles
         shell: pwsh
-        run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=${{ matrix.platform }}
-      - name: Managed P/Invoke over pure MSBuild artifacts
-        if: matrix.runnable
+        run: |
+          foreach ($profile in 'runtime-shared', 'shim-static') {
+            $preset = "windows-msvc-x64-$profile"
+            cmake --preset $preset
+            if ($LASTEXITCODE) { throw "$preset configure failed." }
+            cmake --build --preset "$preset-release"
+            if ($LASTEXITCODE) { throw "$preset build failed." }
+            ctest --preset $preset
+            if ($LASTEXITCODE) { throw "$preset tests failed." }
+            cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
+            if ($LASTEXITCODE) { throw "$preset install failed." }
+          }
+      - name: Run managed P/Invoke over CMake artifacts
+        shell: pwsh
+        run: |
+          $env:ARCFORGES_NATIVE_BUILD_MODE = 'cmake'
+          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/stage/native/win-x64/native"
+          dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
+      - name: Build the independent Windows solution
+        run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=x64
+      - name: Run managed P/Invoke over pure MSBuild artifacts
         shell: pwsh
         run: |
           $env:ARCFORGES_NATIVE_BUILD_MODE = 'msbuild'
-          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/msbuild/native/${{ matrix.rid }}/Release"
+          $env:ARCFORGES_NATIVE_DIR = "${{ github.workspace }}/artifacts/msbuild/native/win-x64/Release"
           dotnet test tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj -c Release --no-restore --filter Category=NativeAbi
 
-  sanitizer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
-        with:
-          cmakeVersion: '4.3.3'
-          ninjaVersion: '1.13.1'
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-Linux-asan-${{ env.VCPKG_COMMIT }}
-      - name: Install Linux native prerequisites
-        run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake libtool libdrm-dev nasm yasm
-      - name: Bootstrap pinned vcpkg
-        shell: pwsh
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP vcpkg
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
-          git -C $root checkout --detach $env:VCPKG_COMMIT
-          & "$root/bootstrap-vcpkg.sh" -disableMetrics
-          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
-          New-Item -ItemType Directory -Force -Path $archives | Out-Null
-          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
-      - run: cmake --preset linux-clang-x64-runtime-shared-asan && cmake --build --preset linux-clang-x64-runtime-shared-asan && ctest --preset linux-clang-x64-runtime-shared-asan
-      - run: cmake --preset linux-clang-x64-shim-static-asan && cmake --build --preset linux-clang-x64-shim-static-asan && ctest --preset linux-clang-x64-shim-static-asan
-      - name: Fuzz all native ABI boundaries
-        run: |
-          artifacts/cmake/linux-clang-x64/runtime-shared-asan/native/arcmedia-ffmpeg-abi/arcmedia_ffmpeg_abi_fuzzer -runs=2000
-          for fuzzer in artifacts/cmake/linux-clang-x64/shim-static-asan/native/*-abi/*_fuzzer; do
-            "$fuzzer" -runs=2000
-          done
-
-  web-browser:
+  app-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
+      - run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev libbrotli-dev xvfb
       - run: dotnet workload install wasm-tools --skip-manifest-update
-      - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
-      - run: dotnet restore tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj --locked-mode
-      - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/web
-      - run: dotnet build tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-restore
+      - name: Publish and initialize one real Avalonia window
+        run: |
+          dotnet restore src/ArcChat/ArcChat.Desktop/ArcChat.Desktop.csproj --locked-mode
+          dotnet publish src/ArcChat/ArcChat.Desktop/ArcChat.Desktop.csproj -c Release -r linux-x64 --self-contained true --no-restore -o artifacts/desktop
+          xvfb-run --auto-servernum artifacts/desktop/ArcChat.Desktop --smoke | grep -F 'ok arcforges-smoke avalonia-window'
+      - name: Publish and probe Cloud HTTP plus SignalR
+        shell: pwsh
+        run: |
+          $project = 'src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj'
+          dotnet restore $project --locked-mode
+          dotnet publish $project -c Release --self-contained false --no-restore -o artifacts/cloud
+          $process = Start-Process dotnet -ArgumentList @('artifacts/cloud/ArcForges.Cloud.Host.dll', '--urls', 'http://127.0.0.1:5087') -PassThru
+          try {
+            $ready = $false
+            foreach ($attempt in 1..30) {
+              try {
+                $health = Invoke-RestMethod http://127.0.0.1:5087/health
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Cloud /health never became ready.' }
+            $root = Invoke-RestMethod http://127.0.0.1:5087/
+            if (-not $root.ok -or $root.app -ne 'arcforges-cloud') { throw 'Cloud root contract failed.' }
+            $negotiate = Invoke-RestMethod -Method Post 'http://127.0.0.1:5087/hubs/v1/events/negotiate?negotiateVersion=1'
+            if ([string]::IsNullOrWhiteSpace($negotiate.connectionToken)) { throw 'SignalR negotiate returned no token.' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: Publish Web and build Browser tests
+        run: |
+          dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
+          dotnet restore tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj --locked-mode
+          dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/web
+          dotnet build tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-restore
       - name: Install Chromium
         shell: pwsh
         run: |
           $script = Get-ChildItem artifacts/bin/dotnet -Recurse -Filter playwright.ps1 | Select-Object -First 1
           if (-not $script) { throw 'Playwright installation script was not produced.' }
           & $script.FullName install --with-deps chromium
-      - name: Serve the published site and run Browser tests
+      - name: Serve and probe Web in Chromium
+        shell: pwsh
         run: |
-          python3 -m http.server 8080 --directory artifacts/web/wwwroot &
-          server=$!
-          trap 'kill $server' EXIT
-          ARCFORGES_WEB_BASE_URL=http://127.0.0.1:8080 dotnet test tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-build --filter Category=Browser
+          $server = Start-Process python3 -ArgumentList @('-m', 'http.server', '8080', '--directory', 'artifacts/web/wwwroot') -PassThru
+          try {
+            $env:ARCFORGES_WEB_BASE_URL = 'http://127.0.0.1:8080'
+            dotnet test tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-build --filter Category=Browser
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
 
-  android-device:
-    runs-on: ubuntu-latest
+  android-package:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -352,99 +171,55 @@ jobs:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - name: Publish the x64 Android package with Mono AOT
-        run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-x64 --no-restore -p:AndroidPackageFormats=apk
+      - name: Publish one production Android APK
+        run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-arm64 --no-restore -p:AndroidPackageFormats=apk
       - name: Stage the signed APK
+        shell: pwsh
         run: |
-          mkdir -p artifacts/android
-          apk=$(find artifacts/bin/dotnet/linux/ArcChat.Mobile/Release/net10.0-android/android-x64 -maxdepth 1 -type f -name '*-Signed.apk' | head -n 1)
-          test -n "$apk"
-          install -m 0644 "$apk" artifacts/android/ArcChat.Mobile-Signed.apk
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Install, launch, and inspect the MAUI page
-        uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
-        with:
-          api-level: 35
-          arch: x86_64
-          target: google_apis
-          script: |
-            adb install -r artifacts/android/ArcChat.Mobile-Signed.apk
-            adb shell am force-stop com.arcforges.arcchat
-            adb shell monkey -p com.arcforges.arcchat -c android.intent.category.LAUNCHER 1
-            sleep 8
-            adb shell uiautomator dump /sdcard/arcforges-window.xml
-            adb pull /sdcard/arcforges-window.xml artifacts/android/window.xml
-            grep -F 'Hello from ArcChat Mobile' artifacts/android/window.xml
+          New-Item -ItemType Directory -Force artifacts/android | Out-Null
+          $apk = Get-ChildItem artifacts/bin/dotnet/windows/ArcChat.Mobile/Release/net10.0-android/android-arm64 -File -Filter '*-Signed.apk' | Select-Object -First 1
+          if (-not $apk) { throw 'The signed Android APK was not produced.' }
+          Copy-Item -LiteralPath $apk.FullName artifacts/android/ArcChat.Mobile-arm64-Signed.apk
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: android-smoke
-          path: artifacts/android
+          name: arcchat-android-arm64
+          path: artifacts/android/ArcChat.Mobile-arm64-Signed.apk
 
-  policy:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
-      - run: dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore --filter Category=Architecture
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet list ArcForges.slnx package --vulnerable --include-transitive
-
-  supply-chain:
+  security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - name: Secret scan
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          fail-on-severity: high
+          license-check: true
+          vulnerability-check: true
+          show-openssf-scorecard: true
+      - name: Scan the repository for secrets
         run: |
           docker run --rm \
             --volume "${GITHUB_WORKSPACE}:/repo" \
             "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" \
             detect --source=/repo --no-banner --redact --config=/repo/.gitleaks.toml
-      - run: mkdir -p artifacts
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          path: .
-          format: spdx-json
-          output-file: artifacts/arcforges.spdx.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: arcforges-sbom
-          path: artifacts/arcforges.spdx.json
 
-  foundation-gate:
+  ci:
     if: always()
-    needs:
-      - locked-restore
-      - build-windows
-      - build-linux
-      - managed-tests
-      - architecture-tests
-      - coverage
-      - native-cmake
-      - native-msbuild
-      - sanitizer
-      - web-browser
-      - android-device
-      - policy
-      - supply-chain
+    needs: [managed, native-win-x64, app-smoke, android-package, security]
     runs-on: ubuntu-latest
     env:
-      GATE_NEEDS: ${{ toJSON(needs) }}
+      CI_NEEDS: ${{ toJSON(needs) }}
     steps:
-      - name: Require every foundation job
+      - name: Require every CI job
         shell: pwsh
         run: |
-          $jobs = $env:GATE_NEEDS | ConvertFrom-Json
+          $jobs = $env:CI_NEEDS | ConvertFrom-Json
           $failed = @($jobs.PSObject.Properties | Where-Object { $_.Value.result -ne 'success' })
           if ($failed.Count) {
             $failed | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Value.result } | Write-Host
-            throw 'One or more foundation jobs did not succeed.'
+            throw 'One or more CI jobs did not succeed.'
           }

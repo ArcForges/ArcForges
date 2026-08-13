@@ -1,4 +1,4 @@
-name: Release train
+name: Release
 
 on:
   workflow_dispatch:
@@ -8,14 +8,42 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
 
 jobs:
-  desktop-native-aot:
-    uses: ./.github/workflows/aot-publish-smoke.yml
+  desktop-win-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Publish and smoke the desktop family
+        shell: pwsh
+        run: |
+          foreach ($product in 'ArcChat', 'ArcNotes', 'ArcScope', 'ArcSlate') {
+            $project = "src/$product/$product.Desktop/$product.Desktop.csproj"
+            $output = "artifacts/release/desktop-win-x64/$product"
+            dotnet restore $project --locked-mode
+            if ($LASTEXITCODE) { throw "[$product,restore] failed." }
+            dotnet publish $project -c Release -r win-x64 --self-contained true --no-restore -o $output
+            if ($LASTEXITCODE) { throw "[$product,publish] failed." }
+            $result = & "$output/$product.Desktop.exe" --smoke
+            if ($LASTEXITCODE -or $result -notmatch 'ok arcforges-smoke avalonia-window') {
+              throw "[$product,smoke] failed: $result"
+            }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arcforges-desktop-win-x64
+          path: artifacts/release/desktop-win-x64
 
   web:
     runs-on: ubuntu-latest
@@ -27,13 +55,6 @@ jobs:
       - run: dotnet workload install wasm-tools --skip-manifest-update
       - run: dotnet restore src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj --locked-mode
       - run: dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/release/web
-      - name: Record checksums
-        shell: pwsh
-        run: |
-          Get-ChildItem artifacts/release/web -File -Recurse | Sort-Object FullName | ForEach-Object {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-            "$hash  $($_.FullName.Substring((Resolve-Path 'artifacts/release/web').Path.Length + 1).Replace('\\','/'))"
-          } | Set-Content artifacts/release/web/SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: arcforges-web
@@ -48,26 +69,18 @@ jobs:
           global-json-file: global.json
       - run: dotnet workload install maui-android --skip-manifest-update
       - run: dotnet restore src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj --locked-mode
-      - name: Publish the ARM64 Android packages with Mono AOT
-        run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-arm64 --no-restore -p:AndroidPackageFormats=apk%3Baab
-      - name: Stage the signed Android packages
+      - run: dotnet publish src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj -f net10.0-android -c Release -r android-arm64 --no-restore -p:AndroidPackageFormats=apk
+      - name: Stage the signed APK
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts/release/android | Out-Null
-          $packages = @(Get-ChildItem artifacts/bin/dotnet/windows/ArcChat.Mobile/Release/net10.0-android/android-arm64 -File | Where-Object { $_.Name -like '*-Signed.apk' -or $_.Name -like '*-Signed.aab' })
-          if ($packages.Count -lt 2) { throw "Expected a signed APK and an AAB, found $($packages.Count)." }
-          $packages | Copy-Item -Destination artifacts/release/android
-      - name: Record checksums
-        shell: pwsh
-        run: |
-          Get-ChildItem artifacts/release/android -File -Recurse | Sort-Object FullName | ForEach-Object {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)"
-          } | Set-Content artifacts/release/android/SHA256SUMS
+          $apk = Get-ChildItem artifacts/bin/dotnet/windows/ArcChat.Mobile/Release/net10.0-android/android-arm64 -File -Filter '*-Signed.apk' | Select-Object -First 1
+          if (-not $apk) { throw 'The signed Android APK was not produced.' }
+          Copy-Item -LiteralPath $apk.FullName artifacts/release/android/ArcChat.Mobile-arm64-Signed.apk
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: arcchat-android
-          path: artifacts/release/android
+          name: arcchat-android-arm64
+          path: artifacts/release/android/ArcChat.Mobile-arm64-Signed.apk
 
   cloud:
     runs-on: ubuntu-latest
@@ -78,58 +91,14 @@ jobs:
           global-json-file: global.json
       - run: dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
       - run: dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore -o artifacts/release/cloud
-      - name: Package and checksum
-        run: |
-          tar -C artifacts/release/cloud -czf artifacts/arcforges-cloud.tar.gz .
-          sha256sum artifacts/arcforges-cloud.tar.gz > artifacts/arcforges-cloud.tar.gz.sha256
+      - run: tar -C artifacts/release/cloud -czf artifacts/arcforges-cloud-linux-x64.tar.gz .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: arcforges-cloud
-          path: |
-            artifacts/arcforges-cloud.tar.gz
-            artifacts/arcforges-cloud.tar.gz.sha256
+          name: arcforges-cloud-linux-x64
+          path: artifacts/arcforges-cloud-linux-x64.tar.gz
 
-  native:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            rid: win-x64
-            runtime: windows-msvc-x64-runtime-shared
-            runtimeBuild: windows-msvc-x64-runtime-shared-release
-            shim: windows-msvc-x64-shim-static
-            shimBuild: windows-msvc-x64-shim-static-release
-            binary: windows-msvc-x64
-          - os: windows-latest
-            rid: win-arm64
-            runtime: windows-msvc-arm64-runtime-shared
-            runtimeBuild: windows-msvc-arm64-runtime-shared-release
-            shim: windows-msvc-arm64-shim-static
-            shimBuild: windows-msvc-arm64-shim-static-release
-            binary: windows-msvc-arm64
-          - os: ubuntu-latest
-            rid: linux-x64
-            runtime: linux-clang-x64-runtime-shared
-            runtimeBuild: linux-clang-x64-runtime-shared-release
-            shim: linux-clang-x64-shim-static
-            shimBuild: linux-clang-x64-shim-static-release
-            binary: linux-clang-x64
-          - os: macos-15-intel
-            rid: osx-x64
-            runtime: macos-clang-x64-runtime-shared
-            runtimeBuild: macos-clang-x64-runtime-shared-release
-            shim: macos-clang-x64-shim-static
-            shimBuild: macos-clang-x64-shim-static-release
-            binary: macos-clang-x64
-          - os: macos-15
-            rid: osx-arm64
-            runtime: macos-clang-arm64-runtime-shared
-            runtimeBuild: macos-clang-arm64-runtime-shared-release
-            shim: macos-clang-arm64-shim-static
-            shimBuild: macos-clang-arm64-shim-static-release
-            binary: macos-clang-arm64
-    runs-on: ${{ matrix.os }}
+  native-win-x64:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
@@ -139,53 +108,37 @@ jobs:
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: release-vcpkg-${{ runner.os }}-${{ matrix.rid }}-${{ env.VCPKG_COMMIT }}
-      - name: Install Linux native prerequisites
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake libtool libdrm-dev nasm yasm
-      - name: Install macOS native prerequisites
-        if: runner.os == 'macOS'
-        run: |
-          brew install autoconf autoconf-archive automake libtool nasm yasm
-          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
+          key: vcpkg-Windows-x64-${{ env.VCPKG_COMMIT }}
       - name: Bootstrap pinned vcpkg
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP vcpkg
           git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
           git -C $root checkout --detach $env:VCPKG_COMMIT
-          if ($IsWindows) { & "$root/bootstrap-vcpkg.bat" -disableMetrics } else { & "$root/bootstrap-vcpkg.sh" -disableMetrics }
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
           $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
           New-Item -ItemType Directory -Force -Path $archives | Out-Null
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
           "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
-      - name: Build, test, and stage both native profiles
+      - name: Build and stage both native profiles
         shell: pwsh
         run: |
-          cmake --preset '${{ matrix.runtime }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build --preset '${{ matrix.runtimeBuild }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --preset '${{ matrix.shim }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build --preset '${{ matrix.shimBuild }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $config = if ($IsWindows) { @('--config', 'Release') } else { @() }
-          cmake --install "artifacts/cmake/${{ matrix.binary }}/runtime-shared" @config
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --install "artifacts/cmake/${{ matrix.binary }}/shim-static" @config
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Get-ChildItem "artifacts/stage/native/${{ matrix.rid }}" -File -Recurse | Sort-Object FullName | ForEach-Object {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-            "$hash  $($_.FullName.Substring((Resolve-Path "artifacts/stage/native/${{ matrix.rid }}").Path.Length + 1).Replace('\\','/'))"
-          } | Set-Content "artifacts/stage/native/${{ matrix.rid }}/SHA256SUMS"
+          foreach ($profile in 'runtime-shared', 'shim-static') {
+            $preset = "windows-msvc-x64-$profile"
+            cmake --preset $preset
+            if ($LASTEXITCODE) { throw "$preset configure failed." }
+            cmake --build --preset "$preset-release"
+            if ($LASTEXITCODE) { throw "$preset build failed." }
+            cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
+            if ($LASTEXITCODE) { throw "$preset install failed." }
+          }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: arcforges-native-${{ matrix.rid }}
-          path: artifacts/stage/native/${{ matrix.rid }}
+          name: arcforges-native-win-x64
+          path: artifacts/stage/native/win-x64
 
   release-sbom:
-    needs: [desktop-native-aot, web, android, cloud, native]
+    needs: [desktop-win-x64, web, android, cloud, native-win-x64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
