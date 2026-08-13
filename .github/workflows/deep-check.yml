@@ -16,7 +16,6 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
-  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
 
 jobs:
   codeql:
@@ -53,19 +52,29 @@ jobs:
         if: matrix.language == 'cpp'
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-Windows-codeql-${{ env.VCPKG_COMMIT }}
-      - name: Bootstrap pinned vcpkg
+          key: vcpkg-classic-Windows-x64-${{ hashFiles('eng/native/vcpkg/ports/**') }}
+      - name: Install Windows native dependencies
         if: matrix.language == 'cpp'
         shell: pwsh
         run: |
-          $root = Join-Path $env:RUNNER_TEMP vcpkg
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
-          git -C $root checkout --detach $env:VCPKG_COMMIT
-          & "$root/bootstrap-vcpkg.bat" -disableMetrics
-          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
-          New-Item -ItemType Directory -Force -Path $archives | Out-Null
+          $root = $env:VCPKG_INSTALLATION_ROOT
+          if ([string]::IsNullOrWhiteSpace($root)) { throw 'Runner vcpkg installation was not found.' }
+          $archives = Join-Path $env:RUNNER_TEMP 'vcpkg-archives'
+          New-Item -ItemType Directory -Force $archives | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$archives,readwrite"
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+          & "$root/vcpkg.exe" install `
+            'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,amf]:x64-windows' `
+            'libusb[core]:x64-windows' `
+            'miniaudio[core]:x64-windows' `
+            'opentimelineio[core]:x64-windows-static-md' `
+            'opencolorio[core]:x64-windows-static-md' `
+            'openimageio[core]:x64-windows-static-md' `
+            'openexr[core]:x64-windows-static-md' `
+            'imath[core]:x64-windows-static-md' `
+            'mdflib[core]:x64-windows-static-md' `
+            "--overlay-ports=${{ github.workspace }}/eng/native/vcpkg/ports"
+          if ($LASTEXITCODE) { throw 'vcpkg install failed.' }
       - name: Build C++
         if: matrix.language == 'cpp'
         shell: pwsh
@@ -90,19 +99,26 @@ jobs:
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-Linux-deep-${{ env.VCPKG_COMMIT }}
+          key: vcpkg-classic-Linux-x64-${{ hashFiles('eng/native/vcpkg/ports/**') }}
       - run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake clang-tidy libtool libdrm-dev nasm yasm
-      - name: Bootstrap pinned vcpkg
-        shell: pwsh
+      - name: Install Linux native dependencies
         run: |
-          $root = Join-Path $env:RUNNER_TEMP vcpkg
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg $root
-          git -C $root checkout --detach $env:VCPKG_COMMIT
-          & "$root/bootstrap-vcpkg.sh" -disableMetrics
-          $archives = Join-Path $env:RUNNER_TEMP vcpkg-archives
-          New-Item -ItemType Directory -Force -Path $archives | Out-Null
-          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+          root="${VCPKG_INSTALLATION_ROOT:?Runner vcpkg installation was not found.}"
+          archives="$RUNNER_TEMP/vcpkg-archives"
+          mkdir -p "$archives"
+          export VCPKG_BINARY_SOURCES="clear;files,$archives,readwrite"
+          echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"
+          "$root/vcpkg" install \
+            'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,vaapi]:x64-linux-dynamic' \
+            'libusb[core]:x64-linux-dynamic' \
+            'miniaudio[core]:x64-linux-dynamic' \
+            'opentimelineio[core]:x64-linux' \
+            'opencolorio[core]:x64-linux' \
+            'openimageio[core]:x64-linux' \
+            'openexr[core]:x64-linux' \
+            'imath[core]:x64-linux' \
+            'mdflib[core]:x64-linux' \
+            "--overlay-ports=$GITHUB_WORKSPACE/eng/native/vcpkg/ports"
       - name: Run clang-tidy, ASan, UBSan, tests, and fuzzers
         run: |
           cmake --preset linux-clang-x64-runtime-shared-asan '-DCMAKE_CXX_CLANG_TIDY=clang-tidy'

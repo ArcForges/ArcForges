@@ -15,7 +15,7 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
-#include <libusb.h>
+#include <libusb-1.0/libusb.h>
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif

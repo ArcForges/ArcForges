@@ -23,7 +23,7 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v145</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <PropertyGroup><ArcForgesNativeProfile>runtime-shared</ArcForgesNativeProfile></PropertyGroup>
+  <PropertyGroup><VcpkgUseStatic>false</VcpkgUseStatic></PropertyGroup>
   <Import Project="..\..\windows\ArcForges.Native.props" />
   <ItemDefinitionGroup>
     <ClCompile>
@@ -36,5 +36,4 @@
   <ItemGroup><ClCompile Include="..\src\arcmedia_ffmpeg_abi.cpp" /><ClCompile Include="..\..\shared\src\arc_native_abi.cpp" /></ItemGroup>
   <ItemGroup><ClInclude Include="..\include\arc\arc_media_abi.h" /><ClInclude Include="..\..\shared\include\arc\arc_native_abi.h" /><ClInclude Include="..\..\shared\src\arc_native_abi_internal.hpp" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <Import Project="..\..\windows\ArcForges.Native.targets" />
 </Project>

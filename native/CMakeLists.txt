@@ -35,16 +35,6 @@ if(ARCFORGES_NATIVE_PROFILE STREQUAL "runtime-shared")
     pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
     find_path(MINIAUDIO_INCLUDE_DIR NAMES miniaudio.h REQUIRED)
     add_subdirectory(arcmedia-ffmpeg-abi)
-    if(WIN32)
-        install(DIRECTORY "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/"
-            DESTINATION native FILES_MATCHING PATTERN "*.dll")
-    elseif(APPLE)
-        install(DIRECTORY "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib/"
-            DESTINATION native FILES_MATCHING PATTERN "*.dylib")
-    else()
-        install(DIRECTORY "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib/"
-            DESTINATION native FILES_MATCHING PATTERN "*.so" PATTERN "*.so.*")
-    endif()
 elseif(ARCFORGES_NATIVE_PROFILE STREQUAL "shim-static")
     find_package(MdfLib CONFIG REQUIRED)
     find_package(OpenTimelineIO CONFIG REQUIRED)

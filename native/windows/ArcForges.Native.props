@@ -5,21 +5,6 @@
     <ArcForgesRepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..\'))</ArcForgesRepositoryRoot>
     <ArcForgesTargetRid Condition="'$(Platform)' == 'x64'">win-x64</ArcForgesTargetRid>
     <ArcForgesTargetRid Condition="'$(Platform)' == 'ARM64'">win-arm64</ArcForgesTargetRid>
-    <ArcForgesTargetArch Condition="'$(Platform)' == 'x64'">x64</ArcForgesTargetArch>
-    <ArcForgesTargetArch Condition="'$(Platform)' == 'ARM64'">arm64</ArcForgesTargetArch>
-    <VcpkgRoot Condition="'$(VcpkgRoot)' == '' and '$(VCPKG_ROOT)' != ''">$([MSBuild]::NormalizeDirectory('$(VCPKG_ROOT)'))</VcpkgRoot>
-    <VcpkgRoot Condition="'$(VcpkgRoot)' == ''">C:\vcpkg\</VcpkgRoot>
-    <VcpkgEnabled>true</VcpkgEnabled>
-    <VcpkgEnableClassic>false</VcpkgEnableClassic>
-    <VcpkgEnableManifest>true</VcpkgEnableManifest>
-    <VcpkgManifestInstall>true</VcpkgManifestInstall>
-    <VcpkgAutoBootstrap>false</VcpkgAutoBootstrap>
-    <VcpkgManifestRoot>$(ArcForgesRepositoryRoot)eng\native\vcpkg\manifests\$(ArcForgesNativeProfile)\</VcpkgManifestRoot>
-    <VcpkgManifestInstalledBaseDir>$(ArcForgesRepositoryRoot)artifacts\obj\vcpkg\$(ArcForgesNativeProfile)\$(ArcForgesTargetRid)\</VcpkgManifestInstalledBaseDir>
-    <VcpkgTriplet Condition="'$(ArcForgesNativeProfile)' == 'runtime-shared'">arc-runtime-$(ArcForgesTargetArch)-windows</VcpkgTriplet>
-    <VcpkgTriplet Condition="'$(ArcForgesNativeProfile)' == 'shim-static'">arc-shim-$(ArcForgesTargetArch)-windows</VcpkgTriplet>
-    <VcpkgHostTriplet>x64-windows</VcpkgHostTriplet>
-    <VcpkgApplocalDeps Condition="'$(ArcForgesNativeProfile)' == 'runtime-shared'">true</VcpkgApplocalDeps>
     <OutDir>$(ArcForgesRepositoryRoot)artifacts\msbuild\native\$(ArcForgesTargetRid)\$(Configuration)\</OutDir>
     <IntDir>$(ArcForgesRepositoryRoot)artifacts\obj\msbuild\native\$(MSBuildProjectName)\$(ArcForgesTargetRid)\$(Configuration)\</IntDir>
     <TargetName>$(ProjectName)</TargetName>
@@ -27,13 +12,14 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(ArcForgesRepositoryRoot)native\shared\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalIncludeDirectories Condition="'$(ArcForgesNativeProfile)' == 'runtime-shared'">$(VcpkgManifestInstalledBaseDir)$(VcpkgTriplet)\include\libusb-1.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatAngleIncludeAsExternal>true</TreatAngleIncludeAsExternal>
       <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions Condition="'$(ArcForgesNativeProfile)' == 'runtime-shared'">ARCFORGES_RUNTIME_SHARED_GRAPH=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(ArcForgesNativeProfile)' == 'shim-static'">ARCFORGES_SHIM_STATIC_GRAPH=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(VcpkgUseStatic)' != 'true'">ARCFORGES_RUNTIME_SHARED_GRAPH=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(VcpkgUseStatic)' == 'true'">ARCFORGES_SHIM_STATIC_GRAPH=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link Condition="'$(VcpkgUseStatic)' == 'true'">
+      <AdditionalDependencies>bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
-  <Import Project="$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.props" />
 </Project>

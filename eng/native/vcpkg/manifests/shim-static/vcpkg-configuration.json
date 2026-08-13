@@ -1,4 +1,0 @@
-{
-  "overlay-ports": ["overlay-ports"],
-  "overlay-triplets": ["../../triplets/shim-static"]
-}

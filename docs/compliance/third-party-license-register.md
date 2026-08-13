@@ -1,8 +1,8 @@
 # Third-party License Register
 
-The authoritative direct versions are in `Directory.Packages.props` and the three native vcpkg manifests.
-Every restore is locked. Pull requests run dependency review and vulnerability checks; pull requests and releases
-emit the resolved transitive graph as SPDX JSON rather than maintaining a second hand-written version list.
+The authoritative managed versions are in `Directory.Packages.props`; reviewed native packages and vcpkg
+revision are in `deploy/README.md`. Managed restore is locked. Pull requests run dependency review and
+vulnerability checks, and releases emit the resolved transitive graph as SPDX JSON.
 
 | Dependency family | Version/source | SPDX/license | Compatibility/use | Owner |
 |---|---|---|---|---|
@@ -18,10 +18,10 @@ emit the resolved transitive graph as SPDX JSON rather than maintaining a second
 | OpenImageIO | 3.1.14.0#1 | Apache-2.0 | Static inside owned image shim | Step 25 |
 | minizip-ng / zlib | 4.1.0 / 1.3.2#1 | Zlib | Minimal static transitive closure | Step 10/25 |
 | libjpeg-turbo / libpng / TIFF | 3.2.0 / 1.6.58 / 4.7.2 | BSD-3-Clause / libpng-2.0 / libtiff | Minimal static image closure | Step 25 |
-| fmt / rapidjson / robin-map / yaml-cpp | locked vcpkg baseline | MIT | Static implementation dependencies | Step 10/24/25 |
-| expat | locked vcpkg baseline | MIT | Static MDF parser dependency | Step 22 |
-| vcpkg-cmake / vcpkg-cmake-config | locked vcpkg baseline | MIT | Build-time port helpers only | Step 01 |
-| Vulkan headers / AMF / oneVPL / nv-codec headers | locked vcpkg baseline | Apache-2.0 OR MIT / MIT / MIT / upstream header license | Hardware capability headers/loaders | Step 07 |
-| glslang / SPIRV-Cross | locked vcpkg baseline | BSD-3-Clause / Apache-2.0 | Build-time shader host tools only | Step 01/25 |
+| fmt / rapidjson / robin-map / yaml-cpp | reviewed vcpkg checkout | MIT | Static implementation dependencies | Step 10/24/25 |
+| expat | reviewed vcpkg checkout | MIT | Static MDF parser dependency | Step 22 |
+| vcpkg-cmake / vcpkg-cmake-config | reviewed vcpkg checkout | MIT | Build-time port helpers only | Step 01 |
+| Vulkan headers / AMF / oneVPL / nv-codec headers | reviewed vcpkg checkout | Apache-2.0 OR MIT / MIT / MIT / upstream header license | Hardware capability headers/loaders | Step 07 |
+| glslang / SPIRV-Cross | reviewed vcpkg checkout | BSD-3-Clause / Apache-2.0 | Build-time shader host tools only | Step 01/25 |
 | Microsoft.Playwright | 1.61.0 | Apache-2.0 | Browser smoke tests only | Foundation closure |
 | coverlet.collector | 10.0.1 | MIT | Coverage collection only | Foundation closure |
