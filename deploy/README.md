@@ -48,3 +48,7 @@ integration. CMake remains independent of the Visual Studio integration and read
 `$env:VCPKG_ROOT` through `CMakePresets.json`. Other operating systems install the same two dependency groups
 under the standard triplets named by their presets. The optional macOS shader-tool preset additionally requires
 `glslang[tools]` and `spirv-cross` for its host triplet.
+
+`win.slnx` builds the owned ABI projects before the managed native ABI test and deploys their complete DLL runtime
+app-local for both Debug and Release. The generated test executable therefore runs directly from its output
+directory without native-runtime path or build-mode environment variables.

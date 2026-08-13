@@ -10,5 +10,24 @@
       TargetFramework="net10.0"
       WebAssemblySdkPackVersion="10.0.11" />
   </ItemGroup>
+  <PropertyGroup Condition="'$(ArcForgesDeployWindowsNativeRuntime)' == 'true'">
+    <ArcForgesWindowsNativeRuntimeDirectory>$(MSBuildThisFileDirectory)artifacts\msbuild\native\win-x64\$(Configuration)\</ArcForgesWindowsNativeRuntimeDirectory>
+  </PropertyGroup>
+  <Target
+    Name="CollectArcForgesWindowsNativeRuntime"
+    BeforeTargets="AssignTargetPaths"
+    Condition="'$(ArcForgesDeployWindowsNativeRuntime)' == 'true' and $([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <_ArcForgesWindowsNativeRuntime Include="$(ArcForgesWindowsNativeRuntimeDirectory)*.dll" />
+      <Content Include="@(_ArcForgesWindowsNativeRuntime)">
+        <Link>%(Filename)%(Extension)</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </Content>
+    </ItemGroup>
+    <Error
+      Condition="'@(_ArcForgesWindowsNativeRuntime)' == ''"
+      Text="ArcForges native runtime was not built at '$(ArcForgesWindowsNativeRuntimeDirectory)'. Build the Windows solution so its native project dependencies run first." />
+  </Target>
   <Import Project="eng\build\NoInlineVersions.targets" />
 </Project>

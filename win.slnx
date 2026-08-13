@@ -214,7 +214,13 @@
     <Project Path="tests/MobileContractTests/ArcForges.Tests.MobileContractTests.csproj" />
   </Folder>
   <Folder Name="/tests/NativeAbiTests/">
-    <Project Path="tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj" />
+    <Project Path="tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj">
+      <BuildDependency Project="native/arcmedia-ffmpeg-abi/windows/arcmedia_ffmpeg_abi.vcxproj" />
+      <BuildDependency Project="native/arcscope-mdf-abi/windows/arcscope_mdf_abi.vcxproj" />
+      <BuildDependency Project="native/arcslate-otio-abi/windows/arcslate_otio_abi.vcxproj" />
+      <BuildDependency Project="native/arcslate-color-abi/windows/arcslate_color_abi.vcxproj" />
+      <BuildDependency Project="native/arcslate-image-abi/windows/arcslate_image_abi.vcxproj" />
+    </Project>
   </Folder>
   <Folder Name="/tests/NativeContentTests/">
     <Project Path="tests/NativeContentTests/ArcForges.Tests.NativeContentTests.csproj" />
