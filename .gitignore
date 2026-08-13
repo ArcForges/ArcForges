@@ -1,7 +1,20 @@
+# Git worktrees and IDE-local state
 .worktree/
+.worktrees/
 .vs/
 .idea/
 .vscode/
+.fleet/
+_ReSharper*/
+*.DotSettings.user
+*.rsuser
+*.userosscache
+*.sln.docstates
+*.user
+*.suo
+/tests/**/Properties/launchSettings.json
+
+# Restored dependencies, build outputs, and compiler caches
 .packages/
 **/bin/
 **/obj/
@@ -10,12 +23,41 @@ artifacts/
 /out/
 x64/
 ARM64/
+.compiler-cache/
+.cache/
+.ccache/
+.sccache/
+
+# CMake-local state
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake-build-*/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+Testing/
+compile_commands.json
+
+# Local test and coverage results
 TestResults/
-*.user
-*.suo
+*.trx
+*.coverage
+*.coveragexml
+coverage.cobertura.xml
+coverage.opencover.xml
+lcov.info
+
+# Local secrets and environment overrides
+**/.env
+**/.env.local
+**/.env.*.local
+**/secrets.json
+**/appsettings.*.local.json
+
+# Tool and operating-system junk
 *.cache
 *.log
 *.binlog
-compile_commands.json
-CMakeUserPresets.json
 .DS_Store
+Thumbs.db
