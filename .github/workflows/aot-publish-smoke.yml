@@ -119,3 +119,20 @@ jobs:
             dotnet publish $project -c Release -r $rid --self-contained true --no-restore -o $output
             if ($LASTEXITCODE) { throw "[$rid,$product,publish] failed." }
           }
+
+  runtime-publish-gate:
+    if: always()
+    needs: [desktop-native-aot, cloud-jit, win-arm64-compile]
+    runs-on: ubuntu-latest
+    env:
+      GATE_NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require every runtime publish job
+        shell: pwsh
+        run: |
+          $jobs = $env:GATE_NEEDS | ConvertFrom-Json
+          $failed = @($jobs.PSObject.Properties | Where-Object { $_.Value.result -ne 'success' })
+          if ($failed.Count) {
+            $failed | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Value.result } | Write-Host
+            throw 'One or more runtime publish jobs did not succeed.'
+          }

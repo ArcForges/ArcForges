@@ -81,3 +81,20 @@ jobs:
           VALIDATE_CLANG_FORMAT: true
           VALIDATE_GITHUB_ACTIONS: true
           VALIDATE_GIT_MERGE_CONFLICT_MARKERS: true
+
+  code-quality-gate:
+    if: always()
+    needs: [managed-analyzers, native-clang-tidy, repository-linters]
+    runs-on: ubuntu-latest
+    env:
+      GATE_NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require every open-source quality job
+        shell: pwsh
+        run: |
+          $jobs = $env:GATE_NEEDS | ConvertFrom-Json
+          $failed = @($jobs.PSObject.Properties | Where-Object { $_.Value.result -ne 'success' })
+          if ($failed.Count) {
+            $failed | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Value.result } | Write-Host
+            throw 'One or more code-quality jobs did not succeed.'
+          }

@@ -408,3 +408,33 @@ jobs:
         with:
           name: arcforges-sbom
           path: artifacts/arcforges.spdx.json
+
+  foundation-gate:
+    if: always()
+    needs:
+      - locked-restore
+      - build-windows
+      - build-linux
+      - managed-tests
+      - architecture-tests
+      - coverage
+      - native-cmake
+      - native-msbuild
+      - sanitizer
+      - web-browser
+      - android-device
+      - policy
+      - supply-chain
+    runs-on: ubuntu-latest
+    env:
+      GATE_NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require every foundation job
+        shell: pwsh
+        run: |
+          $jobs = $env:GATE_NEEDS | ConvertFrom-Json
+          $failed = @($jobs.PSObject.Properties | Where-Object { $_.Value.result -ne 'success' })
+          if ($failed.Count) {
+            $failed | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Value.result } | Write-Host
+            throw 'One or more foundation jobs did not succeed.'
+          }

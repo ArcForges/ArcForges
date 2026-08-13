@@ -199,6 +199,9 @@ public sealed class RepositoryPolicyTests
         Xunit.Assert.Contains(workflows, text => text.Contains("anchore/sbom-action@", StringComparison.Ordinal));
         Xunit.Assert.Contains(workflows, text => text.Contains("actions/dependency-review-action@", StringComparison.Ordinal));
         Xunit.Assert.Contains(workflows, text => text.Contains("package --vulnerable --include-transitive", StringComparison.Ordinal));
+        Xunit.Assert.Contains(workflows, text => text.Contains("foundation-gate:", StringComparison.Ordinal));
+        Xunit.Assert.Contains(workflows, text => text.Contains("code-quality-gate:", StringComparison.Ordinal));
+        Xunit.Assert.Contains(workflows, text => text.Contains("runtime-publish-gate:", StringComparison.Ordinal));
 
         var helperScripts = EnumerateRepositoryFiles("*")
             .Where(path => Path.GetExtension(path) is ".ps1" or ".sh")
