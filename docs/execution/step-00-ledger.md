@@ -15,8 +15,8 @@
 | Substep | Deliverable(s) | Status | Commit |
 |---|---|---|---|
 | 00.00 | `docs/scope/product-family.md`, `docs/tools/check-scope.ps1` | done | 3bf1579 |
-| 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | done | this commit |
-| 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | not started | — |
+| 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | done | 8821c05 |
+| 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | done | this commit |
 | 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | not started | — |
 | 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | not started | — |
 | 00.05 | `docs/scope/verification-oracles.md` | not started | — |
@@ -79,4 +79,27 @@
 - Next action: substep 00.02 — produce `docs/scope/source-subsystems.md` (subsystem-level functional inventory
   with the unified row mode) and merge/verify against `feature-inventory-and-mapping.md`, incl. completeness
   scripts.
+- Branch tip: 8821c05.
+
+### Substep 00.02 — source subsystem feature inventory (this commit)
+
+- `docs/scope/source-subsystems.md`: subsystem-level feature inventory across all six sources with the
+  unified row mode (FeatureId|SourceRepo@Baseline|SourcePath|Behavior|DecisionClass|TargetProduct|
+  TargetProject|TargetDefinition|OwningStep|OracleClass|LicenseEvidence|AttributionRequired|Notes),
+  grouped per source (AionUi desktop `AF-F-AIONUI-*` + mobile `-M-*`, AFFiNE blocksuite + backend ReferenceOnly,
+  siyuan ReferenceOnly/独立实现, Serial-Studio CORE/PRO/LIB with Pro→Replace+O4, ArcVideo, ArcVideoFoundation),
+  plus the Yjs/CRDT Drop row and merge-consistency § with feature-inventory.
+  82 subsystem rows; FeatureId families all present; ranges/placeholders pointer style documented (per-feature
+  unique IDs live in `feature-inventory-and-mapping.md` — the 833-row denominator).
+- `docs/tools/check-inventory.ps1`: 34 assertions PASS on the merged coverage (82 rows; Decision/Oracle/
+  OwningStep non-empty, no TBD; ten source families present; SS-PRO all Replace+O4; AFFINE-BE all ReferenceOnly;
+  ipcBridge 35 groups + 299-member extraction + 289 unique desktop rows + renderer/pages dirs; blocksuite/siyuan/
+  Serial-Studio lib/ArcVideo modules closure; per-source SourcePath sample present). Reverse evidence verified:
+  deleting the `shell` group from the deliverable fails "Every ipcBridge export-member group … missing shell".
+- Validation: `pwsh -NoProfile -File docs/tools/check-inventory.ps1 …` → exit 0, PASS.
+- Risk: per-feature rows are aggregated at subsystem level in this file (groups/ranges); the authoritative
+  per-feature uniqueness is the plan's `feature-inventory-and-mapping.md` denominator (read-only), and the
+  merge is asserted consistent by the script (families + ranges present, no genuine orphan path).
+- Next action: substep 00.03 — `docs/scope/license-summary.md` evidence paths (`Test-Path`), trademark
+  blacklist, AGPL obligations→owning-step table, DecisionClass↔Manifest map.
 - Branch tip: this commit.
