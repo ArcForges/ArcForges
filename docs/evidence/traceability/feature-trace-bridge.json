@@ -1,0 +1,5883 @@
+{
+  "schemaVersion": 1,
+  "generatedUtc": "2026-08-14T00:00:00Z",
+  "initialState": "BridgeGenerationRequired",
+  "globalFeatureIds": [
+    "AF-F-AIONUI-0001",
+    "AF-F-AIONUI-0002",
+    "AF-F-AIONUI-0003",
+    "AF-F-AIONUI-0004",
+    "AF-F-AIONUI-0005",
+    "AF-F-AIONUI-0006",
+    "AF-F-AIONUI-0007",
+    "AF-F-AIONUI-0008",
+    "AF-F-AIONUI-0009",
+    "AF-F-AIONUI-0010",
+    "AF-F-AIONUI-0011",
+    "AF-F-AIONUI-0012",
+    "AF-F-AIONUI-0013",
+    "AF-F-AIONUI-0014",
+    "AF-F-AIONUI-0015",
+    "AF-F-AIONUI-0016",
+    "AF-F-AIONUI-0017",
+    "AF-F-AIONUI-0018",
+    "AF-F-AIONUI-0019",
+    "AF-F-AIONUI-0020",
+    "AF-F-AIONUI-0021",
+    "AF-F-AIONUI-0022",
+    "AF-F-AIONUI-0023",
+    "AF-F-AIONUI-0024",
+    "AF-F-AIONUI-0025",
+    "AF-F-AIONUI-0026",
+    "AF-F-AIONUI-0027",
+    "AF-F-AIONUI-0028",
+    "AF-F-AIONUI-0029",
+    "AF-F-AIONUI-0030",
+    "AF-F-AIONUI-0031",
+    "AF-F-AIONUI-0032",
+    "AF-F-AIONUI-0033",
+    "AF-F-AIONUI-0034",
+    "AF-F-AIONUI-0035",
+    "AF-F-AIONUI-0036",
+    "AF-F-AIONUI-0037",
+    "AF-F-AIONUI-0038",
+    "AF-F-AIONUI-0039",
+    "AF-F-AIONUI-0040",
+    "AF-F-AIONUI-0041",
+    "AF-F-AIONUI-0042",
+    "AF-F-AIONUI-0043",
+    "AF-F-AIONUI-0044",
+    "AF-F-AIONUI-0045",
+    "AF-F-AIONUI-0046",
+    "AF-F-AIONUI-0047",
+    "AF-F-AIONUI-0048",
+    "AF-F-AIONUI-0049",
+    "AF-F-AIONUI-0050",
+    "AF-F-AIONUI-0051",
+    "AF-F-AIONUI-0052",
+    "AF-F-AIONUI-0053",
+    "AF-F-AIONUI-0054",
+    "AF-F-AIONUI-0055",
+    "AF-F-AIONUI-0056",
+    "AF-F-AIONUI-0057",
+    "AF-F-AIONUI-0058",
+    "AF-F-AIONUI-0059",
+    "AF-F-AIONUI-0060",
+    "AF-F-AIONUI-0061",
+    "AF-F-AIONUI-0062",
+    "AF-F-AIONUI-0063",
+    "AF-F-AIONUI-0064",
+    "AF-F-AIONUI-0065",
+    "AF-F-AIONUI-0066",
+    "AF-F-AIONUI-0067",
+    "AF-F-AIONUI-0068",
+    "AF-F-AIONUI-0069",
+    "AF-F-AIONUI-0070",
+    "AF-F-AIONUI-0071",
+    "AF-F-AIONUI-0072",
+    "AF-F-AIONUI-0073",
+    "AF-F-AIONUI-0074",
+    "AF-F-AIONUI-0075",
+    "AF-F-AIONUI-0076",
+    "AF-F-AIONUI-0077",
+    "AF-F-AIONUI-0078",
+    "AF-F-AIONUI-0079",
+    "AF-F-AIONUI-0080",
+    "AF-F-AIONUI-0081",
+    "AF-F-AIONUI-0082",
+    "AF-F-AIONUI-0083",
+    "AF-F-AIONUI-0084",
+    "AF-F-AIONUI-0085",
+    "AF-F-AIONUI-0086",
+    "AF-F-AIONUI-0087",
+    "AF-F-AIONUI-0088",
+    "AF-F-AIONUI-0089",
+    "AF-F-AIONUI-0090",
+    "AF-F-AIONUI-0091",
+    "AF-F-AIONUI-0092",
+    "AF-F-AIONUI-0093",
+    "AF-F-AIONUI-0094",
+    "AF-F-AIONUI-0095",
+    "AF-F-AIONUI-0096",
+    "AF-F-AIONUI-0097",
+    "AF-F-AIONUI-0098",
+    "AF-F-AIONUI-0099",
+    "AF-F-AIONUI-0100",
+    "AF-F-AIONUI-0101",
+    "AF-F-AIONUI-0102",
+    "AF-F-AIONUI-0103",
+    "AF-F-AIONUI-0104",
+    "AF-F-AIONUI-0105",
+    "AF-F-AIONUI-0106",
+    "AF-F-AIONUI-0107",
+    "AF-F-AIONUI-0108",
+    "AF-F-AIONUI-0109",
+    "AF-F-AIONUI-0110",
+    "AF-F-AIONUI-0111",
+    "AF-F-AIONUI-0112",
+    "AF-F-AIONUI-0113",
+    "AF-F-AIONUI-0114",
+    "AF-F-AIONUI-0115",
+    "AF-F-AIONUI-0116",
+    "AF-F-AIONUI-0117",
+    "AF-F-AIONUI-0118",
+    "AF-F-AIONUI-0119",
+    "AF-F-AIONUI-0120",
+    "AF-F-AIONUI-0121",
+    "AF-F-AIONUI-0122",
+    "AF-F-AIONUI-0123",
+    "AF-F-AIONUI-0124",
+    "AF-F-AIONUI-0125",
+    "AF-F-AIONUI-0126",
+    "AF-F-AIONUI-0127",
+    "AF-F-AIONUI-0128",
+    "AF-F-AIONUI-0129",
+    "AF-F-AIONUI-0130",
+    "AF-F-AIONUI-0131",
+    "AF-F-AIONUI-0132",
+    "AF-F-AIONUI-0133",
+    "AF-F-AIONUI-0134",
+    "AF-F-AIONUI-0135",
+    "AF-F-AIONUI-0136",
+    "AF-F-AIONUI-0137",
+    "AF-F-AIONUI-0138",
+    "AF-F-AIONUI-0139",
+    "AF-F-AIONUI-0140",
+    "AF-F-AIONUI-0141",
+    "AF-F-AIONUI-0142",
+    "AF-F-AIONUI-0143",
+    "AF-F-AIONUI-0144",
+    "AF-F-AIONUI-0145",
+    "AF-F-AIONUI-0146",
+    "AF-F-AIONUI-0147",
+    "AF-F-AIONUI-0148",
+    "AF-F-AIONUI-0149",
+    "AF-F-AIONUI-0150",
+    "AF-F-AIONUI-0151",
+    "AF-F-AIONUI-0152",
+    "AF-F-AIONUI-0153",
+    "AF-F-AIONUI-0154",
+    "AF-F-AIONUI-0155",
+    "AF-F-AIONUI-0156",
+    "AF-F-AIONUI-0157",
+    "AF-F-AIONUI-0158",
+    "AF-F-AIONUI-0159",
+    "AF-F-AIONUI-0160",
+    "AF-F-AIONUI-0161",
+    "AF-F-AIONUI-0162",
+    "AF-F-AIONUI-0163",
+    "AF-F-AIONUI-0164",
+    "AF-F-AIONUI-0165",
+    "AF-F-AIONUI-0166",
+    "AF-F-AIONUI-0167",
+    "AF-F-AIONUI-0168",
+    "AF-F-AIONUI-0169",
+    "AF-F-AIONUI-0170",
+    "AF-F-AIONUI-0171",
+    "AF-F-AIONUI-0172",
+    "AF-F-AIONUI-0173",
+    "AF-F-AIONUI-0174",
+    "AF-F-AIONUI-0175",
+    "AF-F-AIONUI-0176",
+    "AF-F-AIONUI-0177",
+    "AF-F-AIONUI-0178",
+    "AF-F-AIONUI-0179",
+    "AF-F-AIONUI-0180",
+    "AF-F-AIONUI-0181",
+    "AF-F-AIONUI-0182",
+    "AF-F-AIONUI-0183",
+    "AF-F-AIONUI-0184",
+    "AF-F-AIONUI-0185",
+    "AF-F-AIONUI-0186",
+    "AF-F-AIONUI-0187",
+    "AF-F-AIONUI-0188",
+    "AF-F-AIONUI-0189",
+    "AF-F-AIONUI-0190",
+    "AF-F-AIONUI-0191",
+    "AF-F-AIONUI-0192",
+    "AF-F-AIONUI-0193",
+    "AF-F-AIONUI-0194",
+    "AF-F-AIONUI-0195",
+    "AF-F-AIONUI-0196",
+    "AF-F-AIONUI-0197",
+    "AF-F-AIONUI-0198",
+    "AF-F-AIONUI-0199",
+    "AF-F-AIONUI-0200",
+    "AF-F-AIONUI-0201",
+    "AF-F-AIONUI-0202",
+    "AF-F-AIONUI-0203",
+    "AF-F-AIONUI-0204",
+    "AF-F-AIONUI-0205",
+    "AF-F-AIONUI-0206",
+    "AF-F-AIONUI-0207",
+    "AF-F-AIONUI-0208",
+    "AF-F-AIONUI-0209",
+    "AF-F-AIONUI-0210",
+    "AF-F-AIONUI-0211",
+    "AF-F-AIONUI-0212",
+    "AF-F-AIONUI-0213",
+    "AF-F-AIONUI-0214",
+    "AF-F-AIONUI-0215",
+    "AF-F-AIONUI-0216",
+    "AF-F-AIONUI-0217",
+    "AF-F-AIONUI-0218",
+    "AF-F-AIONUI-0219",
+    "AF-F-AIONUI-0220",
+    "AF-F-AIONUI-0221",
+    "AF-F-AIONUI-0222",
+    "AF-F-AIONUI-0223",
+    "AF-F-AIONUI-0224",
+    "AF-F-AIONUI-0225",
+    "AF-F-AIONUI-0226",
+    "AF-F-AIONUI-0227",
+    "AF-F-AIONUI-0228",
+    "AF-F-AIONUI-0229",
+    "AF-F-AIONUI-0230",
+    "AF-F-AIONUI-0231",
+    "AF-F-AIONUI-0232",
+    "AF-F-AIONUI-0233",
+    "AF-F-AIONUI-0234",
+    "AF-F-AIONUI-0235",
+    "AF-F-AIONUI-0236",
+    "AF-F-AIONUI-0237",
+    "AF-F-AIONUI-0238",
+    "AF-F-AIONUI-0239",
+    "AF-F-AIONUI-0240",
+    "AF-F-AIONUI-0241",
+    "AF-F-AIONUI-0242",
+    "AF-F-AIONUI-0243",
+    "AF-F-AIONUI-0244",
+    "AF-F-AIONUI-0245",
+    "AF-F-AIONUI-0246",
+    "AF-F-AIONUI-0247",
+    "AF-F-AIONUI-0248",
+    "AF-F-AIONUI-0249",
+    "AF-F-AIONUI-0250",
+    "AF-F-AIONUI-0251",
+    "AF-F-AIONUI-0252",
+    "AF-F-AIONUI-0253",
+    "AF-F-AIONUI-0254",
+    "AF-F-AIONUI-0255",
+    "AF-F-AIONUI-0256",
+    "AF-F-AIONUI-0257",
+    "AF-F-AIONUI-0258",
+    "AF-F-AIONUI-0259",
+    "AF-F-AIONUI-0260",
+    "AF-F-AIONUI-0261",
+    "AF-F-AIONUI-0262",
+    "AF-F-AIONUI-0283",
+    "AF-F-AIONUI-0284",
+    "AF-F-AIONUI-0285",
+    "AF-F-AIONUI-0286",
+    "AF-F-AIONUI-0287",
+    "AF-F-AIONUI-0288",
+    "AF-F-AIONUI-0289",
+    "AF-F-AIONUI-M-0001",
+    "AF-F-AIONUI-M-0002",
+    "AF-F-AIONUI-M-0003",
+    "AF-F-AIONUI-M-0004",
+    "AF-F-AIONUI-M-0005",
+    "AF-F-AIONUI-M-0006",
+    "AF-F-AIONUI-M-0007",
+    "AF-F-AIONUI-M-0008",
+    "AF-F-AIONUI-M-0009",
+    "AF-F-AIONUI-M-0010",
+    "AF-F-AIONUI-M-0011",
+    "AF-F-AIONUI-M-0012",
+    "AF-F-AIONUI-M-0013",
+    "AF-F-AIONUI-M-0014",
+    "AF-F-AIONUI-M-0015",
+    "AF-F-AIONUI-M-0016",
+    "AF-F-AIONUI-M-0017",
+    "AF-F-AIONUI-M-0018",
+    "AF-F-AIONUI-M-0019",
+    "AF-F-AIONUI-M-0020",
+    "AF-F-BLOCKSUITE-0001",
+    "AF-F-BLOCKSUITE-0002",
+    "AF-F-BLOCKSUITE-0003",
+    "AF-F-BLOCKSUITE-0004",
+    "AF-F-BLOCKSUITE-0005",
+    "AF-F-BLOCKSUITE-0006",
+    "AF-F-BLOCKSUITE-0007",
+    "AF-F-BLOCKSUITE-0008",
+    "AF-F-BLOCKSUITE-0009",
+    "AF-F-BLOCKSUITE-0010",
+    "AF-F-BLOCKSUITE-0011",
+    "AF-F-BLOCKSUITE-0012",
+    "AF-F-BLOCKSUITE-0013",
+    "AF-F-BLOCKSUITE-0014",
+    "AF-F-BLOCKSUITE-0015",
+    "AF-F-BLOCKSUITE-0016",
+    "AF-F-BLOCKSUITE-0017",
+    "AF-F-BLOCKSUITE-0018",
+    "AF-F-BLOCKSUITE-0019",
+    "AF-F-BLOCKSUITE-0020",
+    "AF-F-BLOCKSUITE-0021",
+    "AF-F-BLOCKSUITE-0022",
+    "AF-F-BLOCKSUITE-0023",
+    "AF-F-BLOCKSUITE-0024",
+    "AF-F-BLOCKSUITE-0025",
+    "AF-F-BLOCKSUITE-0026",
+    "AF-F-BLOCKSUITE-0027",
+    "AF-F-BLOCKSUITE-0028",
+    "AF-F-BLOCKSUITE-0029",
+    "AF-F-BLOCKSUITE-0030",
+    "AF-F-BLOCKSUITE-0031",
+    "AF-F-BLOCKSUITE-0032",
+    "AF-F-BLOCKSUITE-0033",
+    "AF-F-BLOCKSUITE-0034",
+    "AF-F-BLOCKSUITE-0035",
+    "AF-F-BLOCKSUITE-0036",
+    "AF-F-BLOCKSUITE-0037",
+    "AF-F-BLOCKSUITE-0038",
+    "AF-F-BLOCKSUITE-0039",
+    "AF-F-BLOCKSUITE-0040",
+    "AF-F-BLOCKSUITE-0041",
+    "AF-F-BLOCKSUITE-0042",
+    "AF-F-BLOCKSUITE-0043",
+    "AF-F-BLOCKSUITE-0044",
+    "AF-F-BLOCKSUITE-0045",
+    "AF-F-BLOCKSUITE-0046",
+    "AF-F-BLOCKSUITE-0047",
+    "AF-F-BLOCKSUITE-0048",
+    "AF-F-BLOCKSUITE-0049",
+    "AF-F-BLOCKSUITE-0050",
+    "AF-F-BLOCKSUITE-0051",
+    "AF-F-BLOCKSUITE-0052",
+    "AF-F-BLOCKSUITE-0053",
+    "AF-F-BLOCKSUITE-0054",
+    "AF-F-BLOCKSUITE-0055",
+    "AF-F-BLOCKSUITE-0056",
+    "AF-F-BLOCKSUITE-0057",
+    "AF-F-BLOCKSUITE-0058",
+    "AF-F-BLOCKSUITE-0059",
+    "AF-F-BLOCKSUITE-0060",
+    "AF-F-BLOCKSUITE-0061",
+    "AF-F-BLOCKSUITE-0062",
+    "AF-F-BLOCKSUITE-0063",
+    "AF-F-BLOCKSUITE-0064",
+    "AF-F-BLOCKSUITE-0065",
+    "AF-F-BLOCKSUITE-0066",
+    "AF-F-BLOCKSUITE-0067",
+    "AF-F-BLOCKSUITE-0068",
+    "AF-F-BLOCKSUITE-0069",
+    "AF-F-BLOCKSUITE-0070",
+    "AF-F-BLOCKSUITE-0071",
+    "AF-F-BLOCKSUITE-0072",
+    "AF-F-SIYUAN-0001",
+    "AF-F-SIYUAN-0002",
+    "AF-F-SIYUAN-0003",
+    "AF-F-BLOCKSUITE-0073",
+    "AF-F-SIYUAN-0004",
+    "AF-F-SIYUAN-0005",
+    "AF-F-SIYUAN-0006",
+    "AF-F-SIYUAN-0007",
+    "AF-F-SIYUAN-0008",
+    "AF-F-SIYUAN-0009",
+    "AF-F-BLOCKSUITE-0074",
+    "AF-F-BLOCKSUITE-0075",
+    "AF-F-SIYUAN-0010",
+    "AF-F-SIYUAN-0011",
+    "AF-F-SIYUAN-0012",
+    "AF-F-SIYUAN-0013",
+    "AF-F-SIYUAN-0014",
+    "AF-F-BLOCKSUITE-0076",
+    "AF-F-SIYUAN-0015",
+    "AF-F-BLOCKSUITE-0077",
+    "AF-F-SIYUAN-0016",
+    "AF-F-SIYUAN-0017",
+    "AF-F-SIYUAN-0018",
+    "AF-F-SIYUAN-0019",
+    "AF-F-SIYUAN-0020",
+    "AF-F-SIYUAN-0021",
+    "AF-F-SIYUAN-0022",
+    "AF-F-SIYUAN-0023",
+    "AF-F-SIYUAN-0024",
+    "AF-F-BLOCKSUITE-0078",
+    "AF-F-BLOCKSUITE-0079",
+    "AF-F-BLOCKSUITE-0080",
+    "AF-F-BLOCKSUITE-0081",
+    "AF-F-BLOCKSUITE-0082",
+    "AF-F-SIYUAN-0025",
+    "AF-F-SIYUAN-0026",
+    "AF-F-SIYUAN-0027",
+    "AF-F-SIYUAN-0028",
+    "AF-F-SIYUAN-0029",
+    "AF-F-SIYUAN-0030",
+    "AF-F-SIYUAN-0031",
+    "AF-F-SIYUAN-0032",
+    "AF-F-SIYUAN-0033",
+    "AF-F-SIYUAN-0034",
+    "AF-F-SIYUAN-0035",
+    "AF-F-SIYUAN-0036",
+    "AF-F-SIYUAN-0037",
+    "AF-F-SIYUAN-0038",
+    "AF-F-SIYUAN-0039",
+    "AF-F-SIYUAN-0040",
+    "AF-F-SIYUAN-0041",
+    "AF-F-SIYUAN-0042",
+    "AF-F-SIYUAN-0043",
+    "AF-F-SIYUAN-0044",
+    "AF-F-SIYUAN-0045",
+    "AF-F-SIYUAN-0046",
+    "AF-F-SIYUAN-0047",
+    "AF-F-SIYUAN-0048",
+    "AF-F-SIYUAN-0049",
+    "AF-F-SIYUAN-0050",
+    "AF-F-SIYUAN-0051",
+    "AF-F-SIYUAN-0052",
+    "AF-F-SIYUAN-0053",
+    "AF-F-SIYUAN-0054",
+    "AF-F-SIYUAN-0055",
+    "AF-F-SIYUAN-0056",
+    "AF-F-SIYUAN-0057",
+    "AF-F-SIYUAN-0058",
+    "AF-F-SIYUAN-0059",
+    "AF-F-SIYUAN-0060",
+    "AF-F-SIYUAN-0061",
+    "AF-F-SIYUAN-0062",
+    "AF-F-SIYUAN-0063",
+    "AF-F-SIYUAN-0064",
+    "AF-F-SIYUAN-0065",
+    "AF-F-SIYUAN-0066",
+    "AF-F-SIYUAN-0067",
+    "AF-F-SIYUAN-0068",
+    "AF-F-SIYUAN-0069",
+    "AF-F-SIYUAN-0070",
+    "AF-F-SIYUAN-0071",
+    "AF-F-SIYUAN-0072",
+    "AF-F-SIYUAN-0073",
+    "AF-F-SIYUAN-0074",
+    "AF-F-SIYUAN-0075",
+    "AF-F-SS-CORE-0001",
+    "AF-F-SS-CORE-0002",
+    "AF-F-SS-CORE-0003",
+    "AF-F-SS-CORE-0004",
+    "AF-F-SS-PRO-0001",
+    "AF-F-SS-PRO-0002",
+    "AF-F-SS-PRO-0003",
+    "AF-F-SS-PRO-0004",
+    "AF-F-SS-PRO-0005",
+    "AF-F-SS-PRO-0006",
+    "AF-F-SS-PRO-0007",
+    "AF-F-SS-CORE-0005",
+    "AF-F-SS-CORE-0006",
+    "AF-F-SS-CORE-0007",
+    "AF-F-SS-CORE-0008",
+    "AF-F-SS-CORE-0009",
+    "AF-F-SS-CORE-0010",
+    "AF-F-SS-CORE-0011",
+    "AF-F-SS-CORE-0012",
+    "AF-F-SS-CORE-0013",
+    "AF-F-SS-LIB-0001",
+    "AF-F-SS-LIB-0002",
+    "AF-F-SS-CORE-0014",
+    "AF-F-SS-LIB-0003",
+    "AF-F-SS-CORE-0015",
+    "AF-F-SS-CORE-0016",
+    "AF-F-SS-CORE-0017",
+    "AF-F-SS-CORE-0018",
+    "AF-F-SS-CORE-0019",
+    "AF-F-SS-CORE-0020",
+    "AF-F-SS-CORE-0021",
+    "AF-F-SS-CORE-0022",
+    "AF-F-SS-CORE-0023",
+    "AF-F-SS-PRO-0008",
+    "AF-F-SS-CORE-0024",
+    "AF-F-SS-CORE-0025",
+    "AF-F-SS-CORE-0026",
+    "AF-F-SS-CORE-0027",
+    "AF-F-SS-CORE-0028",
+    "AF-F-SS-CORE-0029",
+    "AF-F-SS-CORE-0030",
+    "AF-F-SS-CORE-0031",
+    "AF-F-SS-CORE-0032",
+    "AF-F-SS-CORE-0033",
+    "AF-F-SS-CORE-0034",
+    "AF-F-SS-CORE-0035",
+    "AF-F-SS-CORE-0036",
+    "AF-F-SS-CORE-0037",
+    "AF-F-SS-CORE-0038",
+    "AF-F-SS-CORE-0039",
+    "AF-F-SS-PRO-0009",
+    "AF-F-SS-PRO-0010",
+    "AF-F-SS-PRO-0011",
+    "AF-F-SS-PRO-0012",
+    "AF-F-SS-PRO-0013",
+    "AF-F-SS-PRO-0014",
+    "AF-F-SS-PRO-0015",
+    "AF-F-SS-PRO-0016",
+    "AF-F-SS-PRO-0017",
+    "AF-F-SS-CORE-0040",
+    "AF-F-SS-CORE-0041",
+    "AF-F-SS-PRO-0018",
+    "AF-F-SS-PRO-0019",
+    "AF-F-SS-CORE-0042",
+    "AF-F-SS-CORE-0043",
+    "AF-F-SS-CORE-0044",
+    "AF-F-SS-CORE-0045",
+    "AF-F-SS-CORE-0046",
+    "AF-F-SS-CORE-0047",
+    "AF-F-SS-CORE-0048",
+    "AF-F-SS-CORE-0049",
+    "AF-F-SS-CORE-0050",
+    "AF-F-SS-CORE-0051",
+    "AF-F-SS-PRO-0020",
+    "AF-F-SS-PRO-0021",
+    "AF-F-SS-CORE-0052",
+    "AF-F-SS-CORE-0053",
+    "AF-F-SS-CORE-0054",
+    "AF-F-SS-CORE-0055",
+    "AF-F-SS-LIB-0004",
+    "AF-F-SS-LIB-0005",
+    "AF-F-SS-LIB-0006",
+    "AF-F-SS-LIB-0007",
+    "AF-F-SS-LIB-0008",
+    "AF-F-SS-LIB-0009",
+    "AF-F-SS-LIB-0010",
+    "AF-F-SS-LIB-0011",
+    "AF-F-SS-LIB-0012",
+    "AF-F-SS-LIB-0013",
+    "AF-F-SS-LIB-0014",
+    "AF-F-SS-CORE-0056",
+    "AF-F-SS-CORE-0057",
+    "AF-F-SS-CORE-0058",
+    "AF-F-SS-PRO-0022",
+    "AF-F-SS-CORE-0059",
+    "AF-F-SS-CORE-0060",
+    "AF-F-SS-CORE-0061",
+    "AF-F-ARCVF-0001",
+    "AF-F-ARCVF-0002",
+    "AF-F-ARCVF-0003",
+    "AF-F-ARCVF-0004",
+    "AF-F-ARCVF-0005",
+    "AF-F-ARCVF-0006",
+    "AF-F-ARCVF-0007",
+    "AF-F-ARCVF-0008",
+    "AF-F-ARCVF-0009",
+    "AF-F-ARCV-0001",
+    "AF-F-ARCV-0002",
+    "AF-F-ARCV-0003",
+    "AF-F-ARCV-0004",
+    "AF-F-ARCV-0005",
+    "AF-F-ARCV-0006",
+    "AF-F-ARCV-0007",
+    "AF-F-ARCV-0008",
+    "AF-F-ARCV-0009",
+    "AF-F-ARCV-0010",
+    "AF-F-ARCV-0011",
+    "AF-F-ARCV-0012",
+    "AF-F-ARCV-0013",
+    "AF-F-ARCV-0014",
+    "AF-F-ARCV-0015",
+    "AF-F-ARCV-0016",
+    "AF-F-ARCV-0017",
+    "AF-F-ARCV-0018",
+    "AF-F-ARCV-0019",
+    "AF-F-ARCV-0020",
+    "AF-F-ARCV-0021",
+    "AF-F-ARCV-0022",
+    "AF-F-ARCV-0023",
+    "AF-F-ARCV-0024",
+    "AF-F-ARCV-0025",
+    "AF-F-ARCV-0026",
+    "AF-F-ARCV-0027",
+    "AF-F-ARCV-0028",
+    "AF-F-ARCV-0029",
+    "AF-F-ARCV-0030",
+    "AF-F-ARCV-0031",
+    "AF-F-ARCV-0032",
+    "AF-F-ARCV-0033",
+    "AF-F-ARCV-0034",
+    "AF-F-ARCV-0035",
+    "AF-F-ARCV-0036",
+    "AF-F-ARCV-0037",
+    "AF-F-ARCV-0038",
+    "AF-F-ARCV-0039",
+    "AF-F-ARCV-0040",
+    "AF-F-ARCV-0041",
+    "AF-F-ARCV-0042",
+    "AF-F-ARCV-0043",
+    "AF-F-ARCV-0044",
+    "AF-F-ARCV-0045",
+    "AF-F-ARCV-0046",
+    "AF-F-ARCV-0047",
+    "AF-F-ARCV-0048",
+    "AF-F-ARCV-0049",
+    "AF-F-ARCV-0050",
+    "AF-F-ARCV-0051",
+    "AF-F-ARCV-0052",
+    "AF-F-ARCV-0053",
+    "AF-F-ARCV-0054",
+    "AF-F-ARCV-0055",
+    "AF-F-ARCV-0056",
+    "AF-F-ARCV-0057",
+    "AF-F-ARCV-0058",
+    "AF-F-ARCV-0059",
+    "AF-F-ARCV-0060",
+    "AF-F-ARCV-0061",
+    "AF-F-ARCV-0062",
+    "AF-F-ARCV-0063",
+    "AF-F-ARCV-0064",
+    "AF-F-ARCV-0065",
+    "AF-F-ARCV-0066",
+    "AF-F-ARCV-0067",
+    "AF-F-ARCV-0068",
+    "AF-F-ARCVF-0010",
+    "AF-F-ARCV-0069",
+    "AF-F-ARCV-0070",
+    "AF-F-ARCV-0071",
+    "AF-F-ARCV-0072",
+    "AF-F-ARCVF-0011",
+    "AF-F-AFFINE-BE-0001",
+    "AF-F-AFFINE-BE-0002",
+    "AF-F-AFFINE-BE-0003",
+    "AF-F-AFFINE-BE-0004",
+    "AF-F-AFFINE-BE-0005",
+    "AF-F-AFFINE-BE-0006",
+    "AF-F-AFFINE-BE-0007",
+    "AF-F-AFFINE-BE-0008",
+    "AF-F-AFFINE-BE-0009",
+    "AF-F-AFFINE-BE-0010",
+    "AF-F-AFFINE-BE-0011",
+    "AF-F-AFFINE-BE-0012",
+    "AF-F-AFFINE-BE-0013",
+    "AF-F-AFFINE-BE-0014",
+    "AF-F-AFFINE-BE-0015",
+    "AF-F-AFFINE-BE-0016",
+    "AF-F-AFFINE-BE-0017",
+    "AF-F-AFFINE-BE-0018",
+    "AF-F-AFFINE-BE-0019",
+    "AF-F-AFFINE-BE-0020",
+    "AF-F-AFFINE-BE-0021",
+    "AF-F-AFFINE-BE-0022",
+    "AF-F-AFFINE-BE-0023",
+    "AF-F-AFFINE-BE-0024",
+    "AF-F-AFFINE-BE-0025",
+    "AF-F-AFFINE-BE-0026",
+    "AF-F-AFFINE-BE-0027",
+    "AF-F-AFFINE-BE-0028",
+    "AF-F-AFFINE-BE-0029",
+    "AF-F-AFFINE-BE-0030",
+    "AF-F-AFFINE-BE-0031",
+    "AF-F-AFFINE-BE-0032",
+    "AF-F-AFFINE-BE-0033",
+    "AF-F-AFFINE-BE-0034",
+    "AF-F-AFFINE-BE-0035",
+    "AF-F-AFFINE-BE-0036",
+    "AF-F-AFFINE-BE-0037",
+    "AF-F-AFFINE-BE-0038",
+    "AF-F-AFFINE-BE-0039",
+    "AF-F-AFFINE-BE-0040",
+    "AF-F-AFFINE-BE-0041",
+    "AF-F-AFFINE-BE-0042",
+    "AF-F-AFFINE-BE-0043",
+    "AF-F-AFFINE-BE-0044",
+    "AF-F-AFFINE-BE-0045",
+    "AF-F-AFFINE-BE-0046",
+    "AF-F-AFFINE-BE-0047",
+    "AF-F-AFFINE-BE-0048",
+    "AF-F-AFFINE-BE-0049",
+    "AF-F-AFFINE-BE-0050",
+    "AF-F-AFFINE-BE-0051",
+    "AF-F-AFFINE-BE-0052",
+    "AF-F-AFFINE-BE-0053",
+    "AF-F-AFFINE-BE-0054",
+    "AF-F-AFFINE-BE-0055",
+    "AF-F-AFFINE-BE-0056",
+    "AF-F-AFFINE-BE-0057",
+    "AF-F-AFFINE-BE-0058",
+    "AF-F-AFFINE-BE-0059",
+    "AF-F-AFFINE-BE-0060",
+    "AF-F-AFFINE-BE-0061",
+    "AF-F-AFFINE-BE-0062",
+    "AF-F-AFFINE-FE-0001",
+    "AF-F-AFFINE-FE-0002",
+    "AF-F-AFFINE-FE-0003",
+    "AF-F-AFFINE-FE-0004",
+    "AF-F-AFFINE-FE-0005",
+    "AF-F-AFFINE-FE-0006",
+    "AF-F-AFFINE-FE-0007",
+    "AF-F-AFFINE-FE-0008",
+    "AF-F-AFFINE-FE-0009",
+    "AF-F-AFFINE-FE-0010",
+    "AF-F-AFFINE-FE-0011",
+    "AF-F-AFFINE-FE-0012",
+    "AF-F-AFFINE-FE-0013",
+    "AF-F-AFFINE-FE-0014",
+    "AF-F-AFFINE-FE-0015",
+    "AF-F-AFFINE-FE-0016",
+    "AF-F-AFFINE-FE-0017",
+    "AF-F-AFFINE-FE-0018",
+    "AF-F-AFFINE-FE-0019",
+    "AF-F-AFFINE-FE-0020",
+    "AF-F-AFFINE-FE-0021",
+    "AF-F-AFFINE-FE-0022",
+    "AF-F-AFFINE-FE-0023",
+    "AF-F-AFFINE-FE-0024",
+    "AF-F-AFFINE-FE-0025",
+    "AF-F-AFFINE-FE-0026",
+    "AF-F-AFFINE-FE-0027",
+    "AF-F-AFFINE-FE-0028",
+    "AF-F-AFFINE-FE-0029",
+    "AF-F-AFFINE-FE-0030",
+    "AF-F-AFFINE-FE-0031",
+    "AF-F-AFFINE-FE-0032",
+    "AF-F-AFFINE-FE-0033",
+    "AF-F-AFFINE-FE-0034",
+    "AF-F-AFFINE-FE-0035",
+    "AF-F-AFFINE-FE-0036",
+    "AF-F-AFFINE-FE-0037",
+    "AF-F-AFFINE-FE-0038",
+    "AF-F-AFFINE-FE-0039",
+    "AF-F-AFFINE-FE-0040",
+    "AF-F-AFFINE-FE-0041",
+    "AF-F-AFFINE-FE-0042",
+    "AF-F-AFFINE-FE-0043",
+    "AF-F-AFFINE-FE-0044",
+    "AF-F-AFFINE-FE-0045",
+    "AF-F-AFFINE-FE-0046",
+    "AF-F-AFFINE-FE-0047",
+    "AF-F-AFFINE-FE-0048",
+    "AF-F-AFFINE-FE-0049",
+    "AF-F-AFFINE-FE-0050",
+    "AF-F-AFFINE-FE-0051",
+    "AF-F-AFFINE-FE-0052",
+    "AF-F-AFFINE-FE-0053",
+    "AF-F-AFFINE-FE-0054",
+    "AF-F-AFFINE-FE-0055",
+    "AF-F-AFFINE-FE-0056",
+    "AF-F-AFFINE-FE-0057",
+    "AF-F-AFFINE-FE-0058",
+    "AF-F-AFFINE-FE-0059",
+    "AF-F-AFFINE-FE-0060",
+    "AF-F-AFFINE-FE-0061",
+    "AF-F-AFFINE-FE-0062",
+    "AF-F-AFFINE-FE-0063",
+    "AF-F-AFFINE-FE-0064",
+    "AF-F-AFFINE-FE-0065",
+    "AF-F-AFFINE-FE-0066",
+    "AF-F-AFFINE-FE-0067",
+    "AF-F-AFFINE-FE-0068",
+    "AF-F-AFFINE-FE-0069",
+    "AF-F-AFFINE-FE-0070",
+    "AF-F-AFFINE-FE-0071",
+    "AF-F-AFFINE-FE-0072",
+    "AF-F-AFFINE-FE-0073",
+    "AF-F-AFFINE-FE-0074",
+    "AF-F-AFFINE-FE-0075",
+    "AF-F-AFFINE-FE-0076",
+    "AF-F-AFFINE-FE-0077",
+    "AF-F-AFFINE-FE-0078",
+    "AF-F-AFFINE-FE-0079",
+    "AF-F-AFFINE-FE-0080",
+    "AF-F-AFFINE-FE-0081",
+    "AF-F-AFFINE-FE-0082",
+    "AF-F-AFFINE-FE-0083",
+    "AF-F-AFFINE-FE-0084",
+    "AF-F-AIONUI-0263",
+    "AF-F-AIONUI-0264",
+    "AF-F-AIONUI-0265",
+    "AF-F-AIONUI-0266",
+    "AF-F-AIONUI-0267",
+    "AF-F-AIONUI-0268",
+    "AF-F-AIONUI-0269",
+    "AF-F-AIONUI-0270",
+    "AF-F-AIONUI-0271",
+    "AF-F-AIONUI-0272",
+    "AF-F-AIONUI-0273",
+    "AF-F-AIONUI-0274",
+    "AF-F-AIONUI-0275",
+    "AF-F-AIONUI-0276",
+    "AF-F-AIONUI-0277",
+    "AF-F-AIONUI-0278",
+    "AF-F-AIONUI-0279",
+    "AF-F-AIONUI-0280",
+    "AF-F-AIONUI-0281",
+    "AF-F-AIONUI-0282"
+  ],
+  "globalCoverageIds": [
+    "SC-AION-01",
+    "SC-AION-02",
+    "SC-AION-03",
+    "SC-AION-04",
+    "SC-AION-05",
+    "SC-AFF-01",
+    "SC-AFF-02",
+    "SC-AFF-03",
+    "SC-AFF-04",
+    "SC-AFF-05",
+    "SC-SY-01",
+    "SC-SY-02",
+    "SC-SY-03",
+    "SC-SY-04",
+    "SC-SY-05",
+    "SC-SS-01",
+    "SC-SS-02",
+    "SC-SS-03",
+    "SC-SS-04",
+    "SC-SS-05",
+    "SC-SS-06",
+    "SC-AV-01",
+    "SC-AV-02",
+    "SC-AV-03",
+    "SC-AV-04",
+    "SC-AVF-01",
+    "SC-AVF-02"
+  ],
+  "records": [
+    {
+      "traceId": "TR-ARC-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        2
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.2"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        2
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud Agent/全部客户端投影",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        12,
+        14,
+        18,
+        19,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4,
+        5
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.6",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部桌面",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部桌面",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部桌面",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.1",
+        "FG.4",
+        "FG.5",
+        "FG.6",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        1,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.1",
+        "FG.5",
+        "FG.7",
+        "FG.8",
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        27,
+        28
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.1",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-ARC-14",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-ARC-14",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Web/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        29,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Desktop products",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        3
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        3
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        3,
+        8
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        3
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        8
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        8
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        3,
+        8
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-IPC-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-IPC-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        3
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-PERSIST-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-PERSIST-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.3"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-PERSIST-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-PERSIST-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.2"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-PERSIST-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-PERSIST-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.2",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-PERSIST-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-PERSIST-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-PERSIST-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-PERSIST-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4,
+        9,
+        10,
+        21,
+        23
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-PERSIST-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-PERSIST-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        8,
+        29,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat/Cloud/Mobile/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        9,
+        12,
+        14,
+        19,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 + Mobile/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        18,
+        19,
+        29,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 + Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        13,
+        26,
+        29,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 + Extension",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        11,
+        14,
+        26,
+        27,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Mobile/Desktop/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        18,
+        19,
+        26,
+        29,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 + Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        26,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SEC-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SEC-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        5,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        13,
+        26,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部桌面",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 UI",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6,
+        9,
+        29,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.6",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 UI",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6,
+        9,
+        29,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.6",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope/ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21,
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        2,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4,
+        12,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        4,
+        9,
+        25,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-QUAL-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-QUAL-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全部 + Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        26,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        12,
+        14
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        13,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        13,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        14,
+        27
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        12,
+        13
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-14",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-14",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-15",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-15",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6,
+        7,
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.1",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-16",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-16",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-17",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-17",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        8
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-18",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-18",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat+ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        8
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-19",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-19",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        13,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.3"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-20",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-20",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat/Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        18,
+        19,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-21",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-21",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        2,
+        9,
+        12,
+        14,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-22",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-22",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat Desktop",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        17
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CHAT-23",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CHAT-23",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat Desktop",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        0,
+        9,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.1",
+        "FG.5",
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10,
+        16
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10,
+        11
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        15
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        16
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        17
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        11,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.3",
+        "FG.4",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-NOTE-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-NOTE-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes/ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        21
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope/ArcChat/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.6",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-14",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-14",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21,
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-15",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-15",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        22
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SCOPE-16",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SCOPE-16",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6,
+        7,
+        21,
+        22,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5",
+        "FG.6",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        23
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        23
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        24,
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7,
+        24,
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        24,
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        24,
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        23,
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        25
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        23
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        23
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate/ArcChat/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        25,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        7
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.6",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-14",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-14",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        24
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-SLATE-15",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-SLATE-15",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcSlate",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        24,
+        25,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.6",
+        "FG.8",
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Mobile/Desktop",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        18,
+        19,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.3",
+        "FG.5",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        26,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.4",
+        "FG.8"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18,
+        20,
+        26,
+        29,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        13,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Desktop/Mobile/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        14,
+        18,
+        19,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        13,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        28
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        19,
+        20,
+        26,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        13,
+        26,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        2,
+        7,
+        12,
+        18,
+        19,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-14",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-14",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-15",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-15",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-16",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-16",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Client",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-17",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-17",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Desktop/Mobile/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        12,
+        13,
+        18,
+        19,
+        29,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-18",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-18",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        6,
+        12,
+        18,
+        19,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.3"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-19",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-19",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        18,
+        19,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.3",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-20",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-20",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Web/Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.7",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-21",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-21",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcScope/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21,
+        22,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.3",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-22",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-22",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        11,
+        13,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-23",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-23",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcNotes/Cloud/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        10,
+        17,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4",
+        "FG.6",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-24",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-24",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Scope/Slate/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        21,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4",
+        "FG.6"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-25",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-25",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        12,
+        19,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.3",
+        "FG.4",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-26",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-26",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        13,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-27",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-27",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        26,
+        29,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-28",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-28",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/ArcChat",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-29",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-29",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        26,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.7"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-30",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-30",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18,
+        20,
+        26,
+        28,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-31",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-31",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Desktop/CLI/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        27,
+        29,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-32",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-32",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Clients",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        28,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-33",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-33",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Ops",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        26,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.9",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-34",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-34",
+      "arcForgesRequirementId": null,
+      "targetProduct": "全产品",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.0",
+        "FG.4",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-35",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-35",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/ArcChat三端",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        12,
+        13,
+        18,
+        19,
+        29
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-36",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-36",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Desktop updater/Web下载页",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        29,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.7",
+        "FG.8",
+        "FG.10"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-37",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-37",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Cloud/Desktop/Mobile/Web",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        1,
+        13,
+        27,
+        29,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.8",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-CLOUD-38",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-CLOUD-38",
+      "arcForgesRequirementId": null,
+      "targetProduct": "ArcChat Desktop/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        9,
+        13,
+        14,
+        27,
+        30
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.4",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-01",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-01",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-02",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-02",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-03",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-03",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18,
+        20
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-04",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-04",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-05",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-05",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        19
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-06",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-06",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        19
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-07",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-07",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        19
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-08",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-08",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        19
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-09",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-09",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        12,
+        19,
+        20,
+        26
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.2",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-10",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-10",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        19
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-11",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-11",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        19,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-12",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-12",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        20
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.5"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-13",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-13",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18,
+        19
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.1",
+        "FG.5",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    },
+    {
+      "traceId": "TR-MOB-14",
+      "featureIds": [],
+      "coverageIds": [],
+      "requirementId": "TR-MOB-14",
+      "arcForgesRequirementId": null,
+      "targetProduct": "Mobile/Cloud",
+      "targetProjects": [],
+      "targetTypes": [],
+      "contractIds": [],
+      "dataIds": [],
+      "uiSurfaceIds": [],
+      "owningSteps": [
+        18,
+        20,
+        26,
+        28,
+        30,
+        31
+      ],
+      "testIds": [],
+      "gateIds": [
+        "FG.4",
+        "FG.5",
+        "FG.7",
+        "FG.9"
+      ],
+      "sourceBaselines": [],
+      "closureStatus": "BridgeGenerationRequired",
+      "missingFields": [
+        "arcForgesRequirementId",
+        "featureIds(per-record)",
+        "coverageIds(per-record)"
+      ],
+      "evidenceHash": ""
+    }
+  ]
+}
