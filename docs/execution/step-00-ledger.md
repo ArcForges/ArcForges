@@ -19,7 +19,14 @@
 - Branch-tip / commit identity：`feat/af00-00-scope-inventory` tip = this commit（自引用，SHA 记录于 Draft PR body / final report）。
 - Exact safe next action：开始 Substep 00.01 — 产出 `docs/scope/source-baseline.md` + `docs/scope/baseline-snapshot.txt`：对 6 仓库执行 `rev-parse HEAD`/`status --porcelain`/`describe --tags` 追加快照，落九态 Source Coverage 状态机与每仓库每子系统现状表，命中 5 dirty file 的 Coverage/Feature 保持 `NeedsRecheck`。
 
-## Substep 00.01 — 待实施
+## Substep 00.01 — 来源仓库基线与 Source Coverage 状态机
+
+- Scope：产出 `docs/scope/source-baseline.md`（6 仓库基线表、核验快照引用、九态 Source Coverage 状态机、27 行每仓库每子系统现状表、基线漂移流程）+ `docs/scope/baseline-snapshot.txt`（只读 git 命令原始输出，UTC `2026-08-14T04:05:21Z`）+ `docs/tools/check-source-baseline.ps1`（逐仓可判真核验 + 九态枚举校验）。
+- Validation：`pwsh docs/tools/check-source-baseline.ps1` → all assertions green（EXIT=0）。六仓 HEAD/tag/dirty-file 集合/DiffSha256 与 register §2 逐字相等；27 行 CoverageStatus 全部 ∈ 九态集合；五个 `NeedsRecheck` 行保持，未自动闭合。
+- Evidence：`baseline-snapshot.txt` 记录全部只读命令输出；DiffSha256 用 raw bytes（cmd 直向文件）计算，避免 PowerShell 字符串 LF→CRLF 改写——三 hash 逐字匹配 register（`1f87a590…`、`3302eb6c…`、`9ccbbea3…`）。
+- Risks：五个 `NeedsRecheck` Coverage/Feature（SC-AION-03/05、SC-AV-01/04、SC-AVF-02；Feature AF-F-AIONUI-0283/0285、ARCV-0065/0069、ARCVF-0011）保持阻断，需 clean frozen checkout 或接受新基线后复核关闭——本步不闭合 Step 00 Completion Gate。
+- Branch-tip / commit identity：`feat/af00-00-scope-inventory`，本子步骤提交为 this commit / branch tip。
+- Exact safe next action：开始 Substep 00.02 — 产出 `docs/scope/source-subsystems.md` 子系统级清单并并入 `feature-inventory-and-mapping.md`（已含 833 行）；落完整性核验脚本（ipcBridge 导出成员差集、blocksuite 包名差集、Pro 行全 Replace/O4、零孤立路径双向断言）。
 
 ## Substep 00.02 — 待实施
 
