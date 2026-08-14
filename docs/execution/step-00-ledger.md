@@ -18,8 +18,8 @@
 | 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | done | 8821c05 |
 | 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | done | 982200b |
 | 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | done | e12e404 |
-| 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | done | this commit |
-| 00.05 | `docs/scope/verification-oracles.md` | not started | — |
+| 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | done | b0f2e7a |
+| 00.05 | `docs/scope/verification-oracles.md` | done | this commit |
 | 00.06 | `docs/scope/sequencing.md`, traceability seeds, `eng/traceability/generate-feature-trace-bridge` | not started | — |
 | Gate | File-level Completion Gate (00 closure) | not started | — |
 
@@ -152,4 +152,28 @@
   gate (FG.8) exactly as layout §12/layout §9.1 freeze.
 - Next action: substep 00.05 — `docs/scope/verification-oracles.md` (O1–O7 definitions, 8-item golden-sample
   catalog, management rules, test pyramid landing, coverage binding).
+- Branch tip: b0f2e7a.
+
+### Substep 00.05 — verification oracles & behavior golden samples (this commit)
+
+- `docs/scope/verification-oracles.md`: Oracle categories table (O1 源行为重放 / O2 结构对等 / O3 行为规格 /
+  O4 公开协议标准 / O5 数学·算法基准 / O6 视觉基线 / O7 序列化金样, with 定义|捕获方式|拥有测试|适用 Decision);
+  8-item behavior golden-sample first catalog (AionUi composeMessage, conversation CRUD/pin/分组, mobile WS
+  reconnect/JWT/分组, blocksuite Document/Block/Edgeless/Database/Slides sample (Yjs Drop, no compat golden),
+  Serial-Studio FrameReader/CircularBuffer/LTTB, ArcVideoFoundation rational/time/timecode/av_reduce,
+  siyuan input/output-only samples, sync/conflict revision samples); golden management rules
+  (tests/golden/<area> + provenance.json; red lines: no source excerpt / no 3rd-party IP / no secret;
+  update = contract-level → PR + ADR + gate); test-pyramid landing; 00.02 binding (OracleClass ∈ O1–O7 on
+  every row, Copy/Rewrite/ReferenceOnly 100% landing).
+- `docs/tools/check-oracles.ps1`: catalog ≥8 with 5 cols; every source-subsystems row OracleClass valid (O1–O7,
+  no O8/O9, no empty) naming offenders; Copy/Rewrite/ReferenceOnly Oracle landing; golden red-line scan scoped
+  to Step-00 file + target docs (zero ≥15-line source excerpt). PASS. Reverse evidence: setting a siyuan row
+  Oracle=O9 → "bad=1 … AF-F-SIYUAN-0001..0026=[O9]" FAIL.
+- Also fixed the single non-conforming OracleClass (blocksuite Yjs/CRDT Drop row) from "—" to "O1" with a
+  negative-gate note, so every row has a valid Oracle (00.05 coverage requirement).
+- Validation: `pwsh -NoProfile -File docs/tools/check-oracles.ps1 …` → exit 0, PASS (6 asserts).
+- Risk: golden catalog format/source rules are frozen here; the sample bodies are captured during owning
+  steps (never pre-generated), so none exist yet — that is by design and not a closure claim.
+- Next action: substep 00.06 — `docs/scope/sequencing.md` (branch/PR examples, PR template fields, 00–31 order),
+  traceability-matrix requirement seeds + machine-readable bridge, freeze-decision registration.
 - Branch tip: this commit.

@@ -97,7 +97,7 @@ Yjs/awareness/CRDT/state-vector rows are registered **Drop**.
 | AF-F-BLOCKSUITE-xxxx | AFFiNE@`81df4751…` | `blocksuite/affine/data-view/*`,`database` | 多视图 Database | Copy/Rewrite | ArcNotes | `ArcNotes.Database` | Typed Property/View | 16 | O2 | MIT | yes | |
 | AF-F-BLOCKSUITE-xxxx | AFFiNE@`81df4751…` | `blocksuite/affine/blocks/frame`,`frame-panel` | Slides/Frame 演示 | Copy/Rewrite | ArcNotes | `ArcNotes.Slides` | Frame/演示 | 17 | O2 | MIT | yes | |
 | AF-F-BLOCKSUITE-xxxx | AFFiNE@`81df4751…` | `blocksuite/affine/…/adapter` | snapshot/block 几何/连接/分组/Typed Property/视图/presentation 行为 | Copy/Rewrite | ArcNotes | `ArcNotes.Domain`/`ArcNotes.{Edgeless,Database,Slides}` | snapshot 格式/类型系统 | 10,15,16,17 | O2/O5 | MIT | yes | 纯 C# 独立重实现依据 |
-| AF-F-BLOCKSUITE-xxxx | AFFiNE@`81df4751…` | blocksuite `yjs`,`awareness`,`CRDT`,`state-vector` | 协作/CRDT | **Drop** | — | — | 不进入目标 schema/wire/golden/开放项 | — | — | MIT | no | 明确 Drop，无兼容字段 |
+| AF-F-BLOCKSUITE-xxxx | AFFiNE@`81df4751…` | blocksuite `yjs`,`awareness`,`CRDT`,`state-vector` | 协作/CRDT | **Drop** | — | — | 不进入目标 schema/wire/golden/开放项 | — | O1 | MIT | no | 明确 Drop，无兼容字段；负门禁：不生成 any CRDT/Yjs 兼容金样 |
 
 ---
 
