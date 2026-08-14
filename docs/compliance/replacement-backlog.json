@@ -1,0 +1,12 @@
+{
+  "$schema": "https://arcforges.org/schemas/compliance/replacement-backlog.v1.schema.json",
+  "schemaVersion": 1,
+  "generatedUtc": "2026-08-14T00:00:00Z",
+  "entries": [
+    { "ItemId": "RPL-0001", "What": "Replace vendored QuaZip (LGPL-2.1+static exception)", "Why": ".NET built-in ZIP; no second archiver", "TemporarySource": "none", "ReplacementDesign": "System.IO.Compression", "ReplacementStage": "07 / 21-22", "ExitCriteria": "no QuaZip in restore/build/staged/NOTICE/SBOM (negative scan)", "Status": "Decided" },
+    { "ItemId": "RPL-0002", "What": "Replace QSimpleUpdater (MIT) update signal", "Why": "Desktop update path is Velopack 1.2.0", "TemporarySource": "none", "ReplacementDesign": "locked Velopack 1.2.0 adapter", "ReplacementStage": "24 / 31", "ExitCriteria": "no QSimpleUpdater; update via signed Velopack feed", "Status": "Decided" },
+    { "ItemId": "RPL-0003", "What": "Replace QCodeEditor (MIT) Qt widget", "Why": "Avalonia-only; no AvaloniaEdit", "TemporarySource": "none", "ReplacementDesign": "ArcScope.Desktop.ProjectEditor.JsonProjectEditorControl (own Avalonia 12.1.1); TextMateSharp token-only", "ReplacementStage": "21-22", "ExitCriteria": "no AvaloniaEdit/QCodeEditor in graph", "Status": "Decided" },
+    { "ItemId": "RPL-0004", "What": "Replace OpenSSL build path", "Why": "Managed/OS TLS", "TemporarySource": "none", "ReplacementDesign": ".NET built-in TLS (SChannel / macOS security / Linux OS libssl+libcrypto as closed system deps)", "ReplacementStage": "12 / 21 / 31", "ExitCriteria": "no vendored/app-local OpenSSL; OS TLS only in NativeSystemDependencyRegistryV1", "Status": "Decided" },
+    { "ItemId": "RPL-0005", "What": "Replace direct mdflib C++ access", "Why": "never cross C++ ABI", "TemporarySource": "none", "ReplacementDesign": "arcscope-mdf-abi owned narrow C ABI (mdflib v2.3.0 overlay static in shim-static)", "ReplacementStage": "22 / 07", "ExitCriteria": "MDF4 only via arcscope_mdf_abi; no cross C++ ABI; stable-C-API alternate must update native register first", "Status": "Decided" }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://arcforges.org/schemas/compliance/independent-reimplementation.v1.schema.json",
+  "schemaVersion": 1,
+  "generatedUtc": "2026-08-14T00:00:00Z",
+  "entries": [
+    {
+      "ItemId": "IRM-0001",
+      "SourceRepo": "C:\\MyFile\\ArcForges\\siyuan",
+      "SourceCommit": "eef10568384e2e7cf547adb029ae46a72e43c287",
+      "WhyIndependent": "UD-LIC-3",
+      "BehaviorSpecPaths": "siyuan kernel API groups (block/reference/search/import/export/history/sync/asset/template/snippet) + app UI behavior specs (not source excerpts)",
+      "TargetProduct": "ArcNotes",
+      "TargetProject": "ArcNotes.Domain / Application / Editor / Search / ImportExport",
+      "NoSourceCopyProof": "code review + no-source-excerpt golden + independent test suite; Step 30/31 negative scan",
+      "ValidationOracle": "O3",
+      "Status": "Clean-room Planned (10-15)"
+    },
+    {
+      "ItemId": "IRM-0002",
+      "SourceRepo": "C:\\MyFile\\ArcForges\\Serial-Studio",
+      "SourceCommit": "639daafb2fe7d324c3b2d5583d2514c8c470676f",
+      "WhyIndependent": "UD-LIC-5",
+      "BehaviorSpecPaths": "public protocol standards (MQTT/Modbus/CAN/UART/Serial), public docs, ArcForges spec, own tests (not Pro source)",
+      "TargetProduct": "ArcScope",
+      "TargetProject": "ArcScope.Infrastructure / Domain (independent modules)",
+      "NoSourceCopyProof": "code review + public-protocol conformance tests; no commercial expression/resource/brand/activation",
+      "ValidationOracle": "O4",
+      "Status": "Clean-room Planned (21-22)"
+    },
+    {
+      "ItemId": "IRM-0003",
+      "SourceRepo": "C:\\MyFile\\ArcForges\\AFFiNE (EE dirs)",
+      "SourceCommit": "81df4751a367f2795bc0d165586650dbe8db73d6",
+      "WhyIndependent": "UD-LIC-4",
+      "BehaviorSpecPaths": "Prisma 57-table pattern, clock-based sync, permission evaluator, blob two-phase GC, entitlement->quota projection, Passkey/OTP, socket.io sync pattern (not source)",
+      "TargetProduct": "ArcForges Cloud",
+      "TargetProject": "ArcForges.Cloud.Modules.* (ASP.NET Core independent)",
+      "NoSourceCopyProof": "code review + no-source-excerpt golden + independent Cloud suite; avoid derivative-work risk",
+      "ValidationOracle": "O3",
+      "Status": "Clean-room Planned (12/26)"
+    }
+  ]
+}

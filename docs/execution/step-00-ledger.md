@@ -17,8 +17,8 @@
 | 00.00 | `docs/scope/product-family.md`, `docs/tools/check-scope.ps1` | done | 3bf1579 |
 | 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | done | 8821c05 |
 | 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | done | 982200b |
-| 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | done | this commit |
-| 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | not started | — |
+| 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | done | e12e404 |
+| 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | done | this commit |
 | 00.05 | `docs/scope/verification-oracles.md` | not started | — |
 | 00.06 | `docs/scope/sequencing.md`, traceability seeds, `eng/traceability/generate-feature-trace-bridge` | not started | — |
 | Gate | File-level Completion Gate (00 closure) | not started | — |
@@ -121,4 +121,35 @@
 - Risk: AionUi SPDX count recompute (742/1238) differs from the matrix's desktop subset (519/733); both are
   recorded; no conclusion depends on the exact numerator.
 - Next action: substep 00.04 — establish the five compliance manifests (md+json) under docs/compliance/.
+- Branch tip: e12e404.
+
+### Substep 00.04 — reuse manifests structure & first entries (this commit)
+
+- Created `docs/compliance/` five manifests, each Markdown + machine-readable JSON with fields verbatim from
+  `license-and-reuse-matrix.md` §6 and Step 00.04:
+  - `copied-code.md/.json` (CCM-0001..0006): ipcBridge→Contracts.LocalRpc/ArcChat; chatLib merge→ArcChat.Domain/
+    Application; mobile messageAdapter/JWT→ArcChat.Mobile; blocksuite→ArcNotes.Domain/Edgeless/Database/Slides;
+    Serial-Studio GPL core→ArcScope.Infrastructure; ArcVideo/Foundation→ArcSlate.Domain/Infrastructure.
+  - `copied-asset.md/.json` (CAM-0001..0006): AionUi 13-language i18n, mobile theme/i18n, blocksuite palette/theme/
+    SVG, seed data; CAM-0005/0006 = suspicious third-party IP theme covers + Serial-Studio brand with
+    `Status=Replace`, empty `TargetPath`, no notice (not migrated).
+  - `independent-reimplementation.md/.json` (IRM-0001..0003): siyuan(UD-LIC-3,O3), Serial-Studio Pro(UD-LIC-5,O4),
+    AFFiNE EE(UD-LIC-4,O3).
+  - `replacement-backlog.md/.json` (RPL-0001..0005): QuaZip→System.IO.Compression, QSimpleUpdater→Velopack,
+    QCodeEditor→JsonProjectEditorControl, OpenSSL→.NET/OS TLS, mdflib→owned C ABI; TemporarySource="none"
+    (direct permanent replacement, consistent with §6.4).
+  - `third-party-license-register.md/.json`: managed baseline from layout §12 + native vcpkg baseline
+    `40f3c709db80acf154ac4b17a1f83c564ebd022e` (FFmpeg 8.1.2#3, miniaudio 0.11.25, libusb 1.0.30, OTIO/OCIO/OIIO/
+    OpenEXR/Imath/mdflib, host-tools glslang/SPIRV-Cross, PDFium non-V8) + explicit forbidden set (AvaloniaEdit,
+    ClosedXML, CSharpMath.Avalonia, NAudio, Silk.NET.OpenGL, managed FFmpeg, MessagePack, SqlSugar/Dapper, TS/Node,
+    local model runtime...). Replaces the prior non-compliant skeleton register.
+- `docs/tools/check-manifests.ps1`: 30 assertions PASS (required-field completeness per manifest, ID uniqueness,
+  UD-LIC-2/3/4/5 decision coverage, suspicious-IP isolation, TemporarySource='none', vcpkg baseline verbatim).
+  Reverse evidence: deleting CCM-0001 → "UD-LIC-2 referenced by ≥1 manifest row" FAIL (names the gap).
+- Validation: `pwsh -NoProfile -File docs/tools/check-manifests.ps1 …` → exit 0, PASS.
+- Risk: the old `third-party-license-register.md` (foundation-era summary) was replaced with the compliant schema;
+  MIT/native copyright/notice fields are concise and will be back-filled with SPDX per-entry at roll-out
+  gate (FG.8) exactly as layout §12/layout §9.1 freeze.
+- Next action: substep 00.05 — `docs/scope/verification-oracles.md` (O1–O7 definitions, 8-item golden-sample
+  catalog, management rules, test pyramid landing, coverage binding).
 - Branch tip: this commit.

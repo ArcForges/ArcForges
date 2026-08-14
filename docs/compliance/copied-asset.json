@@ -1,0 +1,73 @@
+{
+  "$schema": "https://arcforges.org/schemas/compliance/copied-asset.v1.schema.json",
+  "schemaVersion": 1,
+  "generatedUtc": "2026-08-14T00:00:00Z",
+  "entries": [
+    {
+      "AssetId": "CAM-0001",
+      "SourcePath": "AionUi/packages/desktop/locales/** (13 languages)",
+      "AssetClass": "i18n",
+      "License": "Apache-2.0",
+      "TargetPath": "src/ArcChat/Presentation / DesignSystem i18n resources",
+      "NoticeLine": "NOTICE.md: locale keys derived from AionUi (Apache-2.0)",
+      "SuspiciousThirdPartyIp": false,
+      "ReplacePlan": "none",
+      "Status": "Planned"
+    },
+    {
+      "AssetId": "CAM-0002",
+      "SourcePath": "AionUi/mobile/{constants/theme.ts, i18n/*, hooks/useThemeColor.ts}",
+      "AssetClass": "theme/i18n",
+      "License": "Apache-2.0",
+      "TargetPath": "src/Mobile/ArcChat.Mobile.* tokens + resources",
+      "NoticeLine": "NOTICE.md: theme tokens/i18n keys from AionUi (Apache-2.0)",
+      "SuspiciousThirdPartyIp": false,
+      "ReplacePlan": "none",
+      "Status": "Planned"
+    },
+    {
+      "AssetId": "CAM-0003",
+      "SourcePath": "AFFiNE/blocksuite palette/default theme/partial SVG",
+      "AssetClass": "palette/theme/svg",
+      "License": "MIT",
+      "TargetPath": "src/ArcNotes + shared DesignSystem palette",
+      "NoticeLine": "NOTICE.md: palette/theme/svg from AFFiNE blocksuite (MIT)",
+      "SuspiciousThirdPartyIp": false,
+      "ReplacePlan": "per-asset review; escalate to Replace on doubt",
+      "Status": "Planned"
+    },
+    {
+      "AssetId": "CAM-0004",
+      "SourcePath": "AionUi seed-data JSON (masks/prompts/preset-assistant/builtin-MCP)",
+      "AssetClass": "seed-data",
+      "License": "Apache-2.0",
+      "TargetPath": "src/ArcChat seed-data (structure + keys)",
+      "NoticeLine": "NOTICE.md: seed data structure/keys from AionUi (Apache-2.0)",
+      "SuspiciousThirdPartyIp": false,
+      "ReplacePlan": "structure+keys kept; values product-maintained",
+      "Status": "Planned"
+    },
+    {
+      "AssetId": "CAM-0005",
+      "SourcePath": "AionUi hello-kitty.png / misaka-mikoto-theme.png theme covers",
+      "AssetClass": "theme",
+      "License": "unknown/third-party IP",
+      "TargetPath": "",
+      "NoticeLine": "- (not migrated; redraw)",
+      "SuspiciousThirdPartyIp": true,
+      "ReplacePlan": "redraw; exclude from normal flow",
+      "Status": "Replace"
+    },
+    {
+      "AssetId": "CAM-0006",
+      "SourcePath": "Serial-Studio app/** icons/brand",
+      "AssetClass": "icon",
+      "License": "trademark/brand",
+      "TargetPath": "",
+      "NoticeLine": "- (not migrated; redraw)",
+      "SuspiciousThirdPartyIp": true,
+      "ReplacePlan": "redraw; trademark policy",
+      "Status": "Replace"
+    }
+  ]
+}
