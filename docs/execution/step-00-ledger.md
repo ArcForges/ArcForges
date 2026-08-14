@@ -14,8 +14,8 @@
 
 | Substep | Deliverable(s) | Status | Commit |
 |---|---|---|---|
-| 00.00 | `docs/scope/product-family.md`, `docs/tools/check-scope.ps1` | done | this commit |
-| 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | not started | — |
+| 00.00 | `docs/scope/product-family.md`, `docs/tools/check-scope.ps1` | done | 3bf1579 |
+| 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | done | this commit |
 | 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | not started | — |
 | 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | not started | — |
 | 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | not started | — |
@@ -57,4 +57,26 @@
 - Validation: `pwsh -NoProfile -File docs/tools/check-scope.ps1 -PlanRoot ... -TargetDocsRoot ...` → exit 0, Result PASS.
 - Risk: none outstanding for 00.00.
 - Next action: substep 00.01 — recompute 6-repo HEAD/status/DiffSha256, write `docs/scope/source-baseline.md` + `baseline-snapshot.txt`, embed nine-state Coverage state machine.
-- Branch tip: this commit (`feat/af00-scope-and-source-inventory`).
+- Branch tip: 3bf1579 (`feat/af00-scope-and-source-inventory`).
+
+### Substep 00.01 — source baselines & Coverage state machine (this commit)
+
+- Recomputed the six-repo HEAD/branch/describe/submodule + `sha256(git ls-files -s)` index aggregate and, for
+  the dirty repos, DiffSha256 (`sha256(git diff)` minus a single trailing LF) — all match
+  `source-coverage-register.md` §2: zero index drift; AionUi `1f87a590…`, ArcVideo `3302eb6c…`,
+  ArcVideoFoundation `9ccbbea3…` DiffSha256 verbatim.
+- `docs/scope/baseline-snapshot.txt`: raw `rev-parse HEAD` / `status --porcelain=v1` / `describe --tags --always`
+  / `submodule status` / `INDEX_SH` / `DIFF_SH` per repo + UTC generation timestamp.
+- `docs/scope/source-baseline.md`: baseline table, index-aggregate table, nine-state Source Coverage state
+  machine (per-state entry/evidence/exit), 27 per-source per-subsystem rows with fixed columns and a single
+  nine-state CoverageStatus (5 dirty-path rows stay NeedsRecheck), and the drift process (trigger→mark→find→
+  re-read→update; un-reconciled NeedsRecheck blocks Step 00 closure).
+- `docs/tools/check-baseline.ps1`: per-repo decidable verdict (HEAD/tag/index-aggregate/worktree-set/DiffSha256)
+  + validates every §3 CoverageStatus ∈ nine-state set. PASS 2026-08-14 (six repos + 27 rows).
+- Validation: `pwsh -NoProfile -File docs/tools/check-baseline.ps1 -PlanRoot …` → exit 0, PASS.
+- Risk: the five NeedsRecheck rows remain open by design (dirty worktree hits registered paths); not a defect,
+  but Step 00 cannot claim full closure until reconciled on a clean frozen checkout.
+- Next action: substep 00.02 — produce `docs/scope/source-subsystems.md` (subsystem-level functional inventory
+  with the unified row mode) and merge/verify against `feature-inventory-and-mapping.md`, incl. completeness
+  scripts.
+- Branch tip: this commit.

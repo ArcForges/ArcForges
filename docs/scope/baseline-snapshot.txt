@@ -1,0 +1,70 @@
+ArcForges Step 00.01 baseline verification snapshot
+Generated (UTC): 2026-08-14T14:07:44Z
+Method: git rev-parse HEAD; git status --porcelain=v1; git describe --tags --always;
+        git submodule status; index-sh = sha256(git ls-files -s); diff-sh = sha256(git diff) minus trailing LF
+
+################################################################
+REPO: AionUi
+PATH: C:/MyFile/ArcForges/AionUi
+HEAD: 29c9271a59484e4696778cb80164f705245a6186
+BRANCH: Branch_v2.1.35
+DESCRIBE: v2.1.35
+WORKTREE (porcelain):
+ M scripts/rebuildNativeModules.js
+ M tests/unit/build-scripts/windows-fast-build-script.test.ts
+SUBMODULES:
+INDEX_SH: 93ba619e23883786271d0c8fd785b0f654bd9066fb198460bbe7f83034f3a80f
+DIFF_SH: 1f87a590859586a4b64831d54b0292117294dabaef93c71a5fe4bcd377525492
+################################################################
+REPO: AFFiNE
+PATH: C:/MyFile/ArcForges/AFFiNE
+HEAD: 81df4751a367f2795bc0d165586650dbe8db73d6
+BRANCH: Branch_v0.27.2
+DESCRIBE: v0.27.2
+WORKTREE (porcelain):
+SUBMODULES:
+INDEX_SH: 78f2c778d8a4b11731c907adf22e4140b697588e93b519d8e05c10ebae6ba313
+DIFF_SH: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+################################################################
+REPO: siyuan
+PATH: C:/MyFile/ArcForges/siyuan
+HEAD: eef10568384e2e7cf547adb029ae46a72e43c287
+BRANCH: Branch_v3.7.3
+DESCRIBE: v3.7.3
+WORKTREE (porcelain):
+SUBMODULES:
+INDEX_SH: e3ed4807c24dafbdfd6b9ea36d0810d000d2d1ee07ac1b65436cfc4ce72e59b6
+DIFF_SH: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+################################################################
+REPO: Serial-Studio
+PATH: C:/MyFile/ArcForges/Serial-Studio
+HEAD: 639daafb2fe7d324c3b2d5583d2514c8c470676f
+BRANCH: Branch_v4.0.3
+DESCRIBE: v4.0.3
+WORKTREE (porcelain):
+SUBMODULES:
+INDEX_SH: 6a8f6c545304e567dcf46b8c78c7236ab3bca7735ea93de60756889887c38386
+DIFF_SH: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+################################################################
+REPO: ArcVideo
+PATH: C:/MyFile/ArcForges/ArcVideo
+HEAD: caf56513278703adec0c2933ec235bb864d72e31
+BRANCH: main
+DESCRIBE: caf5651
+WORKTREE (porcelain):
+ M CMakeLists.txt
+ M app/common/otioutils.h
+SUBMODULES:
+INDEX_SH: dd99c8a6bd33403828c41d7421327ddfc537039aa2f11ff739d46e39af08528e
+DIFF_SH: 3302eb6c34d252be675ada195461f746c8965d1c2014280df52e0d51a767030c
+################################################################
+REPO: ArcVideoFoundation
+PATH: C:/MyFile/ArcForges/ArcVideoFoundation
+HEAD: 139eecaaa79dbad743a146f174a9c89a66ed594b
+BRANCH: main
+DESCRIBE: 139eeca
+WORKTREE (porcelain):
+ M CMakeLists.txt
+SUBMODULES:
+INDEX_SH: c9166509b4e883a1834c18e3286a3ea4a1ea644f9e22942d100c83a23e1ae8da
+DIFF_SH: 9ccbbea307352499f5ad55ed6f5eb52176f5f0eff7c20df6d3e77969a9f85a96
