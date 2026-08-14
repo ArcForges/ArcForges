@@ -15,6 +15,8 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
+  VCPKG_COMMIT: 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
+  VCPKG_WINDOWS_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
 
 jobs:
   desktop-win-x64:
@@ -104,19 +106,34 @@ jobs:
         with:
           cmakeVersion: '4.3.3'
           ninjaVersion: '1.13.1'
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-classic-Windows-x64-${{ hashFiles('eng/native/vcpkg/ports/**') }}
-      - name: Install Windows native dependencies
+      - name: Pin vcpkg checkout
         shell: pwsh
         run: |
           $root = $env:VCPKG_INSTALLATION_ROOT
           if ([string]::IsNullOrWhiteSpace($root)) { throw 'Runner vcpkg installation was not found.' }
+          git -C $root fetch --depth 1 origin $env:VCPKG_COMMIT
+          if ($LASTEXITCODE) { throw 'vcpkg fetch failed.' }
+          git -C $root checkout --detach $env:VCPKG_COMMIT
+          if ($LASTEXITCODE) { throw 'vcpkg checkout failed.' }
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed.' }
+          $actual = (git -C $root rev-parse HEAD).Trim()
+          if ($actual -ne $env:VCPKG_COMMIT) { throw "Unexpected vcpkg commit: $actual" }
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/vcpkg-archives
+          key: vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
+          restore-keys: |
+            vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-
+            vcpkg-classic-Windows-x64-
+      - name: Install Windows native dependencies
+        shell: pwsh
+        run: |
+          $root = $env:VCPKG_ROOT
           $archives = Join-Path $env:RUNNER_TEMP 'vcpkg-archives'
           New-Item -ItemType Directory -Force $archives | Out-Null
           $env:VCPKG_BINARY_SOURCES = "clear;files,$archives,readwrite"
-          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
           & "$root/vcpkg.exe" install `
             'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,amf]:x64-windows' `
             'libusb[core]:x64-windows' `
