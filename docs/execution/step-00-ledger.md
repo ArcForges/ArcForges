@@ -16,8 +16,8 @@
 |---|---|---|---|
 | 00.00 | `docs/scope/product-family.md`, `docs/tools/check-scope.ps1` | done | 3bf1579 |
 | 00.01 | `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt` | done | 8821c05 |
-| 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | done | this commit |
-| 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | not started | — |
+| 00.02 | `docs/scope/source-subsystems.md` + merge into `feature-inventory-and-mapping.md`, completeness scripts | done | 982200b |
+| 00.03 | `docs/scope/license-summary.md`, evidence-path checks, trademark blacklist | done | this commit |
 | 00.04 | `docs/compliance/{copied-code,copied-asset,independent-reimplementation,replacement-backlog,third-party-license-register}.{md,json}` | not started | — |
 | 00.05 | `docs/scope/verification-oracles.md` | not started | — |
 | 00.06 | `docs/scope/sequencing.md`, traceability seeds, `eng/traceability/generate-feature-trace-bridge` | not started | — |
@@ -102,4 +102,23 @@
   merge is asserted consistent by the script (families + ranges present, no genuine orphan path).
 - Next action: substep 00.03 — `docs/scope/license-summary.md` evidence paths (`Test-Path`), trademark
   blacklist, AGPL obligations→owning-step table, DecisionClass↔Manifest map.
+- Branch tip: 982200b.
+
+### Substep 00.03 — license & reuse matrix (this commit)
+
+- `docs/scope/license-summary.md`: UD-LIC-1..5 decision cards (决定文本 | 文件级证据 | 约束清单 | 影响步骤);
+  evidence list with recomputed 2026-08-14 facts (AionUi/LICENSE Apache-2.0 first line, agentModes.ts:1-5 SPDX,
+  742/1238 TS/TSX SPDX recompute vs matrix 519/733 desktop subset; AFFiNE root MIT + backend/server + common/native
+  EE; blocksuite package.json MIT; siyuan/LICENSE AGPL + app/appearance/LICENSE MIT; Serial-Studio LICENSE.md §7
+  trademark/fork + BUILD_COMMERCIAL guard + 475/473 SPDX recompute; ArcVideo/Foundation GPL-3.0); AGPL obligations
+  → owning-step table (Copyleft/§13/attribution/trademark/resource); DecisionClass↔Manifest map; release
+  compliance 8 items bound to FG rows + steps; StartArcForges static NotExecuted oracle note.
+- `docs/tools/check-license.ps1`: evidence paths Test-Path (11), AFFiNE EE text, blocksuite MIT ≥5; matrix §2
+  non-empty (5 rows/4 cols) + §3 vendored decision non-empty; trademark blacklist over product name/ProductId
+  zero hits; Pro/EE isolation (SS-PRO Replace+O4, AFFINE-BE ReferenceOnly). PASS. Reverse evidence: SS-PRO set to
+  Copy → "SS-PRO isolation … UD-LIC-5" FAIL; restored → PASS.
+- Validation: `pwsh -NoProfile -File docs/tools/check-license.ps1 …` → PASS.
+- Risk: AionUi SPDX count recompute (742/1238) differs from the matrix's desktop subset (519/733); both are
+  recorded; no conclusion depends on the exact numerator.
+- Next action: substep 00.04 — establish the five compliance manifests (md+json) under docs/compliance/.
 - Branch tip: this commit.
