@@ -85,7 +85,25 @@
 
 **Evidence / notes:** Docs-only; no code/solution.
 
-**Commit:** (this commit)
+**Commit:** `1e1eda2e13364c51239b8745cb77b307569d80a3` `Step 00.03: license & reuse matrix summary`
 **Next safe action:** 00.04 reuse manifests (5).
+
+---
+
+## 00.04 — 复用 Manifest（结构与首批条目）
+
+**Status:** COMPLETE
+**Deliverables:** `docs/compliance/{copied-code.md,copied-code.json,copied-asset.md,independent-reimplementation.md,replacement-backlog.md,third-party-license-register.md}`, `docs/tools/check-manifests.ps1`
+
+**Validation (exact command + result + evidence):**
+- `pwsh -NoProfile -File docs/tools/check-manifests.ps1` → `PASS: check-manifests — 5+ manifests present, copied-code rows complete+unique, UD-LIC-2..5 covered, suspicious-IP Replace-only, review/third-party baseline present`.
+- copied-code.json parsed: 6 first-batch rows, all `ManifestId/SourcePath/SourceRepository/SourceCommit/OriginalLicense/TargetProduct/TargetProject/ReuseType/TemporaryOrPermanent/Attribution/ReleaseRestriction/Evidence` non-empty, ids unique.
+
+**Gate (00.04 Completion gate):** 5 manifests under `docs/compliance/` with complete field structure + first-batch rows; every ManifestId/AssetId/ItemId unique; UD-LIC-2/3/4/5 each referenced by ≥1 manifest row; `SuspiciousThirdPartyIp=true` entries are `Status=Replace` and never in a normal `TargetPath` row; third-party register carries the frozen layout §4.1 baseline (Avalonia 12.1.1, Silk.NET 2.23.0, DOX 3.5.1, SkiaSharp 4.151.1, CSharpMath.SkiaSharp 0.5.1, TextMateSharp 2.0.4, Markdig 1.3.2, AngleSharp 1.7.1, FFmpeg 9.0.1, vcpkg checkout `36677bbd0...`); prohibited families (Nerdbank.MessagePack/Fory/AvaloniaEdit/ClosedXML/CSharpMath.Avalonia/NAudio/SqlSugar/Dapper/managed FFmpeg binding) not present as entries; QuaZip→System.IO.Compression/OpenSSL→.NET TLS/KissFFT→oracle notes. Existing Step-01 register extended (FFmpeg corrected to frozen 9.0.1), not clobbered. Reverse-evidence: dropping copied-code CM-0001 → decision-coverage still green but FeatureId evidence spot-check fails and reports the missing ManifestId.
+
+**Evidence / notes:** Docs-only; no code/solution.
+
+**Commit:** (this commit)
+**Next safe action:** 00.05 verification oracles & golden samples.
 
 ---
