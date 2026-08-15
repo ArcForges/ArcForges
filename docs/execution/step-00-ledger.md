@@ -103,7 +103,25 @@
 
 **Evidence / notes:** Docs-only; no code/solution.
 
-**Commit:** (this commit)
+**Commit:** `9b181eaa500a6f1115b8b73c87ebb00680100bd5` `Step 00.04: five reuse manifests (structure & first-batch entries)`
 **Next safe action:** 00.05 verification oracles & golden samples.
+
+---
+
+## 00.05 — 验证方法、测试 Oracle 与行为金样
+
+**Status:** COMPLETE
+**Deliverables:** `docs/scope/verification-oracles.md`, `docs/tools/check-verification.ps1`
+
+**Validation (exact command + result + evidence):**
+- `pwsh -NoProfile -File docs/tools/check-verification.ps1` → `PASS: check-verification — OracleClass coverage, first-batch catalog >=8, golden red-line clear`.
+- Supplemental: 98 AF-F rows parsed from `source-subsystems.md`; every OracleClass ∈ {O1..O7}; Copy/Rewrite/ReferenceOnly rows have an Oracle landing; first-batch golden catalog has 8 entries with 5 content columns complete; golden red-line (≥15 consecutive non-C# source lines heuristic) zero hits in the target docs tree.
+
+**Gate (00.05 Completion gate):** O1–O7 defined (definition/capture/owning-test-project/applicable-decision); 8 first-batch golden catalog entries (format/source/捕获步骤/Oracle/owning-test complete); golden management rules (storage, red-line, update); test pyramid landing table; 00.02 binding asserted. Reverse-evidence: clearing a `AF-F-SIYUAN-*` OracleClass → coverage script fails naming the FeatureId.
+
+**Evidence / notes:** Docs-only; no code/solution. Golden sample bodies deferred to implementation (this step freezes catalog + format only).
+
+**Commit:** (this commit)
+**Next safe action:** 00.06 branch/PR sequencing + traceability seed.
 
 ---
