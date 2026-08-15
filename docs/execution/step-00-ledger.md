@@ -48,7 +48,27 @@
 - Baseline table, verification snapshot, nine-state state machine, 27 per-repo per-subsystem status rows (fixed 13-column shape; states ∈ nine-state set), drift process. Docs-only; read-only source verification only.
 - `StartArcForges` static packaged oracle: not enumerated as executable evidence; static-only, `NotExecuted` (no runtime launch).
 
-**Commit:** (this commit)
+**Commit:** `1dd5f0b6039aacc8a79bbadf51e197e1ded4d41c` `Step 00.01: source baseline & coverage state machine`
 **Next safe action:** 00.02 source subsystem feature inventory.
+
+---
+
+## 00.02 — 来源子系统功能清单
+
+**Status:** COMPLETE
+**Deliverables:** `docs/scope/source-subsystems.md`, `docs/tools/check-source-coverage.ps1`
+
+**Validation (exact command + result + evidence):**
+- `pwsh -NoProfile -File docs/tools/check-source-coverage.ps1` → `OK: ipcBridge member coverage — 277 members, diff set empty` + `PASS: check-source-coverage — ipcBridge members covered, 3 columns non-empty, SS-PRO all Replace/O4, AFFINE-BE all ReferenceOnly, siyuan all ReferenceOnly/O3`.
+- ipcBridge member anti-inventory: members extracted from `ipcBridge.ts@29c9271a` via brace-depth parse (41 export groups, 277 members); every member token present in `source-subsystems.md` (diff set empty). Reverse-failure holds: deleting a member's row → diff non-empty.
+
+**Gate (00.02 Completion gate):** 6-source per-subsystem independent rows, `DecisionClass`/`OracleClass`/`OwningStep` non-empty, zero orphan paths (path existence sampled); completeness script green; Pro/EE/siyuan rows carry UD-LIC constraints (`SS-PRO` all `Replace`+`O4` UD-LIC-5; `AFFINE-BE` all `ReferenceOnly` UD-LIC-4; siyuan `ReferenceOnly`+`O3` UD-LIC-3). Subsystem-level inventory merged per-source aligned to `feature-inventory-and-mapping.md` canonical `AF-F-*` IDs.
+
+**Evidence / notes:**
+- Sections: 1 AionUi desktop (1.1 ipcBridge 41 export-group rows w/ all members; 1.2 chatLib message model + 8 merge-rule rows; 1.3 storage config types + 13-table; 1.4 renderer pages/comps; 1.5 process; 1.6 i18n 13-language), 2 AionUi mobile (WS protocol / messageAdapter·grouping·JWT / 7-class gap / publish-credential Replace / wss+TLS), 3 AFFiNE blocksuite (per-package, Yjs/CRDT Drop), 4 AFFiNE BE (ReferenceOnly EE), 5 siyuan (ReferenceOnly/O3), 6 Serial-Studio (core Copy GPL / Pro Replace O4 / LIB per-dependency), 7 ArcVideo, 8 ArcVideoFoundation, 9 serial-merge + completeness binding.
+- Docs-only; no code/solution produced.
+
+**Commit:** (this commit)
+**Next safe action:** 00.03 license & reuse matrix (license-summary).
 
 ---
