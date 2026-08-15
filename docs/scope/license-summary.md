@@ -1,7 +1,7 @@
 # License Summary — 许可证与复用矩阵快速参照
 
 > **权威来源**：本文件是 `license-and-reuse-matrix.md` 的快速参照与文件级证据冻结；权威仍为该矩阵与 `source-coverage-register.md`。本文件不引入新许可证结论，不构成法律意见；正式发布前法务审查见 `final-production-gate.md`。
-> 所有许可证结论附**文件级证据路径**，可 `Test-Path` 核验；AGPL 兼容性结论引用 AGPL §13。核验本步已作为一次性断言执行并记录证据（见 `docs/execution/step-00-ledger.md`；仓库策略禁 tracked helper scripts，脚本不纳入版本控制）。
+> 所有许可证结论附**文件级证据路径**，可 `Test-Path` 核验；AGPL 兼容性结论引用 AGPL §13。核验本步已作为一次性只读断言执行并记录证据（见 `docs/execution/step-00-ledger.md`；仓库策略禁 tracked helper scripts，脚本不纳入版本控制）。
 
 ---
 
@@ -31,7 +31,7 @@
 | Serial-Studio SPDX | SPDX 实测 482 文件：291 双许可 / 182 纯商业 / 9 无标记 audit debt | |
 | Serial-Studio BUILD_COMMERCIAL | `Serial-Studio/CMakeLists.txt` `option(BUILD_COMMERCIAL ...)` 门控 | |
 | ArcVideo / Foundation GPL-3.0 | `ArcVideo/LICENSE`、`ArcVideoFoundation/LICENSE`（GNU GPL v3 全文 ×2） | |
-| Packaged oracle | `C:\MyFile\ArcForges\StartArcForges` | 只读静态发布物/文件布局 Oracle；`NotExecuted`（不启动任何 executable/service/installer/updater/subprocess） |
+| Packaged oracle | `C:\MyFile\ArcForges\StartArcForges`；静态证据 `docs/scope/packaged-oracle-static-evidence.md` | 只读静态发布物/文件布局 Oracle；`NotExecuted`（不启动任何 executable/service/installer/updater/subprocess） |
 
 ---
 

@@ -1,171 +1,185 @@
 # Step 00 — Scope & Source Inventory : Execution Ledger
 
-> Canonical continuation ledger for ArcForges Step 00 (docs-only). Rules: one atomic implementation/evidence
-> commit per owning substep; a PR only after the whole active scope passes its final review and the 00-closure
-> Completion Gate. Remote PRs are history; this file is the only continuation record until a final PR exists.
-> Records reflect **actual** commands, exit codes, evidence paths, and branch-tip identity — never fabricated.
+> Canonical continuation ledger for the local review of Step 00. The review is docs-only and
+> remains honest about the final gate: a generated bridge does not close `NeedsRecheck`, and the
+> historical PR #18 is not a continuation target.
 
-- Active step: `00-scope-and-source-inventory.md`（whole-step mode）
-- Active branch: `feat/af00-scope-source-inventory-reboot`（fresh; prior PR #16 & #15 closed-unmerged, their branch names not reused）
-- Worktree: `.worktree/af00-scope-source-inventory-reboot`
-- Base: `origin/main` (`d29f986a76c5523b1c358227bf6990b1a451b4bd`) — Step 00 is sequence start, no prerequisites
-- Ledger path: `docs/execution/step-00-ledger.md`
-- UTC run start: 2026-08-15
+- Active step: `00-scope-and-source-inventory.md` (whole-step mode)
+- Review branch: `feat/af00-scope-source-inventory-reboot` (the supplied original branch)
+- Review worktree: `C:\MyFile\ArcForges\ArcForges\.worktree\af00-scope-source-inventory-reboot`
+- Review parent: `ed6a89494389df4b7ece643e235b3816866e0acb`
+- Frozen target base: `origin/main` (`96c02e7f829a9e19c0a787d4996fb2428c404ad7`)
+- Related remote PR: PR #18 on this branch; the local review commit is not pushed, commented on,
+  or used to reopen the PR.
+- Planning-repository writeback: branch `docs/af00-license-matrix-dirty-state`, separate worktree,
+  commit `1a918eb9f2f287139c642bcf247662bbae9d7d9a`; no planning-repository PR.
+- Review date: 2026-08-15 (Asia/Shanghai; command evidence records UTC where available).
 
----
+## 00.00 — Freeze product family and scope
 
-## 00.00 — 冻结产品组合与范围
+**Review status:** structural evidence retained; no target-code scope violation found.
 
-**Status:** COMPLETE
-**Deliverables:** `docs/scope/product-family.md`, `docs/tools/check-scope.ps1`
+**Files:** `docs/scope/product-family.md`.
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File docs/tools/check-scope.ps1` → `PASS: check-scope ... 7 invariants + product freeze + staging + Web-9 assertions green` (evidence: `docs/tools/check-scope.ps1`; run at UTC 2026-08-15)
+**Historical evidence retained:** the original read-only scope assertion recorded the exact seven
+  ProductIds, owning steps, ArcNotes staging, platform freeze, and the ArcImage exit/non-target
+  whitelist. The helper was removed because tracked `.ps1` files violate the repository policy;
+  no replacement executable was added.
 
-**Gate (00.00 Completion gate):** product-family.md exists; freeze table rows == README product set, ProductId set exactly equal to the 7; every ProductId has owning step(s); plan tree grep `ArcImage` only in exit/non-target context (whitelist assertion) and zero target project/Namespace hits; Edgeless/Database/Slides -> steps 15/16/17; 7 invariants non-empty enforcement column. All assertions green.
+**Commit:** `21c2801175f001526f7355dc9f7cd2d1c6bd044a` — `Step 00.00: freeze product family & scope`.
 
-**Evidence / notes:**
-- Freeze table, exit/inheritance table, 7 product-autonomy invariants, ArcNotes staging, Android/iOS/Web freeze, business model snapshot, no-time-outputs note. Docs-only; no code/solution produced.
-- Status of the five dirty tracked source files recorded for 00.01 — this substep produced no source mutation.
+## 00.01 — Source baselines and coverage state machine
 
-**Commit:** `0392f19157ac41efb7c387bb0bf3de6ad20fb500` `Step 00.00: freeze product family & scope`
-**Next safe action:** 00.01 source baseline + coverage state machine.
+**Review status:** source-baseline evidence is consistent; **BLOCKED** by the five authoritative
+`NeedsRecheck` overlays.
 
----
+**Files:** `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt`,
+`docs/scope/packaged-oracle-static-evidence.md`.
 
-## 00.01 — 来源仓库基线与 Source Coverage 状态机
+**Read-only assertions:** all six frozen HEADs match the planning baseline; AFFiNE, siyuan, and
+Serial-Studio are clean; AionUi, ArcVideo, and ArcVideoFoundation match their declared dirty
+files and DiffSha256 values. The affected rows remain `NeedsRecheck`:
 
-**Status:** COMPLETE
-**Deliverables:** `docs/scope/source-baseline.md`, `docs/scope/baseline-snapshot.txt`, `docs/tools/check-source-baseline.ps1`
+- Features: `AF-F-AIONUI-0283`, `AF-F-AIONUI-0285`, `AF-F-ARCV-0065`, `AF-F-ARCV-0069`,
+  `AF-F-ARCVF-0011`.
+- Coverage: `SC-AION-03`, `SC-AION-05`, `SC-AV-01`, `SC-AV-04`, `SC-AVF-02`.
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File docs/tools/check-source-baseline.ps1` → `PASS: all six repositories match the frozen baseline; zero drift (clean repos clean, dirty repos exactly 5 dirty files with matching DiffSha256); source-baseline.md CoverageStatus all within nine-state set`. Snapshot written to `docs/scope/baseline-snapshot.txt` (UTC `2026-08-15T03:26:50Z`).
-- All six `rev-parse HEAD` == frozen commits; AionUi/ArcVideo/ArcVideoFoundation clean-check skips + dirty-check DiffSha256 recomputed and equal to register (`1f87a590…`, `3302eb6c…`, `9ccbbea3…`). AFFiNE/siyuan/Serial-Studio verified clean; each `describe --tags --always` matches. **Zero drift.**
+**Packaged oracle:** static inventory only; `StartArcForges` status is `NotExecuted`. Evidence is
+in `docs/scope/packaged-oracle-static-evidence.md` with full-tree manifest hash
+`0e16e92490e1986b71f2b0186ee0a0fe4212119e5eade4b0b3d7f35cd95b143d`.
 
-**Gate (00.01 Completion gate):** source-baseline.md + baseline-snapshot.txt exist; 6 commits verbatim match §1; workspace clean/dirty matches `source-coverage-register.md` current snapshot per-repo; the 5 dirty tracked files' Coverage/Feature rows are `NeedsRecheck` (`AF-F-AIONUI-0283, AF-F-AIONUI-0285, AF-F-ARCV-0065, AF-F-ARCV-0069, AF-F-ARCVF-0011`; coverage `SC-AION-03/05, SC-AV-01/04, SC-AVF-02`); nine-state machine complete; every subsystem has exactly one current state; drift process executable (trigger + update path). The 5 `NeedsRecheck` remain flagged — Step 00 does not claim full closure until they are re-reviewed.
+**Commit:** `d561f9a0363d86df66186e9c60f547fb29e3d79c` — `Step 00.01: source baseline & coverage state machine`.
 
-**Evidence / notes:**
-- Baseline table, verification snapshot, nine-state state machine, 27 per-repo per-subsystem status rows (fixed 13-column shape; states ∈ nine-state set), drift process. Docs-only; read-only source verification only.
-- `StartArcForges` static packaged oracle: not enumerated as executable evidence; static-only, `NotExecuted` (no runtime launch).
+## 00.02 — Source subsystem feature inventory
 
-**Commit:** `1dd5f0b6039aacc8a79bbadf51e197e1ded4d41c` `Step 00.01: source baseline & coverage state machine`
-**Next safe action:** 00.02 source subsystem feature inventory.
+**Review status:** source index corrected; **00.02 atomic-row closure is not claimed** while the
+planning inventory still contains grouped ipcBridge cells that require independent member rows.
 
----
+**File:** `docs/scope/source-subsystems.md`.
 
-## 00.02 — 来源子系统功能清单
+**Review findings fixed:** the file now distinguishes its 41-row ipcBridge export-group index from
+the final Feature denominator and records the actual 315 named member tokens. The final atomic
+container remains the planning-repository `feature-inventory-and-mapping.md`; the index count is
+not used as the bridge denominator.
 
-**Status:** COMPLETE
-**Deliverables:** `docs/scope/source-subsystems.md`, `docs/tools/check-source-coverage.ps1`
+**Outstanding document finding:** several planning-inventory ipcBridge cells still combine multiple
+members (for example `application.openDevTools / isDevToolsOpened` and `team.*` event groups), so
+the literal 00.02 rule “each export member gets an independent line” needs a planning-inventory
+reconciliation before this gate can pass.
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File docs/tools/check-source-coverage.ps1` → `OK: ipcBridge member coverage — 277 members, diff set empty` + `PASS: check-source-coverage — ipcBridge members covered, 3 columns non-empty, SS-PRO all Replace/O4, AFFINE-BE all ReferenceOnly, siyuan all ReferenceOnly/O3`.
-- ipcBridge member anti-inventory: members extracted from `ipcBridge.ts@29c9271a` via brace-depth parse (41 export groups, 277 members); every member token present in `source-subsystems.md` (diff set empty). Reverse-failure holds: deleting a member's row → diff non-empty.
+**Commit:** `13a4e9460268d575dbc450a01606a5899d8039e3` — `Step 00.02: source subsystem feature inventory`.
 
-**Gate (00.02 Completion gate):** 6-source per-subsystem independent rows, `DecisionClass`/`OracleClass`/`OwningStep` non-empty, zero orphan paths (path existence sampled); completeness script green; Pro/EE/siyuan rows carry UD-LIC constraints (`SS-PRO` all `Replace`+`O4` UD-LIC-5; `AFFINE-BE` all `ReferenceOnly` UD-LIC-4; siyuan `ReferenceOnly`+`O3` UD-LIC-3). Subsystem-level inventory merged per-source aligned to `feature-inventory-and-mapping.md` canonical `AF-F-*` IDs.
+## 00.03 — License and reuse matrix
 
-**Evidence / notes:**
-- Sections: 1 AionUi desktop (1.1 ipcBridge 41 export-group rows w/ all members; 1.2 chatLib message model + 8 merge-rule rows; 1.3 storage config types + 13-table; 1.4 renderer pages/comps; 1.5 process; 1.6 i18n 13-language), 2 AionUi mobile (WS protocol / messageAdapter·grouping·JWT / 7-class gap / publish-credential Replace / wss+TLS), 3 AFFiNE blocksuite (per-package, Yjs/CRDT Drop), 4 AFFiNE BE (ReferenceOnly EE), 5 siyuan (ReferenceOnly/O3), 6 Serial-Studio (core Copy GPL / Pro Replace O4 / LIB per-dependency), 7 ArcVideo, 8 ArcVideoFoundation, 9 serial-merge + completeness binding.
-- Docs-only; no code/solution produced.
+**Review status:** target quick-reference corrected; planning authority repaired in a separate
+planning worktree.
 
-**Commit:** `fa11f26f2550525db396ff58732441723897e986` `Step 00.02: source subsystem feature inventory`
-**Next safe action:** 00.03 license & reuse matrix (license-summary).
+**Files:** `docs/scope/license-summary.md`, `docs/deviations.md`.
 
----
+The quick-reference now points to the static packaged-oracle evidence. The planning matrix §1
+records AionUi, ArcVideo, and ArcVideoFoundation as dirty with exact normalized DiffSha256 values;
+AFFiNE, siyuan, and Serial-Studio remain clean. The tracked-helper-script conflict is recorded as
+a repository-policy deviation; durable CI/test gate repair remains a later planning action.
 
-## 00.03 — 许可证与复用矩阵
+**Commits:** target `99d02a01198448d95533753722c73a9f7917e02c` — `Step 00.03: license & reuse matrix summary`;
+planning writeback `1a918eb9f2f287139c642bcf247662bbae9d7d9a` — `docs: reconcile source worktree license evidence`.
 
-**Status:** COMPLETE
-**Deliverables:** `docs/scope/license-summary.md`, `docs/tools/check-license.ps1`
+## 00.04 — Five reuse manifests
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File docs/tools/check-license.ps1` → `PASS: check-license — evidence paths, brand blacklist, Pro/EE isolation all green`. Evidence: `docs/tools/check-license.ps1`; plus a §2/§3 plan-matrix scan confirming 12 §2 rows (four columns non-empty) and 15 §3 vendored rows (all decisions non-empty).
+**Review status:** structure and first-batch evidence retained.
 
-**Gate (00.03 Completion gate):** license-summary.md complete; evidence script green (AionUi Apache-2.0 LICENSE + agentModes SPDX, AFFiNE EE ×2 + blocksuite MIT ×5 sample, siyuan AGPL, Serial-Studio BUILD_COMMERCIAL, ArcVideo/Foundation GPL ×2, StartArcForges as `NotExecuted` static oracle); UD-LIC-1..5 cards with file-level evidence + constraint + impact steps; AGPL-obligation → owning-step table; decision-class ↔ manifest mapping; compliance-closing 8 items bound to FG rows + steps; brand blacklist on target naming zero hits; Pro/EE isolation (SS-PRO all Replace/O4 UD-LIC-5, AFFINE-BE all ReferenceOnly UD-LIC-4). Reverse-evidence holds (flipping an SS-PRO row to Copy → isolation assertion fails citing UD-LIC-5).
+**Files:** `docs/compliance/{copied-code.md,copied-code.json,copied-asset.md,independent-reimplementation.md,replacement-backlog.md,third-party-license-register.md}`.
 
-**Evidence / notes:** Docs-only; no code/solution.
+The copied-code JSON has six unique first-batch rows with the required non-empty fields. The five
+Markdown manifests retain the UD-LIC-2..5, suspicious-IP Replace-only, and frozen dependency
+baseline entries. No new source reuse or license conclusion was introduced by this review.
 
-**Commit:** `1e1eda2e13364c51239b8745cb77b307569d80a3` `Step 00.03: license & reuse matrix summary`
-**Next safe action:** 00.04 reuse manifests (5).
+**Commit:** `7b95c4d3801330e4ee92d49ea7c99ea1ad7a69fe` — `Step 00.04: five reuse manifests (structure & first-batch entries)`.
 
----
+## 00.05 — Verification oracles and golden samples
 
-## 00.04 — 复用 Manifest（结构与首批条目）
+**Review status:** structure retained; no runtime or golden-sample capture was claimed.
 
-**Status:** COMPLETE
-**Deliverables:** `docs/compliance/{copied-code.md,copied-code.json,copied-asset.md,independent-reimplementation.md,replacement-backlog.md,third-party-license-register.md}`, `docs/tools/check-manifests.ps1`
+**File:** `docs/scope/verification-oracles.md`.
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File docs/tools/check-manifests.ps1` → `PASS: check-manifests — 5+ manifests present, copied-code rows complete+unique, UD-LIC-2..5 covered, suspicious-IP Replace-only, review/third-party baseline present`.
-- copied-code.json parsed: 6 first-batch rows, all `ManifestId/SourcePath/SourceRepository/SourceCommit/OriginalLicense/TargetProduct/TargetProject/ReuseType/TemporaryOrPermanent/Attribution/ReleaseRestriction/Evidence` non-empty, ids unique.
+The O1–O7 definitions, eight first-batch catalog entries, red-line rule, storage/provenance rules,
+and test-pyramid landing remain present. Golden bodies remain implementation-stage work as the
+active scope requires.
 
-**Gate (00.04 Completion gate):** 5 manifests under `docs/compliance/` with complete field structure + first-batch rows; every ManifestId/AssetId/ItemId unique; UD-LIC-2/3/4/5 each referenced by ≥1 manifest row; `SuspiciousThirdPartyIp=true` entries are `Status=Replace` and never in a normal `TargetPath` row; third-party register carries the frozen layout §4.1 baseline (Avalonia 12.1.1, Silk.NET 2.23.0, DOX 3.5.1, SkiaSharp 4.151.1, CSharpMath.SkiaSharp 0.5.1, TextMateSharp 2.0.4, Markdig 1.3.2, AngleSharp 1.7.1, FFmpeg 9.0.1, vcpkg checkout `36677bbd0...`); prohibited families (Nerdbank.MessagePack/Fory/AvaloniaEdit/ClosedXML/CSharpMath.Avalonia/NAudio/SqlSugar/Dapper/managed FFmpeg binding) not present as entries; QuaZip→System.IO.Compression/OpenSSL→.NET TLS/KissFFT→oracle notes. Existing Step-01 register extended (FFmpeg corrected to frozen 9.0.1), not clobbered. Reverse-evidence: dropping copied-code CM-0001 → decision-coverage still green but FeatureId evidence spot-check fails and reports the missing ManifestId.
+**Commit:** `bc9911073f40353c0465469f9c5fb055c5359508` — `Step 00.05: verification oracles & golden samples`.
 
-**Evidence / notes:** Docs-only; no code/solution.
+## 00.06 — Sequencing and traceability seed
 
-**Commit:** `9b181eaa500a6f1115b8b73c87ebb00680100bd5` `Step 00.04: five reuse manifests (structure & first-batch entries)`
-**Next safe action:** 00.05 verification oracles & golden samples.
+**Review status:** bridge structure corrected locally; closure remains blocked.
 
----
+**Files:** `docs/scope/sequencing.md`, `docs/traceability-matrix.md`,
+`docs/execution/step-00-review-validation.md`.
 
-## 00.05 — 验证方法、测试 Oracle 与行为金样
+The stale local bridge was rejected (24 records, 86 feature IDs, 27 coverage IDs, abbreviated
+baselines, null evidence hashes). A replacement was generated by an inline read-only PowerShell
+assertion because the repository policy forbids retaining the plan-mandated helper scripts:
 
-**Status:** COMPLETE
-**Deliverables:** `docs/scope/verification-oracles.md`, `docs/tools/check-verification.ps1`
+- `records=24`
+- `featureIds=833`
+- `coverageIds=27`
+- `missing=0`, `extra=0`
+- `closureState=BridgeGenerationRequired`
+- local SHA-256: `e7e5768f879ce5607f0fcf37a504c433b3e9423a76481f620dd107f74834b41`
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File docs/tools/check-verification.ps1` → `PASS: check-verification — OracleClass coverage, first-batch catalog >=8, golden red-line clear`.
-- Supplemental: 98 AF-F rows parsed from `source-subsystems.md`; every OracleClass ∈ {O1..O7}; Copy/Rewrite/ReferenceOnly rows have an Oracle landing; first-batch golden catalog has 8 entries with 5 content columns complete; golden red-line (≥15 consecutive non-C# source lines heuristic) zero hits in the target docs tree.
+The bridge output is recorded at `artifacts/evidence/traceability/feature-trace-bridge.json`; the
+exact result and policy boundary are recorded in `docs/execution/step-00-review-validation.md`.
+It does not close any `NeedsRecheck` row.
 
-**Gate (00.05 Completion gate):** O1–O7 defined (definition/capture/owning-test-project/applicable-decision); 8 first-batch golden catalog entries (format/source/捕获步骤/Oracle/owning-test complete); golden management rules (storage, red-line, update); test pyramid landing table; 00.02 binding asserted. Reverse-evidence: clearing a `AF-F-SIYUAN-*` OracleClass → coverage script fails naming the FeatureId.
+**Commit:** `2542287395a46ddbc7f0a6637f2ba5110a6c5a60` — `Step 00.06: branch/PR sequencing & traceability seed`.
 
-**Evidence / notes:** Docs-only; no code/solution. Golden sample bodies deferred to implementation (this step freezes catalog + format only).
+## Review correction commit
 
-**Commit:** `c87e8c1e32fe2cee139bf060f28a616d5889e9df` `Step 00.05: verification oracles & golden samples`
-**Next safe action:** 00.06 branch/PR sequencing + traceability seed.
+One target-repository atomic docs/evidence commit contains the ledger, review evidence, static
+packaged-oracle evidence, corrected quick-reference/deviation text, corrected source-index wording,
+and the machine-readable bridge only; no product code, source repository, build file, CI workflow,
+or helper script is in scope.
 
----
+**Commit:** this final review commit — `docs: reconcile Step 00 review evidence` (the final SHA is
+  recorded in the handoff after the ledger is amended).
 
-## 00.06 — 分支/PR 序列与追踪种子
+## Final whole-scope audit after the review commit
 
-**Status:** COMPLETE
-**Deliverables:** `docs/scope/sequencing.md`, `docs/traceability-matrix.md`, `eng/traceability/generate-feature-trace-bridge.ps1`, `artifacts/evidence/traceability/feature-trace-bridge.json`, `docs/tools/check-traceability.ps1`; `docs/deviations.md` updated.
+- `git status --short` → empty; the supplied original worktree is clean and one commit ahead of
+  its remote PR #18 branch; target main and planning writeback worktrees also remain clean.
+- `git diff HEAD^ HEAD --check` → no output; `git ls-files '*.ps1' '*.sh'` → empty output.
+- Inline bridge assertion against the current planning files → `inventory=833`, `bridge=833`,
+  `missing=0`, `extra=0`; `coverage=27`, `bridge=27`, `missing=0`, `extra=0`; `records=24`,
+  `top=BridgeGenerationRequired`, `statuses=NeedsRecheck`; artifact SHA-256
+  `e7e5768f8793ce5607f0fcf37a504c433b3e9423a76481f620dd107f74834b41`.
+- Inline source-index assertion → `ipcGroups=41`, `declaredTokens=315`; copied-code manifest
+  parse → `copiedCodeRows=6`, `uniqueManifestIds=6`.
+- Inline packaged-oracle assertion using sorted `product-relative-path|file-length` records,
+  UTF-8/LF encoding, and a final LF → `records=11297`, manifest hash
+  `0e16e92490e1986b71f2b0186ee0a0fe4212119e5eade4b0b3d7f35cd95b143d`; evidence file contains
+  the same hash and `Status=NotExecuted`.
 
-**Validation (exact command + result + evidence):**
-- `pwsh -NoProfile -File eng/traceability/generate-feature-trace-bridge.ps1` → `WROTE: artifacts/evidence/traceability/feature-trace-bridge.json (records=24, featureIds=86, coverageIds=27, closureState=BridgeGenerationRequired)`.
-- `pwsh -NoProfile -File docs/tools/check-traceability.ps1` → `PASS: check-traceability — TR rows complete, bridge sets equal + honest BridgeGenerationRequired, NeedsRecheck blocked, branch regex green`.
+## Whole-scope review result
 
-**Gate (00.06 Completion gate):** `docs/scope/sequencing.md` (branch naming examples whole-step/substep/lettered; PR completion template field list; 00–31 sequence table verbatim README §4 with the hard merge-order constraints 01→02→03/04→05/06→07→08–12→13→14→15–17→18→19→20→21–22→23–25→26→27–29→30→31); `docs/traceability-matrix.md` seed (stable TR-* requirement summaries with OwningStep/Test/FG; explicitly not a Feature-count closure); machine-readable bridge generator producing `feature-trace-bridge.json` (24 records, records schema complete, initial `closureStatus` = `BridgeGenerationRequired`, coverage-touching records `NeedsRecheck`); frozen-decision registration (`00-scope...md` 末尾"冻结决策与实施核验"：sync=native-interop=Foundation-single-location=source-coverage-state) + README §9 recovery-entry update rule; deviations.md appended (no README/layout deviation; Foundation single-ID ruling flagged for Step 02). Branch-naming regex `^feat/af\d{2}(-\d{2})?-[a-z0-9-]+$` green.
+**Status:** **BLOCKED — Step 00 cannot claim closure.**
 
-**Evidence / notes:** Docs-only + generated bridge JSON evidence; no code/solution. Dead PR #16 (`feat/af00-scope-and-source-inventory`) and #15 (`feat/af00-00-scope-inventory`) branch names not reused — active Step 00 branch is `feat/af00-scope-source-inventory-reboot` (fresh).
+**Findings fixed locally:** stale branch/base/PR continuation claims; stale commit SHAs; stale
+86-feature bridge claim; missing static packaged-oracle record; plan license-matrix dirty-state
+conflict; tracked-helper-script policy wording; source-index group-vs-atomic denominator wording.
 
-**Commit:** `f938e1cdac2459f68a1b2bba1e775c87732c0058` `Step 00.06: branch/PR sequencing & traceability seed`
-**Next safe action:** whole-scope scan of all 00.00–00.06 + 00-closure gate; then final review + push + single PR.
+**Remaining blockers/findings:**
 
----
+1. The five dirty source files and their five coverage rows remain authoritative `NeedsRecheck`;
+   source/current-worktree overlays have not been reconciled against clean frozen-baseline evidence.
+2. The planning feature inventory still has grouped ipcBridge cells, so independent member-row
+   closure is not yet evidenced even though the source-subsystem group index names all 315 tokens.
 
-## Whole-scope review + CI-driven fix (post-push)
+**Risk:** claiming completion, pushing, or opening a PR would present an unreviewed source overlay
+and a non-atomic feature denominator as closed evidence.
 
-**Status:** COMPLETE — PR #18 created; `managed` CI failed; root cause found and fixed in a review commit.
+**PR state:** no PR was created by this review. Historical PR #18 remains untouched.
 
-**Root cause (not flaky; a rerun cannot fix):** The repo's ArchitectureTest
-`ArcForges.Tests.ArchitectureTests.RepositoryPolicyTests.NativeDirectDependenciesAreRegisteredAndSupplyChainGatesStayEnabled`
-(core: `tests/ArchitectureTests/RepositoryPolicyTests.cs:260-264`) forbids **any** tracked `.ps1`/`.sh` anywhere
-in the repo. Step 00 added 8 tracked helper scripts (`docs/tools/check-*.ps1`, `eng/traceability/generate-feature-trace-bridge.ps1`),
-causing a deterministic violation of the established repository policy (docs/deviations.md item 8).
-
-**Fix (review commit, pushed):** `git rm` the 8 tracked scripts; updated the referencing docs to state the gate
-assertions were executed as one-time recorded verification (evidence in this ledger) and that the scripts are not
-tracked per `RepositoryPolicyTests`; appended a deviations row documenting the conflict and flagging the plan's
-`docs/tools/*.ps1` mandate for authority repair (future durable gate should be a test/CI-based gate per deviations
-item 8). All eight substep gates (results) remain valid as recorded evidence.
-
-**Validation after fix:** `git ls-files '*.ps1' '*.sh'` on the branch = 0 (policy satisfied). CI re-run expected green.
-
-**Evidence / notes:** This is a genuine plan↔repository-policy conflict discovered by CI; per arcforges.md authority
-chain, the plan script-mandate is flagged for repair (no PLAN_REPO writeback performed in this run — flagged).
-
-**Commit:** (this commit — review fix)
-**Next safe action:** confirm PR #18 CI green; then Step 01 on a fresh branch/worktree/PR.
-
----
+**Safe resume action:** in a clean worktree for each frozen source commit, reread the five dirty
+paths and exact diffs; reconcile `source-coverage-register.md`, the feature-inventory statuses,
+the planning license matrix, and the independent ipcBridge member rows; regenerate the bridge;
+rerun the final production gate and whole-scope review; only then push this review branch and open
+exactly one new PR titled `Step 00: Scope & Source Inventory`.

@@ -1,8 +1,8 @@
 # Source Subsystems — 来源子系统级功能清单
 
-> **权威来源**：本文件是 ArcForges 重写中六个只读来源仓库的子系统级功能清单，最终容器为 `feature-inventory-and-mapping.md`（合并目标）。行模式遵循 `00-scope-and-source-inventory.md` 00.02，FeatureId 全局唯一且稳定，不复用废弃号。
+> **权威来源**：本文件是 ArcForges 重写中六个只读来源仓库的子系统级功能清单，最终原子容器为 `feature-inventory-and-mapping.md`（合并目标）。本文件的 AionUi ipcBridge 部分是 41 个导出组的组索引；原子成员 FeatureId/行为行以该最终容器为准，不能把组索引行数当作 Feature 分母。行模式遵循 `00-scope-and-source-inventory.md` 00.02，FeatureId 全局唯一且稳定，不复用废弃号。
 > 每行必须三列（`DecisionClass`/`OracleClass`/`OwningStep`）非空；路径必须在来源 @BaselineCommit 真实存在（抽样 `Test-Path` 核验）；Pro/EE/siyuan 受限来源行标注 UD-LIC 约束。
-> AionUi ipcBridge 导出成员已经脚本从 `ipcBridge.ts` 全文解析并全部入行（覆盖集差集=空，本步已逐条验证）。
+> AionUi ipcBridge 导出组已经从 `ipcBridge.ts` 全文只读解析；组索引逐名记录 315 个成员 token（覆盖集差集=空）。原子成员映射仍由 `feature-inventory-and-mapping.md` 的 00.02 合并目标承载；本仓库不保留被 RepositoryPolicyTests 禁止的解析脚本。
 >
 > **统一行模式**：`FeatureId | SourceRepo@BaselineCommit | SourcePath | Behavior | DecisionClass | TargetProduct | TargetProject | TargetDefinition | OwningStep | OracleClass | LicenseEvidence | AttributionRequired | Notes`。
 >
@@ -12,7 +12,7 @@
 
 ## 1. AionUi 桌面端（ArcChat Desktop；Apache-2.0，AttributionRequired=yes）
 
-### 1.1 ipcBridge.ts 合同面（按导出组；全部导出成员逐名入行）
+### 1.1 ipcBridge.ts 合同面（按导出组；组行逐名列出成员，原子 Feature 行见合并目标）
 
 | FeatureId | SourceRepo@BaselineCommit | SourcePath | Behavior | DecisionClass | TargetProduct | TargetProject | TargetDefinition | OwningStep | OracleClass | LicenseEvidence | AttributionRequired | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -296,8 +296,7 @@
 
 ## 9. 串行合并与完整性绑定
 
-- 本文件按来源分段、按 `feature-inventory-and-mapping.md` 现有 `AF-F-*` ID（权威容器）对接；废弃号登记不复用。ipcBridge 合同面在本文件以组级行覆盖全部 41 导出组与逐成员名；逐成员行为/契约的权威原子行保存在 `feature-inventory-and-mapping.md` §1（AF-F-AIONUI-0001..0282）。
+- 本文件按来源分段、按 `feature-inventory-and-mapping.md` 现有 `AF-F-*` ID（权威容器）对接；废弃号登记不复用。ipcBridge 合同面在本文件以组级行覆盖全部 41 导出组与 315 个逐名成员 token；逐成员行为/契约的权威原子行保存在 `feature-inventory-and-mapping.md` §1（AF-F-AIONUI-0001..0289）。Bridge/Feature 分母必须读取该原子容器，而不是把本文件的组行误当作原子行。
 - 零孤立双向断言：清单中每个 `SourcePath` 在来源树存在（正向）；来自 ipcBridge/renderer/process/blocksuite/siyuan-kernel/Serial-Studio 驱动·widget·lib/ArcVideo 顶层模块/ArcVideoFoundation 值类型的每个来源关键路径都在本清单（反向）。`DecisionClass`/`OracleClass`/`OwningStep` 三列无空值。
 - UD-LIC 约束标注：siyuan（UD-LIC-3）、AFFiNE EE（UD-LIC-4）、Serial-Studio Pro（UD-LIC-5）行分别标注"独立实现/不复制 EE 代码/反克隆条款"，AttributionRequired=no（受限来源不进 Copied Manifest 正常行）。
-- 门禁：本步一次性断言验证完整性（ipcBridge 成员覆盖差集=空、三列非空、Pro 全 Replace/O4、EE 全 ReferenceOnly、路径存在），证据见 `docs/execution/step-00-ledger.md`；仓库策略 `RepositoryPolicyTests` 禁 tracked helper scripts，断言脚本不纳入版本控制。
-
+- 门禁：本步一次性只读断言验证完整性（ipcBridge 成员 token 覆盖差集=空、三列非空、Pro 全 Replace/O4、EE 全 ReferenceOnly、路径存在），证据见 `docs/execution/step-00-ledger.md`；仓库策略 `RepositoryPolicyTests` 禁 tracked helper scripts，断言脚本不纳入版本控制。
