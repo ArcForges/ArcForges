@@ -132,7 +132,7 @@ jobs:
             $nativeDlls | ForEach-Object { Remove-Item -LiteralPath (Join-Path $testOutput $_.Name) -Force -ErrorAction SilentlyContinue }
           }
       - name: Build the independent Windows solution
-        run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=x64
+        run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=x64 -v:minimal -clp:Summary
       - name: Run the app-local native ABI test executable
         shell: pwsh
         run: |
