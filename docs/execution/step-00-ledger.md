@@ -139,7 +139,33 @@
 
 **Evidence / notes:** Docs-only + generated bridge JSON evidence; no code/solution. Dead PR #16 (`feat/af00-scope-and-source-inventory`) and #15 (`feat/af00-00-scope-inventory`) branch names not reused — active Step 00 branch is `feat/af00-scope-source-inventory-reboot` (fresh).
 
-**Commit:** (this commit)
+**Commit:** `f938e1cdac2459f68a1b2bba1e775c87732c0058` `Step 00.06: branch/PR sequencing & traceability seed`
 **Next safe action:** whole-scope scan of all 00.00–00.06 + 00-closure gate; then final review + push + single PR.
+
+---
+
+## Whole-scope review + CI-driven fix (post-push)
+
+**Status:** COMPLETE — PR #18 created; `managed` CI failed; root cause found and fixed in a review commit.
+
+**Root cause (not flaky; a rerun cannot fix):** The repo's ArchitectureTest
+`ArcForges.Tests.ArchitectureTests.RepositoryPolicyTests.NativeDirectDependenciesAreRegisteredAndSupplyChainGatesStayEnabled`
+(core: `tests/ArchitectureTests/RepositoryPolicyTests.cs:260-264`) forbids **any** tracked `.ps1`/`.sh` anywhere
+in the repo. Step 00 added 8 tracked helper scripts (`docs/tools/check-*.ps1`, `eng/traceability/generate-feature-trace-bridge.ps1`),
+causing a deterministic violation of the established repository policy (docs/deviations.md item 8).
+
+**Fix (review commit, pushed):** `git rm` the 8 tracked scripts; updated the referencing docs to state the gate
+assertions were executed as one-time recorded verification (evidence in this ledger) and that the scripts are not
+tracked per `RepositoryPolicyTests`; appended a deviations row documenting the conflict and flagging the plan's
+`docs/tools/*.ps1` mandate for authority repair (future durable gate should be a test/CI-based gate per deviations
+item 8). All eight substep gates (results) remain valid as recorded evidence.
+
+**Validation after fix:** `git ls-files '*.ps1' '*.sh'` on the branch = 0 (policy satisfied). CI re-run expected green.
+
+**Evidence / notes:** This is a genuine plan↔repository-policy conflict discovered by CI; per arcforges.md authority
+chain, the plan script-mandate is flagged for repair (no PLAN_REPO writeback performed in this run — flagged).
+
+**Commit:** (this commit — review fix)
+**Next safe action:** confirm PR #18 CI green; then Step 01 on a fresh branch/worktree/PR.
 
 ---

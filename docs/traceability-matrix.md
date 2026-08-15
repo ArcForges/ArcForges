@@ -1,6 +1,6 @@
 # Traceability Matrix（追踪矩阵）— Step 00.06 种子
 
-> **权威来源**：本文件是 ArcForges「来源功能 → 产品需求 → 架构落点 → 步骤 → 测试 → 门禁」的追踪矩阵种子（00.06 产出）。Markdown 大表只保存**稳定 `TR-*` requirement 摘要**，**不代替** Feature/Coverage 外键；闭合状态只由 `eng/traceability/generate-feature-trace-bridge` 生成的 `feature-trace-bridge.json` 判定，不靠人工复制 Feature 数量行。
+> **权威来源**：本文件是 ArcForges「来源功能 → 产品需求 → 架构落点 → 步骤 → 测试 → 门禁」的追踪矩阵种子（00.06 产出）。Markdown 大表只保存**稳定 `TR-*` requirement 摘要**，**不代替** Feature/Coverage 外键；闭合状态只由 trace-bridge 生成器（实施阶段以 test/CI gate 落实）生成的 `feature-trace-bridge.json` 判定，不靠人工复制 Feature 数量行。
 > 当前状态诚实为 **`BridgeGenerationRequired`**：实现/发布阶段由生成器把每个 Feature 连接到唯一 primary requirement owner、拥有步骤、测试与 Gate。`NeedsRecheck` / `Missing*` 保持阻断，不能因生成成功自动改 `Closed`。
 
 ---
@@ -40,7 +40,7 @@
 | TR-MOB-01 | MAUI shared 网络/持久化 + Android Remote Chat/Task/Approval | 18/19 | `ArcChat.Mobile.Tests` / `ArcChat.Mobile.UiTests` | FG.5 |
 | TR-MOB-02 | iOS 架构完整（Planned/Build Deferred） | 20 | `ArcChat.Mobile.Tests`（架构） | FG.5 |
 
-> 上面 requirement 摘要行不构成闭合声明：Feature/Coverage 外键、测试、门禁证据都必须由 `generate-feature-trace-bridge` 生成的 `feature-trace-bridge.json` 在实施阶段补齐并判真。
+> 上面 requirement 摘要行不构成闭合声明：Feature/Coverage 外键、测试、门禁证据都必须由 trace-bridge 生成器（实施阶段以 test/CI gate 落实）生成的 `feature-trace-bridge.json` 在实施阶段补齐并判真。
 
 ---
 

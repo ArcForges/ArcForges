@@ -90,7 +90,7 @@
 
 ## 5. 基线漂移流程
 
-1. **识别变化**：例行重跑基线核验脚本（`docs/tools/check-source-baseline.ps1`）；任一仓库 `HEAD != 冻结 commit`、`tag` 不匹配、`status --porcelain` 出现未登记新增/删除/修改，或 `DiffSha256` 与快照不一致，即触发。
+1. **识别变化**：例行重跑基线核验（本步以一次性脚本断言执行，证据见 ledger；仓库策略禁 tracked helper scripts）；任一仓库 `HEAD != 冻结 commit`、`tag` 不匹配、`status --porcelain` 出现未登记新增/删除/修改，或 `DiffSha256` 与快照不一致，即触发。
 2. **标记漂移**：受影响子系统/命中路径的 Coverage/Feature 行全部置 `NeedsRecheck`，写漂移报告（新旧 commit diff 摘要 + 受影响清单行 ID 列表）。
 3. **找出受影响结论**：定位受影响清单行（`feature-inventory-and-mapping.md`）、许可证证据（`license-and-reuse-matrix.md` §1/§7）与行为金样。
 4. **重读**：在 clean frozen checkout 或明确接受的新基线上重新逐项核验。
@@ -101,7 +101,7 @@
 
 ## 6. 一致性核验与 Gate
 
-- `docs/tools/check-source-baseline.ps1` 对 6 仓库给出可判真逐仓结果：`HEAD` == 冻结 commit、tag 匹配、`status --porcelain` 与登记 dirty-file 集合 + 规范化 DiffSha256 完全相等；未登记新增/删除/修改、diff hash 漂移或 commit 漂移均失败并列出受影响 Coverage/Feature，不把"全绿"偷换为"全 clean"。
+- 基线核验（本步一次性脚本断言）对 6 仓库给出可判真逐仓结果：`HEAD` == 冻结 commit、tag 匹配、`status --porcelain` 与登记 dirty-file 集合 + 规范化 DiffSha256 完全相等；未登记新增/删除/修改、diff hash 漂移或 commit 漂移均失败并列出受影响 Coverage/Feature，不把"全绿"偷换为"全 clean"。
 - 现状表无"未定义状态"单元格：每个子系统的 `CoverageStatus ∈` 九态集合（脚本枚举校验）。
 - 完成门禁：`source-baseline.md` + `baseline-snapshot.txt` 存在；6 commit 逐字匹配 §1；workspace clean/dirty 与登记簿当前快照逐仓一致；命中 5 个 dirty file 的 Coverage/Feature 均为 `NeedsRecheck`；九态状态机定义完整；每子系统有且仅有一个当前状态；漂移流程可直接执行。
 - **任一 `NeedsRecheck` 未复核关闭前，Step 00 不得宣称整体完整闭合** —— 本步如实登记 5 个 `NeedsRecheck`，保留阻断状态。

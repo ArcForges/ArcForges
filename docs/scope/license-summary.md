@@ -1,7 +1,7 @@
 # License Summary — 许可证与复用矩阵快速参照
 
 > **权威来源**：本文件是 `license-and-reuse-matrix.md` 的快速参照与文件级证据冻结；权威仍为该矩阵与 `source-coverage-register.md`。本文件不引入新许可证结论，不构成法律意见；正式发布前法务审查见 `final-production-gate.md`。
-> 所有许可证结论附**文件级证据路径**，可 `Test-Path` 核验；AGPL 兼容性结论引用 AGPL §13。核验脚本：`docs/tools/check-license.ps1`。
+> 所有许可证结论附**文件级证据路径**，可 `Test-Path` 核验；AGPL 兼容性结论引用 AGPL §13。核验本步已作为一次性断言执行并记录证据（见 `docs/execution/step-00-ledger.md`；仓库策略禁 tracked helper scripts，脚本不纳入版本控制）。
 
 ---
 
@@ -75,7 +75,7 @@
 
 ---
 
-## 6. 核验（`docs/tools/check-license.ps1`）
+## 6. 核验（本步已执行的一次性断言）
 
 1. 每个证据路径 `Test-Path` 为真；AFFiNE 后端 EE LICENSE 与 blocksuite MIT 抽查 5 个 `package.json`。
 2. `license-and-reuse-matrix.md` §2 每来源行"确切许可证/复用决策/移植方式/关键约束"四列非空；§3 vendored 表每行决策非空。
@@ -87,4 +87,4 @@
 ## 7. 商标与 Pro/EE 隔离结论
 
 - 目标产品命名（`implementation-repository-layout.md` §8 命名集 + `product-family.md` 冻结表）：`arcchat/arcnotes/arcscope/arcslate/arcchat-mobile/arcforges-cloud/arcforges-web` —— 对 `serial.?studio|affine|olive|aionui` 正则零命中。（本文件 §1–§3 提及 AionUi/AFFiNE/Serial-Studio/Olive 仅在证据/归属语境，不构成目标命名。）
-- Pro/EE：ArcScope Pro 全部 `Replace`（UD-LIC-5）；AFFiNE 后端全部 `ReferenceOnly`（UD-LIC-4）；siyuan 全部 `ReferenceOnly`（UD-LIC-3）。`docs/tools/check-source-coverage.ps1` 已交叉验证 source-subsystems.md。
+- Pro/EE：ArcScope Pro 全部 `Replace`（UD-LIC-5）；AFFiNE 后端全部 `ReferenceOnly`（UD-LIC-4）；siyuan 全部 `ReferenceOnly`（UD-LIC-3）。已交叉验证 `source-subsystems.md`（SDK 一次性断言）。

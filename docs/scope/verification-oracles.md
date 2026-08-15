@@ -59,4 +59,4 @@
 
 ## 5. 与 00.02 的绑定
 
-`feature-inventory-and-mapping.md` / `source-subsystems.md` 每行的 `OracleClass` 列取值必须 ∈ O1–O7，且该行在首批目录或拥有步骤测试计划中有落点。`docs/tools/check-verification.ps1` 强制执行：`OracleClass` 无空值；Decision=Copy/Rewrite/ReferenceOnly 的行 100% 有 Oracle 落点；金样红线上限（源码片段启发式 ≥15 行）规划树零命中；首批目录 ≥8 条且五列齐全。
+`feature-inventory-and-mapping.md` / `source-subsystems.md` 每行的 `OracleClass` 列取值必须 ∈ O1–O7，且该行在首批目录或拥有步骤测试计划中有落点。本步一次性断言验证：`OracleClass` 无空值；Decision=Copy/Rewrite/ReferenceOnly 的行 100% 有 Oracle 落点；金样红线上限（源码片段启发式 ≥15 行）规划树零命中；首批目录 ≥8 条且五列齐全。证据见 `docs/execution/step-00-ledger.md`；仓库策略禁 tracked helper scripts，断言脚本不纳入版本控制。

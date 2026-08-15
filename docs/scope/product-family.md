@@ -2,7 +2,7 @@
 
 > **权威来源**：本文件是 ArcForges 全产品家族 Step 00.00 的机械可核验范围冻结。产品集合、平台、运行时与拥有步骤以 `ArcForgesReWrite-AllCsharp - Paddle/README.md` §2 / §4 为唯一事实；与本文件冲突时先回写规划，再更新本文件。
 > 这是 docs-only 规划证据：Step 00.00 不产出任何 `.slnx`/`.csproj`/C#/XAML/构建脚本/CI 文件。
-> 一致性由 `docs/tools/check-scope.ps1` 强制执行（纯文本断言，不触来源仓库）。
+> 一致性由本步记录的一次性纯文本断言验证（纯文本断言，不触来源仓库；证据见 `docs/execution/step-00-ledger.md`；仓库策略 `RepositoryPolicyTests` 禁 tracked helper scripts，断言脚本不纳入版本控制）。
 
 ---
 
@@ -108,7 +108,7 @@
 
 ## 7. 一致性核验
 
-`docs/tools/check-scope.ps1` 执行 00.00 的 Testing requirements 断言：
+Step 00.00 的 Testing requirements 断言（本步已逐条执行并记录证据，见 ledger）：
 
 1. 产品冻结表行数 == README §2 行数且 ProductId 集合逐字相等（`arcchat,arcnotes,arcscope,arcslate,arcchat-mobile,arcforges-cloud,arcforges-web`）。
 2. 每个 ProductId 至少 1 个拥有步骤。

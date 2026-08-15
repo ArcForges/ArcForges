@@ -62,7 +62,7 @@
 ## 4. 追踪种子与机读 bridge 合同
 
 - Markdown 大表（`docs/traceability-matrix.md`）保存稳定 `TR-*` requirement 摘要，**不能代替** Feature/Coverage 外键；不靠人工复制 Feature 数量行宣称闭合。
-- `eng/traceability/generate-feature-trace-bridge` 从 Feature inventory、Coverage register、TR/PS/Contract/Data/Test/Gate registries 生成 `artifacts/evidence/traceability/feature-trace-bridge.json`。每条记录固定 `traceId/featureIds[]/coverageIds[]/requirementId/target*/contractIds[]/dataIds[]/uiSurfaceIds[]/owningSteps[]/testIds[]/gateIds[]/sourceBaselines[]/closureStatus/missingFields[]/evidenceHash`。
+- trace-bridge 生成器（本步以一次性脚本运行生成 bridge JSON；仓库策略 `RepositoryPolicyTests` 禁 tracked helper scripts，生成器脚本不纳入版本控制，bridge 输出记录于 ledger）从 Feature inventory、Coverage register、TR/PS/Contract/Data/Test/Gate registries 生成 `artifacts/evidence/traceability/feature-trace-bridge.json`。每条记录固定 `traceId/featureIds[]/coverageIds[]/requirementId/target*/contractIds[]/dataIds[]/uiSurfaceIds[]/owningSteps[]/testIds[]/gateIds[]/sourceBaselines[]/closureStatus/missingFields[]/evidenceHash`。
 - 初始状态诚实为 `BridgeGenerationRequired`；只有外键存在、非适用面有稳定 `NotApplicable(reasonCode)`、Feature/Coverage 非 `NeedsRecheck` 且同 release 测试/门禁证据存在，生成器才写 `Closed`。本轮文档决策完成 **不等于** 实现 evidence 已生成。
 - 本步登记冻结决策（见 `00-scope-and-source-inventory.md` 末"冻结决策与实施核验"）与 README §9 恢复入口的更新规则。
 
@@ -70,7 +70,7 @@
 
 ## 5. 一致性核验
 
-`docs/tools/check-traceability.ps1` 执行 00.06 Testing requirements：
+Step 00.06 的 Testing requirements 断言（本步已逐条执行并记录证据）：
 
 1. 追踪完整性：每个 Markdown `TR-*` 有 OwningStep（∈ 00–31）、Test 与 FG；生成 bridge 的 `featureIds` 集合 == `feature-inventory-and-mapping.md` 当前唯一 ID 集合，`coverageIds` 集合 == Coverage register 可展开集合，所有外键双向差集为空；`NeedsRecheck`/`Missing*` 保留为阻断状态，不能因生成成功自动改 `Closed`。
 2. 分支命名正则校验：`^feat/af\d{2}(-\d{2})?-[a-z0-9-]+$`（对 sequencing.md 示例与后续分支可用）。
