@@ -1,0 +1,45 @@
+=== ArcForges Step 00 source-baseline snapshot ===
+UTC: 2026-08-15T03:26:50.3024342Z
+
+repo: AionUi
+  rev-parse HEAD            : 29c9271a59484e4696778cb80164f705245a6186
+  branch --show-current     : Branch_v2.1.35
+  describe --tags --always  : v2.1.35
+  status --porcelain lines  : 2
+  DiffSha256                  : 1f87a590859586a4b64831d54b0292117294dabaef93c71a5fe4bcd377525492
+  DiffSha256 match            : yes (zero drift)
+
+repo: AFFiNE
+  rev-parse HEAD            : 81df4751a367f2795bc0d165586650dbe8db73d6
+  branch --show-current     : Branch_v0.27.2
+  describe --tags --always  : v0.27.2
+  status --porcelain lines  : 0
+
+repo: siyuan
+  rev-parse HEAD            : eef10568384e2e7cf547adb029ae46a72e43c287
+  branch --show-current     : Branch_v3.7.3
+  describe --tags --always  : v3.7.3
+  status --porcelain lines  : 0
+
+repo: Serial-Studio
+  rev-parse HEAD            : 639daafb2fe7d324c3b2d5583d2514c8c470676f
+  branch --show-current     : Branch_v4.0.3
+  describe --tags --always  : v4.0.3
+  status --porcelain lines  : 0
+
+repo: ArcVideo
+  rev-parse HEAD            : caf56513278703adec0c2933ec235bb864d72e31
+  branch --show-current     : main
+  describe --tags --always  : caf5651
+  status --porcelain lines  : 2
+  DiffSha256                  : 3302eb6c34d252be675ada195461f746c8965d1c2014280df52e0d51a767030c
+  DiffSha256 match            : yes (zero drift)
+
+repo: ArcVideoFoundation
+  rev-parse HEAD            : 139eecaaa79dbad743a146f174a9c89a66ed594b
+  branch --show-current     : main
+  describe --tags --always  : 139eeca
+  status --porcelain lines  : 1
+  DiffSha256                  : 9ccbbea307352499f5ad55ed6f5eb52176f5f0eff7c20df6d3e77969a9f85a96
+  DiffSha256 match            : yes (zero drift)
+
