@@ -68,7 +68,24 @@
 - Sections: 1 AionUi desktop (1.1 ipcBridge 41 export-group rows w/ all members; 1.2 chatLib message model + 8 merge-rule rows; 1.3 storage config types + 13-table; 1.4 renderer pages/comps; 1.5 process; 1.6 i18n 13-language), 2 AionUi mobile (WS protocol / messageAdapter·grouping·JWT / 7-class gap / publish-credential Replace / wss+TLS), 3 AFFiNE blocksuite (per-package, Yjs/CRDT Drop), 4 AFFiNE BE (ReferenceOnly EE), 5 siyuan (ReferenceOnly/O3), 6 Serial-Studio (core Copy GPL / Pro Replace O4 / LIB per-dependency), 7 ArcVideo, 8 ArcVideoFoundation, 9 serial-merge + completeness binding.
 - Docs-only; no code/solution produced.
 
-**Commit:** (this commit)
+**Commit:** `fa11f26f2550525db396ff58732441723897e986` `Step 00.02: source subsystem feature inventory`
 **Next safe action:** 00.03 license & reuse matrix (license-summary).
+
+---
+
+## 00.03 — 许可证与复用矩阵
+
+**Status:** COMPLETE
+**Deliverables:** `docs/scope/license-summary.md`, `docs/tools/check-license.ps1`
+
+**Validation (exact command + result + evidence):**
+- `pwsh -NoProfile -File docs/tools/check-license.ps1` → `PASS: check-license — evidence paths, brand blacklist, Pro/EE isolation all green`. Evidence: `docs/tools/check-license.ps1`; plus a §2/§3 plan-matrix scan confirming 12 §2 rows (four columns non-empty) and 15 §3 vendored rows (all decisions non-empty).
+
+**Gate (00.03 Completion gate):** license-summary.md complete; evidence script green (AionUi Apache-2.0 LICENSE + agentModes SPDX, AFFiNE EE ×2 + blocksuite MIT ×5 sample, siyuan AGPL, Serial-Studio BUILD_COMMERCIAL, ArcVideo/Foundation GPL ×2, StartArcForges as `NotExecuted` static oracle); UD-LIC-1..5 cards with file-level evidence + constraint + impact steps; AGPL-obligation → owning-step table; decision-class ↔ manifest mapping; compliance-closing 8 items bound to FG rows + steps; brand blacklist on target naming zero hits; Pro/EE isolation (SS-PRO all Replace/O4 UD-LIC-5, AFFINE-BE all ReferenceOnly UD-LIC-4). Reverse-evidence holds (flipping an SS-PRO row to Copy → isolation assertion fails citing UD-LIC-5).
+
+**Evidence / notes:** Docs-only; no code/solution.
+
+**Commit:** (this commit)
+**Next safe action:** 00.04 reuse manifests (5).
 
 ---
