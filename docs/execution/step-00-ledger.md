@@ -121,7 +121,25 @@
 
 **Evidence / notes:** Docs-only; no code/solution. Golden sample bodies deferred to implementation (this step freezes catalog + format only).
 
-**Commit:** (this commit)
+**Commit:** `c87e8c1e32fe2cee139bf060f28a616d5889e9df` `Step 00.05: verification oracles & golden samples`
 **Next safe action:** 00.06 branch/PR sequencing + traceability seed.
+
+---
+
+## 00.06 — 分支/PR 序列与追踪种子
+
+**Status:** COMPLETE
+**Deliverables:** `docs/scope/sequencing.md`, `docs/traceability-matrix.md`, `eng/traceability/generate-feature-trace-bridge.ps1`, `artifacts/evidence/traceability/feature-trace-bridge.json`, `docs/tools/check-traceability.ps1`; `docs/deviations.md` updated.
+
+**Validation (exact command + result + evidence):**
+- `pwsh -NoProfile -File eng/traceability/generate-feature-trace-bridge.ps1` → `WROTE: artifacts/evidence/traceability/feature-trace-bridge.json (records=24, featureIds=86, coverageIds=27, closureState=BridgeGenerationRequired)`.
+- `pwsh -NoProfile -File docs/tools/check-traceability.ps1` → `PASS: check-traceability — TR rows complete, bridge sets equal + honest BridgeGenerationRequired, NeedsRecheck blocked, branch regex green`.
+
+**Gate (00.06 Completion gate):** `docs/scope/sequencing.md` (branch naming examples whole-step/substep/lettered; PR completion template field list; 00–31 sequence table verbatim README §4 with the hard merge-order constraints 01→02→03/04→05/06→07→08–12→13→14→15–17→18→19→20→21–22→23–25→26→27–29→30→31); `docs/traceability-matrix.md` seed (stable TR-* requirement summaries with OwningStep/Test/FG; explicitly not a Feature-count closure); machine-readable bridge generator producing `feature-trace-bridge.json` (24 records, records schema complete, initial `closureStatus` = `BridgeGenerationRequired`, coverage-touching records `NeedsRecheck`); frozen-decision registration (`00-scope...md` 末尾"冻结决策与实施核验"：sync=native-interop=Foundation-single-location=source-coverage-state) + README §9 recovery-entry update rule; deviations.md appended (no README/layout deviation; Foundation single-ID ruling flagged for Step 02). Branch-naming regex `^feat/af\d{2}(-\d{2})?-[a-z0-9-]+$` green.
+
+**Evidence / notes:** Docs-only + generated bridge JSON evidence; no code/solution. Dead PR #16 (`feat/af00-scope-and-source-inventory`) and #15 (`feat/af00-00-scope-inventory`) branch names not reused — active Step 00 branch is `feat/af00-scope-source-inventory-reboot` (fresh).
+
+**Commit:** (this commit)
+**Next safe action:** whole-scope scan of all 00.00–00.06 + 00-closure gate; then final review + push + single PR.
 
 ---
