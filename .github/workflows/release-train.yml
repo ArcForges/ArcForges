@@ -102,7 +102,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
+      - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
         with:
           cmakeVersion: '4.3.3'
           ninjaVersion: '1.13.1'

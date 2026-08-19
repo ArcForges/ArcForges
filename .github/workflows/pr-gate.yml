@@ -53,7 +53,7 @@ jobs:
         with:
           global-json-file: global.json
       - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
-      - uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
+      - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
         with:
           cmakeVersion: '4.3.3'
           ninjaVersion: '1.13.1'
