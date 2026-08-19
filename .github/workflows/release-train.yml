@@ -120,7 +120,7 @@ jobs:
           $actual = (git -C $root rev-parse HEAD).Trim()
           if ($actual -ne $env:VCPKG_COMMIT) { throw "Unexpected vcpkg commit: $actual" }
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
