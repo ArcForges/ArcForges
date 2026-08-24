@@ -14,7 +14,7 @@ frozen baseline from `implementation-repository-layout.md` §4.1; a later NuGet 
 | Avalonia | 12.1.1 | MIT | Native desktop UI | Step 01/06 |
 | SkiaSharp and native assets | 4.151.1 | MIT | Cross-platform Avalonia rendering backend | Step 01/06 |
 | .NET / ASP.NET Core / MAUI | 10.0.x | MIT | Managed hosts | Step 01 |
-| xUnit v3 and Microsoft.NET.Test.Sdk | 3.2.2 / 18.8.1 | Apache-2.0 / MIT | Tests only | Step 01 |
+| xUnit v3 and Microsoft.NET.Test.Sdk | 4.0.0 / 18.8.1 | Apache-2.0 / MIT | Tests only | Step 01 |
 | OpenTimelineIO | 0.18.1#2, locked overlay | Apache-2.0 | Static inside owned shim | Step 24 |
 | mdflib | 2.3.0, locked overlay | MIT | Static inside owned shim | Step 22 |
 | FFmpeg | builtin **9.0.1** (frozen 2026-08-15) | LGPL-2.1-or-later configuration | Shared behind ArcMediaNative | Step 07 |
@@ -48,7 +48,7 @@ Field set: `Dependency | Version | License (SPDX) | Source | Copyright | Notice 
 | TextMateSharp | 2.0.4 | MIT | textmate-sharp | textmate-sharp authors | keep LICENSE | yes (tokenization only) | Step 09/27 |
 | Markdig | 1.3.2 | BSD-2-Clause | nuget.org | Alexandre Mutel et al. | keep LICENSE | yes (Markdown) | Step 09 |
 | AngleSharp | 1.7.1 | MIT | nuget.org | AngleSharp contributors | keep LICENSE | yes (ContentSandbox SafeHtml only) | Step 09/22 |
-| xUnit v3 / Test SDK | 3.2.2 / 18.8.1 | Apache-2.0 / MIT | nuget.org | .NET foundation | keep LICENSE | yes (tests only) | Step 01 |
+| xUnit v3 / Test SDK | 4.0.0 / 18.8.1 | Apache-2.0 / MIT | nuget.org | .NET foundation | keep LICENSE | yes (tests only) | Step 01 |
 | Microsoft.Playwright / coverlet | 1.61.0 / 10.0.1 | Apache-2.0 / MIT | nuget.org | Microsoft | keep LICENSE | yes (tests only) | Foundation closure |
 
 ### Native supply chain (vcpkg checkout `36677bbd0b3bf11da7376e62e14bffcc54d2eaeb`)

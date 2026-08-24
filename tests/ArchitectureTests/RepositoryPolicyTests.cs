@@ -58,6 +58,39 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void ManagedTestsUseTheMicrosoftTestingPlatformContract()
+    {
+        using var globalJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Value, "global.json")));
+        var runner = globalJson.RootElement
+            .GetProperty("test")
+            .GetProperty("runner")
+            .GetString();
+        Xunit.Assert.Equal("Microsoft.Testing.Platform", runner);
+
+        var pullRequestGate = File.ReadAllText(Path.Combine(RepositoryRoot.Value, ".github", "workflows", "pr-gate.yml"));
+        Xunit.Assert.DoesNotContain("--filter ", pullRequestGate, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("--ignore-exit-code 8", pullRequestGate, StringComparison.Ordinal);
+        Xunit.Assert.Contains("dotnet test --solution ArcForges.slnx", pullRequestGate, StringComparison.Ordinal);
+        Xunit.Assert.Contains("-p:ArcForgesManagedTestTaxonomy=true", pullRequestGate, StringComparison.Ordinal);
+        Xunit.Assert.Contains("--filter-trait Category=Unit", pullRequestGate, StringComparison.Ordinal);
+        Xunit.Assert.Contains("dotnet test --project tests/Web/ArcForges.Web.BrowserTests", pullRequestGate, StringComparison.Ordinal);
+        Xunit.Assert.Contains("--filter-trait Category=Browser", pullRequestGate, StringComparison.Ordinal);
+
+        string[] separatelyGatedProjects =
+        [
+            Path.Combine("tests", "NativeAbiTests", "ArcForges.Tests.NativeAbiTests.csproj"),
+            Path.Combine("tests", "Web", "ArcForges.Web.BrowserTests", "ArcForges.Web.BrowserTests.csproj"),
+        ];
+        foreach (var project in separatelyGatedProjects)
+        {
+            var content = File.ReadAllText(Path.Combine(RepositoryRoot.Value, project));
+            Xunit.Assert.Contains("Condition=\"'$(ArcForgesManagedTestTaxonomy)' == 'true'\"", content, StringComparison.Ordinal);
+            Xunit.Assert.Contains("--ignore-exit-code 8", content, StringComparison.Ordinal);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void FirstPartySourceFilesDeclareSpdx()
     {
         string[] extensions = [".cs", ".cpp", ".cc", ".cxx", ".mm", ".h", ".hpp", ".cmake", ".props", ".targets", ".vcxproj"];

@@ -15,6 +15,7 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
   VCPKG_COMMIT: 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
   VCPKG_WINDOWS_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
 
@@ -43,7 +44,7 @@ jobs:
       - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
       - run: dotnet build ArcForges.slnx -c Release --no-restore
       - name: Run the complete managed test taxonomy
-        run: dotnet test ArcForges.slnx -c Release --no-build --no-restore --filter "Category=Unit|Category=Integration|Category=Contract|Category=Ui|Category=Architecture"
+        run: dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture
 
   native-win-x64:
     runs-on: windows-latest
@@ -195,7 +196,7 @@ jobs:
           $server = Start-Process python3 -ArgumentList @('-m', 'http.server', '8080', '--directory', 'artifacts/web/wwwroot') -PassThru
           try {
             $env:ARCFORGES_WEB_BASE_URL = 'http://127.0.0.1:8080'
-            dotnet test tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-build --filter Category=Browser
+            dotnet test --project tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-build --filter-trait Category=Browser
           } finally {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }

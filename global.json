@@ -4,5 +4,8 @@
     "rollForward": "disable",
     "allowPrerelease": false
   },
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
+  },
   "workloadVersion": "10.0.400"
 }
