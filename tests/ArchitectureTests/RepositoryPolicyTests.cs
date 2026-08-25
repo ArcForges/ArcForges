@@ -290,6 +290,27 @@ public sealed class RepositoryPolicyTests
         Xunit.Assert.Contains(workflows, text => text.Contains("github/codeql-action/analyze@", StringComparison.Ordinal));
         Xunit.Assert.Contains(workflows, text => text.Contains("  ci:", StringComparison.Ordinal));
 
+        var deepCheck = File.ReadAllText(Path.Combine(root, ".github", "workflows", "deep-check.yml"));
+        Xunit.Assert.Contains("languages: csharp", deepCheck, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("language: [csharp, cpp]", deepCheck, StringComparison.Ordinal);
+        Xunit.Assert.Contains("-DCMAKE_CXX_CLANG_TIDY=clang-tidy", deepCheck, StringComparison.Ordinal);
+
+        var pullRequestGate = File.ReadAllText(Path.Combine(root, ".github", "workflows", "pr-gate.yml"));
+        var releaseTrain = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release-train.yml"));
+        foreach (var workflow in new[] { pullRequestGate, releaseTrain, deepCheck })
+        {
+            Xunit.Assert.Contains("steps.vcpkg-toolchain.outputs.fingerprint", workflow, StringComparison.Ordinal);
+            Xunit.Assert.Contains("checkout --detach --force", workflow, StringComparison.Ordinal);
+        }
+        foreach (var workflow in new[] { pullRequestGate, releaseTrain })
+        {
+            Xunit.Assert.DoesNotContain("vcpkg-classic-Windows-x64-", workflow, StringComparison.Ordinal);
+        }
+
+        var hooks = File.ReadAllText(Path.Combine(root, ".pre-commit-config.yaml"));
+        Xunit.Assert.Contains("pre-commit/mirrors-clang-format", hooks, StringComparison.Ordinal);
+        Xunit.Assert.Contains("repository-hooks:", pullRequestGate, StringComparison.Ordinal);
+
         var helperScripts = EnumerateRepositoryFiles("*")
             .Where(path => Path.GetExtension(path) is ".ps1" or ".sh")
             .Select(path => Path.GetRelativePath(root, path))
