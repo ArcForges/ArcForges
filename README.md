@@ -37,7 +37,7 @@ prevents generated package files from being mistaken for ArcForges-owned source 
 ```powershell
 dotnet restore ArcForges.slnx --locked-mode
 dotnet build ArcForges.slnx -c Release --no-restore
-dotnet test ArcForges.slnx -c Release --no-build
+dotnet test --solution ArcForges.slnx -c Release --no-build
 
 cmake --preset windows-msvc-x64-runtime-shared
 cmake --build --preset windows-msvc-x64-runtime-shared-release

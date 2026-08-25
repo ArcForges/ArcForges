@@ -6,6 +6,8 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>
+    <!-- This suite is exercised against the published site by app-smoke, outside the managed taxonomy. -->
+    <TestingPlatformCommandLineArguments Condition="'$(ArcForgesManagedTestTaxonomy)' == 'true'">$(TestingPlatformCommandLineArguments) --ignore-exit-code 8</TestingPlatformCommandLineArguments>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
