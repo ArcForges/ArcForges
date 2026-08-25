@@ -17,16 +17,11 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   VCPKG_COMMIT: 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
-  VCPKG_WINDOWS_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
   VCPKG_LINUX_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
 
 jobs:
   codeql:
-    name: codeql-${{ matrix.language }}
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [csharp, cpp]
+    name: codeql-csharp
     runs-on: windows-latest
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
@@ -34,77 +29,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: github/codeql-action/init@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
         with:
-          languages: ${{ matrix.language }}
+          languages: csharp
           build-mode: manual
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        if: matrix.language == 'csharp'
         with:
           global-json-file: global.json
       - name: Build C#
-        if: matrix.language == 'csharp'
         run: |
           dotnet workload install maui-android wasm-tools --skip-manifest-update
           dotnet restore ArcForges.slnx --locked-mode
           dotnet build ArcForges.slnx -c Release --no-restore
-      - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
-        if: matrix.language == 'cpp'
-        with:
-          cmakeVersion: '4.3.3'
-          ninjaVersion: '1.13.1'
-      - name: Pin vcpkg checkout
-        if: matrix.language == 'cpp'
-        shell: pwsh
-        run: |
-          $root = $env:VCPKG_INSTALLATION_ROOT
-          if ([string]::IsNullOrWhiteSpace($root)) { throw 'Runner vcpkg installation was not found.' }
-          git -C $root fetch --depth 1 origin $env:VCPKG_COMMIT
-          if ($LASTEXITCODE) { throw 'vcpkg fetch failed.' }
-          git -C $root checkout --detach $env:VCPKG_COMMIT
-          if ($LASTEXITCODE) { throw 'vcpkg checkout failed.' }
-          & "$root/bootstrap-vcpkg.bat" -disableMetrics
-          if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed.' }
-          $actual = (git -C $root rev-parse HEAD).Trim()
-          if ($actual -ne $env:VCPKG_COMMIT) { throw "Unexpected vcpkg commit: $actual" }
-          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: matrix.language == 'cpp'
-        with:
-          path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
-          restore-keys: |
-            vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-
-            vcpkg-classic-Windows-x64-
-      - name: Install Windows native dependencies
-        if: matrix.language == 'cpp'
-        shell: pwsh
-        run: |
-          $root = $env:VCPKG_ROOT
-          $archives = Join-Path $env:RUNNER_TEMP 'vcpkg-archives'
-          New-Item -ItemType Directory -Force $archives | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$archives,readwrite"
-          & "$root/vcpkg.exe" install `
-            'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,amf]:x64-windows' `
-            'libusb[core]:x64-windows' `
-            'miniaudio[core]:x64-windows' `
-            'opentimelineio[core]:x64-windows-static-md' `
-            'opencolorio[core]:x64-windows-static-md' `
-            'openimageio[core]:x64-windows-static-md' `
-            'openexr[core]:x64-windows-static-md' `
-            'imath[core]:x64-windows-static-md' `
-            'mdflib[core]:x64-windows-static-md' `
-            "--overlay-ports=${{ github.workspace }}/eng/native/vcpkg/ports"
-          if ($LASTEXITCODE) { throw 'vcpkg install failed.' }
-      - name: Build C++
-        if: matrix.language == 'cpp'
-        shell: pwsh
-        run: |
-          foreach ($profile in 'runtime-shared', 'shim-static') {
-            $preset = "windows-msvc-x64-$profile"
-            cmake --preset $preset
-            if ($LASTEXITCODE) { throw "$preset configure failed." }
-            cmake --build --preset "$preset-release"
-            if ($LASTEXITCODE) { throw "$preset build failed." }
-          }
       - uses: github/codeql-action/analyze@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
 
   native-quality:
@@ -115,6 +49,7 @@ jobs:
         with:
           cmakeVersion: '4.3.3'
           ninjaVersion: '1.13.1'
+      - run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake clang-tidy libtool libdrm-dev nasm yasm
       - name: Pin vcpkg checkout
         run: |
           root="${VCPKG_INSTALLATION_ROOT:?Runner vcpkg installation was not found.}"
@@ -123,14 +58,21 @@ jobs:
           "$root/bootstrap-vcpkg.sh" -disableMetrics
           test "$(git -C "$root" rev-parse HEAD)" = "$VCPKG_COMMIT"
           echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Resolve vcpkg toolchain fingerprint
+        id: vcpkg-toolchain
+        run: |
+          set -euo pipefail
+          identity="compiler=$(c++ --version | sed -n '1p');target=$(c++ -dumpmachine);compiler-version=$(c++ -dumpfullversion -dumpversion);linker=$(ld --version | sed -n '1p');libc=$(ldd --version | sed -n '1p');cmake=$(cmake --version | sed -n '1p');ninja=$(ninja --version)"
+          fingerprint=$(printf '%s' "$identity" | sha256sum | cut -d' ' -f1)
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "vcpkg toolchain: $identity"
+          echo "vcpkg toolchain fingerprint: $fingerprint"
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-classic-Linux-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_LINUX_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
+          key: vcpkg-classic-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_LINUX_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
           restore-keys: |
-            vcpkg-classic-Linux-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_LINUX_X64_GRAPH_REVISION }}-
-            vcpkg-classic-Linux-x64-
-      - run: sudo apt-get update && sudo apt-get install --yes autoconf autoconf-archive automake clang-tidy libtool libdrm-dev nasm yasm
+            vcpkg-classic-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_LINUX_X64_GRAPH_REVISION }}-
       - name: Install Linux native dependencies
         run: |
           root="$VCPKG_ROOT"

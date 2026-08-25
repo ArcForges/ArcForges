@@ -120,13 +120,41 @@ jobs:
           $actual = (git -C $root rev-parse HEAD).Trim()
           if ($actual -ne $env:VCPKG_COMMIT) { throw "Unexpected vcpkg commit: $actual" }
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+      - name: Resolve vcpkg toolchain fingerprint
+        id: vcpkg-toolchain
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere was not found.' }
+          $installationPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+          $installationVersion = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion).Trim()
+          if (-not $installationPath -or -not $installationVersion) { throw 'Visual Studio C++ tools were not found.' }
+          $vcToolsVersion = (Get-Content -LiteralPath (Join-Path $installationPath 'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt') -Raw).Trim()
+          $compiler = Join-Path $installationPath "VC\Tools\MSVC\$vcToolsVersion\bin\Hostx64\x64\cl.exe"
+          $compilerVersion = (Get-Item -LiteralPath $compiler).VersionInfo.FileVersion
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
+          $sdkVersion = (Get-ChildItem -LiteralPath $sdkRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name
+          $cmakeVersion = ((cmake --version | Select-Object -First 1) -replace '^cmake version\s+', '').Trim()
+          $ninjaVersion = (ninja --version).Trim()
+          $identity = [ordered]@{
+            visualStudio = $installationVersion
+            vcTools = $vcToolsVersion
+            compiler = $compilerVersion
+            windowsSdk = $sdkVersion
+            cmake = $cmakeVersion
+            ninja = $ninjaVersion
+          } | ConvertTo-Json -Compress
+          $bytes = [Text.Encoding]::UTF8.GetBytes($identity)
+          $fingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          "fingerprint=$fingerprint" >> $env:GITHUB_OUTPUT
+          "vcpkg toolchain: $identity"
+          "vcpkg toolchain fingerprint: $fingerprint"
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
+          key: vcpkg-classic-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
           restore-keys: |
-            vcpkg-classic-Windows-x64-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-
-            vcpkg-classic-Windows-x64-
+            vcpkg-classic-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-
       - name: Install Windows native dependencies
         shell: pwsh
         run: |

@@ -53,9 +53,10 @@ independent MSBuild `.vcxproj` definitions and do not call CMake. Build `Release
 directly in Visual Studio.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full verification flow.
 
-Pull requests check the managed solution, both Windows native build paths, real application/browser smoke tests,
-one Android package, dependency review, and secret scanning. CodeQL, clang-tidy, sanitizers, and fuzzing run in
-the weekly/manual deep check. These gates do not depend on GitHub's paid Code Quality feature.
+Pull requests check the managed solution, both Windows native build paths, repository hooks, real
+application/browser smoke tests, one Android package, dependency review, and secret scanning. C# CodeQL plus
+Linux clang-tidy, sanitizers, and fuzzing run in the weekly/manual deep check. These gates do not depend on
+GitHub's paid Code Quality feature.
 
 ## Architecture
 
