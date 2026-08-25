@@ -54,7 +54,7 @@ jobs:
         run: |
           root="${VCPKG_INSTALLATION_ROOT:?Runner vcpkg installation was not found.}"
           git -C "$root" fetch --depth 1 origin "$VCPKG_COMMIT"
-          git -C "$root" checkout --detach "$VCPKG_COMMIT"
+          git -C "$root" checkout --detach --force "$VCPKG_COMMIT"
           "$root/bootstrap-vcpkg.sh" -disableMetrics
           test "$(git -C "$root" rev-parse HEAD)" = "$VCPKG_COMMIT"
           echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"

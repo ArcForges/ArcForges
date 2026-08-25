@@ -65,7 +65,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($root)) { throw 'Runner vcpkg installation was not found.' }
           git -C $root fetch --depth 1 origin $env:VCPKG_COMMIT
           if ($LASTEXITCODE) { throw 'vcpkg fetch failed.' }
-          git -C $root checkout --detach $env:VCPKG_COMMIT
+          git -C $root checkout --detach --force $env:VCPKG_COMMIT
           if ($LASTEXITCODE) { throw 'vcpkg checkout failed.' }
           & "$root/bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed.' }

@@ -300,6 +300,7 @@ public sealed class RepositoryPolicyTests
         foreach (var workflow in new[] { pullRequestGate, releaseTrain, deepCheck })
         {
             Xunit.Assert.Contains("steps.vcpkg-toolchain.outputs.fingerprint", workflow, StringComparison.Ordinal);
+            Xunit.Assert.Contains("checkout --detach --force", workflow, StringComparison.Ordinal);
         }
         foreach (var workflow in new[] { pullRequestGate, releaseTrain })
         {
