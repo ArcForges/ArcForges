@@ -91,6 +91,22 @@ because either one silently produces a green rule that checks nothing:
   `ArchitectureSurfaceTests` fails when the analysed surface is implausibly small;
 - its dependency search **never matches a term ending in `.`** — `"Android"` matches, `"Android."` does not.
 
+## Step 01.05 — suppression and AOT gates, 2026-08-28
+
+| Drill | Gate | Observed failure | Reverted |
+|---|---|---|---|
+| `JsonSerializer.Serialize(object)` added to `src/ArcChat/ArcChat.Desktop/AotDrillProbe.cs` | Release build of the desktop head | exit 1 — `AotDrillProbe.cs(7,55): error IL2026` *and* `error IL3050`, both naming the exact member and line | yes |
+| `[UnconditionalSuppressMessage]` with `Justification = "it is fine"` (no four-part evidence) | `RepositoryPolicyTests.TrimmingSuppressionsCarryReviewEvidence` | exit 2 — `Unreviewed trimming suppressions: src\ArcChat\ArcChat.Desktop\SuppressionDrillProbe.cs:7` | yes |
+| `[UnconditionalSuppressMessage]` with all four segments but `Scope = "module"` | same gate | exit 2 — same message; a complete justification does not buy a module-wide suppression | yes |
+| `<PublishAot>true</PublishAot>` added to `ArcForges.Cloud.Host.csproj` | `RepositoryPolicyTests.PublishModePropertiesEvaluateToTheirDeclaredValues` | exit 2 — `Assert.Equal() Failure`, `Expected: false`, `Actual: true` | yes |
+
+Two gates were added here. `TrimmingSuppressionCountStaysAtTheStep0105Baseline` pins the count at the Step
+01.05 baseline of zero, which is a different question from whether a suppression is well documented.
+`PublishModePropertiesEvaluateToTheirDeclaredValues` reads `PublishAot`, `TrimMode`, `PublishTrimmed` and
+`RunAOTCompilation` back out of MSBuild's own evaluation for the desktop head, ContentSandbox, the Cloud
+host and the WASM head, because `implementation-repository-layout.md` §13 is explicit that a publish mode
+must be asserted from the evaluated value rather than from the text of a project file.
+
 ## Executed earlier
 
 | Check | Environment | Result |
@@ -107,8 +123,6 @@ evidence, so Step 01 cannot close on them. The three Step 01.01 drills were disc
 
 | Drill | Plan source | Expected failure |
 |---|---|---|
-| Inject `[UnconditionalSuppressMessage]` without the four-part justification, and one with `Scope=module` | 01.05 | the suppression audit fails naming the line and the missing segment |
-| Inject a reflection path into a desktop head | 01.05 | Release build fails with IL2026/IL3050 on the exact line |
 | Five CI violation drills (lock, ARC-004, missing SPDX, unregistered package, IL2026) | 01.06 | the corresponding job goes red and the summary names the rule |
 | Turn off `PublishAot` on a desktop head | 01.07 | the desktop publish gate fails (the Cloud half of this drill is already executed above) |
 

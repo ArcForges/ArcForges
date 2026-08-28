@@ -181,6 +181,80 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void TrimmingSuppressionCountStaysAtTheStep0105Baseline()
+    {
+        // Step 01.05 sets the baseline at zero and forbids it rising without an approved ADR. Counting is
+        // separate from TrimmingSuppressionsCarryReviewEvidence: a suppression can be perfectly documented
+        // and still not belong here.
+        const int baseline = 0;
+        var unconditionalSuppression = "Unconditional" + "SuppressMessage";
+
+        var suppressions = EnumerateRepositoryFiles("*.cs")
+            .SelectMany(source => File.ReadLines(source)
+                .Select((line, index) => (Source: source, Line: index + 1, Text: line))
+                .Where(entry => entry.Text.Contains(unconditionalSuppression, StringComparison.Ordinal)))
+            .Select(entry => $"{Path.GetRelativePath(RepositoryRoot.Value, entry.Source)}:{entry.Line}")
+            .ToArray();
+
+        Xunit.Assert.True(
+            suppressions.Length == baseline,
+            $"Trimming suppression count moved from {baseline} to {suppressions.Length}: {string.Join(", ", suppressions)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void PublishModePropertiesEvaluateToTheirDeclaredValues()
+    {
+        // implementation-repository-layout.md §13 is explicit that a publish mode must be asserted from the
+        // evaluated value, not from the text of a project file: an import, a condition or a Directory.Build
+        // file can change the effective value without changing any single csproj. These are read back out of
+        // MSBuild's own evaluation.
+        (string Project, string Property, string Expected)[] expectations =
+        [
+            (Path.Combine("src", "ArcChat", "ArcChat.Desktop", "ArcChat.Desktop.csproj"), "PublishAot", "true"),
+            (Path.Combine("src", "ArcChat", "ArcChat.Desktop", "ArcChat.Desktop.csproj"), "TrimMode", "full"),
+            (Path.Combine("src", "DesktopHelpers", "ArcForges.ContentSandbox", "ArcForges.ContentSandbox.csproj"), "PublishAot", "true"),
+            (Path.Combine("src", "Cloud", "ArcForges.Cloud.Host", "ArcForges.Cloud.Host.csproj"), "PublishAot", "false"),
+            (Path.Combine("src", "Cloud", "ArcForges.Cloud.Host", "ArcForges.Cloud.Host.csproj"), "PublishTrimmed", "false"),
+            (Path.Combine("src", "Web", "ArcForges.Web.App", "ArcForges.Web.App.csproj"), "RunAOTCompilation", "false"),
+            (Path.Combine("src", "Web", "ArcForges.Web.App", "ArcForges.Web.App.csproj"), "PublishTrimmed", "true"),
+        ];
+
+        foreach ((string project, string property, string expected) in expectations)
+        {
+            var actual = EvaluateMsBuildProperty(Path.Combine(RepositoryRoot.Value, project), property);
+            Xunit.Assert.Equal(expected, actual, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static string EvaluateMsBuildProperty(string project, string property)
+    {
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo(
+                "dotnet", $"msbuild \"{project}\" -nologo -getProperty:{property}")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = RepositoryRoot.Value,
+            },
+        };
+
+        process.Start();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        Xunit.Assert.True(
+            process.ExitCode == 0,
+            $"Could not evaluate {property} for {project}:{Environment.NewLine}{output}{error}");
+
+        return output.Trim();
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void VcpkgIntegrationUsesClassicInstalledPackagesWithoutRepositoryPaths()
     {
         var root = RepositoryRoot.Value;
