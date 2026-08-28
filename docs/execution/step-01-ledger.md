@@ -24,10 +24,10 @@ does that check.
 |---|---|---|
 | 01.00 Repository and solution skeleton | Satisfied | 166 managed projects, 5 `.vcxproj`, 6 native shims, the 13 top-level files and the required directories are asserted by `RepositoryPolicyTests.RepositoryLayoutMatchesFoundationContract` |
 | 01.01 Central package management, locked restore, version policy | Partly satisfied | Package table corrected this run; locked restore is clean; **the three reverse-failure drills have no evidence** |
-| 01.02 BuildingBlocks and Contracts skeleton | Satisfied | 13 + 7 projects build and test; contract reference graph equals layout §3; `contracts.props` now imported |
+| 01.02 BuildingBlocks and Contracts skeleton | Satisfied | 13 + 7 projects build and test; `contracts.props` now imported; the layout §3 contract reference graph is pinned edge-by-edge by `RepositoryPolicyTests.ContractProjectsMatchTheFixedReferenceGraph`, with a recorded reverse-failure drill |
 | 01.03 Product / Cloud / Mobile / Web skeleton | Satisfied | ContentSandbox is now a five-RID Native AOT head, the composition-root seam exists and is tested, Mobile identity corrected, bUnit skeleton added, 24 pending-scope markers present |
 | 01.04 ArchitectureTests | **Not satisfied** | 13 rules and 26 fixtures exist and are in the default test chain, but they scan source text instead of running `NetArchTest.Rules` over the loaded assemblies with Roslyn-compiled fixtures |
-| 01.05 AOT / trimming properties and analyzers | Partly satisfied | All eight layered property files now reach exactly their declared hosts, pinned by a test; **the two suppression drills and the IL2026/IL3050 injection drill have no evidence** |
+| 01.05 AOT / trimming properties and analyzers | Partly satisfied | All eight layered property files now reach exactly their declared hosts, pinned by a test with two recorded reverse-failure drills; **the two suppression drills and the IL2026/IL3050 injection drill have no evidence** |
 | 01.06 CI skeleton | **Not satisfied** | None of the ten `pr-gate` job names, no `runtime-publish-smoke.yml`, none of the seven `train-*` jobs, no archived violation drills |
 | 01.07 Native AOT / Cloud JIT publish verification | Partly satisfied | 6 of 25 publish cells executed with real artifacts; Cloud JIT contract smoke and an idle GC comparison executed; **19 cells and the fixed-workload GC baseline have no runner** |
 

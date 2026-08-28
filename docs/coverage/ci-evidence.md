@@ -12,14 +12,28 @@ Windows 11 Pro for Workstations 10.0.26200, .NET SDK 10.0.400, branch `feat/af01
 | Locked restore | `dotnet restore ArcForges.slnx --locked-mode` | Passed; `git status` clean afterwards |
 | Format | `dotnet format ArcForges.slnx --verify-no-changes --no-restore` | Passed |
 | Release build | `dotnet build ArcForges.slnx -c Release --no-restore` | Passed; 0 warnings, 0 errors across 166 managed projects |
-| Managed taxonomy | `dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture` | Passed; 114 total, 91 passed, 23 skipped, 0 failed |
-| Architecture + policy | `dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore` | Passed; 38 total, 37 passed, 1 skipped |
+| Managed taxonomy | `dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture` | Passed; 115 total, 92 passed, 23 skipped, 0 failed |
+| Architecture + policy | `dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore` | Passed; 39 total, 38 passed, 1 skipped |
 | Desktop Native AOT | `dotnet publish src/<Product>/<Product>.Desktop -c Release -r win-x64` then `<Product>.Desktop.exe --smoke` | Passed for all four heads; see [aot-baseline.md](aot-baseline.md) |
 | ContentSandbox Native AOT | `dotnet publish src/DesktopHelpers/ArcForges.ContentSandbox -c Release -r win-x64` | Passed; 969,216-byte native image, 0 IL2026/IL3050 |
 | Cloud JIT | publish framework-dependent, then `/health`, `/`, SignalR negotiate, Server vs Workstation GC idle | Passed; see [runtime-baseline.md](runtime-baseline.md) |
 
 The 23 skips are the `PendingScopeTests` markers Step 01.03 requires — one per cross-boundary test project,
 each naming its owning step and unlock condition. They are visible un-reached scope, not silent passes.
+
+## Reverse-failure drills executed, 2026-08-28
+
+Each was injected, observed red with the offending name in the message, and reverted; `git status` was clean
+afterwards.
+
+| Injected violation | Rule | Observed failure |
+|---|---|---|
+| Extra `Contracts.Sync -> Contracts.Agent` ProjectReference | `RepositoryPolicyTests.ContractProjectsMatchTheFixedReferenceGraph` | failed, `Actual: "ArcForges.Contracts.Agent"` at index 0 |
+| Removed the `rpc-attach.props` import from `ArcSlate.LocalRpc` | `RepositoryPolicyTests.LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts` | failed, expected set contained `ArcSlate.LocalRpc`, actual set did not |
+| Added `desktop-aot.props` to `ArcForges.Cloud.Host` | same rule | failed, `Actual: "ArcForges.Cloud.Host"` in the desktop-AOT host set |
+
+These cover the layout §3 contract graph and the Step 01.05 property-file boundary. They do **not** discharge
+the drills listed below, which are separate rules.
 
 ## Executed earlier
 
@@ -44,7 +58,7 @@ Step 01 cannot close. Each needs a deliberately broken branch pushed to CI, whic
 | Inject `[UnconditionalSuppressMessage]` without the four-part justification, and one with `Scope=module` | 01.05 | the suppression audit fails naming the line and the missing segment |
 | Inject a reflection path into a desktop head | 01.05 | Release build fails with IL2026/IL3050 on the exact line |
 | Five CI violation drills (lock, ARC-004, missing SPDX, unregistered package, IL2026) | 01.06 | the corresponding job goes red and the summary names the rule |
-| Turn off `PublishAot` on a desktop head; turn it on for Cloud | 01.07 | desktop publish gate fails; Cloud AOT is rejected by the property-file test |
+| Turn off `PublishAot` on a desktop head | 01.07 | the desktop publish gate fails (the Cloud half of this drill is already executed above) |
 
 ## Required by Step 01 and structurally missing
 

@@ -404,6 +404,49 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void ContractProjectsMatchTheFixedReferenceGraph()
+    {
+        // implementation-repository-layout.md §3 fixes this graph and forbids any other
+        // Contract-to-Contract edge. An extra edge and a missing edge both fail here.
+        Dictionary<string, string[]> graph = new(StringComparer.Ordinal)
+        {
+            ["ArcForges.Contracts.Foundation"] = [],
+            ["ArcForges.Contracts.Agent"] = ["ArcForges.Contracts.Foundation"],
+            ["ArcForges.Contracts.Sync"] = ["ArcForges.Contracts.Foundation"],
+            ["ArcForges.Contracts.LocalRpc"] = ["ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation"],
+            ["ArcForges.Contracts.PublicApi"] =
+                ["ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.Sync"],
+            ["ArcForges.Contracts.Realtime"] =
+                ["ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.Sync"],
+            ["ArcForges.Contracts.Serialization"] =
+            [
+                "ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.LocalRpc",
+                "ArcForges.Contracts.PublicApi", "ArcForges.Contracts.Realtime", "ArcForges.Contracts.Sync",
+            ],
+        };
+
+        var contractsRoot = Path.Combine(RepositoryRoot.Value, "src", "Contracts");
+        var projects = Directory.EnumerateFiles(contractsRoot, "*.csproj", SearchOption.AllDirectories).ToArray();
+        Xunit.Assert.Equal(graph.Count, projects.Length);
+
+        foreach (var project in projects)
+        {
+            var name = Path.GetFileNameWithoutExtension(project);
+            Xunit.Assert.True(graph.ContainsKey(name), $"{name} is not part of the layout §3 contract set.");
+
+            var actual = XDocument.Load(project).Descendants("ProjectReference")
+                .Select(element => element.Attribute("Include")?.Value)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => Path.GetFileNameWithoutExtension(value!.Replace('\\', Path.DirectorySeparatorChar)))
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+
+            Xunit.Assert.Equal(graph[name], actual);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts()
     {
         // implementation-repository-layout.md §13 and Step 01.05 assign each property file to one
