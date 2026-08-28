@@ -78,17 +78,31 @@ public sealed class RepositoryPolicyTests
         Xunit.Assert.Contains("dotnet test --project tests/Web/ArcForges.Web.BrowserTests", pullRequestGate, StringComparison.Ordinal);
         Xunit.Assert.Contains("--filter-trait Category=Browser", pullRequestGate, StringComparison.Ordinal);
 
-        string[] separatelyGatedProjects =
-        [
-            Path.Combine("tests", "NativeAbiTests", "ArcForges.Tests.NativeAbiTests.csproj"),
-            Path.Combine("tests", "Web", "ArcForges.Web.BrowserTests", "ArcForges.Web.BrowserTests.csproj"),
-        ];
-        foreach (var project in separatelyGatedProjects)
+        // Exit code 8 means "zero tests ran". A category slice legitimately leaves most assemblies empty, so
+        // the tolerance is declared once, centrally, and only for taxonomy runs. It must not appear in the
+        // workflow, where it would apply to a whole slice and hide one that ran nothing.
+        var buildTargets = File.ReadAllText(Path.Combine(RepositoryRoot.Value, "Directory.Build.targets"));
+        Xunit.Assert.Contains(
+            "<PropertyGroup Condition=\"'$(IsTestProject)' == 'true' and '$(ArcForgesManagedTestTaxonomy)' == 'true'\">",
+            buildTargets,
+            StringComparison.Ordinal);
+        Xunit.Assert.Contains("--ignore-exit-code 8", buildTargets, StringComparison.Ordinal);
+
+        var strayTolerance = EnumerateRepositoryFiles("*.csproj")
+            .Where(project => File.ReadAllText(project).Contains("--ignore-exit-code", StringComparison.Ordinal))
+            .Select(project => Path.GetRelativePath(RepositoryRoot.Value, project))
+            .ToArray();
+        Xunit.Assert.True(
+            strayTolerance.Length == 0,
+            $"Exit-code tolerance belongs in Directory.Build.targets, not per project: {string.Join(", ", strayTolerance)}");
+
+        // Every slice that filters the whole solution must prove it actually ran something.
+        foreach (var slice in new[] { "Category=Unit", "Category=Integration" })
         {
-            var content = File.ReadAllText(Path.Combine(RepositoryRoot.Value, project));
-            Xunit.Assert.Contains("Condition=\"'$(ArcForgesManagedTestTaxonomy)' == 'true'\"", content, StringComparison.Ordinal);
-            Xunit.Assert.Contains("--ignore-exit-code 8", content, StringComparison.Ordinal);
+            Xunit.Assert.Contains($"--filter-trait {slice}", pullRequestGate, StringComparison.Ordinal);
         }
+
+        Xunit.Assert.Contains("reported no tests at all", pullRequestGate, StringComparison.Ordinal);
     }
 
     [Xunit.Fact]

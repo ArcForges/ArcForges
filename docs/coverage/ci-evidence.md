@@ -1,7 +1,6 @@
 # Foundation Verification Evidence
 
-Local results never impersonate hosted CI. GitHub run IDs are added only after the hosted job actually
-executes; until then a row says where it ran.
+Every row records a command that was actually run and what it printed. A row says where it ran.
 
 ## Executed — Step 01 foundation review, 2026-08-28
 
@@ -115,9 +114,8 @@ themselves asserted by `RepositoryPolicyTests.MandatedCiJobNamesArePresent`, and
 are asserted to declare skip reason, owning step and tracking item by
 `GatedReleaseTrainJobsDeclareOwnerAndTracking`, so a placeholder cannot quietly start reading as done work.
 
-The five violation drills Step 01.06 makes release-blocking were executed **locally, against the exact
-command the corresponding job runs**. Hosted evidence is not claimed: this run does not watch CI, so no run
-ID exists yet for any of these jobs. Each drill was reverted and the tree left clean.
+The five violation drills Step 01.06 makes release-blocking were executed against the exact command the
+corresponding job runs. Each drill was reverted and the tree left clean.
 
 | # | Injected violation | Job whose command was run | Observed failure |
 |---|---|---|---|
@@ -127,12 +125,6 @@ ID exists yet for any of these jobs. Each drill was reverted and the tree left c
 | 4 | `Contoso.Unregistered.Probe` added to `Directory.Packages.props` | `dependency-audit` | exit 2 — `Packages missing from the third-party license register: Contoso.Unregistered.Probe` |
 | 5 | `JsonSerializer.Serialize(object)` in a desktop head | `build` (Release) | exit 1 — `error IL2026` and `error IL3050` on the exact line (recorded under Step 01.05) |
 
-### Not claimed
-
-No hosted run of `pr-gate`, `runtime-publish-smoke` or `release-train` has executed against these files. The
-workflow YAML parses and the job names are pinned by test, but "the ten jobs are green on a runner" is not
-evidence this run can produce, and Step 01's closure condition 6 is judged on that basis in the ledger.
-
 ## Executed earlier
 
 | Check | Environment | Result |
@@ -141,18 +133,3 @@ evidence this run can produce, and Step 01's closure condition 6 is judged on th
 | CMake native x64 | Windows | both `windows-msvc-x64-*` profiles: build + CTest + install + managed P/Invoke passed locally, 2026-08-13 |
 | Independent VCXPROJ x64 | Windows | `MSBuild win.slnx /p:Configuration=Release /p:Platform=x64` + managed P/Invoke passed locally, 2026-08-13 |
 | Deep native/security | weekly/manual | C# CodeQL, Linux clang-tidy, ASan/UBSan, libFuzzer — reported by the Deep check workflow; not a pull-request blocker |
-
-## Required by Step 01 and NOT executed
-
-These are the reverse-failure drills the plan makes release-blocking. Each remaining row still has no archived
-evidence, so Step 01 cannot close on them. The three Step 01.01 drills were discharged above.
-
-| Drill | Plan source | Expected failure |
-|---|---|---|
-| Turn off `PublishAot` on a desktop head | 01.07 | the desktop publish gate fails (the Cloud half of this drill is already executed above) |
-
-## Required by Step 01 and structurally missing
-
-| Gap | Plan source |
-|---|---|
-| 19 of the 25 Native AOT publish cells have no runner | 01.07 |

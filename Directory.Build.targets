@@ -29,5 +29,19 @@
       Condition="'@(_ArcForgesWindowsNativeRuntime)' == ''"
       Text="ArcForges native runtime was not built at '$(ArcForgesWindowsNativeRuntimeDirectory)'. Build the Windows solution so its native project dependencies run first." />
   </Target>
+  <!--
+    The managed taxonomy is run one category at a time, once per pr-gate slice. A single category leaves most
+    test assemblies with nothing to run, and Microsoft.Testing.Platform reports "zero tests ran" as exit
+    code 8 — which is correct for that assembly but is not a failure of the slice. The taxonomy run therefore
+    tolerates code 8 per assembly.
+
+    That tolerance would hide a slice that ran nothing at all, so it never stands alone: each pr-gate slice
+    asserts separately that the run reported a non-zero total, and exit code 8 is the only code ignored, so a
+    real test failure still fails the job.
+  -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true' and '$(ArcForgesManagedTestTaxonomy)' == 'true'">
+    <TestingPlatformCommandLineArguments>$(TestingPlatformCommandLineArguments) --ignore-exit-code 8</TestingPlatformCommandLineArguments>
+  </PropertyGroup>
+
   <Import Project="eng\build\NoInlineVersions.targets" />
 </Project>

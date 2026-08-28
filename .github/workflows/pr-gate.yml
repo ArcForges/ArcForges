@@ -95,7 +95,17 @@ jobs:
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet build ArcForges.slnx -c Release --no-restore
-      - run: dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit
+      - name: Run the unit slice
+        shell: pwsh
+        run: |
+          # Exit code 8 ("zero tests ran") is tolerated per assembly in Directory.Build.targets, because a
+          # single category leaves most of them empty. That tolerance would hide a slice that ran nothing,
+          # so the slice total is checked here.
+          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit 2>&1 | Tee-Object -FilePath $env:RUNNER_TEMP/slice.log
+          if ($LASTEXITCODE -ne 0) { throw 'The unit slice failed.' }
+          $total = Select-String -Path $env:RUNNER_TEMP/slice.log -Pattern '^\s*total:\s*(\d+)' | Select-Object -Last 1
+          if (-not $total) { throw 'The unit slice printed no summary.' }
+          if ([int]$total.Matches[0].Groups[1].Value -le 0) { throw 'The unit slice reported no tests at all.' }
 
   integration-tests:
     runs-on: windows-latest
@@ -111,7 +121,17 @@ jobs:
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet build ArcForges.slnx -c Release --no-restore
-      - run: dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Integration Category=Contract Category=Ui
+      - name: Run the integration slice
+        shell: pwsh
+        run: |
+          # Exit code 8 ("zero tests ran") is tolerated per assembly in Directory.Build.targets, because a
+          # single category leaves most of them empty. That tolerance would hide a slice that ran nothing,
+          # so the slice total is checked here.
+          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Integration Category=Contract Category=Ui 2>&1 | Tee-Object -FilePath $env:RUNNER_TEMP/slice.log
+          if ($LASTEXITCODE -ne 0) { throw 'The integration slice failed.' }
+          $total = Select-String -Path $env:RUNNER_TEMP/slice.log -Pattern '^\s*total:\s*(\d+)' | Select-Object -Last 1
+          if (-not $total) { throw 'The integration slice printed no summary.' }
+          if ([int]$total.Matches[0].Groups[1].Value -le 0) { throw 'The integration slice reported no tests at all.' }
 
   architecture-tests:
     runs-on: windows-latest
@@ -161,7 +181,7 @@ jobs:
       - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet build tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore
       - name: Enforce SPDX headers and the preview-package allowlist
-        run: dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-method '*FirstPartySourceFilesDeclareSpdx*|*LockedPackagesContainNoUnapprovedPreviewVersions*'
+        run: dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-method '*FirstPartySourceFilesDeclareSpdx*' '*LockedPackagesContainNoUnapprovedPreviewVersions*'
 
   dependency-audit:
     runs-on: windows-latest

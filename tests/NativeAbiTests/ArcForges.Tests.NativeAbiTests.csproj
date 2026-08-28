@@ -8,7 +8,6 @@
     <OutputType>Exe</OutputType>
     <ArcForgesDeployWindowsNativeRuntime Condition="'$(SolutionFileName)' == 'win.slnx'">true</ArcForgesDeployWindowsNativeRuntime>
     <!-- This suite is exercised after native staging, outside the managed taxonomy. -->
-    <TestingPlatformCommandLineArguments Condition="'$(ArcForgesManagedTestTaxonomy)' == 'true'">$(TestingPlatformCommandLineArguments) --ignore-exit-code 8</TestingPlatformCommandLineArguments>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />

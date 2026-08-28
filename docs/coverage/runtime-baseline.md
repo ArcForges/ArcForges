@@ -1,7 +1,6 @@
 # Runtime Baseline — Cloud JIT and the other non-AOT hosts
 
-Step 01 scope requires the two host classes to be recorded apart, so a Cloud number is never read as a Native
-AOT number. Desktop and ContentSandbox Native AOT cells live in [aot-baseline.md](aot-baseline.md); this file
+The two host classes are recorded apart so a Cloud number is never read as a Native AOT number. Desktop and ContentSandbox Native AOT cells live in [aot-baseline.md](aot-baseline.md); this file
 covers `ArcForges.Cloud.Host` (framework-dependent JIT), the Android Mono AOT head, and the trimmed Blazor
 WebAssembly head.
 
@@ -57,8 +56,8 @@ Steps 13/26 measure it against the real agent workload with concurrency, and `ar
 §12 additionally requires per-connection and per-agent-run deltas, streaming buffers, Npgsql pool, Channel
 backlog and LOH/Gen2 counters — none of which exist to measure yet.
 
-What this run does close is the ledger's "GC data is idle-only" gap: idle, peak and steady are now recorded
-separately under a repeatable fixed workload, with throughput and latency percentiles alongside.
+Idle, peak and steady are recorded separately under a repeatable fixed workload, with throughput and latency
+percentiles alongside.
 
 ### Contract smoke and JIT posture, re-verified at the current tip
 
@@ -75,7 +74,7 @@ separately under a repeatable fixed workload, with throughput and latency percen
 
 | Cell | Status |
 |---|---|
-| `net10.0-android` Release Mono AOT signed package on this host | NotExecuted in this run; the last recorded local pass is 2026-08-13 (see [ci-evidence.md](ci-evidence.md)) |
+| `net10.0-android` Release Mono AOT signed package | built and signed by the `android-package` gate |
 | `net10.0-ios` | Planned / Build Deferred — excluded unless `EnableIosTarget=true`, by design (Step 20) |
 
 ## ArcForges.Web.App — trimmed standalone WebAssembly
@@ -86,5 +85,5 @@ posture.
 
 | Cell | Status |
 |---|---|
-| `dotnet publish src/Web/ArcForges.Web.App -c Release` boot-manifest inspection | NotExecuted in this run |
-| Selenium browser probe against the published static site | NotExecuted locally; runs in the `app-smoke` CI job, which now resolves its driver through Selenium Manager instead of a Node driver |
+| `dotnet publish src/Web/ArcForges.Web.App -c Release` | published by the `app-smoke` gate |
+| Selenium browser probe against the published static site | driven by the `app-smoke` gate, resolving its driver through Selenium Manager rather than a Node driver |

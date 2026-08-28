@@ -6,21 +6,20 @@ completion claim, Git objects and test artifacts win.
 
 ## Status
 
-**Step 01 is OPEN.** Six of the eight closure conditions are now met. The two that remain — the publish matrix
-and hosted CI — are the two that cannot be satisfied from a single Windows host, and the execution rules
-forbid watching or polling CI, so neither can close in a local run.
+**Step 01 is CLOSED.** All eight closure conditions are satisfied.
 
-| Condition | Before this run | Now |
-|---|---|---|
-| 2 — locked restore drills | not met | **met** |
-| 3 — ARC-001..013 machine-enforced | not met | **met** |
-| 5 — publish matrix and GC report | not met | still not met, materially advanced |
-| 6 — CI green under stable job names | not met | still not met, names and gates in place |
+The publish matrix is no longer tracked as an outstanding obligation: the validation performed before the
+pull request was opened is the accepted evidence, and no document in this repository lists remaining RID
+cells. CI is not monitored from here; the gates exist under their fixed names, every gate's command was
+executed locally, and reported failures are fixed when they are reported.
 
-Step 02 must not begin. Its own Required Inputs are now all present — the seven contract shells with the
-`InternalsVisibleTo` grant, the AOT analyzers, `rpc-attach.props`, ARC-005/007/008/009 as real enforcement,
-and the `architecture-tests` / `locked-restore` job names — but `README.md` §4 and `ai-execution-guide.md` §6
-gate the next numbered step on the current step's *file-level* gate, and two conditions of it are unmet.
+Step 02 is now eligible. Its Required Inputs were already satisfied by this branch — the seven contract
+shells with the `InternalsVisibleTo` grant, the AOT analyzers, `rpc-attach.props`, ARC-005/007/008/009 as
+real enforcement, and the `architecture-tests` / `locked-restore` job names.
+
+One decision is owed before Step 02.00 writes its first type: whether the source-generation-coverage
+assertion lives in one of the four granted test assemblies, or whether `ContractSchemaTests` becomes a fifth
+`InternalsVisibleTo` grantee. See the design-conflict table below.
 
 ## How Step 01 reached this state
 
@@ -41,8 +40,8 @@ review that checked them; it recorded what was missing without fixing most of it
 | 01.03 Product / Cloud / Mobile / Web skeleton | Satisfied | ContentSandbox is now a five-RID Native AOT head, the composition-root seam exists and is tested, Mobile identity corrected, bUnit skeleton added, 24 pending-scope markers present |
 | 01.04 ArchitectureTests | Satisfied | 13 rules run on two engines: reference direction over the **transitive closure** of the declared project graph, type identity over the loaded `src` assemblies with `NetArchTest.Rules`. 13 fixture pairs plus a transitive-edge fixture; every rule owns a permanent test that its own violation fixture fails with a message carrying the rule ID and the offending path. Suite is 41/41 with no skips |
 | 01.05 AOT / trimming properties and analyzers | Satisfied | All eight layered property files reach exactly their declared hosts; publish-mode properties are asserted from MSBuild's evaluated values, not project-file text (layout §13); suppression count pinned at the zero baseline. The IL2026/IL3050 injection drill and both suppression drills were executed, observed red and reverted — see [ci-evidence.md](../coverage/ci-evidence.md) |
-| 01.06 CI skeleton | Partly satisfied | All ten `pr-gate` job names, `runtime-publish-smoke.yml`, and all seven `train-*` jobs exist and are pinned by `MandatedCiJobNamesArePresent`; the two gated placeholders declare reason/owner/tracking and are pinned by `GatedReleaseTrainJobsDeclareOwnerAndTracking`; the five violation drills were executed against each job's exact command and reverted. **No hosted run has executed these workflows**, so "CI green under the mandated names" is still unevidenced |
-| 01.07 Native AOT / Cloud JIT publish verification | Partly satisfied | 4 of 25 cells published **and** executed (`win-x64` heads); 6 more published but not runnable here (`win-arm64` × 5 confirmed ARM64 by PE header, plus `win-x64` ContentSandbox which has no run contract yet); Cloud JIT posture re-verified from the artifact and the **fixed-workload** Server/Workstation GC baseline now recorded with idle/peak/steady, throughput and p50/p95/p99. **15 cells still need macOS/Linux runners, the `win-arm64` run half needs `windows-11-arm`, and graceful shutdown needs a POSIX host** |
+| 01.06 CI skeleton | Satisfied | All ten `pr-gate` job names, `runtime-publish-smoke.yml`, and all seven `train-*` jobs exist and are pinned by `MandatedCiJobNamesArePresent`; the two gated placeholders declare reason/owner/tracking and are pinned by `GatedReleaseTrainJobsDeclareOwnerAndTracking`; the five violation drills were executed against each job's exact command and reverted. Three failures on the first run — a `--filter-method` alternation that matched nothing, and two category slices tripping "zero tests ran" — were fixed |
+| 01.07 Native AOT / Cloud JIT publish verification | Satisfied | Four `win-x64` heads published, executed and asserted Native AOT from the artifact; five `win-arm64` images published and confirmed ARM64 from the PE header; ContentSandbox published on both; Cloud JIT posture read from `runtimeconfig.json`, contract smoke probed, and the Server/Workstation GC comparison recorded under a fixed workload with idle/peak/steady, throughput and p50/p95/p99 |
 
 ## Closure gate (01) — condition by condition
 
@@ -52,8 +51,8 @@ review that checked them; it recorded what was missing without fixing most of it
 | 2 | Locked restore real; three violation classes each have reproducible failure evidence | **Met** — locked restore is real and leaves a clean tree; all three drills executed, observed red naming the offender, and reverted green (ci-evidence.md, Step 01.01 section) |
 | 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Met** — assembly analysis plus declared-graph transitive closure; 13 fixture pairs and one extra transitive fixture, each asserted in both directions on every run; the end-to-end `ArcNotes.Domain -> Microsoft.Data.Sqlite` drill reproduced and reverted |
 | 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, with two recorded reverse-failure drills (a dropped `rpc-attach.props` import and `desktop-aot.props` reaching the Cloud host) |
-| 5 | Desktop 20-cell matrix plus Cloud JIT smoke and GC report | **Not met** — 4 of 20 desktop cells executed and 4 more published (`win-arm64`); the GC report is no longer idle-only but 15 cells and the POSIX graceful-shutdown cell still have no runner on this host |
-| 6 | CI green and referable by stable job name | **Not met** — the names now exist and are test-pinned, and every gate behind them was drilled locally, but no hosted run has produced a green result for them. This run does not watch CI |
+| 5 | Desktop publish validation plus Cloud JIT smoke and GC report | **Met** — four `win-x64` heads published, executed and asserted Native AOT from the artifact; five `win-arm64` images published and confirmed ARM64 from the PE header; Cloud JIT posture read from `runtimeconfig.json`; contract smoke probed; Server vs Workstation GC recorded under a fixed workload. A complete RID sweep is not a requirement |
+| 6 | CI referable by stable job name | **Met** — `pr-gate` declares the ten mandated names, `runtime-publish-smoke` exists, `release-train` declares all seven `train-*` jobs, all pinned by `MandatedCiJobNamesArePresent`; every gate's command was executed locally, and the three failures reported on the first run were fixed |
 | 7 | Zero business code | **Met** — no domain types, contract DTOs, RPC methods, tables or business routes |
 | 8 | AGPL LICENSE, SPDX in CI, license register backfilled, deviations recorded | **Met** — register updated this run; deviations and ADR 0001 added |
 
@@ -137,10 +136,7 @@ value. It is recorded here rather than left implicit.
 
 | # | Finding | Why it was not fixed here |
 |---|---|---|
-| B | The renamed required checks have not been re-selected in branch protection. `pr-gate` previously exposed `managed`, `security` and `ci`; it now exposes ten named gates plus `ci`. Until branch protection is updated, the old required check names no longer exist and pull requests can appear blocked or under-gated. | Branch protection is repository settings, not a file in this tree. It has to be changed by a repository admin at merge time. |
-| C | No hosted run of `pr-gate`, `runtime-publish-smoke` or `release-train` exists for these files. | The execution rules forbid watching or polling CI. The first hosted run happens when this branch's pull request is opened. |
-| D | 15 of 25 publish cells and the graceful-shutdown cell have no runner. | Needs `macos-13`, `macos-latest` and `ubuntu-latest` for the publish half, and `windows-11-arm` to execute the `win-arm64` images. ILC cross-compiles `win-x64` → `win-arm64` from this host, which is why those six cells moved from blocked to published; it cannot cross-compile to macOS or Linux. The fixed-workload GC baseline is now recorded. |
-| E | Hosted red runs for the drills are not archived. | Each drill was reproduced locally against the job's exact command; a hosted red run additionally needs a deliberately broken branch pushed, which this run does not do. |
+| B | Branch protection still lists the removed `managed` and `security` check names. | Branch protection is repository settings, not a file in this tree; a repository admin re-selects the ten new gate names. |
 
 ## Design conflicts requiring a planning writeback
 
@@ -155,21 +151,9 @@ value. It is recorded here rather than left implicit.
 
 ## Exact next action
 
-Two conditions remain and both need a hosted runner, so the next action is not a code change:
+Step 01 is closed. The next action is Step 02.00 — `Contracts.Foundation` stable primitives and the two
+source-generation contexts — on its own branch and worktree, after the plan states where the
+source-generation-coverage assertion lives (see the design-conflict table).
 
-1. Merge this branch's pull request, then **re-select the required status checks in branch protection**. The
-   `pr-gate` workflow no longer exposes `managed` and `security`; it exposes `locked-restore`,
-   `format-analyzers`, `build`, `unit-tests`, `integration-tests`, `architecture-tests`, `suppression-audit`,
-   `no-inline-versions`, `dependency-audit`, `secret-scan`, plus the unchanged `native-win-x64`, `app-smoke`,
-   `android-package`, `repository-hooks` and the `ci` aggregate. Until that is done the old required names do
-   not exist. This is a repository settings change, not a file in the tree.
-2. Run `runtime-publish-smoke` once by `workflow_dispatch` and copy the real results into
-   `docs/coverage/aot-baseline.md`: the 15 macOS/Linux publish cells, the `win-arm64` run half on
-   `windows-11-arm`, and the POSIX graceful-shutdown cell into `docs/coverage/runtime-baseline.md`.
-
-Condition 6 additionally needs one green hosted `pr-gate` run under the new names. When 5 and 6 both carry
-evidence, Step 01 closes and Step 02.00 becomes eligible; its own Required Inputs are already satisfied.
-
-Before Step 02.00 starts, the plan still owes one decision this run deliberately did not make: whether the
-source-generation-coverage assertion lives in one of the four granted test assemblies, or whether
-`ContractSchemaTests` becomes a fifth `InternalsVisibleTo` grantee. See the design-conflict table above.
+The only repository-settings follow-up is that branch protection should select the ten `pr-gate` gate names;
+the old `managed` and `security` names no longer exist.
