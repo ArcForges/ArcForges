@@ -23,7 +23,7 @@ does that check.
 | Substep | State | Evidence |
 |---|---|---|
 | 01.00 Repository and solution skeleton | Satisfied | 166 managed projects, 5 `.vcxproj`, 6 native shims, the 13 top-level files and the required directories are asserted by `RepositoryPolicyTests.RepositoryLayoutMatchesFoundationContract` |
-| 01.01 Central package management, locked restore, version policy | Partly satisfied | Package table corrected this run; locked restore is clean; **the three reverse-failure drills have no evidence** |
+| 01.01 Central package management, locked restore, version policy | Satisfied | Package table corrected in the review run; locked restore is clean; the three reverse-failure drills (lock tamper → NU1403, inline `Version=` → `VerifyNoInlinePackageVersions`, preview package → preview gate) were executed, observed red with the offending name, reverted and re-run green — recorded in [ci-evidence.md](../coverage/ci-evidence.md) |
 | 01.02 BuildingBlocks and Contracts skeleton | Satisfied | 13 + 7 projects build and test; `contracts.props` now imported; the layout §3 contract reference graph is pinned edge-by-edge by `RepositoryPolicyTests.ContractProjectsMatchTheFixedReferenceGraph`, with a recorded reverse-failure drill |
 | 01.03 Product / Cloud / Mobile / Web skeleton | Satisfied | ContentSandbox is now a five-RID Native AOT head, the composition-root seam exists and is tested, Mobile identity corrected, bUnit skeleton added, 24 pending-scope markers present |
 | 01.04 ArchitectureTests | **Not satisfied** | 13 rules and 26 fixtures exist and are in the default test chain, but they scan source text instead of running `NetArchTest.Rules` over the loaded assemblies with Roslyn-compiled fixtures |
@@ -36,7 +36,7 @@ does that check.
 | # | Condition | Verdict |
 |---|---|---|
 | 1 | Clean checkout builds and tests green; 166 projects; tree matches layout | **Met** — from a wiped `artifacts/`: locked restore clean with a clean tree afterwards, `dotnet format --verify-no-changes` clean, Release build 0 warnings / 0 errors, managed taxonomy 115 total / 92 passed / 23 skipped / 0 failed |
-| 2 | Locked restore real; three violation classes each have reproducible failure evidence | **Not met** — locked restore is real, the three drills are not archived |
+| 2 | Locked restore real; three violation classes each have reproducible failure evidence | **Met** — locked restore is real and leaves a clean tree; all three drills executed, observed red naming the offender, and reverted green (ci-evidence.md, Step 01.01 section) |
 | 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Not met** — enforcement is source-text scanning, not assembly analysis |
 | 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, with two recorded reverse-failure drills (a dropped `rpc-attach.props` import and `desktop-aot.props` reaching the Cloud host) |
 | 5 | Desktop 20-cell matrix plus Cloud JIT smoke and GC report | **Not met** — 4 of 20 desktop cells; GC data is idle-only |

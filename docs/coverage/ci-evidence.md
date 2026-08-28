@@ -35,6 +35,24 @@ afterwards.
 These cover the layout §3 contract graph and the Step 01.05 property-file boundary. They do **not** discharge
 the drills listed below, which are separate rules.
 
+## Reverse-failure drills — Step 01.01 supply-chain gates, 2026-08-28
+
+Windows 11 Pro for Workstations 10.0.26200, .NET SDK 10.0.400, branch `feat/af01-01-step-01-closure`.
+Each violation was injected, the gate was observed red with the offending name in its own message, and the
+injection was reverted; the gate was then re-run green and `git status --porcelain --untracked-files=all`
+was empty.
+
+| # | Injected violation | Gate and command | Observed failure | Reverted |
+|---|---|---|---|---|
+| 1 | `"resolved": "10.0.400"` → `"10.0.300"` in `src/Contracts/ArcForges.Contracts.Foundation/packages.lock.json`, project `obj` cleared so restore could not no-op | `dotnet restore src/Contracts/ArcForges.Contracts.Foundation/ArcForges.Contracts.Foundation.csproj --locked-mode` | exit 1 — `error NU1403: Package content hash validation failed for Microsoft.CodeAnalysis.NetAnalyzers.10.0.300. The package is different than the last restore.` | yes; re-run exit 0 |
+| 2 | `<PackageReference Include="Markdig" Version="1.0.0" />` added to `ArcForges.Contracts.Foundation.csproj` | `VerifyNoInlinePackageVersions` via `dotnet restore src/Contracts/ArcForges.Contracts.Foundation/ArcForges.Contracts.Foundation.csproj` | exit 1 — `eng\build\NoInlineVersions.targets(8,5): error : Inline NuGet versions are forbidden. Move these packages to Directory.Packages.props: Markdig [...\ArcForges.Contracts.Foundation.csproj]` — names both project and package | yes |
+| 3 | `Contoso.Preview.Probe/1.0.0-beta.1` added to the same lock file | `dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-method '*LockedPackagesContainNoUnapprovedPreviewVersions*'` | exit 2 — `Unapproved preview packages: src\Contracts\ArcForges.Contracts.Foundation\packages.lock.json: Contoso.Preview.Probe/1.0.0-beta.1` | yes; re-run exit 0 |
+
+Drill 1 note: a lock tamper does **not** invalidate NuGet's no-op restore check, which hashes project inputs
+rather than the lock file. A first attempt returned exit 0 for that reason. The drill is only meaningful with
+the project's `obj` directory cleared, which is what a clean CI checkout always gives; the recorded run above
+clears it explicitly.
+
 ## Executed earlier
 
 | Check | Environment | Result |
@@ -46,14 +64,11 @@ the drills listed below, which are separate rules.
 
 ## Required by Step 01 and NOT executed
 
-These are the reverse-failure drills the plan makes release-blocking. None of them has archived evidence, so
-Step 01 cannot close. Each needs a deliberately broken branch pushed to CI, which this review did not do.
+These are the reverse-failure drills the plan makes release-blocking. Each remaining row still has no archived
+evidence, so Step 01 cannot close on them. The three Step 01.01 drills were discharged above.
 
 | Drill | Plan source | Expected failure |
 |---|---|---|
-| Tamper one `packages.lock.json` version | 01.01 | `dotnet restore --locked-mode` fails naming the lock/project mismatch |
-| Add an inline `Version="1.0.0"` to one `PackageReference` | 01.01 | `VerifyNoInlinePackageVersions` fails naming the project and package |
-| Add any preview-suffixed package | 01.01 | preview gate fails; only the one audited AndroidX transitive is allowlisted |
 | Compile each of the 26 ARC fixtures in the violating direction | 01.04 | the matching rule fails with its rule ID and the offending reference path |
 | Inject `[UnconditionalSuppressMessage]` without the four-part justification, and one with `Scope=module` | 01.05 | the suppression audit fails naming the line and the missing segment |
 | Inject a reflection path into a desktop head | 01.05 | Release build fails with IL2026/IL3050 on the exact line |
