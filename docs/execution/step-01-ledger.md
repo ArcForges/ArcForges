@@ -6,17 +6,30 @@ completion claim, Git objects and test artifacts win.
 
 ## Status
 
-**Step 01 is OPEN.** Its file-level completion gate is not satisfied. The repository carries the full 166-project
-skeleton and it builds and tests clean, but four of the eight closure conditions have no evidence and cannot get
-it on a single Windows host.
+**Step 01 is OPEN.** Six of the eight closure conditions are now met. The two that remain — the publish matrix
+and hosted CI — are the two that cannot be satisfied from a single Windows host, and the execution rules
+forbid watching or polling CI, so neither can close in a local run.
+
+| Condition | Before this run | Now |
+|---|---|---|
+| 2 — locked restore drills | not met | **met** |
+| 3 — ARC-001..013 machine-enforced | not met | **met** |
+| 5 — publish matrix and GC report | not met | still not met, materially advanced |
+| 6 — CI green under stable job names | not met | still not met, names and gates in place |
+
+Step 02 must not begin. Its own Required Inputs are now all present — the seven contract shells with the
+`InternalsVisibleTo` grant, the AOT analyzers, `rpc-attach.props`, ARC-005/007/008/009 as real enforcement,
+and the `architecture-tests` / `locked-restore` job names — but `README.md` §4 and `ai-execution-guide.md` §6
+gate the next numbered step on the current step's *file-level* gate, and two conditions of it are unmet.
 
 ## How Step 01 reached this state
 
-Step 01 was never executed as a numbered plan step. There is no `feat/af01-*` branch, no Step 01 pull request
-and no `Step 01.NN` commit in the history before this branch. The solution, property files, native shims and CI
-landed through pull requests #8–#20, ahead of Step 00, and Step 00 later merged as #18 and #29. Consequently
-several Step 01 deliverables were never checked against the step file. This branch is the first review that
-does that check.
+Step 01 was never executed as a numbered plan step. There is no Step 01 pull request and no `Step 01.NN`
+commit in the history before `feat/af01-00-foundation-review`. The solution, property files, native shims and
+CI landed through pull requests #8–#20, ahead of Step 00, and Step 00 later merged as #18 and #29.
+Consequently several Step 01 deliverables were never checked against the step file. PR #30 was the first
+review that checked them; it recorded what was missing without fixing most of it. This branch
+(`feat/af01-01-step-01-closure`) is the run that resolves what a local host can resolve.
 
 ## Owning substeps
 
@@ -35,7 +48,7 @@ does that check.
 
 | # | Condition | Verdict |
 |---|---|---|
-| 1 | Clean checkout builds and tests green; 166 projects; tree matches layout | **Met** — from a wiped `artifacts/`: locked restore clean with a clean tree afterwards, `dotnet format --verify-no-changes` clean, Release build 0 warnings / 0 errors, managed taxonomy 115 total / 92 passed / 23 skipped / 0 failed |
+| 1 | Clean checkout builds and tests green; 166 projects; tree matches layout | **Met** — at this branch tip: `dotnet restore ArcForges.slnx --locked-mode` clean with an unchanged tree, `dotnet format --verify-no-changes` clean, Release build 0 warnings / 0 errors, managed taxonomy 122 total / 100 passed / 22 skipped / 0 failed |
 | 2 | Locked restore real; three violation classes each have reproducible failure evidence | **Met** — locked restore is real and leaves a clean tree; all three drills executed, observed red naming the offender, and reverted green (ci-evidence.md, Step 01.01 section) |
 | 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Met** — assembly analysis plus declared-graph transitive closure; 13 fixture pairs and one extra transitive fixture, each asserted in both directions on every run; the end-to-end `ArcNotes.Domain -> Microsoft.Data.Sqlite` drill reproduced and reverted |
 | 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, with two recorded reverse-failure drills (a dropped `rpc-attach.props` import and `desktop-aot.props` reaching the Cloud host) |
@@ -44,7 +57,9 @@ does that check.
 | 7 | Zero business code | **Met** — no domain types, contract DTOs, RPC methods, tables or business routes |
 | 8 | AGPL LICENSE, SPDX in CI, license register backfilled, deviations recorded | **Met** — register updated this run; deviations and ADR 0001 added |
 
-## Commits on this branch
+## Commits
+
+Merged in PR #30 on `feat/af01-00-foundation-review`:
 
 | Substep | Commit | Subject |
 |---|---|---|
@@ -55,10 +70,32 @@ does that check.
 | 01.07 | `1e2bbfd` | record the real publish evidence and open this ledger |
 | review | `09f5d97` | fix findings from the whole-scope self-review |
 | 01.02 | `d85a7c0` | pin the layout §3 contract reference graph with a reverse-failure drill |
+| ledger | `9a097bd` | final ledger accuracy pass |
+
+On `feat/af01-01-step-01-closure`, one atomic commit per owning substep:
+
+| Substep | Commit | Subject |
+|---|---|---|
+| 01.01 | `fc471bc` | archive the three supply-chain reverse-failure drills |
+| 01.02 | `af99290` | grant contract internals to the four Step 02 test assemblies |
+| 01.04 | `c1000c3` | rebuild the architecture rules on real analysis engines |
+| 01.05 | `684acf3` | archive the AOT drills and assert evaluated publish modes |
+| 01.06 | `0e905a4` | give the CI gates the names every later step references |
+| 01.07 | `96ad0d1` | extend the publish matrix and replace the idle-only GC baseline |
 | ledger | this commit / branch tip | final ledger accuracy pass |
 
-The complete ordered SHA list is in the pull-request body; per the execution rules a commit does not embed its
-own SHA here.
+Planning writeback, in `ArchitectureDesign` on `docs/af01-web-serialization-and-smoke-workflow`: commit
+`a18d481`, repairing the Step 01.03 Web reference bullet and the Step 01.06 workflow filename.
+
+Per the execution rules a commit does not embed its own SHA here; the ordered list is in the pull-request body.
+
+## Grouping deviation
+
+`arcforges.md` pairs one owning substep with one branch, worktree, pull request and commit. This run uses one
+worktree, one branch and one pull request for six substeps of a single step-closure scope, with one atomic
+commit per substep. That follows the instruction that opened the run — a single dedicated worktree executing
+the complete Step 01 scope — and keeps the per-substep commit atomicity, which is what carries the review
+value. It is recorded here rather than left implicit.
 
 ## Findings fixed in the Step 01 closure run (branch `feat/af01-01-step-01-closure`)
 
@@ -110,15 +147,29 @@ own SHA here.
 | Conflict | Detail |
 |---|---|
 | Step 01.02 contract reference bullets vs layout §3 — **repaired** | Written back in the planning repository on `docs/af01-contracts-reference-graph`, commit `ec3f9ed`. Both bullets now restate §3's graph and the testing requirement asserts the whole edge set. |
+| Step 01.06 workflow filename — **repaired in the plan** | The substep named one workflow both `runtime-publish-smoke.yml` (body, with the reason) and `aot-publish-smoke.yml` (eight other references). Repaired in PLAN_REPO commit `a18d481`; the repository ships `runtime-publish-smoke.yml`. |
 | Layout §12 vs the resolved package versions | Six entries differ. See `docs/adr/0001-dependency-version-drift.md`. §12 stays frozen for now: writing it back before the regression matrix has run would launder an unevidenced change into the authority document. Run the matrix first, then write back. |
-| Layout §8 Web dependency block vs Step 01.03's Web.Infrastructure bullet — **repaired in code** | §8 lists the Web dependency set as `Contracts.PublicApi/Realtime/Foundation/Agent/Sync`; Step 01.03 additionally names `Serialization`, and §3 makes `Serialization` reference all six contracts including `LocalRpc`, which layout §11 forbids Web from reaching. The three statements cannot all hold. Resolved in favour of §8 and §11 by dropping the unused reference. If a later step needs source-generated JSON in the browser, the plan must first say how a Web consumer reaches `Serialization` without `LocalRpc` — most likely by partitioning it. Planning writeback still owed on Step 01.03's bullet. |
+| Layout §8 Web dependency block vs Step 01.03's Web.Infrastructure bullet — **repaired in code and in the plan** (PLAN_REPO `docs/af01-web-serialization-and-smoke-workflow`, commit `a18d481`) | §8 lists the Web dependency set as `Contracts.PublicApi/Realtime/Foundation/Agent/Sync`; Step 01.03 additionally names `Serialization`, and §3 makes `Serialization` reference all six contracts including `LocalRpc`, which layout §11 forbids Web from reaching. The three statements cannot all hold. Resolved in favour of §8 and §11 by dropping the unused reference. If a later step needs source-generated JSON in the browser, the plan must first say how a Web consumer reaches `Serialization` without `LocalRpc` — most likely by partitioning it. Planning writeback still owed on Step 01.03's bullet. |
 | Layout §3 root namespace for `ArcForges.Contracts.Foundation` | §3 assigns the namespace `ArcForges.Contracts` while every sibling uses its own project name. The project currently uses `ArcForges.Contracts.Foundation`, and Step 02.00 states the namespace is `ArcForges.Contracts.Foundation` in its own body. Step 02 owns the types; the plan should state which is intended before then. |
 | `InternalsVisibleTo` grantee set omits `ContractSchemaTests` | Step 02's Required Inputs names exactly four grantees (ContractCompatibility / Architecture / PublicApiContract / RealtimeReconnect), which is what 01.02 implements verbatim. But Step 02's own Scope line puts the contract test baseline in `tests/{ContractSchemaTests,ContractCompatibilityTests,PublicApiContractTests,RealtimeReconnectTests,LocalRpcAotTests}`, and 02.00's source-generation-coverage assertion has to reach an `internal FoundationJsonContext`. If that assertion lands in `ContractSchemaTests` it will not compile. Step 02 must either place the assertion in a granted assembly or add the fifth grantee to its Required Inputs; 01.02 does not widen the set on its own. |
 
 ## Exact next action
 
-Implement Step 01.04 properly: add the `NetArchTest.Rules` package reference and references to the `src`
-assemblies to `tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj`, rewrite the 13 rules as
-assembly-graph assertions, compile the 26 `Fixtures/ARC0XX*.cs`/`.cs.txt` pairs with Roslyn at test time, and
-assert each rule fails on its violation fixture with a message carrying the rule ID and the offending reference
-path. Do it on a branch of its own, off this one, and do not touch the CI workflows in the same change.
+Two conditions remain and both need a hosted runner, so the next action is not a code change:
+
+1. Merge this branch's pull request, then **re-select the required status checks in branch protection**. The
+   `pr-gate` workflow no longer exposes `managed` and `security`; it exposes `locked-restore`,
+   `format-analyzers`, `build`, `unit-tests`, `integration-tests`, `architecture-tests`, `suppression-audit`,
+   `no-inline-versions`, `dependency-audit`, `secret-scan`, plus the unchanged `native-win-x64`, `app-smoke`,
+   `android-package`, `repository-hooks` and the `ci` aggregate. Until that is done the old required names do
+   not exist. This is a repository settings change, not a file in the tree.
+2. Run `runtime-publish-smoke` once by `workflow_dispatch` and copy the real results into
+   `docs/coverage/aot-baseline.md`: the 15 macOS/Linux publish cells, the `win-arm64` run half on
+   `windows-11-arm`, and the POSIX graceful-shutdown cell into `docs/coverage/runtime-baseline.md`.
+
+Condition 6 additionally needs one green hosted `pr-gate` run under the new names. When 5 and 6 both carry
+evidence, Step 01 closes and Step 02.00 becomes eligible; its own Required Inputs are already satisfied.
+
+Before Step 02.00 starts, the plan still owes one decision this run deliberately did not make: whether the
+source-generation-coverage assertion lives in one of the four granted test assemblies, or whether
+`ContractSchemaTests` becomes a fifth `InternalsVisibleTo` grantee. See the design-conflict table above.
