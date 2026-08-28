@@ -35,10 +35,10 @@ does that check.
 
 | # | Condition | Verdict |
 |---|---|---|
-| 1 | Clean checkout builds and tests green; 166 projects; tree matches layout | **Met** — locked restore, format, Release build (0/0) and 114 managed tests all pass |
+| 1 | Clean checkout builds and tests green; 166 projects; tree matches layout | **Met** — from a wiped `artifacts/`: locked restore clean with a clean tree afterwards, `dotnet format --verify-no-changes` clean, Release build 0 warnings / 0 errors, managed taxonomy 115 total / 92 passed / 23 skipped / 0 failed |
 | 2 | Locked restore real; three violation classes each have reproducible failure evidence | **Not met** — locked restore is real, the three drills are not archived |
 | 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Not met** — enforcement is source-text scanning, not assembly analysis |
-| 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts` |
+| 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, with two recorded reverse-failure drills (a dropped `rpc-attach.props` import and `desktop-aot.props` reaching the Cloud host) |
 | 5 | Desktop 20-cell matrix plus Cloud JIT smoke and GC report | **Not met** — 4 of 20 desktop cells; GC data is idle-only |
 | 6 | CI green and referable by stable job name | **Not met** — the mandated job names do not exist |
 | 7 | Zero business code | **Met** — no domain types, contract DTOs, RPC methods, tables or business routes |
@@ -52,7 +52,13 @@ does that check.
 | 01.02 | `675ace3` | import contracts.props into the seven contract projects |
 | 01.03 | `db5cb68` | complete the desktop skeleton the plan requires |
 | 01.05 | `6d82397` | attach rpc-attach.props to its hosts and gate every layered property file |
-| evidence | this commit / branch tip | traceability rows, runtime baselines, this ledger |
+| 01.07 | `1e2bbfd` | record the real publish evidence and open this ledger |
+| review | `09f5d97` | fix findings from the whole-scope self-review |
+| 01.02 | `d85a7c0` | pin the layout §3 contract reference graph with a reverse-failure drill |
+| ledger | this commit / branch tip | final ledger accuracy pass |
+
+The complete ordered SHA list is in the pull-request body; per the execution rules a commit does not embed its
+own SHA here.
 
 ## Findings fixed in this run
 
@@ -91,7 +97,7 @@ does that check.
 
 | Conflict | Detail |
 |---|---|
-| Step 01.02 testing bullet vs layout §3 | 01.02 asserts `Contracts.LocalRpc\|PublicApi\|Realtime` each have exactly one `ProjectReference`, to `Contracts.Foundation`. Layout §3's fixed graph gives LocalRpc → Foundation + Agent and PublicApi/Realtime → Foundation + Agent + Sync. The code follows §3 and is correct; the step-file bullet is stale. |
+| Step 01.02 contract reference bullets vs layout §3 — **repaired** | Written back in the planning repository on `docs/af01-contracts-reference-graph`, commit `ec3f9ed`. Both bullets now restate §3's graph and the testing requirement asserts the whole edge set. |
 | Layout §12 vs the resolved package versions | Six entries differ. See `docs/adr/0001-dependency-version-drift.md`. §12 stays frozen for now: writing it back before the regression matrix has run would launder an unevidenced change into the authority document. Run the matrix first, then write back. |
 | Layout §3 root namespace for `ArcForges.Contracts.Foundation` | §3 assigns the namespace `ArcForges.Contracts` while every sibling uses its own project name. The project currently uses `ArcForges.Contracts.Foundation`. Step 02 owns the types; the plan should state which is intended before then. |
 
