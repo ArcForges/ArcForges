@@ -212,12 +212,9 @@ jobs:
           dotnet restore tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj --locked-mode
           dotnet publish src/Web/ArcForges.Web.App/ArcForges.Web.App.csproj -c Release --no-restore -o artifacts/web
           dotnet build tests/Web/ArcForges.Web.BrowserTests/ArcForges.Web.BrowserTests.csproj -c Release --no-restore
-      - name: Install Chromium
-        shell: pwsh
+      - name: Verify the browser Selenium Manager will drive
         run: |
-          $script = Get-ChildItem artifacts/bin/dotnet -Recurse -Filter playwright.ps1 | Select-Object -First 1
-          if (-not $script) { throw 'Playwright installation script was not produced.' }
-          & $script.FullName install --with-deps chromium
+          google-chrome --version
       - name: Serve and probe Web in Chromium
         shell: pwsh
         run: |

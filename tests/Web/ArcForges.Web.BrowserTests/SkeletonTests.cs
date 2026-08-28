@@ -1,40 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-using Microsoft.Playwright;
+using OpenQA.Selenium;
+using OpenQA.Selenium.Chrome;
+using OpenQA.Selenium.Support.UI;
 
 namespace ArcForges.Web.BrowserTests;
 
 public sealed class SkeletonTests
 {
+    private static readonly TimeSpan BootBudget = TimeSpan.FromSeconds(60);
+
     [Xunit.Fact]
     [Xunit.Trait("Category", "Browser")]
-    public async Task PublishedWasmBootsInARealBrowser()
+    public void PublishedWasmBootsInARealBrowser()
     {
-        string baseUrl = Environment.GetEnvironmentVariable("ARCFORGES_WEB_BASE_URL") ??
+        string configured = Environment.GetEnvironmentVariable("ARCFORGES_WEB_BASE_URL") ??
             throw new InvalidOperationException("ARCFORGES_WEB_BASE_URL must identify the published site.");
+        Uri baseUrl = new(configured, UriKind.Absolute);
 
-        using IPlaywright playwright = await Playwright.CreateAsync().ConfigureAwait(true);
-        IBrowser browser = await playwright.Chromium
-            .LaunchAsync(new BrowserTypeLaunchOptions { Headless = true })
-            .ConfigureAwait(true);
+        ChromeOptions options = new();
+        options.AddArgument("--headless=new");
+        options.AddArgument("--no-sandbox");
+        options.AddArgument("--disable-dev-shm-usage");
+
+        using ChromeDriver driver = new(options);
         try
         {
-            IPage page = await browser.NewPageAsync().ConfigureAwait(true);
-            IResponse? response = await page
-                .GotoAsync(baseUrl, new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle })
-                .ConfigureAwait(true);
+            driver.Navigate().GoToUrl(baseUrl);
 
-            Xunit.Assert.NotNull(response);
-            Xunit.Assert.True(response.Ok, $"Browser navigation failed with HTTP {response.Status}.");
-            Xunit.Assert.Equal("ArcForges", await page.Locator("h1").InnerTextAsync().ConfigureAwait(true));
+            WebDriverWait wait = new(driver, BootBudget);
+            IWebElement heading = wait.Until(candidate => candidate.FindElement(By.CssSelector("h1")));
+
+            Xunit.Assert.Equal("ArcForges", heading.Text);
             Xunit.Assert.Contains(
                 "Hello from the ArcForges Web companion",
-                await page.Locator("main").InnerTextAsync().ConfigureAwait(true),
+                driver.FindElement(By.CssSelector("main")).Text,
                 StringComparison.Ordinal);
         }
         finally
         {
-            await browser.DisposeAsync().ConfigureAwait(true);
+            driver.Quit();
         }
     }
 }
