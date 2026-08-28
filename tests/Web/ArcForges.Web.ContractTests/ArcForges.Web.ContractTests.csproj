@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Web.ContractTests</AssemblyName>
-    <RootNamespace>ArcForges.Web.ContractTests</RootNamespace>
+    <RootNamespace>ArcForges.Web.Tests.Contracts</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>

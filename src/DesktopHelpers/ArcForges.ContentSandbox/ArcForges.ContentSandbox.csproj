@@ -1,9 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Parent-bound one-shot helper. implementation-repository-layout.md §13 requires the same
+    self-contained Native AOT publish mode and the same five desktop RIDs as the four desktop
+    heads, so it imports the same property files instead of restating them.
+  -->
+  <Import Project="..\..\..\eng\build\desktop-aot.props" />
+  <Import Project="..\..\..\eng\build\desktop-rids.props" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.ContentSandbox</AssemblyName>
     <RootNamespace>ArcForges.ContentSandbox</RootNamespace>
     <OutputType>Exe</OutputType>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Desktop.RichContent\ArcForges.Desktop.RichContent.csproj" />

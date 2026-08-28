@@ -24,15 +24,20 @@
           "Microsoft.TestPlatform.TestHost": "18.9.0"
         }
       },
-      "Microsoft.Playwright": {
+      "Selenium.Support": {
         "type": "Direct",
-        "requested": "[1.62.0, )",
-        "resolved": "1.62.0",
-        "contentHash": "cos6dmHPcMpS6bXw2WEgoXb8KXwMhs3c5L0P/cUf2rdUpjVA3g3u+KiSpVp2VCzsXymRpy2tFHqm+Wnz7s5VhQ==",
+        "requested": "[4.46.0, )",
+        "resolved": "4.46.0",
+        "contentHash": "jnYu0iMTD0S8pZU4e2L/0y6AImO+vW9ckXbNm5rXKSoOAEIy1NsQ4rC9xy5HAf0HMGF2RxZ43J/FCVXeLikvEw==",
         "dependencies": {
-          "Microsoft.Bcl.AsyncInterfaces": "6.0.0",
-          "System.ComponentModel.Annotations": "5.0.0"
+          "Selenium.WebDriver": "4.46.0"
         }
+      },
+      "Selenium.WebDriver": {
+        "type": "Direct",
+        "requested": "[4.46.0, )",
+        "resolved": "4.46.0",
+        "contentHash": "7bXGxmHD9mZEYflnUDVdE5IV/O9tat0DgFBnPYSrDv+W+0HrpFR8qMON4tTFNMe1fJHPS5HUIQLQdTKX8744bw=="
       },
       "xunit.runner.visualstudio": {
         "type": "Direct",
@@ -286,11 +291,6 @@
         "type": "Transitive",
         "resolved": "5.0.0",
         "contentHash": "dDoKi0PnDz31yAyETfRntsLArTlVAVzUzCIvvEDsDsucrl33Dl8pIJG06ePTJTI3tGpeyHS9Cq7Foc/s4EeKcg=="
-      },
-      "System.ComponentModel.Annotations": {
-        "type": "Transitive",
-        "resolved": "5.0.0",
-        "contentHash": "dMkqfy2el8A8/I76n2Hi1oBFEbG1SfxD2l5nhwXV3XjlnOmwxJlQbYpJH4W51odnU9sARCSAgv7S3CyAFMkpYg=="
       },
       "System.Security.AccessControl": {
         "type": "Transitive",

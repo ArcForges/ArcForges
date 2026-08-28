@@ -39,6 +39,12 @@
 | TR-CLOUD-02 | 持久 ToolRequest/ToolResult + SignalR wakeup + HTTP 权威面 | 13/14 | `ArcForges.Cloud.Tests` / `EndToEndTests` | FG.2/FG.4 |
 | TR-MOB-01 | MAUI shared 网络/持久化 + Android Remote Chat/Task/Approval | 18/19 | `ArcChat.Mobile.Tests` / `ArcChat.Mobile.UiTests` | FG.5 |
 | TR-MOB-02 | iOS 架构完整（Planned/Build Deferred） | 20 | `ArcChat.Mobile.Tests`（架构） | FG.5 |
+| TR-QUAL-02 | Locked restore：每项目提交 `packages.lock.json`，CI 以 `--locked-mode` 还原，篡改/散落版本/预览包三种违规各有可复现失败证据 | 01 | `tests/ArchitectureTests`（`RepositoryPolicyTests`）+ `pr-gate` locked restore 步骤 | FG.8 |
+| TR-QUAL-03 | ArchitectureTests ARC-001..ARC-013 机器强制 layout §11 引用禁止矩阵，每条规则配通过与失败 fixture | 01 | `tests/ArchitectureTests`（`ARC0XX*Tests`） | FG.1/FG.9 |
+| TR-QUAL-04 | 分层 AOT/JIT/WASM 属性文件只被声明宿主 import；Desktop/ContentSandbox Native AOT、Cloud JIT、Web `RunAOTCompilation=false` 互不串线 | 01 | `RepositoryPolicyTests.LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts` | FG.5/FG.7 |
+| TR-QUAL-05 | 发布验证矩阵：四 Desktop × 5 RID Native AOT publish + `--smoke`，Cloud framework-dependent JIT publish 与 Server/Workstation GC 基线 | 01/07/31 | `docs/coverage/aot-baseline.md` / `docs/coverage/runtime-baseline.md` + `release-train` | FG.5/FG.8 |
+| TR-QUAL-06 | AGPL-3.0-only 根 LICENSE 与源文件 SPDX 头由 CI 强制；Third-Party-License-Register 覆盖每个直接依赖 | 01/30/31 | `RepositoryPolicyTests.FirstPartySourceFilesDeclareSpdx` / `RootLicenseMatchesCanonicalAgplText` | FG.0/FG.8 |
+| TR-QUAL-07 | Desktop composition root 是唯一注册面；长期运行工作只能经 `DesktopHostedServiceRegistry` 进入进程 | 01/08/10/21/23 | `<Product>.Tests.Ui`（`DesktopCompositionRootTests`） | FG.1/FG.5 |
 
 > 上面 requirement 摘要行不构成闭合声明：Feature/Coverage 外键、测试、门禁证据都必须由 trace-bridge 生成器（实施阶段以 test/CI gate 落实）生成的 `feature-trace-bridge.json` 在实施阶段补齐并判真。
 

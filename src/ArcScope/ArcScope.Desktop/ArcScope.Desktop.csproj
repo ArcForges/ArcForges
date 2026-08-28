@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <Import Project="..\..\..\eng\build\desktop-aot.props" />
   <Import Project="..\..\..\eng\build\desktop-rids.props" />
+  <Import Project="..\..\..\eng\build\rpc-attach.props" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcScope.Desktop</AssemblyName>
@@ -15,6 +16,7 @@
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Observability\ArcForges.Observability.csproj" />
@@ -23,5 +25,8 @@
     <ProjectReference Include="..\ArcScope.Infrastructure\ArcScope.Infrastructure.csproj" />
     <ProjectReference Include="..\ArcScope.LocalRpc\ArcScope.LocalRpc.csproj" />
     <ProjectReference Include="..\ArcScope.Presentation\ArcScope.Presentation.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcScope.Tests.Ui" />
   </ItemGroup>
 </Project>

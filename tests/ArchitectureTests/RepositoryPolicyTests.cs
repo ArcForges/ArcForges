@@ -402,6 +402,111 @@ public sealed class RepositoryPolicyTests
         }
     }
 
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ContractProjectsMatchTheFixedReferenceGraph()
+    {
+        // implementation-repository-layout.md §3 fixes this graph and forbids any other
+        // Contract-to-Contract edge. An extra edge and a missing edge both fail here.
+        Dictionary<string, string[]> graph = new(StringComparer.Ordinal)
+        {
+            ["ArcForges.Contracts.Foundation"] = [],
+            ["ArcForges.Contracts.Agent"] = ["ArcForges.Contracts.Foundation"],
+            ["ArcForges.Contracts.Sync"] = ["ArcForges.Contracts.Foundation"],
+            ["ArcForges.Contracts.LocalRpc"] = ["ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation"],
+            ["ArcForges.Contracts.PublicApi"] =
+                ["ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.Sync"],
+            ["ArcForges.Contracts.Realtime"] =
+                ["ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.Sync"],
+            ["ArcForges.Contracts.Serialization"] =
+            [
+                "ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.LocalRpc",
+                "ArcForges.Contracts.PublicApi", "ArcForges.Contracts.Realtime", "ArcForges.Contracts.Sync",
+            ],
+        };
+
+        var contractsRoot = Path.Combine(RepositoryRoot.Value, "src", "Contracts");
+        var projects = Directory.EnumerateFiles(contractsRoot, "*.csproj", SearchOption.AllDirectories).ToArray();
+        Xunit.Assert.Equal(graph.Count, projects.Length);
+
+        foreach (var project in projects)
+        {
+            var name = Path.GetFileNameWithoutExtension(project);
+            Xunit.Assert.True(graph.ContainsKey(name), $"{name} is not part of the layout §3 contract set.");
+
+            var actual = XDocument.Load(project).Descendants("ProjectReference")
+                .Select(element => element.Attribute("Include")?.Value)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => Path.GetFileNameWithoutExtension(value!.Replace('\\', Path.DirectorySeparatorChar)))
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+
+            Xunit.Assert.Equal(graph[name], actual);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts()
+    {
+        // implementation-repository-layout.md §13 and Step 01.05 assign each property file to one
+        // host set. Importing one anywhere else crosses the Native AOT / JIT / WASM boundaries the
+        // release gates depend on, and importing it nowhere leaves the gate unattached.
+        Dictionary<string, string[]> expected = new(StringComparer.Ordinal)
+        {
+            ["desktop-aot.props"] =
+            [
+                "ArcChat.Desktop", "ArcNotes.Desktop", "ArcScope.Desktop", "ArcSlate.Desktop",
+                "ArcForges.ContentSandbox",
+            ],
+            ["desktop-rids.props"] =
+            [
+                "ArcChat.Desktop", "ArcNotes.Desktop", "ArcScope.Desktop", "ArcSlate.Desktop",
+                "ArcForges.ContentSandbox",
+            ],
+            ["rpc-attach.props"] =
+            [
+                "ArcChat.Desktop", "ArcNotes.Desktop", "ArcScope.Desktop", "ArcSlate.Desktop",
+                "ArcChat.LocalRpc", "ArcNotes.LocalRpc", "ArcScope.LocalRpc", "ArcSlate.LocalRpc",
+                "ArcForges.Tests.LocalRpcAotTests",
+            ],
+            ["contracts.props"] =
+            [
+                "ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation",
+                "ArcForges.Contracts.LocalRpc", "ArcForges.Contracts.PublicApi",
+                "ArcForges.Contracts.Realtime", "ArcForges.Contracts.Serialization",
+                "ArcForges.Contracts.Sync",
+            ],
+            ["cloud-jit.props"] = ["ArcForges.Cloud.Host"],
+            ["web-wasm.props"] = ["ArcForges.Web.App"],
+            ["mobile.props"] = ["ArcChat.Mobile"],
+            ["Android.aot.props"] = ["ArcChat.Mobile"],
+        };
+
+        var projects = EnumerateRepositoryFiles("*.csproj").ToArray();
+        foreach ((string propertyFile, string[] hosts) in expected)
+        {
+            var actual = projects
+                .Where(project => File.ReadAllText(project).Contains(propertyFile, StringComparison.Ordinal))
+                .Select(project => Path.GetFileNameWithoutExtension(project))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+
+            Xunit.Assert.Equal(hosts.OrderBy(name => name, StringComparer.Ordinal).ToArray(), actual);
+        }
+
+        // The desktop AOT posture must never reach the Cloud JIT host or the WASM head.
+        string cloudHost = File.ReadAllText(Path.Combine(
+            RepositoryRoot.Value, "src", "Cloud", "ArcForges.Cloud.Host", "ArcForges.Cloud.Host.csproj"));
+        Xunit.Assert.DoesNotContain("desktop-aot.props", cloudHost, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("<PublishAot>true</PublishAot>", cloudHost, StringComparison.Ordinal);
+
+        string webApp = File.ReadAllText(Path.Combine(
+            RepositoryRoot.Value, "src", "Web", "ArcForges.Web.App", "ArcForges.Web.App.csproj"));
+        Xunit.Assert.DoesNotContain("desktop-aot.props", webApp, StringComparison.Ordinal);
+        Xunit.Assert.DoesNotContain("<RunAOTCompilation>true</RunAOTCompilation>", webApp, StringComparison.Ordinal);
+    }
+
     private static string? ExtractExportName(string declaration)
     {
         int open = declaration.IndexOf('(', StringComparison.Ordinal);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-namespace ArcForges.Web.UnitTests;
+namespace ArcForges.Web.Tests.Unit;
 
 public sealed class SkeletonTests
 {
