@@ -33,8 +33,11 @@ set as the restorable truth, rather than reverting to the §12 values. Reverting
 change: it invalidates every committed lock file, and `xunit.v3 3.2.2` cannot host the
 `Microsoft.Testing.Platform` runner that `global.json` pins and that `RepositoryPolicyTests` asserts.
 
-`implementation-repository-layout.md` §12 must be written back to these versions so that the plan and the code
-name one fact. Until that writeback lands, §12 is the stale side of the conflict, not the repository.
+Do **not** write `implementation-repository-layout.md` §12 back to these versions yet. §12 freezes them and
+requires an upgrade to carry license, vulnerability, AOT/JIT, memory and contract-regression evidence; that
+evidence does not exist, so amending the authority document now would launder an unevidenced change into the
+plan. §12 stays frozen and this ADR carries the divergence until the regression matrix below has run — then the
+writeback lands as one reviewed planning change.
 
 ## Consequences
 
@@ -49,10 +52,14 @@ name one fact. Until that writeback lands, §12 is the stale side of the conflic
 
 ## Isolation and verification
 
-- Executed: `dotnet restore ArcForges.slnx --locked-mode` (clean, no lock churn), `dotnet build ArcForges.slnx -c Release`
-  (0 warnings, 0 errors), and the full managed taxonomy (77/77) on Windows, 2026-08-28.
-- Not executed: five-RID Desktop Native AOT publish, Cloud Server/Workstation GC memory comparison, and the
-  previous/current contract compatibility matrix. Step 01 stays open until those exist.
+- Executed on Windows, 2026-08-28: `dotnet restore ArcForges.slnx --locked-mode` (clean, no lock churn),
+  `dotnet format --verify-no-changes` (clean), `dotnet build ArcForges.slnx -c Release` (0 warnings, 0 errors),
+  the managed taxonomy (114 total, 91 passed, 23 skipped), `win-x64` Native AOT publish and `--smoke` for all
+  four desktop heads plus ContentSandbox, and the Cloud JIT contract smoke with an idle Server/Workstation GC
+  comparison.
+- Not executed: the `win-arm64`, `osx-x64`, `osx-arm64` and `linux-x64` AOT cells, the fixed-workload GC
+  baseline, and the previous/current contract compatibility matrix. Step 01 stays open until those exist; see
+  `docs/coverage/aot-baseline.md` and `docs/coverage/runtime-baseline.md`.
 - Rollback: pin each entry back to its §12 value and regenerate every lock file in one dependency pull request.
-- Exit criteria: `implementation-repository-layout.md` §12 writeback merged, and the regression matrix above
-  executed and archived under `docs/coverage/`.
+- Exit criteria, in order: execute and archive the regression matrix above under `docs/coverage/`, then land
+  the `implementation-repository-layout.md` §12 writeback as one reviewed planning change. Not the reverse.

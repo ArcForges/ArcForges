@@ -15,7 +15,7 @@ internal sealed class DesktopHostedServiceRegistry
 {
     private readonly Dictionary<Type, Func<IServiceProvider, IHostedService>> _factories = [];
 
-    /// <summary>The hosted service types registered so far, in registration order.</summary>
+    /// <summary>The hosted service types registered so far. Order is not part of the contract.</summary>
     public IReadOnlyCollection<Type> RegisteredServices => _factories.Keys;
 
     /// <summary>

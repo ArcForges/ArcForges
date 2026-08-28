@@ -92,7 +92,7 @@ does that check.
 | Conflict | Detail |
 |---|---|
 | Step 01.02 testing bullet vs layout §3 | 01.02 asserts `Contracts.LocalRpc\|PublicApi\|Realtime` each have exactly one `ProjectReference`, to `Contracts.Foundation`. Layout §3's fixed graph gives LocalRpc → Foundation + Agent and PublicApi/Realtime → Foundation + Agent + Sync. The code follows §3 and is correct; the step-file bullet is stale. |
-| Layout §12 vs the resolved package versions | Six entries differ. See `docs/adr/0001-dependency-version-drift.md`; §12 needs the writeback. |
+| Layout §12 vs the resolved package versions | Six entries differ. See `docs/adr/0001-dependency-version-drift.md`. §12 stays frozen for now: writing it back before the regression matrix has run would launder an unevidenced change into the authority document. Run the matrix first, then write back. |
 | Layout §3 root namespace for `ArcForges.Contracts.Foundation` | §3 assigns the namespace `ArcForges.Contracts` while every sibling uses its own project name. The project currently uses `ArcForges.Contracts.Foundation`. Step 02 owns the types; the plan should state which is intended before then. |
 
 ## Exact next action
