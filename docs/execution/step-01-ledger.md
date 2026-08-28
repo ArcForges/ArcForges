@@ -26,7 +26,7 @@ does that check.
 | 01.01 Central package management, locked restore, version policy | Satisfied | Package table corrected in the review run; locked restore is clean; the three reverse-failure drills (lock tamper → NU1403, inline `Version=` → `VerifyNoInlinePackageVersions`, preview package → preview gate) were executed, observed red with the offending name, reverted and re-run green — recorded in [ci-evidence.md](../coverage/ci-evidence.md) |
 | 01.02 BuildingBlocks and Contracts skeleton | Satisfied | 13 + 7 projects build and test; `contracts.props` now imported; the layout §3 contract reference graph is pinned edge-by-edge by `RepositoryPolicyTests.ContractProjectsMatchTheFixedReferenceGraph`, with a recorded reverse-failure drill. The `InternalsVisibleTo` grant Step 02 lists as a Required Input is declared once in `contracts.props` and pinned against emitted metadata by `RepositoryPolicyTests.ContractAssembliesGrantInternalsToTheContractTestProjects`, with its own recorded drill |
 | 01.03 Product / Cloud / Mobile / Web skeleton | Satisfied | ContentSandbox is now a five-RID Native AOT head, the composition-root seam exists and is tested, Mobile identity corrected, bUnit skeleton added, 24 pending-scope markers present |
-| 01.04 ArchitectureTests | **Not satisfied** | 13 rules and 26 fixtures exist and are in the default test chain, but they scan source text instead of running `NetArchTest.Rules` over the loaded assemblies with Roslyn-compiled fixtures |
+| 01.04 ArchitectureTests | Satisfied | 13 rules run on two engines: reference direction over the **transitive closure** of the declared project graph, type identity over the loaded `src` assemblies with `NetArchTest.Rules`. 13 fixture pairs plus a transitive-edge fixture; every rule owns a permanent test that its own violation fixture fails with a message carrying the rule ID and the offending path. Suite is 41/41 with no skips |
 | 01.05 AOT / trimming properties and analyzers | Partly satisfied | All eight layered property files now reach exactly their declared hosts, pinned by a test with two recorded reverse-failure drills; **the two suppression drills and the IL2026/IL3050 injection drill have no evidence** |
 | 01.06 CI skeleton | **Not satisfied** | None of the ten `pr-gate` job names, no `runtime-publish-smoke.yml`, none of the seven `train-*` jobs, no archived violation drills |
 | 01.07 Native AOT / Cloud JIT publish verification | Partly satisfied | 6 of 25 publish cells executed with real artifacts; Cloud JIT contract smoke and an idle GC comparison executed; **19 cells and the fixed-workload GC baseline have no runner** |
@@ -37,7 +37,7 @@ does that check.
 |---|---|---|
 | 1 | Clean checkout builds and tests green; 166 projects; tree matches layout | **Met** — from a wiped `artifacts/`: locked restore clean with a clean tree afterwards, `dotnet format --verify-no-changes` clean, Release build 0 warnings / 0 errors, managed taxonomy 115 total / 92 passed / 23 skipped / 0 failed |
 | 2 | Locked restore real; three violation classes each have reproducible failure evidence | **Met** — locked restore is real and leaves a clean tree; all three drills executed, observed red naming the offender, and reverted green (ci-evidence.md, Step 01.01 section) |
-| 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Not met** — enforcement is source-text scanning, not assembly analysis |
+| 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Met** — assembly analysis plus declared-graph transitive closure; 13 fixture pairs and one extra transitive fixture, each asserted in both directions on every run; the end-to-end `ArcNotes.Domain -> Microsoft.Data.Sqlite` drill reproduced and reverted |
 | 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, with two recorded reverse-failure drills (a dropped `rpc-attach.props` import and `desktop-aot.props` reaching the Cloud host) |
 | 5 | Desktop 20-cell matrix plus Cloud JIT smoke and GC report | **Not met** — 4 of 20 desktop cells; GC data is idle-only |
 | 6 | CI green and referable by stable job name | **Not met** — the mandated job names do not exist |
@@ -60,7 +60,19 @@ does that check.
 The complete ordered SHA list is in the pull-request body; per the execution rules a commit does not embed its
 own SHA here.
 
-## Findings fixed in this run
+## Findings fixed in the Step 01 closure run (branch `feat/af01-01-step-01-closure`)
+
+1. **`ArcForges.Web.Infrastructure` reached `ArcForges.Contracts.LocalRpc`.** The rebuilt ARC-006 rule found
+   it on its first run: `ArcForges.Web.Infrastructure -> ArcForges.Contracts.Serialization ->
+   ArcForges.Contracts.LocalRpc`. Layout §11 and architecture §14 forbid `Web/Mobile -> LocalRpc`, and
+   layout §8's Web dependency block lists exactly `Contracts.PublicApi/Realtime/Foundation/Agent/Sync` —
+   not `Serialization`. Step 01.03's bullet had added `Serialization`, which necessarily drags the whole
+   contract set including LocalRpc. The reference was unused, so it was removed rather than the rule being
+   weakened. The old source-text scan could not see this edge at all.
+2. The three Step 01.01 supply-chain drills, the Step 01.02 internals grant and its drill, and the Step 01.04
+   rebuild are described in their own commits and in `docs/coverage/ci-evidence.md`.
+
+## Findings fixed in the earlier review run
 
 1. `ArcForges.Web.BrowserTests` drove Chromium through `Microsoft.Playwright`, whose .NET package ships a
    Node.js driver. Layout §11 and the frozen invariants forbid a Node toolchain; §8/§12 and Step 01.03 name
@@ -88,7 +100,6 @@ own SHA here.
 
 | # | Finding | Why it was not fixed here |
 |---|---|---|
-| A | ArchitectureTests do not use `NetArchTest.Rules` or Roslyn fixture compilation (01.01 pins the framework, 01.04 requires assembly analysis over all `src` assemblies). The current scan cannot see transitive assembly references, so a Domain reaching a DB provider indirectly would pass. `NetArchTest.Rules 1.3.2` is pinned centrally and referenced by nothing. | Replacing the suite is a rewrite of Step 01.04's core deliverable, not a narrow review fix. It needs its own change with its own reverse-failure evidence. |
 | B | `pr-gate.yml`, `release-train.yml` and the missing `runtime-publish-smoke.yml` do not carry the job names every later step's gate references. | Restructuring the gate renames the required checks on a protected workflow. That needs explicit authorization, since it can block every open pull request. |
 | C | 19 of 25 Native AOT publish cells, the fixed-workload GC baseline, and the graceful-shutdown cell have no runner. | Needs `windows-arm64`, `macos-x64`, `macos-arm64` and `ubuntu` runners. ILC cannot cross-compile from this host. |
 | D | Every reverse-failure drill in 01.01, 01.04, 01.05 and 01.06 is unarchived. | Each needs a deliberately broken branch pushed to CI and a red run recorded. |
@@ -99,6 +110,7 @@ own SHA here.
 |---|---|
 | Step 01.02 contract reference bullets vs layout §3 — **repaired** | Written back in the planning repository on `docs/af01-contracts-reference-graph`, commit `ec3f9ed`. Both bullets now restate §3's graph and the testing requirement asserts the whole edge set. |
 | Layout §12 vs the resolved package versions | Six entries differ. See `docs/adr/0001-dependency-version-drift.md`. §12 stays frozen for now: writing it back before the regression matrix has run would launder an unevidenced change into the authority document. Run the matrix first, then write back. |
+| Layout §8 Web dependency block vs Step 01.03's Web.Infrastructure bullet — **repaired in code** | §8 lists the Web dependency set as `Contracts.PublicApi/Realtime/Foundation/Agent/Sync`; Step 01.03 additionally names `Serialization`, and §3 makes `Serialization` reference all six contracts including `LocalRpc`, which layout §11 forbids Web from reaching. The three statements cannot all hold. Resolved in favour of §8 and §11 by dropping the unused reference. If a later step needs source-generated JSON in the browser, the plan must first say how a Web consumer reaches `Serialization` without `LocalRpc` — most likely by partitioning it. Planning writeback still owed on Step 01.03's bullet. |
 | Layout §3 root namespace for `ArcForges.Contracts.Foundation` | §3 assigns the namespace `ArcForges.Contracts` while every sibling uses its own project name. The project currently uses `ArcForges.Contracts.Foundation`, and Step 02.00 states the namespace is `ArcForges.Contracts.Foundation` in its own body. Step 02 owns the types; the plan should state which is intended before then. |
 | `InternalsVisibleTo` grantee set omits `ContractSchemaTests` | Step 02's Required Inputs names exactly four grantees (ContractCompatibility / Architecture / PublicApiContract / RealtimeReconnect), which is what 01.02 implements verbatim. But Step 02's own Scope line puts the contract test baseline in `tests/{ContractSchemaTests,ContractCompatibilityTests,PublicApiContractTests,RealtimeReconnectTests,LocalRpcAotTests}`, and 02.00's source-generation-coverage assertion has to reach an `internal FoundationJsonContext`. If that assertion lands in `ContractSchemaTests` it will not compile. Step 02 must either place the assertion in a granted assembly or add the fifth grantee to its Required Inputs; 01.02 does not widen the set on its own. |
 

@@ -1,0 +1,13 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcChat.Domain.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ArcChat.Indirection/ArcChat.Indirection.csproj" />
+  </ItemGroup>
+</Project>
+<!-- file: ArcChat.Indirection.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+</Project>

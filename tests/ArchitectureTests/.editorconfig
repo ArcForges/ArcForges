@@ -1,3 +1,10 @@
 # xUnit discovers these test classes through their public surface.
 [ArchitectureRuleTests.cs]
 dotnet_diagnostic.CA1515.severity = none
+
+# Fixtures exist to be inspected by the rules, not instantiated or consumed by production code.
+[Fixtures/*.cs]
+dotnet_diagnostic.CA1812.severity = none
+dotnet_diagnostic.CA1018.severity = none
+dotnet_diagnostic.CA1040.severity = none
+dotnet_diagnostic.CA1815.severity = none

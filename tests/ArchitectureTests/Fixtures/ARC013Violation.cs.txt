@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
-
-internal sealed class Violation { private WebView2? _browser; }
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcChat.Desktop.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" />
+  </ItemGroup>
+</Project>

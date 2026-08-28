@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
-
-internal sealed class Violation { private ArcForges.Cloud.Modules.Notes.Persistence.Store? _store; }
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcForges.Cloud.Modules.Chat.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Cloud.Modules.Notes/ArcForges.Cloud.Modules.Notes.csproj" />
+  </ItemGroup>
+</Project>

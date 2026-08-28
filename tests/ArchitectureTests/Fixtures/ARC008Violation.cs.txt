@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
-
-internal sealed class Violation { void Call() => Refit.RestService.For<object>(); }
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcChat.CloudClient.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Refit.Reflection" />
+  </ItemGroup>
+</Project>

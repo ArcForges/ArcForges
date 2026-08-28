@@ -59,6 +59,38 @@ clears it explicitly.
 |---|---|---|---|
 | Dropped the `ArcForges.Tests.RealtimeReconnectTests` grant from `eng/build/contracts.props` | `RepositoryPolicyTests.ContractAssembliesGrantInternalsToTheContractTestProjects` | exit 2 — `Assert.Equal() Failure: Collections differ`, `Actual` missing `ArcForges.Tests.RealtimeReconnectTests` | yes; re-run exit 0 |
 
+## Step 01.04 — architecture rules rebuilt on assemblies and the project graph, 2026-08-28
+
+`tests/ArchitectureTests` now references `NetArchTest.Rules` and every production project under `src/`
+(all but the `net10.0-android` MAUI head and the Blazor WebAssembly head, which a `net10.0` test assembly
+cannot reference and which are covered by the project-graph engine instead).
+
+| Check | Command | Result |
+|---|---|---|
+| Architecture suite | `dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore` | Passed; **41 total, 41 passed, 0 skipped** |
+| Full managed taxonomy | `dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture` | Passed; 117 total, 95 passed, 22 skipped, 0 failed |
+| Release build | `dotnet build ArcForges.slnx -c Release --no-restore` | Passed; 0 warnings, 0 errors |
+| Format | `dotnet format ArcForges.slnx --verify-no-changes --no-restore` | Passed |
+| Locked restore | `dotnet restore ArcForges.slnx --locked-mode` | Passed |
+
+**The 13 violation fixtures are no longer a one-time drill.** Each rule owns a permanent
+`ViolationFixtureFailsTheRule` test that compiles or materialises its fixture on every run and asserts the
+rule fails with a message starting `[ARC-0XX <rule name>] ` and containing ` -> `. A rule that stops
+detecting its own violation now turns the suite red by itself.
+
+| Drill | Rule | Observed failure | Reverted |
+|---|---|---|---|
+| Added `<PackageReference Include="Microsoft.Data.Sqlite" />` to `src/ArcNotes/ArcNotes.Domain/ArcNotes.Domain.csproj` (the end-to-end drill Step 01.04 names) | `ARC001DomainHasNoExternalDependenciesTests` | exit 2 — `[ARC-001 Domain has no external dependencies] ArcNotes.Domain -> Microsoft.Data.Sqlite` | yes; suite back to 41/41 |
+| Indirect edge `ArcChat.Domain -> ArcChat.Indirection -> Microsoft.Data.Sqlite` (fixture `ARC001TransitiveViolation.cs.txt`) | `AnIndirectForbiddenEdgeAlsoFailsAndNamesThePath` | permanent test; asserts the failure names the whole path | n/a — runs every build |
+
+Two `NetArchTest.Rules 1.3.2` behaviours were established empirically while building this and are recorded
+because either one silently produces a green rule that checks nothing:
+
+- it converts Cecil definitions to runtime `Type`s and **drops** those the CLR cannot resolve, so a rule run
+  over an unloaded file passes having analysed zero types. Assemblies are loaded before analysis, and
+  `ArchitectureSurfaceTests` fails when the analysed surface is implausibly small;
+- its dependency search **never matches a term ending in `.`** — `"Android"` matches, `"Android."` does not.
+
 ## Executed earlier
 
 | Check | Environment | Result |
@@ -75,7 +107,6 @@ evidence, so Step 01 cannot close on them. The three Step 01.01 drills were disc
 
 | Drill | Plan source | Expected failure |
 |---|---|---|
-| Compile each of the 26 ARC fixtures in the violating direction | 01.04 | the matching rule fails with its rule ID and the offending reference path |
 | Inject `[UnconditionalSuppressMessage]` without the four-part justification, and one with `Scope=module` | 01.05 | the suppression audit fails naming the line and the missing segment |
 | Inject a reflection path into a desktop head | 01.05 | Release build fails with IL2026/IL3050 on the exact line |
 | Five CI violation drills (lock, ARC-004, missing SPDX, unregistered package, IL2026) | 01.06 | the corresponding job goes red and the summary names the rule |
@@ -88,5 +119,4 @@ evidence, so Step 01 cannot close on them. The three Step 01.01 drills were disc
 | `pr-gate.yml` has none of the ten mandated stable job names (`locked-restore`, `format-analyzers`, `build`, `unit-tests`, `integration-tests`, `architecture-tests`, `suppression-audit`, `no-inline-versions`, `dependency-audit`, `secret-scan`) | 01.06 |
 | No `runtime-publish-smoke.yml` (the desktop 5-RID × 4-head matrix plus the separate Cloud JIT job) | 01.06 |
 | `release-train.yml` has none of the seven mandated `train-*` jobs, and no gated placeholder emits skip reason, owning step and tracking item | 01.06 |
-| ArchitectureTests scan source text instead of running `NetArchTest.Rules` over the loaded `src` assemblies with Roslyn-compiled violation fixtures | 01.01 / 01.04 |
 | 19 of the 25 Native AOT publish cells have no runner | 01.07 |

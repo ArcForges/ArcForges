@@ -1,223 +1,122 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-using System.Xml.Linq;
+using System.Reflection;
+using System.Runtime.Loader;
 
 namespace ArcForges.Tests.ArchitectureTests;
 
-internal static class ArchitectureRules
+/// <summary>Shared inputs for the thirteen rules: the real project graph and the built assemblies.</summary>
+internal static class ArchitectureContext
 {
-    private static readonly string[] ProductPrefixes = ["ArcChat", "ArcNotes", "ArcScope", "ArcSlate"];
-    private static readonly Lazy<string> RepositoryRoot = new(FindRepositoryRoot);
+    internal static readonly Lazy<string> RepositoryRoot = new(FindRepositoryRoot);
 
-    internal static void AssertRule(string id)
-    {
-        var violations = ValidateProduction(id).ToArray();
-        Xunit.Assert.True(violations.Length == 0, $"[{id}] {string.Join(Environment.NewLine, violations)}");
-    }
+    internal static readonly Lazy<ProjectGraph> Graph =
+        new(() => ProjectGraph.Load(Path.Combine(RepositoryRoot.Value, "src")));
 
-    internal static void AssertFixtures(string id)
+    /// <summary>
+    /// Every production assembly this test project references, resolved from its own output directory.
+    /// A build that produced nothing would otherwise let the type rules pass vacuously, so the count is
+    /// asserted by <see cref="ArchitectureSurfaceTests"/>.
+    /// </summary>
+    internal static readonly Lazy<IReadOnlyList<string>> ProductionAssemblyPaths = new(() =>
     {
-        var fixtureRoot = Path.Combine(RepositoryRoot.Value, "tests", "ArchitectureTests", "Fixtures");
-        var valid = File.ReadAllText(Path.Combine(fixtureRoot, $"{id.Replace("-", string.Empty, StringComparison.Ordinal)}Valid.cs"));
-        var invalid = File.ReadAllText(Path.Combine(fixtureRoot, $"{id.Replace("-", string.Empty, StringComparison.Ordinal)}Violation.cs.txt"));
-        Xunit.Assert.Empty(ValidateFixture(id, valid));
-        Xunit.Assert.NotEmpty(ValidateFixture(id, invalid));
-    }
-
-    private static string[] ValidateFixture(string id, string content)
-    {
-        string root = Path.Combine(Path.GetTempPath(), "arcforges-architecture-fixture", Guid.NewGuid().ToString("N"));
-        try
-        {
-            string relativePath = FixtureRelativePath(id);
-            string path = Path.Combine(root, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, id == "ARC-012" ? CloudModuleFixture(content) : content);
-            return ValidateProduction(id, root).ToArray();
-        }
-        finally
-        {
-            if (Directory.Exists(root))
-            {
-                Directory.Delete(root, recursive: true);
-            }
-        }
-    }
-
-    private static string FixtureRelativePath(string id) => id switch
-    {
-        "ARC-001" => Path.Combine("src", "ArcChat", "ArcChat.Domain", "ArcChat.Domain.csproj"),
-        "ARC-002" => Path.Combine("src", "ArcChat", "ArcChat.Presentation", "FixtureViewModel.cs"),
-        "ARC-003" => Path.Combine("src", "ArcChat", "ArcChat.LocalRpc", "ArcChat.LocalRpc.csproj"),
-        "ARC-004" => Path.Combine("src", "ArcChat", "ArcChat.Domain", "ArcChat.Domain.csproj"),
-        "ARC-005" => Path.Combine("src", "Contracts", "ArcForges.Contracts.Foundation", "Fixture.cs"),
-        "ARC-006" => Path.Combine("src", "Cloud", "Fixture.csproj"),
-        "ARC-007" or "ARC-009" => Path.Combine("src", "Contracts", "ArcForges.Contracts.LocalRpc", "Fixture.cs"),
-        "ARC-008" or "ARC-011" => Path.Combine("src", "Fixture.cs"),
-        "ARC-010" => Path.Combine("src", "BuildingBlocks", "ArcForges.Foundation", "Fixture.cs"),
-        "ARC-012" => Path.Combine("src", "Cloud", "ArcForges.Cloud.Modules.Chat", "ArcForges.Cloud.Modules.Chat.csproj"),
-        "ARC-013" => Path.Combine("src", "ArcChat", "ArcChat.Desktop", "Fixture.cs"),
-        _ => throw new ArgumentOutOfRangeException(nameof(id), id, "Unknown architecture fixture."),
-    };
-
-    private static string CloudModuleFixture(string content)
-    {
-        bool violates = content.Contains("ArcForges.Cloud.Modules.Notes", StringComparison.Ordinal);
-        string reference = violates
-            ? "<ProjectReference Include=\"../ArcForges.Cloud.Modules.Notes/ArcForges.Cloud.Modules.Notes.csproj\" />"
-            : string.Empty;
-        return $"<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>{reference}</ItemGroup></Project>";
-    }
-
-    private static IEnumerable<string> ValidateProduction(string id, string? repositoryRoot = null)
-    {
-        var root = repositoryRoot ?? RepositoryRoot.Value;
-        var sourceRoot = Path.Combine(root, "src");
-        var projects = Directory.EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories).ToArray();
-        var sources = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+        var names = Graph.Value.Nodes.Select(node => node.Name).ToHashSet(StringComparer.Ordinal);
+        return Directory.EnumerateFiles(AppContext.BaseDirectory, "*.dll")
+            .Where(path => names.Contains(Path.GetFileNameWithoutExtension(path)))
+            .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
+    });
 
-        return id switch
-        {
-            "ARC-001" => FindTokens(projects.Where(path => Path.GetFileNameWithoutExtension(path).EndsWith(".Domain", StringComparison.Ordinal)),
-                ["Application", "Infrastructure", "Desktop", "Contracts.", "Avalonia", "Microsoft.Maui", "StreamJsonRpc", "Refit", "SignalR.Client", "Npgsql", "Microsoft.Data.Sqlite", "ArcForges.NativeInterop"]),
-            "ARC-002" => FindTokens(sources.Where(path => Path.GetFileName(path).Contains("ViewModel", StringComparison.Ordinal)),
-                ["DbContext", "Npgsql", "Sqlite", "StreamJsonRpc", "Refit", "SignalR", "IntPtr", "nint", "SafeHandle"]),
-            "ARC-003" => FindTokens(projects.Where(IsAdapterProject), ["Avalonia", "Microsoft.Maui", ".Desktop", "ViewModel", "DbContext"]),
-            "ARC-004" => ValidateProductIsolation(projects),
-            "ARC-005" => FindTokens(ProjectAndSourceFiles(root, "src", "Contracts"),
-                ["Avalonia", "Microsoft.Maui", "Npgsql", "Microsoft.Data.Sqlite", "ArcForges.NativeInterop", "Android.", "UIKit.", "Windows.", "AppKit.", "record struct AppId", "class AppId"]),
-            "ARC-006" => ValidatePublicClients(projects),
-            "ARC-007" => FindTokens(ProjectAndSourceFiles(root, "src", "Contracts", "ArcForges.Contracts.LocalRpc"),
-                ["object ", "dynamic ", "System.Type", "Dictionary<string, object>", "JsonElement"]),
-            "ARC-008" => FindTokens(projects.Concat(sources), ["Refit.Reflection", "RestService.For<"]),
-            "ARC-009" => ValidateGeneratedRpc(ProjectAndSourceFiles(root, "src", "Contracts", "ArcForges.Contracts.LocalRpc")),
-            "ARC-010" => FindTokens(ProjectAndSourceFiles(root, "src", "BuildingBlocks", "ArcForges.Foundation"),
-                ["class Document", "record Document", "class VideoTimeline", "record VideoTimeline", "class Conversation", "record Conversation", "class Capture", "record Capture"]),
-            "ARC-011" => FindTokens(sources, ["AVFrame", "AVPacket", "AVCodec", "AVFormatContext", "ma_device", "ma_context", "std::"]),
-            "ARC-012" => ValidateCloudModuleIsolation(projects),
-            "ARC-013" => ValidateDesktopNativeOnly(root),
-            _ => [$"Unknown architecture rule {id}."],
-        };
+    internal static readonly Lazy<IReadOnlyList<Assembly>> ProductionAssemblies = new(() =>
+        ProductionAssemblyPaths.Value.Select(Assembly.LoadFrom).ToArray());
+
+    internal static Assembly LoadProduction(string name) => Assembly.Load(name);
+
+    /// <summary>
+    /// Compiles a fixture and loads it into the default context so NetArchTest can resolve its types.
+    /// Fixture assembly names are chosen not to collide with a real one.
+    /// </summary>
+    internal static Assembly LoadFixtureAssembly(string id, string assemblyName)
+    {
+        var path = FixtureCompiler.Compile(RepositoryRoot.Value, id, assemblyName);
+        return Assembly.LoadFrom(path);
     }
 
-    private static IEnumerable<string> ValidateProductIsolation(IEnumerable<string> projects)
+    /// <summary>
+    /// Loads a fixture that deliberately reuses a real assembly identity, which only a separate load
+    /// context can host alongside the real one.
+    /// </summary>
+    internal static Assembly LoadIsolatedFixtureAssembly(string id, string assemblyName)
     {
-        foreach (var project in projects.Where(path => path.EndsWith(".Domain.csproj", StringComparison.Ordinal) || path.EndsWith(".Application.csproj", StringComparison.Ordinal)))
+        var path = FixtureCompiler.Compile(RepositoryRoot.Value, id, assemblyName);
+        var context = new AssemblyLoadContext($"{id}-fixture-{Guid.NewGuid():N}");
+        return context.LoadFromAssemblyPath(path);
+    }
+
+    internal static string FixtureAssemblyPath(string id, string assemblyName) =>
+        FixtureCompiler.Compile(RepositoryRoot.Value, id, assemblyName);
+
+    /// <summary>
+    /// Materialises a synthetic <c>src</c> tree from a graph fixture and returns a graph over it.
+    /// A fixture may declare several projects, separated by <c>&lt;!-- file: Name.csproj --&gt;</c>, which is
+    /// what lets a fixture reproduce an <em>indirect</em> forbidden edge rather than only a direct one.
+    /// </summary>
+    internal static ProjectGraph LoadGraphFixture(string id)
+    {
+        var source = Path.Combine(
+            RepositoryRoot.Value, "tests", "ArchitectureTests", "Fixtures",
+            $"{id.Replace("-", string.Empty, StringComparison.Ordinal)}Violation.cs.txt");
+        var root = Path.Combine(Path.GetTempPath(), "arcforges-graph-fixtures", $"{id}-{Guid.NewGuid():N}", "src");
+        Directory.CreateDirectory(root);
+
+        string? current = null;
+        var buffer = new List<string>();
+
+        void Flush()
         {
-            var owner = ProductPrefixes.FirstOrDefault(prefix => Path.GetFileName(project).StartsWith(prefix, StringComparison.Ordinal));
-            if (owner is null)
+            if (current is null)
             {
+                return;
+            }
+
+            var directory = Path.Combine(root, Path.GetFileNameWithoutExtension(current));
+            Directory.CreateDirectory(directory);
+            File.WriteAllLines(Path.Combine(directory, current), buffer);
+            buffer.Clear();
+        }
+
+        foreach (var line in File.ReadAllLines(source))
+        {
+            var marker = line.TrimStart();
+            if (marker.StartsWith("<!-- file:", StringComparison.OrdinalIgnoreCase))
+            {
+                Flush();
+                current = marker["<!-- file:".Length..].Replace("-->", string.Empty, StringComparison.Ordinal).Trim();
                 continue;
             }
 
-            foreach (var other in ProductPrefixes.Where(prefix => !string.Equals(prefix, owner, StringComparison.Ordinal)))
-            {
-                if (File.ReadAllText(project).Contains($"{other}.", StringComparison.Ordinal))
-                {
-                    yield return $"{Path.GetFileName(project)} -> {other}";
-                }
-            }
-        }
-    }
-
-    private static IEnumerable<string> ValidatePublicClients(IEnumerable<string> projects)
-    {
-        var targets = projects.Where(path => path.Contains($"{Path.DirectorySeparatorChar}Cloud{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-            || path.Contains($"{Path.DirectorySeparatorChar}Mobile{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-            || path.Contains($"{Path.DirectorySeparatorChar}Web{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
-        var banned = new[] { "ArcForges.Contracts.LocalRpc", "ArcForges.NativeInterop" };
-        foreach (var violation in FindTokens(targets, banned))
-        {
-            yield return violation;
+            buffer.Add(line);
         }
 
-        var webProjects = projects.Where(path => path.Contains($"{Path.DirectorySeparatorChar}Web{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
-        foreach (var violation in FindTokens(webProjects, ["ArcForges.Cloud.", ".Desktop", "ArcChat.Mobile", "Mcp", "Npgsql", "Microsoft.Data.Sqlite"]))
-        {
-            yield return violation;
-        }
+        Flush();
+        return ProjectGraph.Load(root);
     }
 
-    private static List<string> ValidateGeneratedRpc(IEnumerable<string> files)
+    internal static void AssertClean(IEnumerable<RuleViolation> violations)
     {
-        var content = string.Join(Environment.NewLine, files.Select(File.ReadAllText));
-        if (!content.Contains("JsonRpcContract", StringComparison.Ordinal))
-        {
-            return [];
-        }
-
-        var failures = new List<string>();
-        if (!content.Contains("GenerateShape", StringComparison.Ordinal)) failures.Add("JsonRpcContract -> missing GenerateShape");
-        if (!content.Contains("ExportRpcContractProxies", StringComparison.Ordinal)) failures.Add("JsonRpcContract -> missing ExportRpcContractProxies");
-        return failures;
+        var found = violations.ToArray();
+        Xunit.Assert.True(found.Length == 0, string.Join(Environment.NewLine, found.Select(violation => violation.ToString())));
     }
 
-    private static IEnumerable<string> ValidateCloudModuleIsolation(IEnumerable<string> projects)
+    internal static void AssertViolates(string ruleId, IEnumerable<RuleViolation> violations)
     {
-        foreach (var project in projects.Where(path => Path.GetFileName(path).StartsWith("ArcForges.Cloud.Modules.", StringComparison.Ordinal)))
-        {
-            var ownName = Path.GetFileNameWithoutExtension(project);
-            foreach (var reference in ProjectReferences(project).Where(reference => reference.StartsWith("ArcForges.Cloud.Modules.", StringComparison.Ordinal) && !string.Equals(reference, ownName, StringComparison.Ordinal)))
-            {
-                yield return $"{ownName} -> {reference}";
-            }
-        }
-    }
+        var found = violations.ToArray();
+        Xunit.Assert.NotEmpty(found);
 
-    private static IEnumerable<string> ValidateDesktopNativeOnly(string root)
-    {
-        var directories = new[]
-        {
-            Path.Combine(root, "src", "ArcChat", "ArcChat.Desktop"),
-            Path.Combine(root, "src", "ArcNotes", "ArcNotes.Desktop"),
-            Path.Combine(root, "src", "ArcScope", "ArcScope.Desktop"),
-            Path.Combine(root, "src", "ArcSlate", "ArcSlate.Desktop"),
-            Path.Combine(root, "src", "DesktopHelpers", "ArcForges.ContentSandbox"),
-        };
-        var files = directories.Where(Directory.Exists)
-            .SelectMany(directory => Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
-            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
-        return FindTokens(files, ["WebView", "WebView2", "CEF", "Chromium", "Electron", "WKWebView", "HybridWebView", "BlazorWebView", "JavaScript", "iframe", "localhost", "src\\Web", "src/Web"]);
-    }
-
-    private static IEnumerable<string> FindTokens(IEnumerable<string> files, IEnumerable<string> tokens)
-    {
-        foreach (var file in files)
-        {
-            var content = File.ReadAllText(file);
-            foreach (var token in tokens.Where(token => content.Contains(token, StringComparison.OrdinalIgnoreCase)))
-            {
-                yield return $"{Path.GetRelativePath(RepositoryRoot.Value, file)} -> {token}";
-            }
-        }
-    }
-
-    private static bool IsAdapterProject(string path)
-    {
-        var name = Path.GetFileNameWithoutExtension(path);
-        return name.EndsWith(".LocalRpc", StringComparison.Ordinal)
-            || name is "ArcForges.Cloud.PublicApi" or "ArcForges.Cloud.Realtime";
-    }
-
-    private static IEnumerable<string> ProjectReferences(string project)
-    {
-        var document = XDocument.Load(project);
-        return document.Descendants("ProjectReference")
-            .Select(element => element.Attribute("Include")?.Value)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar))
-            .Select(value => Path.GetFileNameWithoutExtension(value)!);
-    }
-
-    private static IEnumerable<string> ProjectAndSourceFiles(string root, params string[] parts)
-    {
-        var directory = parts.Aggregate(root, Path.Combine);
-        return Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
-            .Where(path => (path.EndsWith(".cs", StringComparison.Ordinal) || path.EndsWith(".csproj", StringComparison.Ordinal))
-                && !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+        // The message format Step 01.04 fixes: "[ARC-0XX <rule name>] <source> -> <target>".
+        var rendered = found[0].ToString();
+        Xunit.Assert.StartsWith($"[{ruleId} {ArchitectureRules.Names[ruleId]}] ", rendered, StringComparison.Ordinal);
+        Xunit.Assert.Contains(" -> ", rendered, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
@@ -228,31 +127,237 @@ internal static class ArchitectureRules
             directory = directory.Parent;
         }
 
-        return directory?.FullName ?? throw new InvalidOperationException("ArcForges repository root was not found.");
+        return directory?.FullName ?? throw new InvalidOperationException("Repository root was not found.");
     }
 }
 
-public abstract class ArchitectureRuleTestBase(string ruleId)
+/// <summary>Guards against every rule passing because nothing was analysed.</summary>
+public sealed class ArchitectureSurfaceTests
 {
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
-    public void ProductionGraphPasses() => ArchitectureRules.AssertRule(ruleId);
+    public void TheAnalysedSurfaceIsNotEmpty()
+    {
+        var projects = ArchitectureContext.Graph.Value.Nodes.Count;
+        var assemblies = ArchitectureContext.ProductionAssemblyPaths.Value.Count;
+
+        Xunit.Assert.True(projects >= 130, $"Only {projects} projects were discovered under src/.");
+        Xunit.Assert.True(
+            assemblies >= 100,
+            $"Only {assemblies} production assemblies were found next to the test host; build the solution first.");
+    }
+}
+
+public sealed class ARC001DomainHasNoExternalDependenciesTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc001(ArchitectureContext.Graph.Value));
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
-    public void FixturesProveBothDirections() => ArchitectureRules.AssertFixtures(ruleId);
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-001", ArchitectureRules.Arc001(ArchitectureContext.LoadGraphFixture("ARC-001")));
+
+    /// <summary>
+    /// The regression for the defect the Step 01 review recorded as finding A: source-text scanning could
+    /// only see a direct edge, so a Domain project reaching a database provider through an intermediate
+    /// project passed. The fixture declares exactly that shape and the failure must name the whole path.
+    /// </summary>
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void AnIndirectForbiddenEdgeAlsoFailsAndNamesThePath()
+    {
+        var violations = ArchitectureRules.Arc001(ArchitectureContext.LoadGraphFixture("ARC-001-Transitive")).ToArray();
+
+        Xunit.Assert.NotEmpty(violations);
+        var rendered = string.Join(Environment.NewLine, violations.Select(violation => violation.ToString()));
+        Xunit.Assert.Contains("ArcChat.Domain -> ArcChat.Indirection -> Microsoft.Data.Sqlite", rendered, StringComparison.Ordinal);
+    }
 }
 
-public sealed class ARC001DomainTests() : ArchitectureRuleTestBase("ARC-001");
-public sealed class ARC002UiLayerTests() : ArchitectureRuleTestBase("ARC-002");
-public sealed class ARC003AdapterTests() : ArchitectureRuleTestBase("ARC-003");
-public sealed class ARC004ProductIsolationTests() : ArchitectureRuleTestBase("ARC-004");
-public sealed class ARC005ContractPurityTests() : ArchitectureRuleTestBase("ARC-005");
-public sealed class ARC006PublicBoundaryTests() : ArchitectureRuleTestBase("ARC-006");
-public sealed class ARC007TypedRpcTests() : ArchitectureRuleTestBase("ARC-007");
-public sealed class ARC008GeneratedRefitTests() : ArchitectureRuleTestBase("ARC-008");
-public sealed class ARC009GeneratedRpcTests() : ArchitectureRuleTestBase("ARC-009");
-public sealed class ARC010FoundationTests() : ArchitectureRuleTestBase("ARC-010");
-public sealed class ARC011NativeBoundaryTests() : ArchitectureRuleTestBase("ARC-011");
-public sealed class ARC012CloudModuleTests() : ArchitectureRuleTestBase("ARC-012");
-public sealed class ARC013DesktopNativeTests() : ArchitectureRuleTestBase("ARC-013");
+public sealed class ARC002UiDoesNotCrossLayersTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc002(ArchitectureContext.ProductionAssemblies.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates(
+            "ARC-002",
+            ArchitectureRules.Arc002([ArchitectureContext.LoadFixtureAssembly("ARC-002", "ArcChat.Presentation.Fixture")]));
+}
+
+public sealed class ARC003AdaptersCarryNoViewModelOrUiTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc003(ArchitectureContext.Graph.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-003", ArchitectureRules.Arc003(ArchitectureContext.LoadGraphFixture("ARC-003")));
+}
+
+public sealed class ARC004ProductsStayIsolatedTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc004(ArchitectureContext.Graph.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-004", ArchitectureRules.Arc004(ArchitectureContext.LoadGraphFixture("ARC-004")));
+}
+
+public sealed class ARC005ContractsStayPureTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule()
+    {
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc005(ArchitectureContext.Graph.Value));
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc005Types(ArchitectureContext.ProductionAssemblies.Value));
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates(
+            "ARC-005",
+            ArchitectureRules.Arc005Types([ArchitectureContext.LoadFixtureAssembly("ARC-005", "ArcForges.Contracts.Fixture")]));
+}
+
+public sealed class ARC006PublicClientsStayOffTheLocalBoundaryTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc006(ArchitectureContext.Graph.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-006", ArchitectureRules.Arc006(ArchitectureContext.LoadGraphFixture("ARC-006")));
+}
+
+public sealed class ARC007NoStringObjectRpcTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(
+            ArchitectureRules.Arc007([ArchitectureContext.LoadProduction("ArcForges.Contracts.LocalRpc")]));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates(
+            "ARC-007",
+            ArchitectureRules.Arc007([ArchitectureContext.LoadIsolatedFixtureAssembly("ARC-007", "ArcForges.Contracts.LocalRpc")]));
+}
+
+public sealed class ARC008RefitIsGeneratedOnlyTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule()
+    {
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc008(ArchitectureContext.Graph.Value));
+
+        // The call-shape half. Step 02.02/02.05 replace this with the published-IL and generated-manifest
+        // gates; until Refit contracts exist there is no call site to inspect at IL level.
+        var offenders = Directory
+            .EnumerateFiles(Path.Combine(ArchitectureContext.RepositoryRoot.Value, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(path => File.ReadAllText(path).Contains("RestService.For<", StringComparison.Ordinal))
+            .ToArray();
+
+        Xunit.Assert.True(offenders.Length == 0, $"Non-generated Refit factory: {string.Join(", ", offenders)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-008", ArchitectureRules.Arc008(ArchitectureContext.LoadGraphFixture("ARC-008")));
+}
+
+public sealed class ARC009StreamJsonRpcProxyMarkersAreCompleteTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(
+            ArchitectureRules.Arc009([ArchitectureContext.LoadProduction("ArcForges.Contracts.LocalRpc")]));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates(
+            "ARC-009",
+            ArchitectureRules.Arc009([ArchitectureContext.LoadIsolatedFixtureAssembly("ARC-009", "ArcForges.Contracts.LocalRpc")]));
+}
+
+public sealed class ARC010FoundationCarriesNoProductDomainTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc010(ArchitectureContext.ProductionAssemblyPaths.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates(
+            "ARC-010",
+            ArchitectureRules.Arc010([ArchitectureContext.FixtureAssemblyPath("ARC-010", "ArcForges.Foundation.Fixture")]));
+}
+
+public sealed class ARC011UpstreamNativeTypesDoNotCrossTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc011(ArchitectureContext.ProductionAssemblyPaths.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates(
+            "ARC-011",
+            ArchitectureRules.Arc011([ArchitectureContext.FixtureAssemblyPath("ARC-011", "ArcForges.NativeInterop.Fixture")]));
+}
+
+public sealed class ARC012CloudModulesDoNotCrossPersistTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc012(ArchitectureContext.Graph.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-012", ArchitectureRules.Arc012(ArchitectureContext.LoadGraphFixture("ARC-012")));
+}
+
+public sealed class ARC013DesktopClosureStaysNativeTests
+{
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ProductionSatisfiesTheRule() =>
+        ArchitectureContext.AssertClean(ArchitectureRules.Arc013(ArchitectureContext.Graph.Value));
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ViolationFixtureFailsTheRule() =>
+        ArchitectureContext.AssertViolates("ARC-013", ArchitectureRules.Arc013(ArchitectureContext.LoadGraphFixture("ARC-013")));
+}

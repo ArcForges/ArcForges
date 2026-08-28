@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// ARC-007: the forbidden InvokeAsync(string, object) shape on a local RPC contract.
 
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
+namespace ArcForges.Contracts.LocalRpc;
 
-internal interface IViolation { object InvokeAsync(string method); }
+public partial interface IViolatingRpc
+{
+    System.Threading.Tasks.Task<object> InvokeAsync(string operation, object argument);
+}

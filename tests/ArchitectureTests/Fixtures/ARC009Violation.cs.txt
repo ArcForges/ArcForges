@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// ARC-009: a [JsonRpcContract] interface with no [GenerateShape], so no proxy is generated for it.
+// The marker attribute belongs to Step 02's package set and is declared here so the shape is reproducible.
 
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
+namespace ArcForges.Contracts.Fixture.Markers
+{
+    [System.AttributeUsage(System.AttributeTargets.Interface)]
+    public sealed class JsonRpcContractAttribute : System.Attribute;
+}
 
-internal interface JsonRpcContractWithoutGeneratedShape;
+namespace ArcForges.Contracts.LocalRpc
+{
+    [ArcForges.Contracts.Fixture.Markers.JsonRpcContract]
+    public partial interface IUnshapedRpc
+    {
+        System.Threading.Tasks.Task PingAsync(System.Threading.CancellationToken cancellationToken);
+    }
+}
