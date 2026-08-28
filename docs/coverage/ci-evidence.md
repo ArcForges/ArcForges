@@ -53,6 +53,12 @@ rather than the lock file. A first attempt returned exit 0 for that reason. The 
 the project's `obj` directory cleared, which is what a clean CI checkout always gives; the recorded run above
 clears it explicitly.
 
+## Reverse-failure drill — Step 01.02 contract internals grant, 2026-08-28
+
+| Injected violation | Gate | Observed failure | Reverted |
+|---|---|---|---|
+| Dropped the `ArcForges.Tests.RealtimeReconnectTests` grant from `eng/build/contracts.props` | `RepositoryPolicyTests.ContractAssembliesGrantInternalsToTheContractTestProjects` | exit 2 — `Assert.Equal() Failure: Collections differ`, `Actual` missing `ArcForges.Tests.RealtimeReconnectTests` | yes; re-run exit 0 |
+
 ## Executed earlier
 
 | Check | Environment | Result |

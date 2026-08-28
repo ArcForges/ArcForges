@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -442,6 +444,41 @@ public sealed class RepositoryPolicyTests
                 .ToArray();
 
             Xunit.Assert.Equal(graph[name], actual);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ContractAssembliesGrantInternalsToTheContractTestProjects()
+    {
+        // Step 02's Required Inputs table names these four assemblies as the consumers of contract
+        // internals: the partitioned JsonSerializerContext types are internal, so source-generation
+        // coverage, old-vs-new compatibility and generated-only purity all have to reach them. The grant
+        // is declared once in eng/build/contracts.props; this asserts the emitted metadata, per assembly.
+        string[] grantees =
+        [
+            "ArcForges.Tests.ArchitectureTests",
+            "ArcForges.Tests.ContractCompatibilityTests",
+            "ArcForges.Tests.PublicApiContractTests",
+            "ArcForges.Tests.RealtimeReconnectTests",
+        ];
+
+        string[] contracts =
+        [
+            "ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.LocalRpc",
+            "ArcForges.Contracts.PublicApi", "ArcForges.Contracts.Realtime", "ArcForges.Contracts.Serialization",
+            "ArcForges.Contracts.Sync",
+        ];
+
+        foreach (var contract in contracts)
+        {
+            var assembly = Assembly.Load(contract);
+            var granted = assembly.GetCustomAttributes<InternalsVisibleToAttribute>()
+                .Select(attribute => attribute.AssemblyName)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+
+            Xunit.Assert.Equal(grantees.OrderBy(value => value, StringComparer.Ordinal).ToArray(), granted);
         }
     }
 

@@ -12,4 +12,21 @@
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <!--
+    Step 02's Required Inputs table names these four assemblies as the consumers of contract internals.
+    The partitioned `JsonSerializerContext` types it introduces are internal, and the source-generation
+    coverage, old-vs-new compatibility and generated-only purity assertions all have to reach them.
+    Declaring the grant here gives all seven contract projects the identical set from one place; the
+    seven-project import boundary is itself pinned by
+    `RepositoryPolicyTests.LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, and the
+    emitted attributes are pinned by
+    `RepositoryPolicyTests.ContractAssembliesGrantInternalsToTheContractTestProjects`.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.Tests.ContractCompatibilityTests" />
+    <InternalsVisibleTo Include="ArcForges.Tests.ArchitectureTests" />
+    <InternalsVisibleTo Include="ArcForges.Tests.PublicApiContractTests" />
+    <InternalsVisibleTo Include="ArcForges.Tests.RealtimeReconnectTests" />
+  </ItemGroup>
 </Project>

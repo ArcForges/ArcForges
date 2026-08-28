@@ -16,4 +16,17 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\ArcForges.Testing\ArcForges.Testing.csproj" />
   </ItemGroup>
+  <!--
+    The seven contract assemblies are loaded so the InternalsVisibleTo grant Step 02 depends on is asserted
+    against emitted metadata rather than against the text of a props file.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.Agent\ArcForges.Contracts.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.Foundation\ArcForges.Contracts.Foundation.csproj" />
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.LocalRpc\ArcForges.Contracts.LocalRpc.csproj" />
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.PublicApi\ArcForges.Contracts.PublicApi.csproj" />
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.Realtime\ArcForges.Contracts.Realtime.csproj" />
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.Serialization\ArcForges.Contracts.Serialization.csproj" />
+    <ProjectReference Include="..\..\src\Contracts\ArcForges.Contracts.Sync\ArcForges.Contracts.Sync.csproj" />
+  </ItemGroup>
 </Project>

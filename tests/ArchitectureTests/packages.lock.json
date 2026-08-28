@@ -175,6 +175,55 @@
           "xunit.v3.runner.common": "[4.0.0]"
         }
       },
+      "arcforges.contracts.agent": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "[1.0.0, )"
+        }
+      },
+      "arcforges.contracts.foundation": {
+        "type": "Project"
+      },
+      "arcforges.contracts.localrpc": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Agent": "[1.0.0, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0, )"
+        }
+      },
+      "arcforges.contracts.publicapi": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Agent": "[1.0.0, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0, )",
+          "ArcForges.Contracts.Sync": "[1.0.0, )"
+        }
+      },
+      "arcforges.contracts.realtime": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Agent": "[1.0.0, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0, )",
+          "ArcForges.Contracts.Sync": "[1.0.0, )"
+        }
+      },
+      "arcforges.contracts.serialization": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Agent": "[1.0.0, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0, )",
+          "ArcForges.Contracts.LocalRpc": "[1.0.0, )",
+          "ArcForges.Contracts.PublicApi": "[1.0.0, )",
+          "ArcForges.Contracts.Realtime": "[1.0.0, )",
+          "ArcForges.Contracts.Sync": "[1.0.0, )"
+        }
+      },
+      "arcforges.contracts.sync": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "[1.0.0, )"
+        }
+      },
       "arcforges.testing": {
         "type": "Project"
       }
