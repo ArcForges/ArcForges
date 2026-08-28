@@ -1,7 +1,15 @@
 <Project>
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Imported by the seven src/Contracts projects only. Contract assemblies are wave 1
+    warnings-as-errors and must stay AOT/trim clean because they ship inside every Native AOT
+    desktop head. The STJ / Refit / StreamJsonRpc source-generator switches and the
+    reflection-prohibition diagnostics that implementation-repository-layout.md §13 assigns to
+    this file are filled in by Step 02, when the contract types themselves land.
+  -->
   <PropertyGroup>
     <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 </Project>
