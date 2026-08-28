@@ -1,4 +1,12 @@
-name: Release
+name: Release train
+
+# Step 01.06 fixes these seven job names. A later step's completion gate is allowed to reference
+# `train-desktop-aot`, `train-cloud-jit`, `train-maui-android`, `train-ios-build`, `train-blazor-web`,
+# `train-native-abi-matrix` and `train-install-upgrade-rollback` by name, so renaming one is a plan change.
+#
+# Three of them are gated placeholders. A gated job states its skip reason, owning step and tracking item in
+# the job summary; it never pretends the work happened. What "release train complete" means widens as each
+# owning step unlocks its job.
 
 on:
   workflow_dispatch:
@@ -19,7 +27,7 @@ env:
   VCPKG_WINDOWS_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
 
 jobs:
-  desktop-win-x64:
+  train-desktop-aot:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -46,7 +54,7 @@ jobs:
           name: arcforges-desktop-win-x64
           path: artifacts/release/desktop-win-x64
 
-  web:
+  train-blazor-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -61,7 +69,7 @@ jobs:
           name: arcforges-web
           path: artifacts/release/web
 
-  android:
+  train-maui-android:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -83,7 +91,7 @@ jobs:
           name: arcchat-android-arm64
           path: artifacts/release/android/ArcChat.Mobile-arm64-Signed.apk
 
-  cloud:
+  train-cloud-jit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -98,7 +106,7 @@ jobs:
           name: arcforges-cloud-linux-x64
           path: artifacts/arcforges-cloud-linux-x64.tar.gz
 
-  native-win-x64:
+  train-native-abi-matrix:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -192,7 +200,7 @@ jobs:
           path: artifacts/stage/native/win-x64
 
   release-sbom:
-    needs: [desktop-win-x64, web, android, cloud, native-win-x64]
+    needs: [train-desktop-aot, train-blazor-web, train-maui-android, train-cloud-jit, train-native-abi-matrix]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -207,3 +215,43 @@ jobs:
         with:
           name: arcforges-release-sbom
           path: artifacts/arcforges-release.spdx.json
+
+  train-ios-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Declare the gate
+        run: |
+          {
+            echo '### train-ios-build — NOT EXECUTED'
+            echo
+            echo '| Field | Value |'
+            echo '|---|---|'
+            echo '| Skip reason | iOS is Planned / Build Deferred by user decision. No iOS compilation, workload install or signing runs in the default train. |'
+            echo '| Owning step | Step 20 — `20-ios-architecture-deferred.md` |'
+            echo '| Tracking | `docs/execution/step-01-ledger.md`, release-train gated jobs |'
+            echo '| Unlock condition | The user lifts Build Deferred; Step 20 then supplies the workload, signing identity and device matrix. |'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Assert no iOS target is enabled by default
+        run: |
+          # The structural half is real and does run: the head must not carry an iOS target unless asked.
+          if grep -q 'net10.0-ios' src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj; then
+            grep -q "EnableIosTarget" src/Mobile/ArcChat.Mobile/ArcChat.Mobile.csproj               || { echo 'net10.0-ios is unconditional; it must be behind EnableIosTarget.'; exit 1; }
+          fi
+
+  train-install-upgrade-rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Declare the gate
+        run: |
+          {
+            echo '### train-install-upgrade-rollback — NOT EXECUTED'
+            echo
+            echo '| Field | Value |'
+            echo '|---|---|'
+            echo '| Skip reason | Installer, signing, Velopack feed, upgrade and rollback artifacts do not exist yet; there is nothing to install or roll back. |'
+            echo '| Owning step | Step 31 — `31-quality-security-and-production-release.md` |'
+            echo '| Tracking | `docs/execution/step-01-ledger.md`, release-train gated jobs |'
+            echo '| Unlock condition | Step 31 produces signed installers and a release manifest; this job then runs clean install, upgrade, rollback and uninstall. |'
+          } >> "$GITHUB_STEP_SUMMARY"

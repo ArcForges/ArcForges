@@ -147,6 +147,95 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void MandatedCiJobNamesArePresent()
+    {
+        // Step 01.06 fixes these names so every later step's completion gate can reference a gate by name.
+        // Renaming one silently would break those references, so the names are asserted, not just written.
+        (string Workflow, string[] Jobs)[] contracts =
+        [
+            ("pr-gate.yml",
+            [
+                "locked-restore", "format-analyzers", "build", "unit-tests", "integration-tests",
+                "architecture-tests", "suppression-audit", "no-inline-versions", "dependency-audit",
+                "secret-scan",
+            ]),
+            ("runtime-publish-smoke.yml", ["desktop-aot", "cloud-jit", "cloud-gc-baseline"]),
+            ("release-train.yml",
+            [
+                "train-desktop-aot", "train-cloud-jit", "train-maui-android", "train-ios-build",
+                "train-blazor-web", "train-native-abi-matrix", "train-install-upgrade-rollback",
+            ]),
+        ];
+
+        foreach ((string workflow, string[] jobs) in contracts)
+        {
+            var path = Path.Combine(RepositoryRoot.Value, ".github", "workflows", workflow);
+            Xunit.Assert.True(File.Exists(path), $"Missing required workflow {workflow}.");
+
+            // Job ids sit at exactly one indent level below the `jobs:` mapping.
+            var declared = File.ReadLines(path)
+                .Select(line => System.Text.RegularExpressions.Regex.Match(line, "^  ([A-Za-z0-9_-]+):\\s*$"))
+                .Where(match => match.Success)
+                .Select(match => match.Groups[1].Value)
+                .ToHashSet(StringComparer.Ordinal);
+
+            var missing = jobs.Where(job => !declared.Contains(job)).ToArray();
+            Xunit.Assert.True(missing.Length == 0, $"{workflow} is missing job(s): {string.Join(", ", missing)}");
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void GatedReleaseTrainJobsDeclareOwnerAndTracking()
+    {
+        // A gated placeholder may exist, but it must never read as completed work: it has to state its skip
+        // reason, its owning step and a tracking item in the job summary.
+        var releaseTrain = File.ReadAllText(
+            Path.Combine(RepositoryRoot.Value, ".github", "workflows", "release-train.yml"));
+
+        foreach (var gated in new[] { "train-ios-build", "train-install-upgrade-rollback" })
+        {
+            var section = releaseTrain[releaseTrain.IndexOf($"  {gated}:", StringComparison.Ordinal)..];
+            Xunit.Assert.Contains("NOT EXECUTED", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("Skip reason", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("Owning step", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("Tracking", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("GITHUB_STEP_SUMMARY", section, StringComparison.Ordinal);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void EveryCentralPackageIsRegistered()
+    {
+        // Step 01.06's dependency-audit gate must fail on an unregistered package. Repository policy
+        // forbids tracked helper scripts, so the plan's check-licenses script lives here instead, and the
+        // comparison is a set equality in both directions: an unregistered package and a stale row both fail.
+        var central = System.Text.RegularExpressions.Regex
+            .Matches(File.ReadAllText(Path.Combine(RepositoryRoot.Value, "Directory.Packages.props")),
+                "PackageVersion Include=\"([^\"]+)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var registered = System.Text.RegularExpressions.Regex
+            .Matches(File.ReadAllText(Path.Combine(RepositoryRoot.Value, "docs", "compliance", "third-party-license-register.md")),
+                @"^\| `([^`]+)` \| ", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var unregistered = central.Except(registered, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray();
+        var stale = registered.Except(central, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray();
+
+        Xunit.Assert.True(
+            unregistered.Length == 0,
+            $"Packages missing from the third-party license register: {string.Join(", ", unregistered)}");
+        Xunit.Assert.True(
+            stale.Length == 0,
+            $"Register rows with no central package: {string.Join(", ", stale)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void TrimmingSuppressionsCarryReviewEvidence()
     {
         var unconditionalSuppression = "Unconditional" + "SuppressMessage";

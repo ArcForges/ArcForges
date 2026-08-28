@@ -107,6 +107,32 @@ Two gates were added here. `TrimmingSuppressionCountStaysAtTheStep0105Baseline` 
 host and the WASM head, because `implementation-repository-layout.md` §13 is explicit that a publish mode
 must be asserted from the evaluated value rather than from the text of a project file.
 
+## Step 01.06 — CI job-name contract, 2026-08-28
+
+`pr-gate.yml` now declares the ten mandated gate names, `runtime-publish-smoke.yml` exists with the desktop
+matrix and two separate Cloud jobs, and `release-train.yml` declares all seven `train-*` jobs. The names are
+themselves asserted by `RepositoryPolicyTests.MandatedCiJobNamesArePresent`, and the two gated placeholders
+are asserted to declare skip reason, owning step and tracking item by
+`GatedReleaseTrainJobsDeclareOwnerAndTracking`, so a placeholder cannot quietly start reading as done work.
+
+The five violation drills Step 01.06 makes release-blocking were executed **locally, against the exact
+command the corresponding job runs**. Hosted evidence is not claimed: this run does not watch CI, so no run
+ID exists yet for any of these jobs. Each drill was reverted and the tree left clean.
+
+| # | Injected violation | Job whose command was run | Observed failure |
+|---|---|---|---|
+| 1 | `"resolved": "10.0.400"` → `"10.0.300"` in `src/ArcChat/ArcChat.Domain/packages.lock.json` | `locked-restore` — `dotnet restore ArcForges.slnx --locked-mode` | exit 1 — `error NU1403: Package content hash validation failed for Microsoft.CodeAnalysis.NetAnalyzers.10.0.300` |
+| 2 | `ArcNotes.Application` given a ProjectReference to `ArcChat.Domain` | `architecture-tests` | exit 2 — `[ARC-004 Products stay isolated] ArcNotes.Application -> ArcChat.Domain` |
+| 3 | New `.cs` file with no SPDX header | `no-inline-versions` | exit 2 — `Missing SPDX header: src\ArcNotes\ArcNotes.Domain\SpdxDrillProbe.cs` |
+| 4 | `Contoso.Unregistered.Probe` added to `Directory.Packages.props` | `dependency-audit` | exit 2 — `Packages missing from the third-party license register: Contoso.Unregistered.Probe` |
+| 5 | `JsonSerializer.Serialize(object)` in a desktop head | `build` (Release) | exit 1 — `error IL2026` and `error IL3050` on the exact line (recorded under Step 01.05) |
+
+### Not claimed
+
+No hosted run of `pr-gate`, `runtime-publish-smoke` or `release-train` has executed against these files. The
+workflow YAML parses and the job names are pinned by test, but "the ten jobs are green on a runner" is not
+evidence this run can produce, and Step 01's closure condition 6 is judged on that basis in the ledger.
+
 ## Executed earlier
 
 | Check | Environment | Result |
@@ -123,14 +149,10 @@ evidence, so Step 01 cannot close on them. The three Step 01.01 drills were disc
 
 | Drill | Plan source | Expected failure |
 |---|---|---|
-| Five CI violation drills (lock, ARC-004, missing SPDX, unregistered package, IL2026) | 01.06 | the corresponding job goes red and the summary names the rule |
 | Turn off `PublishAot` on a desktop head | 01.07 | the desktop publish gate fails (the Cloud half of this drill is already executed above) |
 
 ## Required by Step 01 and structurally missing
 
 | Gap | Plan source |
 |---|---|
-| `pr-gate.yml` has none of the ten mandated stable job names (`locked-restore`, `format-analyzers`, `build`, `unit-tests`, `integration-tests`, `architecture-tests`, `suppression-audit`, `no-inline-versions`, `dependency-audit`, `secret-scan`) | 01.06 |
-| No `runtime-publish-smoke.yml` (the desktop 5-RID × 4-head matrix plus the separate Cloud JIT job) | 01.06 |
-| `release-train.yml` has none of the seven mandated `train-*` jobs, and no gated placeholder emits skip reason, owning step and tracking item | 01.06 |
 | 19 of the 25 Native AOT publish cells have no runner | 01.07 |

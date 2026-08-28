@@ -28,7 +28,7 @@ does that check.
 | 01.03 Product / Cloud / Mobile / Web skeleton | Satisfied | ContentSandbox is now a five-RID Native AOT head, the composition-root seam exists and is tested, Mobile identity corrected, bUnit skeleton added, 24 pending-scope markers present |
 | 01.04 ArchitectureTests | Satisfied | 13 rules run on two engines: reference direction over the **transitive closure** of the declared project graph, type identity over the loaded `src` assemblies with `NetArchTest.Rules`. 13 fixture pairs plus a transitive-edge fixture; every rule owns a permanent test that its own violation fixture fails with a message carrying the rule ID and the offending path. Suite is 41/41 with no skips |
 | 01.05 AOT / trimming properties and analyzers | Satisfied | All eight layered property files reach exactly their declared hosts; publish-mode properties are asserted from MSBuild's evaluated values, not project-file text (layout §13); suppression count pinned at the zero baseline. The IL2026/IL3050 injection drill and both suppression drills were executed, observed red and reverted — see [ci-evidence.md](../coverage/ci-evidence.md) |
-| 01.06 CI skeleton | **Not satisfied** | None of the ten `pr-gate` job names, no `runtime-publish-smoke.yml`, none of the seven `train-*` jobs, no archived violation drills |
+| 01.06 CI skeleton | Partly satisfied | All ten `pr-gate` job names, `runtime-publish-smoke.yml`, and all seven `train-*` jobs exist and are pinned by `MandatedCiJobNamesArePresent`; the two gated placeholders declare reason/owner/tracking and are pinned by `GatedReleaseTrainJobsDeclareOwnerAndTracking`; the five violation drills were executed against each job's exact command and reverted. **No hosted run has executed these workflows**, so "CI green under the mandated names" is still unevidenced |
 | 01.07 Native AOT / Cloud JIT publish verification | Partly satisfied | 6 of 25 publish cells executed with real artifacts; Cloud JIT contract smoke and an idle GC comparison executed; **19 cells and the fixed-workload GC baseline have no runner** |
 
 ## Closure gate (01) — condition by condition
@@ -40,7 +40,7 @@ does that check.
 | 3 | ARC-001..ARC-013 machine-enforced with 26 fixtures | **Met** — assembly analysis plus declared-graph transitive closure; 13 fixture pairs and one extra transitive fixture, each asserted in both directions on every run; the end-to-end `ArcNotes.Domain -> Microsoft.Data.Sqlite` drill reproduced and reverted |
 | 4 | Five runtime configurations never cross | **Met** — pinned by `LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, with two recorded reverse-failure drills (a dropped `rpc-attach.props` import and `desktop-aot.props` reaching the Cloud host) |
 | 5 | Desktop 20-cell matrix plus Cloud JIT smoke and GC report | **Not met** — 4 of 20 desktop cells; GC data is idle-only |
-| 6 | CI green and referable by stable job name | **Not met** — the mandated job names do not exist |
+| 6 | CI green and referable by stable job name | **Not met** — the names now exist and are test-pinned, and every gate behind them was drilled locally, but no hosted run has produced a green result for them. This run does not watch CI |
 | 7 | Zero business code | **Met** — no domain types, contract DTOs, RPC methods, tables or business routes |
 | 8 | AGPL LICENSE, SPDX in CI, license register backfilled, deviations recorded | **Met** — register updated this run; deviations and ADR 0001 added |
 
@@ -100,9 +100,10 @@ own SHA here.
 
 | # | Finding | Why it was not fixed here |
 |---|---|---|
-| B | `pr-gate.yml`, `release-train.yml` and the missing `runtime-publish-smoke.yml` do not carry the job names every later step's gate references. | Restructuring the gate renames the required checks on a protected workflow. That needs explicit authorization, since it can block every open pull request. |
-| C | 19 of 25 Native AOT publish cells, the fixed-workload GC baseline, and the graceful-shutdown cell have no runner. | Needs `windows-arm64`, `macos-x64`, `macos-arm64` and `ubuntu` runners. ILC cannot cross-compile from this host. |
-| D | Every reverse-failure drill in 01.01, 01.04, 01.05 and 01.06 is unarchived. | Each needs a deliberately broken branch pushed to CI and a red run recorded. |
+| B | The renamed required checks have not been re-selected in branch protection. `pr-gate` previously exposed `managed`, `security` and `ci`; it now exposes ten named gates plus `ci`. Until branch protection is updated, the old required check names no longer exist and pull requests can appear blocked or under-gated. | Branch protection is repository settings, not a file in this tree. It has to be changed by a repository admin at merge time. |
+| C | No hosted run of `pr-gate`, `runtime-publish-smoke` or `release-train` exists for these files. | The execution rules forbid watching or polling CI. The first hosted run happens when this branch's pull request is opened. |
+| D | 19 of 25 Native AOT publish cells, the fixed-workload GC baseline, and the graceful-shutdown cell have no runner. | Needs `windows-arm64`, `macos-x64`, `macos-arm64` and `ubuntu` runners. ILC cannot cross-compile from this host. |
+| E | Hosted red runs for the drills are not archived. | Each drill was reproduced locally against the job's exact command; a hosted red run additionally needs a deliberately broken branch pushed, which this run does not do. |
 
 ## Design conflicts requiring a planning writeback
 

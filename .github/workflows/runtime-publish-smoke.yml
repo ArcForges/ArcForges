@@ -1,0 +1,180 @@
+name: Runtime publish smoke
+
+# Step 01.07's publish matrix. Desktop and Cloud are deliberately separate jobs with separate names: the
+# desktop heads are Native AOT and the Cloud host is framework-dependent JIT, and calling both "aot" is the
+# exact confusion architecture §1.1 forbids.
+#
+# ILC cannot cross-compile, so each RID publishes on its own runner. A cell that cannot run is a red job,
+# never a silently skipped one.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-publish-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  desktop-aot:
+    name: desktop-aot (${{ matrix.rid }} / ${{ matrix.product }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4 heads x 5 RIDs = the 20 cells Step 01.07 counts. `include` only attaches a runner to each RID;
+        # it adds no combination, because `runner` is not one of the matrix dimensions.
+        product: [ArcChat, ArcNotes, ArcScope, ArcSlate]
+        rid: [win-x64, win-arm64, linux-x64, osx-x64, osx-arm64]
+        include:
+          - rid: win-x64
+            runner: windows-latest
+          - rid: win-arm64
+            runner: windows-11-arm
+          - rid: linux-x64
+            runner: ubuntu-latest
+          - rid: osx-x64
+            runner: macos-13
+          - rid: osx-arm64
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Install the Native AOT prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes clang zlib1g-dev libbrotli-dev xvfb
+      - name: Publish the head
+        run: |
+          dotnet restore src/${{ matrix.product }}/${{ matrix.product }}.Desktop/${{ matrix.product }}.Desktop.csproj --locked-mode
+          dotnet publish src/${{ matrix.product }}/${{ matrix.product }}.Desktop/${{ matrix.product }}.Desktop.csproj -c Release -r ${{ matrix.rid }} --self-contained true --no-restore -o artifacts/smoke/${{ matrix.rid }}/${{ matrix.product }} -bl:artifacts/smoke/${{ matrix.rid }}/${{ matrix.product }}/publish.binlog
+      - name: Prove ILC actually ran
+        shell: pwsh
+        run: |
+          # A framework-dependent build would silently produce a runnable app, so the gate is the presence
+          # of the native compilation itself, not merely a successful publish.
+          $output = 'artifacts/smoke/${{ matrix.rid }}/${{ matrix.product }}'
+          $native = Get-ChildItem -LiteralPath $output -Recurse -File |
+            Where-Object { $_.Name -in @('${{ matrix.product }}.Desktop.exe', '${{ matrix.product }}.Desktop') }
+          if (-not $native) { throw 'No native host was produced.' }
+          if (Test-Path (Join-Path $output '${{ matrix.product }}.Desktop.dll')) {
+            throw 'A managed assembly was emitted next to the host: this publish was not Native AOT.'
+          }
+      - name: Run the headless self-check
+        shell: pwsh
+        run: |
+          $productId = '${{ matrix.product }}'.ToLowerInvariant()
+          $output = 'artifacts/smoke/${{ matrix.rid }}/${{ matrix.product }}'
+          $exe = if ($IsWindows) { Join-Path $output '${{ matrix.product }}.Desktop.exe' } else { Join-Path $output '${{ matrix.product }}.Desktop' }
+          if (-not $IsWindows) { chmod +x $exe }
+          $result = if ($IsLinux) { xvfb-run --auto-servernum $exe --smoke } else { & $exe --smoke }
+          $result | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "[${{ matrix.rid }}, ${{ matrix.product }}, smoke] exit $LASTEXITCODE" }
+          if ($result -notmatch "$productId ok arcforges-smoke") {
+            throw "[${{ matrix.rid }}, ${{ matrix.product }}, smoke] stdout did not carry '$productId ok arcforges-smoke'"
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-aot-${{ matrix.rid }}-${{ matrix.product }}
+          path: artifacts/smoke/${{ matrix.rid }}/${{ matrix.product }}/publish.binlog
+
+  cloud-jit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Publish framework-dependent
+        run: |
+          dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
+          dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore -o artifacts/cloud
+      - name: Prove the host stayed JIT
+        shell: pwsh
+        run: |
+          $runtimeConfig = Get-Content artifacts/cloud/ArcForges.Cloud.Host.runtimeconfig.json -Raw | ConvertFrom-Json
+          if (-not $runtimeConfig.runtimeOptions.framework -and -not $runtimeConfig.runtimeOptions.frameworks) {
+            throw 'The Cloud host is not framework-dependent.'
+          }
+          if (-not (Test-Path artifacts/cloud/ArcForges.Cloud.Host.dll)) {
+            throw 'No managed assembly was produced: the Cloud host must not be Native AOT.'
+          }
+      - name: Contract smoke and graceful shutdown
+        shell: pwsh
+        run: |
+          $process = Start-Process dotnet -ArgumentList @('artifacts/cloud/ArcForges.Cloud.Host.dll', '--urls', 'http://127.0.0.1:5087') -PassThru
+          try {
+            $ready = $false
+            foreach ($attempt in 1..30) {
+              try {
+                if ((Invoke-RestMethod http://127.0.0.1:5087/health).status -eq 'ok') { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Cloud /health never became ready.' }
+            $root = Invoke-RestMethod http://127.0.0.1:5087/
+            if (-not $root.ok -or $root.app -ne 'arcforges-cloud') { throw 'Cloud root contract failed.' }
+            $negotiate = Invoke-RestMethod -Method Post 'http://127.0.0.1:5087/hubs/v1/events/negotiate?negotiateVersion=1'
+            if ([string]::IsNullOrWhiteSpace($negotiate.connectionToken)) { throw 'SignalR negotiate returned no token.' }
+          } finally {
+            # SIGTERM, not Kill: the graceful-shutdown cell is the point.
+            & /bin/kill -s TERM $process.Id
+            $exited = $process.WaitForExit(30000)
+            if (-not $exited) { throw 'The Cloud host did not shut down within 30s of SIGTERM.' }
+            if ($process.ExitCode -ne 0) { throw "Graceful shutdown returned exit $($process.ExitCode)." }
+          }
+
+  cloud-gc-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Publish
+        run: |
+          dotnet restore src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj --locked-mode
+          dotnet publish src/Cloud/ArcForges.Cloud.Host/ArcForges.Cloud.Host.csproj -c Release --self-contained false --no-restore -o artifacts/cloud
+      - name: Compare Server and Workstation GC under one fixed workload
+        shell: pwsh
+        run: |
+          # Step 01.07 asks only for a reproducible baseline. It deliberately does not pick a winner; the
+          # configuration decision belongs to Steps 13/26 with their own load model.
+          New-Item -ItemType Directory -Force artifacts/gc | Out-Null
+          $report = @()
+          foreach ($mode in @($true, $false)) {
+            $env:DOTNET_gcServer = if ($mode) { '1' } else { '0' }
+            $process = Start-Process dotnet -ArgumentList @('artifacts/cloud/ArcForges.Cloud.Host.dll', '--urls', 'http://127.0.0.1:5088') -PassThru
+            try {
+              foreach ($attempt in 1..30) {
+                try { if ((Invoke-RestMethod http://127.0.0.1:5088/health).status -eq 'ok') { break } } catch { Start-Sleep -Seconds 1 }
+              }
+              $idle = (Get-Process -Id $process.Id).WorkingSet64
+              foreach ($request in 1..2000) { Invoke-RestMethod http://127.0.0.1:5088/health | Out-Null }
+              $process.Refresh()
+              $report += [pscustomobject]@{
+                gcServer = $env:DOTNET_gcServer
+                idleWorkingSetBytes = $idle
+                loadedWorkingSetBytes = (Get-Process -Id $process.Id).WorkingSet64
+                requests = 2000
+              }
+            } finally {
+              & /bin/kill -s TERM $process.Id
+              $process.WaitForExit(30000) | Out-Null
+            }
+          }
+          $report | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 artifacts/gc/gc-baseline.json
+          Get-Content artifacts/gc/gc-baseline.json | Write-Host
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cloud-gc-baseline
+          path: artifacts/gc/gc-baseline.json
