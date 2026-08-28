@@ -17,9 +17,9 @@ Step 02 is now eligible. Its Required Inputs were already satisfied by this bran
 shells with the `InternalsVisibleTo` grant, the AOT analyzers, `rpc-attach.props`, ARC-005/007/008/009 as
 real enforcement, and the `architecture-tests` / `locked-restore` job names.
 
-One decision is owed before Step 02.00 writes its first type: whether the source-generation-coverage
-assertion lives in one of the four granted test assemblies, or whether `ContractSchemaTests` becomes a fifth
-`InternalsVisibleTo` grantee. See the design-conflict table below.
+The one decision that was owed is made: Step 02's source-generation coverage assertion belongs to
+`ArcForges.Tests.ContractCompatibilityTests`, already a grantee, and `ContractSchemaTests` stays scoped to
+generated JSON Schema and golden-file validation. The grantee set stays at four.
 
 ## How Step 01 reached this state
 
@@ -147,13 +147,10 @@ value. It is recorded here rather than left implicit.
 | Layout §12 vs the resolved package versions | Six entries differ. See `docs/adr/0001-dependency-version-drift.md`. §12 stays frozen for now: writing it back before the regression matrix has run would launder an unevidenced change into the authority document. Run the matrix first, then write back. |
 | Layout §8 Web dependency block vs Step 01.03's Web.Infrastructure bullet — **repaired in code and in the plan** (PLAN_REPO `docs/af01-web-serialization-and-smoke-workflow`, commit `a18d481`) | §8 lists the Web dependency set as `Contracts.PublicApi/Realtime/Foundation/Agent/Sync`; Step 01.03 additionally names `Serialization`, and §3 makes `Serialization` reference all six contracts including `LocalRpc`, which layout §11 forbids Web from reaching. The three statements cannot all hold. Resolved in favour of §8 and §11 by dropping the unused reference. If a later step needs source-generated JSON in the browser, the plan must first say how a Web consumer reaches `Serialization` without `LocalRpc` — most likely by partitioning it. Planning writeback still owed on Step 01.03's bullet. |
 | Layout §3 root namespace for `ArcForges.Contracts.Foundation` | §3 assigns the namespace `ArcForges.Contracts` while every sibling uses its own project name. The project currently uses `ArcForges.Contracts.Foundation`, and Step 02.00 states the namespace is `ArcForges.Contracts.Foundation` in its own body. Step 02 owns the types; the plan should state which is intended before then. |
-| `InternalsVisibleTo` grantee set omits `ContractSchemaTests` | Step 02's Required Inputs names exactly four grantees (ContractCompatibility / Architecture / PublicApiContract / RealtimeReconnect), which is what 01.02 implements verbatim. But Step 02's own Scope line puts the contract test baseline in `tests/{ContractSchemaTests,ContractCompatibilityTests,PublicApiContractTests,RealtimeReconnectTests,LocalRpcAotTests}`, and 02.00's source-generation-coverage assertion has to reach an `internal FoundationJsonContext`. If that assertion lands in `ContractSchemaTests` it will not compile. Step 02 must either place the assertion in a granted assembly or add the fifth grantee to its Required Inputs; 01.02 does not widen the set on its own. |
+| `InternalsVisibleTo` grantee set omits `ContractSchemaTests` — **resolved** | Step 02's source-generation coverage assertion lives in `ArcForges.Tests.ContractCompatibilityTests`, which is already one of the four grantees Step 02's Required Inputs names, so no fifth grant is needed. `ContractSchemaTests` stays scoped to generated JSON Schema and golden-file validation, neither of which needs contract internals. The four-grantee set stands unless an authoritative document or the code proves a fifth is unavoidable. |
 
 ## Exact next action
 
 Step 01 is closed. The next action is Step 02.00 — `Contracts.Foundation` stable primitives and the two
-source-generation contexts — on its own branch and worktree, after the plan states where the
-source-generation-coverage assertion lives (see the design-conflict table).
-
-The only repository-settings follow-up is that branch protection should select the ten `pr-gate` gate names;
-the old `managed` and `security` names no longer exist.
+source-generation contexts — on its own branch and worktree. Its source-generation coverage assertion goes in
+`ArcForges.Tests.ContractCompatibilityTests`; the `InternalsVisibleTo` set stays at four.

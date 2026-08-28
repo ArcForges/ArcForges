@@ -22,6 +22,11 @@
     `RepositoryPolicyTests.LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts`, and the
     emitted attributes are pinned by
     `RepositoryPolicyTests.ContractAssembliesGrantInternalsToTheContractTestProjects`.
+
+    The set is exactly four. Step 02's source-generation coverage assertion belongs to
+    `ArcForges.Tests.ContractCompatibilityTests`, which is already listed; `ArcForges.Tests.ContractSchemaTests`
+    stays scoped to generated JSON Schema and golden-file validation and needs no access to contract internals.
+    Do not add a fifth grantee unless an authoritative document or the code proves it unavoidable.
   -->
   <ItemGroup>
     <InternalsVisibleTo Include="ArcForges.Tests.ContractCompatibilityTests" />

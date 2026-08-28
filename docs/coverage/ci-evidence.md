@@ -125,6 +125,41 @@ corresponding job runs. Each drill was reverted and the tree left clean.
 | 4 | `Contoso.Unregistered.Probe` added to `Directory.Packages.props` | `dependency-audit` | exit 2 — `Packages missing from the third-party license register: Contoso.Unregistered.Probe` |
 | 5 | `JsonSerializer.Serialize(object)` in a desktop head | `build` (Release) | exit 1 — `error IL2026` and `error IL3050` on the exact line (recorded under Step 01.05) |
 
+## Gate fixes after the first two CI runs, 2026-08-28
+
+Three gates failed on the first run and two on the second. Every diagnosis below came from the job log, and
+each fix was re-run locally against the exact command the job executes.
+
+| Run | Job | Log evidence | Root cause | Fix |
+|---|---|---|---|---|
+| 1 | `no-inline-versions` | `Zero tests ran`, `Exit code: 5` | `--filter-method '*A*\|*B*'` — Microsoft.Testing.Platform takes repeated values, not pipe alternation, so the filter selected nothing | two space-separated patterns |
+| 1 | `unit-tests` | `error: 36`, `total: 6`, `failed: 0`, exit 8 | a single-category filter over the whole solution leaves most assemblies empty, and MTP reports "zero tests ran" as exit 8 per assembly | tolerance for code 8 declared once in `Directory.Build.targets`, scoped to test projects during a taxonomy run |
+| 1 | `integration-tests` | `error: 7`, `total: 70`, `failed: 0`, exit 8 | same | same |
+| 2 | `unit-tests` | `The unit slice printed no summary.` | the summary line is emitted as `ESC[m  total: 6` — ANSI colour survives the pipe, so the `^\s*total:` anchor could never match | strip ANSI escapes before matching |
+| 2 | `integration-tests` | `The integration slice printed no summary.` | same | same |
+
+Run 2 also proved the run-1 fix: both jobs reached the summary check, which only happens after the exit-code
+check passes, so exit code 8 was no longer being returned.
+
+The run-2 parser fix was verified before pushing, against both a synthetic line carrying the exact
+`ESC[m  total: 6` prefix from the CI log and the real slice output:
+
+| Input | Old anchored regex | New parser |
+|---|---|---|
+| synthetic ANSI summary line | no match — reproduces the CI failure | `6` |
+| real unit slice output | — | `6` |
+
+Both slice steps were then run verbatim, parser included: unit `exit 0, total 6, failed 0`; integration
+`exit 0, total 70, failed 0`.
+
+### A duplicate key nearly shipped
+
+While editing the slice steps, an edit inserted the new `run:` block without removing the old one. Two `run:`
+keys in one step is legal YAML — the last wins — so the file read as fixed while the job would have kept
+executing the old command. `RepositoryPolicyTests.WorkflowStepsDeclareEachKeyOnce` now rejects a repeated
+sibling key inside any workflow list item. Drill: re-injecting a second `run:` fails it with
+`pr-gate.yml:82 repeats 'run' in one step`; reverted, green.
+
 ## Executed earlier
 
 | Check | Environment | Result |

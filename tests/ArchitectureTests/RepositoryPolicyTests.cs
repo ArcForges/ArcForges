@@ -200,6 +200,64 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void WorkflowStepsDeclareEachKeyOnce()
+    {
+        // A repeated key inside one step is silently legal YAML: the last one wins. That once left an
+        // edited `run:` in place above a stale copy, so the job kept executing the old command while the
+        // file read as if it had been fixed. Duplicate sibling keys inside a list item are rejected here.
+        var violations = new List<string>();
+
+        foreach (var workflow in Directory.EnumerateFiles(
+            Path.Combine(RepositoryRoot.Value, ".github", "workflows"), "*.yml"))
+        {
+            var lines = File.ReadAllLines(workflow);
+            var name = Path.GetFileName(workflow);
+
+            for (var index = 0; index < lines.Length; index++)
+            {
+                var start = System.Text.RegularExpressions.Regex.Match(lines[index], @"^(\s*)-\s+([A-Za-z_][\w-]*):");
+                if (!start.Success)
+                {
+                    continue;
+                }
+
+                var itemIndent = start.Groups[1].Value.Length;
+                var keyIndent = itemIndent + 2;
+                var seen = new HashSet<string>(StringComparer.Ordinal) { start.Groups[2].Value };
+
+                for (var cursor = index + 1; cursor < lines.Length; cursor++)
+                {
+                    var line = lines[cursor];
+                    if (line.Trim().Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var indent = line.Length - line.TrimStart().Length;
+                    if (indent <= itemIndent)
+                    {
+                        break;
+                    }
+
+                    if (indent != keyIndent)
+                    {
+                        continue;
+                    }
+
+                    var key = System.Text.RegularExpressions.Regex.Match(line, @"^\s*([A-Za-z_][\w-]*):");
+                    if (key.Success && !seen.Add(key.Groups[1].Value))
+                    {
+                        violations.Add($"{name}:{cursor + 1} repeats '{key.Groups[1].Value}' in one step");
+                    }
+                }
+            }
+        }
+
+        Xunit.Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void GatedReleaseTrainJobsDeclareOwnerAndTracking()
     {
         // A gated placeholder may exist, but it must never read as completed work: it has to state its skip

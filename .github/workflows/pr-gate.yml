@@ -101,11 +101,15 @@ jobs:
           # Exit code 8 ("zero tests ran") is tolerated per assembly in Directory.Build.targets, because a
           # single category leaves most of them empty. That tolerance would hide a slice that ran nothing,
           # so the slice total is checked here.
-          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit 2>&1 | Tee-Object -FilePath $env:RUNNER_TEMP/slice.log
+          $log = Join-Path $env:RUNNER_TEMP 'unit-slice.log'
+          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) { throw 'The unit slice failed.' }
-          $total = Select-String -Path $env:RUNNER_TEMP/slice.log -Pattern '^\s*total:\s*(\d+)' | Select-Object -Last 1
-          if (-not $total) { throw 'The unit slice printed no summary.' }
-          if ([int]$total.Matches[0].Groups[1].Value -le 0) { throw 'The unit slice reported no tests at all.' }
+          # The runner emits the summary with ANSI colour even through a pipe, so "ESC[m  total: 6" never
+          # matches a plain start-of-line anchor. Escapes are stripped before the total is read.
+          $clean = [regex]::Replace((Get-Content -Raw -LiteralPath $log), "$([char]27)\[[0-9;]*[A-Za-z]", '')
+          $summary = [regex]::Matches($clean, '(?m)^\s*total:\s*(\d+)\s*$')
+          if ($summary.Count -eq 0) { throw 'The unit slice printed no summary.' }
+          if ([int]$summary[$summary.Count - 1].Groups[1].Value -le 0) { throw 'The unit slice reported no tests at all.' }
 
   integration-tests:
     runs-on: windows-latest
@@ -127,11 +131,15 @@ jobs:
           # Exit code 8 ("zero tests ran") is tolerated per assembly in Directory.Build.targets, because a
           # single category leaves most of them empty. That tolerance would hide a slice that ran nothing,
           # so the slice total is checked here.
-          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Integration Category=Contract Category=Ui 2>&1 | Tee-Object -FilePath $env:RUNNER_TEMP/slice.log
+          $log = Join-Path $env:RUNNER_TEMP 'integration-slice.log'
+          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Integration Category=Contract Category=Ui 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) { throw 'The integration slice failed.' }
-          $total = Select-String -Path $env:RUNNER_TEMP/slice.log -Pattern '^\s*total:\s*(\d+)' | Select-Object -Last 1
-          if (-not $total) { throw 'The integration slice printed no summary.' }
-          if ([int]$total.Matches[0].Groups[1].Value -le 0) { throw 'The integration slice reported no tests at all.' }
+          # The runner emits the summary with ANSI colour even through a pipe, so "ESC[m  total: 6" never
+          # matches a plain start-of-line anchor. Escapes are stripped before the total is read.
+          $clean = [regex]::Replace((Get-Content -Raw -LiteralPath $log), "$([char]27)\[[0-9;]*[A-Za-z]", '')
+          $summary = [regex]::Matches($clean, '(?m)^\s*total:\s*(\d+)\s*$')
+          if ($summary.Count -eq 0) { throw 'The integration slice printed no summary.' }
+          if ([int]$summary[$summary.Count - 1].Groups[1].Value -le 0) { throw 'The integration slice reported no tests at all.' }
 
   architecture-tests:
     runs-on: windows-latest
