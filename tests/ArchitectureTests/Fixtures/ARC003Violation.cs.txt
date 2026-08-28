@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
-
-internal sealed class Violation : Avalonia.Controls.Control;
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcChat.LocalRpc.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+  </ItemGroup>
+</Project>

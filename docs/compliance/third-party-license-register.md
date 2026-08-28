@@ -81,3 +81,103 @@ Field set: `Dependency | Version | License (SPDX) | Source | Copyright | Notice 
 - **Replaced/Dropped sources**: QuaZip → `System.IO.Compression`; Serial-Studio OpenSSL → .NET/OS TLS; KissFFT → source-coverage/math Oracle only (V1 uses locked MathNet.Numerics); all three must show zero build/link/distribute hits.
 - **FFmpeg GPU feature matrix** frozen: win-x64 = `vulkan,qsv,nvcodec,amf`; win-arm64 = `vulkan`; linux-x64 = `vulkan,vaapi,qsv,nvcodec`; macOS both RID core only with portfile VideoToolbox; `all/all-gpl/all-nonfree/gpl/nonfree/x264/x265/fdk-aac/opencl/opengl/avdevice` permanently disabled. `ArcMediaNative` accepts only caller-owned byte/seek/write callbacks + validated handles — no URL/scheme/socket/network entry.
 - libusb on Linux uses `libusb[core]` (udev-less netlink); hidapi ReferenceOnly; OS/driver deps closed in `NativeSystemDependencyRegistryV1` and equal to the final dependency scan.
+
+## Registered package identities
+
+Machine-checked. `RepositoryPolicyTests.EveryCentralPackageIsRegistered` asserts that this table and the
+`PackageVersion` set in `Directory.Packages.props` are the same set, so a package added centrally without a
+row here fails the `dependency-audit` gate, and a row left behind after a package is dropped fails it too.
+
+Licenses are the expressions recorded in `implementation-repository-layout.md` §12. Where §12 names a family
+rather than each package — Avalonia, SkiaSharp native assets, ASP.NET Core, Microsoft.Extensions, Silk.NET,
+Aspire, Testcontainers, Selenium, OpenTelemetry, NModbus, TextMateSharp, xunit — the family's expression
+applies to its members. Two packages still owe positive evidence beyond nupkg metadata and are tracked in
+`license-and-reuse-matrix.md` §3.2: `NetArchTest.Rules` and `NModbus.Serial` ship without license metadata,
+so the upstream LICENSE commit and the nupkg SHA-256 must be bound before release.
+
+| Package ID | Version | License (SPDX) | Introduced by |
+|---|---|---|---|
+| `AngleSharp` | 1.7.1 | MIT | Step 01/07 |
+| `Aspire.Hosting` | 13.4.6 | MIT | Step 01/12 |
+| `Aspire.Hosting.AppHost` | 13.4.6 | MIT | Step 01/12 |
+| `Aspire.Hosting.Testing` | 13.4.6 | MIT | Step 01/12 |
+| `Avalonia` | 12.1.1 | MIT | Step 01/06 |
+| `Avalonia.Desktop` | 12.1.1 | MIT | Step 01/06 |
+| `Avalonia.Headless` | 12.1.1 | MIT | Step 01/06 |
+| `Avalonia.Headless.XUnit` | 12.1.1 | MIT | Step 01/06 |
+| `Avalonia.Skia` | 12.1.1 | MIT | Step 01/06 |
+| `Avalonia.Themes.Fluent` | 12.1.1 | MIT | Step 01/06 |
+| `AWSSDK.S3` | 4.0.102 | Apache-2.0 | Step 26 |
+| `Azure.Identity` | 1.21.0 | MIT | Step 26 |
+| `Azure.Security.KeyVault.Keys` | 4.10.0 | MIT | Step 26 |
+| `Azure.Security.KeyVault.Secrets` | 4.11.0 | MIT | Step 26 |
+| `BenchmarkDotNet` | 0.15.8 | MIT | Step 21/23 |
+| `bunit` | 2.9.0 | MIT | Step 29 |
+| `CommunityToolkit.Mvvm` | 8.4.2 | MIT | Step 01/06 |
+| `coverlet.collector` | 10.0.1 | MIT | Step 01 |
+| `Cronos` | 0.13.0 | MIT | Step 13 |
+| `CSharpMath.SkiaSharp` | 0.5.1 | MIT | Step 06/10 |
+| `Dock.Avalonia` | 12.1.0 | MIT | Step 21 |
+| `DocumentFormat.OpenXml` | 3.5.1 | MIT | Step 07 |
+| `Fido2` | 4.0.1 | MIT | Step 12 |
+| `Konscious.Security.Cryptography.Argon2` | 1.3.1 | MIT | Step 12 |
+| `Markdig` | 1.3.2 | BSD-2-Clause | Step 06/09 |
+| `MathNet.Numerics` | 5.0.0 | MIT | Step 22 |
+| `Microsoft.Agents.AI` | 1.17.0 | MIT | Step 13 |
+| `Microsoft.AspNetCore.Components.Web` | 10.0.10 | MIT | Step 01/12/29 |
+| `Microsoft.AspNetCore.Components.WebAssembly` | 10.0.10 | MIT | Step 01/12/29 |
+| `Microsoft.AspNetCore.Components.WebAssembly.DevServer` | 10.0.11 | MIT | Step 01/12/29 |
+| `Microsoft.AspNetCore.Mvc.Testing` | 10.0.10 | MIT | Step 01/12/29 |
+| `Microsoft.AspNetCore.OpenApi` | 10.0.10 | MIT | Step 01/12/29 |
+| `Microsoft.AspNetCore.SignalR.Client` | 10.0.10 | MIT | Step 01/12/29 |
+| `Microsoft.CodeAnalysis.NetAnalyzers` | 10.0.400 | MIT | Step 01 |
+| `Microsoft.Data.Sqlite.Core` | 10.0.10 | MIT | Step 04 |
+| `Microsoft.Extensions.AI` | 10.8.3 | MIT | Step 01/12 |
+| `Microsoft.Extensions.ApiDescription.Server` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Hosting` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Hosting.Abstractions` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Http.Resilience` | 10.8.0 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Logging.Abstractions` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Options.ConfigurationExtensions` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Options.DataAnnotations` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Extensions.TimeProvider.Testing` | 10.8.0 | MIT | Step 01/12 |
+| `Microsoft.Extensions.Validation` | 10.0.10 | MIT | Step 01/12 |
+| `Microsoft.Maui.Controls` | 10.0.100 | MIT | Step 18/19 |
+| `Microsoft.NET.Test.Sdk` | 18.9.0 | MIT | Step 01 |
+| `ModelContextProtocol.Core` | 2.1.0 | Apache-2.0 | Step 07/14 |
+| `MQTTnet` | 5.2.0.1603 | MIT | Step 21 |
+| `NetArchTest.Rules` | 1.3.2 | MIT | Step 01 |
+| `NModbus` | 3.0.83 | MIT | Step 21 |
+| `NModbus.Serial` | 3.0.83 | MIT | Step 21 |
+| `Npgsql` | 10.0.3 | PostgreSQL | Step 04/12 |
+| `Npgsql.OpenTelemetry` | 10.0.3 | PostgreSQL | Step 04/12 |
+| `NSubstitute` | 6.1.0 | BSD-3-Clause | Step 01 |
+| `OpenTelemetry` | 1.17.0 | Apache-2.0 | Step 01/12 |
+| `OpenTelemetry.Exporter.OpenTelemetryProtocol` | 1.17.0 | Apache-2.0 | Step 01/12 |
+| `OpenTelemetry.Extensions.Hosting` | 1.17.0 | Apache-2.0 | Step 01/12 |
+| `PolyType` | 1.4.1 | MIT | Step 02/03 |
+| `Refit` | 15.0.0 | MIT | Step 02/12 |
+| `Refit.HttpClientFactory` | 15.0.0 | MIT | Step 02/12 |
+| `Selenium.Support` | 4.46.0 | Apache-2.0 | Step 29 |
+| `Selenium.WebDriver` | 4.46.0 | Apache-2.0 | Step 29 |
+| `Silk.NET.Direct3D11` | 2.23.0 | MIT | Step 07/22/24 |
+| `Silk.NET.DXGI` | 2.23.0 | MIT | Step 07/22/24 |
+| `Silk.NET.Vulkan` | 2.23.0 | MIT | Step 07/22/24 |
+| `Silk.NET.Vulkan.Extensions.EXT` | 2.23.0 | MIT | Step 07/22/24 |
+| `Silk.NET.Vulkan.Extensions.KHR` | 2.23.0 | MIT | Step 07/22/24 |
+| `SkiaSharp` | 4.151.1 | MIT | Step 01/06 |
+| `SkiaSharp.NativeAssets.Linux` | 4.151.1 | MIT | Step 01/06 |
+| `SkiaSharp.NativeAssets.macOS` | 4.151.1 | MIT | Step 01/06 |
+| `SkiaSharp.NativeAssets.WebAssembly` | 4.151.1 | MIT | Step 01/06 |
+| `SkiaSharp.NativeAssets.Win32` | 4.151.1 | MIT | Step 01/06 |
+| `SQLitePCLRaw.bundle_e_sqlite3` | 3.0.5 | Apache-2.0 | Step 04 |
+| `StreamJsonRpc` | 2.25.29 | MIT | Step 02/03 |
+| `System.IO.Ports` | 10.0.10 | MIT | Step 21 |
+| `Testcontainers` | 4.13.0 | MIT | Step 12 |
+| `Testcontainers.PostgreSql` | 4.13.0 | MIT | Step 12 |
+| `TextMateSharp` | 2.0.4 | MIT | Step 06/21 |
+| `TextMateSharp.Grammars` | 2.0.4 | MIT | Step 06/21 |
+| `Velopack` | 1.2.0 | MIT | Step 31 |
+| `xunit.runner.visualstudio` | 3.1.5 | Apache-2.0 | Step 01 |
+| `xunit.v3` | 4.0.0 | Apache-2.0 | Step 01 |

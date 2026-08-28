@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// ARC-010: a product domain type inside the shared, non-serialising Foundation building block.
 
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
+namespace ArcForges.Foundation;
 
-internal sealed class VideoTimeline;
+public sealed class VideoTimeline
+{
+    public long DurationTicks { get; init; }
+}

@@ -16,7 +16,7 @@
 | TR | Requirement 摘要 | OwningStep | Test | FG |
 |---|---|---|---|---|
 | TR-ARC-01 | 稳定序列化 ID/Revision/Sequence/Error/ResourceRef/ArtifactRef 单一落点 `ArcForges.Contracts.Foundation` | 02 | `tests/ContractCompatibilityTests` / `PublicApiContractTests` | FG.2 |
-| TR-ARC-02 | 七个合同项目引用图与 closed tagged unions（Layout §3） | 02 | `tests/ArchitectureTests` | FG.2 |
+| TR-ARC-02 | 七个合同项目引用图与 closed tagged unions（Layout §3）；合同内部可见性授予 Step 02 的四个测试程序集 | 01/02 | `RepositoryPolicyTests.ContractProjectsMatchTheFixedReferenceGraph` / `ContractAssembliesGrantInternalsToTheContractTestProjects` | FG.2 |
 | TR-IPC-01 | 产品间 StreamJsonRpc + Named Pipe/UDS JSON 本机通信 | 03 | `tests/ArchitectureTests` / `LocalRpcAotTests` | FG.2 |
 | TR-PERSIST-01 | 每产品独立 SQLite + WAL/journal/snapshot/崩溃恢复 | 04 | `tests/PersistenceRecoveryTests` | FG.3 |
 | TR-PERSIST-02 | PostgreSQL modular-monolith schema-per-module + migration Expand/Migrate/Contract | 04/12/26 | `ArcForges.Cloud.Tests` / `PersistenceRecoveryTests` | FG.3 |
@@ -40,7 +40,7 @@
 | TR-MOB-01 | MAUI shared 网络/持久化 + Android Remote Chat/Task/Approval | 18/19 | `ArcChat.Mobile.Tests` / `ArcChat.Mobile.UiTests` | FG.5 |
 | TR-MOB-02 | iOS 架构完整（Planned/Build Deferred） | 20 | `ArcChat.Mobile.Tests`（架构） | FG.5 |
 | TR-QUAL-02 | Locked restore：每项目提交 `packages.lock.json`，CI 以 `--locked-mode` 还原，篡改/散落版本/预览包三种违规各有可复现失败证据 | 01 | `tests/ArchitectureTests`（`RepositoryPolicyTests`）+ `pr-gate` locked restore 步骤 | FG.8 |
-| TR-QUAL-03 | ArchitectureTests ARC-001..ARC-013 机器强制 layout §11 引用禁止矩阵，每条规则配通过与失败 fixture | 01 | `tests/ArchitectureTests`（`ARC0XX*Tests`） | FG.1/FG.9 |
+| TR-QUAL-03 | ArchitectureTests ARC-001..ARC-013 机器强制 layout §11 引用禁止矩阵；引用方向规则跑在声明依赖图的**传递闭包**上（间接违规边同样变红并报出整条路径），类型规则跑在已加载的 `src` 程序集上；每条规则配通过 fixture 与失败 fixture，失败信息含规则 ID 与违反路径 | 01 | `tests/ArchitectureTests`（`ARC0XX*Tests`、`ProjectGraph`、`FixtureCompiler`） | FG.1/FG.9 |
 | TR-QUAL-04 | 分层 AOT/JIT/WASM 属性文件只被声明宿主 import；Desktop/ContentSandbox Native AOT、Cloud JIT、Web `RunAOTCompilation=false` 互不串线 | 01 | `RepositoryPolicyTests.LayeredBuildPropertyFilesAreImportedByExactlyTheirDeclaredHosts` | FG.5/FG.7 |
 | TR-QUAL-05 | 发布验证矩阵：四 Desktop × 5 RID Native AOT publish + `--smoke`，Cloud framework-dependent JIT publish 与 Server/Workstation GC 基线 | 01/07/31 | `docs/coverage/aot-baseline.md` / `docs/coverage/runtime-baseline.md` + `release-train` | FG.5/FG.8 |
 | TR-QUAL-06 | AGPL-3.0-only 根 LICENSE 与源文件 SPDX 头由 CI 强制；Third-Party-License-Register 覆盖每个直接依赖 | 01/30/31 | `RepositoryPolicyTests.FirstPartySourceFilesDeclareSpdx` / `RootLicenseMatchesCanonicalAgplText` | FG.0/FG.8 |

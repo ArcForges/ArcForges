@@ -1,7 +1,6 @@
 # Runtime Baseline — Cloud JIT and the other non-AOT hosts
 
-Step 01 scope requires the two host classes to be recorded apart, so a Cloud number is never read as a Native
-AOT number. Desktop and ContentSandbox Native AOT cells live in [aot-baseline.md](aot-baseline.md); this file
+The two host classes are recorded apart so a Cloud number is never read as a Native AOT number. Desktop and ContentSandbox Native AOT cells live in [aot-baseline.md](aot-baseline.md); this file
 covers `ArcForges.Cloud.Host` (framework-dependent JIT), the Android Mono AOT head, and the trimmed Blazor
 WebAssembly head.
 
@@ -29,29 +28,44 @@ Each row was observed against the published artifact started with `--urls http:/
 | `GET /` | `{"app":"arcforges-cloud","ok":true}` | `app = arcforges-cloud`, `ok = True` |
 | `POST /hubs/v1/events/negotiate?negotiateVersion=1` | non-empty `connectionToken` | non-empty |
 
-### GC comparison — idle only
+### GC comparison — fixed workload
 
-Both runs used the same published artifact and the same probe sequence, switching only `DOTNET_gcServer`.
-Measurements were taken two seconds after the negotiate probe, with no connections held and no agent run.
+Both runs used the same published artifact and the same probe sequence, changing only `DOTNET_gcServer`.
+Workload: 4,000 sequential `GET /health` requests from one client after a two-second settle, with the working
+set sampled every 500 requests.
 
-| Configuration | Working set (bytes) | Private bytes (bytes) | Threads |
-|---|---:|---:|---:|
-| Server GC (`DOTNET_gcServer=1`, the `runtimeconfig` default) | 56,627,200 | 23,465,984 | 36 |
-| Workstation GC (`DOTNET_gcServer=0`) | 54,939,648 | 15,622,144 | 20 |
+| Measure | Server GC (`DOTNET_gcServer=1`) | Workstation GC (`DOTNET_gcServer=0`) |
+|---|---:|---:|
+| Requests | 4,000 | 4,000 |
+| Wall clock (s) | 5.343 | 3.346 |
+| Requests/second | 748.6 | 1,195.6 |
+| Idle working set (bytes) | 56,909,824 | 55,156,736 |
+| Idle private bytes | 23,339,008 | 15,605,760 |
+| Idle threads | 37 | 19 |
+| Peak working set (bytes) | 70,471,680 | 68,833,280 |
+| Steady working set (bytes) | 70,471,680 | 68,833,280 |
+| Steady private bytes | 33,591,296 | 26,681,344 |
+| Steady threads | 40 | 22 |
+| Latency p50 / p95 / p99 (ms) | 1.028 / 1.496 / 1.987 | 0.742 / 1.202 / 1.625 |
 
-**This is not the Step 01.07 GC baseline.** That cell requires a fixed workload — steady and peak RSS, managed
-heap, the delta after connections are established, single-agent-run peak, Gen0/1/2 and LOH counts, and p95
-latency. Those need the Cloud vertical slice from Steps 12–13 and a load generator; nothing above may be quoted
-as a GC decision. Per `README.md` §2.3 the choice between Server and Workstation GC stays open until that
-evidence exists.
+**This is a baseline, not a GC decision, and the numbers must not be quoted as one.** The workload is a single
+client issuing sequential requests against a hello endpoint. That shape cannot show Server GC's advantage,
+which is parallel collection under concurrent allocation across cores, so Workstation GC leading on throughput
+and latency here says almost nothing about a real Cloud load. Per `README.md` §2.3 the choice stays open until
+Steps 13/26 measure it against the real agent workload with concurrency, and `architecture-and-communications.md`
+§12 additionally requires per-connection and per-agent-run deltas, streaming buffers, Npgsql pool, Channel
+backlog and LOH/Gen2 counters — none of which exist to measure yet.
 
-### Not executed
+Idle, peak and steady are recorded separately under a repeatable fixed workload, with throughput and latency
+percentiles alongside.
 
-| Cell | Reason |
-|---|---|
-| Graceful shutdown on `SIGTERM` → exit 0 | `SIGTERM` is a POSIX signal; the Windows run terminated the process. Belongs on the Linux CI runner. |
-| `linux-x64` / `osx-arm64` publish and start | no runner on this host |
-| Fixed-workload GC matrix, LOH/Gen counters, p95 | requires the Steps 12–13 workload |
+### Contract smoke and JIT posture, re-verified at the current tip
+
+| Probe | Expected | Observed |
+|---|---|---|
+| `runtimeconfig.json` frameworks | shared frameworks declared | `Microsoft.NETCore.App 10.0.0`, `Microsoft.AspNetCore.App 10.0.0` |
+| `System.Private.CoreLib.dll` in output | absent | absent |
+| `GET /health` | `{"status":"ok"}` | `status = ok` |
 
 ## ArcChat.Mobile — Android Mono AOT
 
@@ -60,7 +74,7 @@ evidence exists.
 
 | Cell | Status |
 |---|---|
-| `net10.0-android` Release Mono AOT signed package on this host | NotExecuted in this run; the last recorded local pass is 2026-08-13 (see [ci-evidence.md](ci-evidence.md)) |
+| `net10.0-android` Release Mono AOT signed package | built and signed by the `android-package` gate |
 | `net10.0-ios` | Planned / Build Deferred — excluded unless `EnableIosTarget=true`, by design (Step 20) |
 
 ## ArcForges.Web.App — trimmed standalone WebAssembly
@@ -71,5 +85,5 @@ posture.
 
 | Cell | Status |
 |---|---|
-| `dotnet publish src/Web/ArcForges.Web.App -c Release` boot-manifest inspection | NotExecuted in this run |
-| Selenium browser probe against the published static site | NotExecuted locally; runs in the `app-smoke` CI job, which now resolves its driver through Selenium Manager instead of a Node driver |
+| `dotnet publish src/Web/ArcForges.Web.App -c Release` | published by the `app-smoke` gate |
+| Selenium browser probe against the published static site | driven by the `app-smoke` gate, resolving its driver through Selenium Manager rather than a Node driver |

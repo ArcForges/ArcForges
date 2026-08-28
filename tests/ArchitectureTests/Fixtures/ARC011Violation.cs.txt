@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// ARC-011: an upstream FFmpeg struct crossing into managed code. The upstream type is declared here
+// because it must never be bindable from managed code in the first place; the rule matches its identity.
 
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
+public struct AVFrame
+{
+    public int Width;
+    public int Height;
+}
 
-internal unsafe struct Violation { public AVFrame* Frame; }
+namespace ArcForges.NativeInterop.Fixture
+{
+    public sealed class DecodedSurface
+    {
+        public AVFrame Frame;
+    }
+}

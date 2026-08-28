@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -76,17 +78,31 @@ public sealed class RepositoryPolicyTests
         Xunit.Assert.Contains("dotnet test --project tests/Web/ArcForges.Web.BrowserTests", pullRequestGate, StringComparison.Ordinal);
         Xunit.Assert.Contains("--filter-trait Category=Browser", pullRequestGate, StringComparison.Ordinal);
 
-        string[] separatelyGatedProjects =
-        [
-            Path.Combine("tests", "NativeAbiTests", "ArcForges.Tests.NativeAbiTests.csproj"),
-            Path.Combine("tests", "Web", "ArcForges.Web.BrowserTests", "ArcForges.Web.BrowserTests.csproj"),
-        ];
-        foreach (var project in separatelyGatedProjects)
+        // Exit code 8 means "zero tests ran". A category slice legitimately leaves most assemblies empty, so
+        // the tolerance is declared once, centrally, and only for taxonomy runs. It must not appear in the
+        // workflow, where it would apply to a whole slice and hide one that ran nothing.
+        var buildTargets = File.ReadAllText(Path.Combine(RepositoryRoot.Value, "Directory.Build.targets"));
+        Xunit.Assert.Contains(
+            "<PropertyGroup Condition=\"'$(IsTestProject)' == 'true' and '$(ArcForgesManagedTestTaxonomy)' == 'true'\">",
+            buildTargets,
+            StringComparison.Ordinal);
+        Xunit.Assert.Contains("--ignore-exit-code 8", buildTargets, StringComparison.Ordinal);
+
+        var strayTolerance = EnumerateRepositoryFiles("*.csproj")
+            .Where(project => File.ReadAllText(project).Contains("--ignore-exit-code", StringComparison.Ordinal))
+            .Select(project => Path.GetRelativePath(RepositoryRoot.Value, project))
+            .ToArray();
+        Xunit.Assert.True(
+            strayTolerance.Length == 0,
+            $"Exit-code tolerance belongs in Directory.Build.targets, not per project: {string.Join(", ", strayTolerance)}");
+
+        // Every slice that filters the whole solution must prove it actually ran something.
+        foreach (var slice in new[] { "Category=Unit", "Category=Integration" })
         {
-            var content = File.ReadAllText(Path.Combine(RepositoryRoot.Value, project));
-            Xunit.Assert.Contains("Condition=\"'$(ArcForgesManagedTestTaxonomy)' == 'true'\"", content, StringComparison.Ordinal);
-            Xunit.Assert.Contains("--ignore-exit-code 8", content, StringComparison.Ordinal);
+            Xunit.Assert.Contains($"--filter-trait {slice}", pullRequestGate, StringComparison.Ordinal);
         }
+
+        Xunit.Assert.Contains("reported no tests at all", pullRequestGate, StringComparison.Ordinal);
     }
 
     [Xunit.Fact]
@@ -145,6 +161,153 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void MandatedCiJobNamesArePresent()
+    {
+        // Step 01.06 fixes these names so every later step's completion gate can reference a gate by name.
+        // Renaming one silently would break those references, so the names are asserted, not just written.
+        (string Workflow, string[] Jobs)[] contracts =
+        [
+            ("pr-gate.yml",
+            [
+                "locked-restore", "format-analyzers", "build", "unit-tests", "integration-tests",
+                "architecture-tests", "suppression-audit", "no-inline-versions", "dependency-audit",
+                "secret-scan",
+            ]),
+            ("runtime-publish-smoke.yml", ["desktop-aot", "cloud-jit", "cloud-gc-baseline"]),
+            ("release-train.yml",
+            [
+                "train-desktop-aot", "train-cloud-jit", "train-maui-android", "train-ios-build",
+                "train-blazor-web", "train-native-abi-matrix", "train-install-upgrade-rollback",
+            ]),
+        ];
+
+        foreach ((string workflow, string[] jobs) in contracts)
+        {
+            var path = Path.Combine(RepositoryRoot.Value, ".github", "workflows", workflow);
+            Xunit.Assert.True(File.Exists(path), $"Missing required workflow {workflow}.");
+
+            // Job ids sit at exactly one indent level below the `jobs:` mapping.
+            var declared = File.ReadLines(path)
+                .Select(line => System.Text.RegularExpressions.Regex.Match(line, "^  ([A-Za-z0-9_-]+):\\s*$"))
+                .Where(match => match.Success)
+                .Select(match => match.Groups[1].Value)
+                .ToHashSet(StringComparer.Ordinal);
+
+            var missing = jobs.Where(job => !declared.Contains(job)).ToArray();
+            Xunit.Assert.True(missing.Length == 0, $"{workflow} is missing job(s): {string.Join(", ", missing)}");
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void WorkflowStepsDeclareEachKeyOnce()
+    {
+        // A repeated key inside one step is silently legal YAML: the last one wins. That once left an
+        // edited `run:` in place above a stale copy, so the job kept executing the old command while the
+        // file read as if it had been fixed. Duplicate sibling keys inside a list item are rejected here.
+        var violations = new List<string>();
+
+        foreach (var workflow in Directory.EnumerateFiles(
+            Path.Combine(RepositoryRoot.Value, ".github", "workflows"), "*.yml"))
+        {
+            var lines = File.ReadAllLines(workflow);
+            var name = Path.GetFileName(workflow);
+
+            for (var index = 0; index < lines.Length; index++)
+            {
+                var start = System.Text.RegularExpressions.Regex.Match(lines[index], @"^(\s*)-\s+([A-Za-z_][\w-]*):");
+                if (!start.Success)
+                {
+                    continue;
+                }
+
+                var itemIndent = start.Groups[1].Value.Length;
+                var keyIndent = itemIndent + 2;
+                var seen = new HashSet<string>(StringComparer.Ordinal) { start.Groups[2].Value };
+
+                for (var cursor = index + 1; cursor < lines.Length; cursor++)
+                {
+                    var line = lines[cursor];
+                    if (line.Trim().Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var indent = line.Length - line.TrimStart().Length;
+                    if (indent <= itemIndent)
+                    {
+                        break;
+                    }
+
+                    if (indent != keyIndent)
+                    {
+                        continue;
+                    }
+
+                    var key = System.Text.RegularExpressions.Regex.Match(line, @"^\s*([A-Za-z_][\w-]*):");
+                    if (key.Success && !seen.Add(key.Groups[1].Value))
+                    {
+                        violations.Add($"{name}:{cursor + 1} repeats '{key.Groups[1].Value}' in one step");
+                    }
+                }
+            }
+        }
+
+        Xunit.Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void GatedReleaseTrainJobsDeclareOwnerAndTracking()
+    {
+        // A gated placeholder may exist, but it must never read as completed work: it has to state its skip
+        // reason, its owning step and a tracking item in the job summary.
+        var releaseTrain = File.ReadAllText(
+            Path.Combine(RepositoryRoot.Value, ".github", "workflows", "release-train.yml"));
+
+        foreach (var gated in new[] { "train-ios-build", "train-install-upgrade-rollback" })
+        {
+            var section = releaseTrain[releaseTrain.IndexOf($"  {gated}:", StringComparison.Ordinal)..];
+            Xunit.Assert.Contains("NOT EXECUTED", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("Skip reason", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("Owning step", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("Tracking", section, StringComparison.Ordinal);
+            Xunit.Assert.Contains("GITHUB_STEP_SUMMARY", section, StringComparison.Ordinal);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void EveryCentralPackageIsRegistered()
+    {
+        // Step 01.06's dependency-audit gate must fail on an unregistered package. Repository policy
+        // forbids tracked helper scripts, so the plan's check-licenses script lives here instead, and the
+        // comparison is a set equality in both directions: an unregistered package and a stale row both fail.
+        var central = System.Text.RegularExpressions.Regex
+            .Matches(File.ReadAllText(Path.Combine(RepositoryRoot.Value, "Directory.Packages.props")),
+                "PackageVersion Include=\"([^\"]+)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var registered = System.Text.RegularExpressions.Regex
+            .Matches(File.ReadAllText(Path.Combine(RepositoryRoot.Value, "docs", "compliance", "third-party-license-register.md")),
+                @"^\| `([^`]+)` \| ", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var unregistered = central.Except(registered, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray();
+        var stale = registered.Except(central, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray();
+
+        Xunit.Assert.True(
+            unregistered.Length == 0,
+            $"Packages missing from the third-party license register: {string.Join(", ", unregistered)}");
+        Xunit.Assert.True(
+            stale.Length == 0,
+            $"Register rows with no central package: {string.Join(", ", stale)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void TrimmingSuppressionsCarryReviewEvidence()
     {
         var unconditionalSuppression = "Unconditional" + "SuppressMessage";
@@ -175,6 +338,80 @@ public sealed class RepositoryPolicyTests
         }
 
         Xunit.Assert.True(violations.Count == 0, $"Unreviewed trimming suppressions: {string.Join(", ", violations)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void TrimmingSuppressionCountStaysAtTheStep0105Baseline()
+    {
+        // Step 01.05 sets the baseline at zero and forbids it rising without an approved ADR. Counting is
+        // separate from TrimmingSuppressionsCarryReviewEvidence: a suppression can be perfectly documented
+        // and still not belong here.
+        const int baseline = 0;
+        var unconditionalSuppression = "Unconditional" + "SuppressMessage";
+
+        var suppressions = EnumerateRepositoryFiles("*.cs")
+            .SelectMany(source => File.ReadLines(source)
+                .Select((line, index) => (Source: source, Line: index + 1, Text: line))
+                .Where(entry => entry.Text.Contains(unconditionalSuppression, StringComparison.Ordinal)))
+            .Select(entry => $"{Path.GetRelativePath(RepositoryRoot.Value, entry.Source)}:{entry.Line}")
+            .ToArray();
+
+        Xunit.Assert.True(
+            suppressions.Length == baseline,
+            $"Trimming suppression count moved from {baseline} to {suppressions.Length}: {string.Join(", ", suppressions)}");
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void PublishModePropertiesEvaluateToTheirDeclaredValues()
+    {
+        // implementation-repository-layout.md §13 is explicit that a publish mode must be asserted from the
+        // evaluated value, not from the text of a project file: an import, a condition or a Directory.Build
+        // file can change the effective value without changing any single csproj. These are read back out of
+        // MSBuild's own evaluation.
+        (string Project, string Property, string Expected)[] expectations =
+        [
+            (Path.Combine("src", "ArcChat", "ArcChat.Desktop", "ArcChat.Desktop.csproj"), "PublishAot", "true"),
+            (Path.Combine("src", "ArcChat", "ArcChat.Desktop", "ArcChat.Desktop.csproj"), "TrimMode", "full"),
+            (Path.Combine("src", "DesktopHelpers", "ArcForges.ContentSandbox", "ArcForges.ContentSandbox.csproj"), "PublishAot", "true"),
+            (Path.Combine("src", "Cloud", "ArcForges.Cloud.Host", "ArcForges.Cloud.Host.csproj"), "PublishAot", "false"),
+            (Path.Combine("src", "Cloud", "ArcForges.Cloud.Host", "ArcForges.Cloud.Host.csproj"), "PublishTrimmed", "false"),
+            (Path.Combine("src", "Web", "ArcForges.Web.App", "ArcForges.Web.App.csproj"), "RunAOTCompilation", "false"),
+            (Path.Combine("src", "Web", "ArcForges.Web.App", "ArcForges.Web.App.csproj"), "PublishTrimmed", "true"),
+        ];
+
+        foreach ((string project, string property, string expected) in expectations)
+        {
+            var actual = EvaluateMsBuildProperty(Path.Combine(RepositoryRoot.Value, project), property);
+            Xunit.Assert.Equal(expected, actual, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static string EvaluateMsBuildProperty(string project, string property)
+    {
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo(
+                "dotnet", $"msbuild \"{project}\" -nologo -getProperty:{property}")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = RepositoryRoot.Value,
+            },
+        };
+
+        process.Start();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        Xunit.Assert.True(
+            process.ExitCode == 0,
+            $"Could not evaluate {property} for {project}:{Environment.NewLine}{output}{error}");
+
+        return output.Trim();
     }
 
     [Xunit.Fact]
@@ -442,6 +679,41 @@ public sealed class RepositoryPolicyTests
                 .ToArray();
 
             Xunit.Assert.Equal(graph[name], actual);
+        }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ContractAssembliesGrantInternalsToTheContractTestProjects()
+    {
+        // Step 02's Required Inputs table names these four assemblies as the consumers of contract
+        // internals: the partitioned JsonSerializerContext types are internal, so source-generation
+        // coverage, old-vs-new compatibility and generated-only purity all have to reach them. The grant
+        // is declared once in eng/build/contracts.props; this asserts the emitted metadata, per assembly.
+        string[] grantees =
+        [
+            "ArcForges.Tests.ArchitectureTests",
+            "ArcForges.Tests.ContractCompatibilityTests",
+            "ArcForges.Tests.PublicApiContractTests",
+            "ArcForges.Tests.RealtimeReconnectTests",
+        ];
+
+        string[] contracts =
+        [
+            "ArcForges.Contracts.Agent", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.LocalRpc",
+            "ArcForges.Contracts.PublicApi", "ArcForges.Contracts.Realtime", "ArcForges.Contracts.Serialization",
+            "ArcForges.Contracts.Sync",
+        ];
+
+        foreach (var contract in contracts)
+        {
+            var assembly = Assembly.Load(contract);
+            var granted = assembly.GetCustomAttributes<InternalsVisibleToAttribute>()
+                .Select(attribute => attribute.AssemblyName)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+
+            Xunit.Assert.Equal(grantees.OrderBy(value => value, StringComparer.Ordinal).ToArray(), granted);
         }
     }
 

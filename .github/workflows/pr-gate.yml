@@ -1,5 +1,13 @@
 name: CI
 
+# Job names are a contract. Every numbered step's completion gate is allowed to reference these by name
+# (`locked-restore`, `architecture-tests`, `suppression-audit`, ...), so renaming one is a plan change, not
+# a refactor. Step 01.06 fixes the ten managed gate names; the native, app, android and hook jobs below
+# predate it and keep their own names.
+#
+# Each job is deliberately self-contained rather than sharing a build through artifacts. The cost is a
+# repeated restore; the benefit is that a red job names exactly one gate and can be re-run alone.
+
 on:
   pull_request:
   push:
@@ -20,7 +28,7 @@ env:
   VCPKG_WINDOWS_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
 
 jobs:
-  managed:
+  locked-restore:
     runs-on: windows-latest
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
@@ -33,7 +41,7 @@ jobs:
           cache-dependency-path: '**/packages*.lock.json'
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
-      - name: Verify deterministic restore
+      - name: Verify the locked restore left the checkout unchanged
         shell: pwsh
         run: |
           $dirty = @(git status --porcelain --untracked-files=all)
@@ -41,10 +49,203 @@ jobs:
             $dirty | Write-Host
             throw 'Locked restore changed the checkout.'
           }
+
+  format-analyzers:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
+
+  build:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - run: dotnet build ArcForges.slnx -c Debug --no-restore
       - run: dotnet build ArcForges.slnx -c Release --no-restore
-      - name: Run the complete managed test taxonomy
-        run: dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture
+
+  unit-tests:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - run: dotnet build ArcForges.slnx -c Release --no-restore
+      - name: Run the unit slice
+        shell: pwsh
+        run: |
+          # Exit code 8 ("zero tests ran") is tolerated per assembly in Directory.Build.targets, because a
+          # single category leaves most of them empty. That tolerance would hide a slice that ran nothing,
+          # so the slice total is checked here.
+          $log = Join-Path $env:RUNNER_TEMP 'unit-slice.log'
+          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw 'The unit slice failed.' }
+          # The runner emits the summary with ANSI colour even through a pipe, so "ESC[m  total: 6" never
+          # matches a plain start-of-line anchor. Escapes are stripped before the total is read.
+          $clean = [regex]::Replace((Get-Content -Raw -LiteralPath $log), "$([char]27)\[[0-9;]*[A-Za-z]", '')
+          $summary = [regex]::Matches($clean, '(?m)^\s*total:\s*(\d+)\s*$')
+          if ($summary.Count -eq 0) { throw 'The unit slice printed no summary.' }
+          if ([int]$summary[$summary.Count - 1].Groups[1].Value -le 0) { throw 'The unit slice reported no tests at all.' }
+
+  integration-tests:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - run: dotnet build ArcForges.slnx -c Release --no-restore
+      - name: Run the integration slice
+        shell: pwsh
+        run: |
+          # Exit code 8 ("zero tests ran") is tolerated per assembly in Directory.Build.targets, because a
+          # single category leaves most of them empty. That tolerance would hide a slice that ran nothing,
+          # so the slice total is checked here.
+          $log = Join-Path $env:RUNNER_TEMP 'integration-slice.log'
+          dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Integration Category=Contract Category=Ui 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw 'The integration slice failed.' }
+          # The runner emits the summary with ANSI colour even through a pipe, so "ESC[m  total: 6" never
+          # matches a plain start-of-line anchor. Escapes are stripped before the total is read.
+          $clean = [regex]::Replace((Get-Content -Raw -LiteralPath $log), "$([char]27)\[[0-9;]*[A-Za-z]", '')
+          $summary = [regex]::Matches($clean, '(?m)^\s*total:\s*(\d+)\s*$')
+          if ($summary.Count -eq 0) { throw 'The integration slice printed no summary.' }
+          if ([int]$summary[$summary.Count - 1].Groups[1].Value -le 0) { throw 'The integration slice reported no tests at all.' }
+
+  architecture-tests:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
+      # The rules load every referenced src assembly, so this build is the analysed surface itself.
+      - run: dotnet build tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore
+      - run: dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-trait Category=Architecture
+
+  suppression-audit:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet restore tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj --locked-mode
+      - run: dotnet build tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore
+      - name: Audit trimming suppressions and their count baseline
+        run: dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-method '*TrimmingSuppression*'
+
+  no-inline-versions:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      # VerifyNoInlinePackageVersions runs before CollectPackageReferences, so restore is the gate.
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - run: dotnet build tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore
+      - name: Enforce SPDX headers and the preview-package allowlist
+        run: dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-method '*FirstPartySourceFilesDeclareSpdx*' '*LockedPackagesContainNoUnapprovedPreviewVersions*'
+
+  dependency-audit:
+    runs-on: windows-latest
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
+      - run: dotnet restore ArcForges.slnx --locked-mode
+      - name: Fail on any vulnerable package
+        shell: pwsh
+        run: |
+          $report = dotnet list ArcForges.slnx package --vulnerable --include-transitive
+          $report | Write-Host
+          if ($report -match 'has the following vulnerable packages') {
+            throw 'Vulnerable packages were reported.'
+          }
+      - run: dotnet build tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-restore
+      - name: Every central package must appear in the third-party license register
+        run: dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore --filter-method '*EveryCentralPackageIsRegistered*'
+      - name: Emit the resolved dependency graph as an SBOM artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/sbom | Out-Null
+          dotnet list ArcForges.slnx package --include-transitive --format json | Out-File -Encoding utf8 artifacts/sbom/dependency-graph.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependency-graph
+          path: artifacts/sbom/dependency-graph.json
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          fail-on-severity: high
+          license-check: true
+          vulnerability-check: true
+          show-openssf-scorecard: true
+      - name: Scan the repository for secrets
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/repo" \
+            "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" \
+            detect --source=/repo --no-banner --redact --config=/repo/.gitleaks.toml
 
   native-win-x64:
     runs-on: windows-latest
@@ -249,28 +450,6 @@ jobs:
           name: arcchat-android-arm64
           path: artifacts/android/ArcChat.Mobile-arm64-Signed.apk
 
-  security:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        if: github.event_name == 'pull_request'
-        with:
-          fail-on-severity: high
-          license-check: true
-          vulnerability-check: true
-          show-openssf-scorecard: true
-      - name: Scan the repository for secrets
-        run: |
-          docker run --rm \
-            --volume "${GITHUB_WORKSPACE}:/repo" \
-            "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" \
-            detect --source=/repo --no-banner --redact --config=/repo/.gitleaks.toml
-
   repository-hooks:
     runs-on: ubuntu-latest
     steps:
@@ -282,7 +461,21 @@ jobs:
 
   ci:
     if: always()
-    needs: [managed, native-win-x64, app-smoke, android-package, security, repository-hooks]
+    needs:
+      - locked-restore
+      - format-analyzers
+      - build
+      - unit-tests
+      - integration-tests
+      - architecture-tests
+      - suppression-audit
+      - no-inline-versions
+      - dependency-audit
+      - secret-scan
+      - native-win-x64
+      - app-smoke
+      - android-package
+      - repository-hooks
     runs-on: ubuntu-latest
     env:
       CI_NEEDS: ${{ toJSON(needs) }}

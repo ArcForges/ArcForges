@@ -1,5 +1,9 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
-
-internal sealed class Violation { private ArcNotes.Domain.Placeholder? _otherProduct; }
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcNotes.Application.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ArcChat.Domain/ArcChat.Domain.csproj" />
+  </ItemGroup>
+</Project>
+<!-- file: ArcChat.Domain.csproj -->
+<Project Sdk="Microsoft.NET.Sdk" />

@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// ARC-002: a ViewModel driving the RPC transport directly instead of going through an Application facade.
 
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
+namespace ArcChat.Presentation.Fixture
+{
+    internal sealed class ConversationListViewModel
+    {
+        private StreamJsonRpc.JsonRpc? _rpc;
 
-internal sealed class ViewModelUsesNativeHandle { private nint _handle; }
+        public bool IsConnected => _rpc is not null;
+    }
+}

@@ -10,10 +10,23 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NetArchTest.Rules" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
+  <!--
+    Step 01.04 requires the rules to run over the loaded src assemblies rather than over source text, so
+    every production project is referenced. The glob keeps the set self-maintaining: a project added to
+    src/ is analysed without editing this file.
+
+    Two projects cannot be ProjectReference targets from a net10.0 test assembly and are analysed through
+    the project-graph engine instead of the loaded-assembly engine:
+      - src/Mobile/ArcChat.Mobile (net10.0-android head)
+      - src/Web/ArcForges.Web.App (Blazor WebAssembly head; its static web assets are not consumable here)
+  -->
   <ItemGroup>
-    <ProjectReference Include="..\..\src\BuildingBlocks\ArcForges.Testing\ArcForges.Testing.csproj" />
+    <ProjectReference
+      Include="..\..\src\**\*.csproj"
+      Exclude="..\..\src\Mobile\ArcChat.Mobile\ArcChat.Mobile.csproj;..\..\src\Web\ArcForges.Web.App\ArcForges.Web.App.csproj" />
   </ItemGroup>
 </Project>

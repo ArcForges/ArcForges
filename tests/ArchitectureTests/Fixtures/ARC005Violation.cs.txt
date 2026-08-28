@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// ARC-005: a contract assembly reaching a platform-specific type. Android reference assemblies cannot be
+// resolved from net10.0, so the platform type is declared here; the rule matches on namespace identity.
 
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
+namespace Android.App
+{
+    public sealed class Activity;
+}
 
-internal sealed class Violation { private Android.App.Activity? _platform; }
+namespace ArcForges.Contracts.Fixture
+{
+    public sealed class DeviceDescriptor
+    {
+        public Android.App.Activity Host { get; init; }
+    }
+}

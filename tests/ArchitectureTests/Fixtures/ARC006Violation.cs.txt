@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-
-namespace ArcForges.Tests.ArchitectureTests.Fixtures;
-
-internal sealed class Violation { private ArcForges.Contracts.LocalRpc.Placeholder? _localRpc; }
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- file: ArcForges.Web.Infrastructure.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Contracts.LocalRpc/ArcForges.Contracts.LocalRpc.csproj" />
+  </ItemGroup>
+</Project>
