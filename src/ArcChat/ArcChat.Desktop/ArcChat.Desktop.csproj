@@ -14,6 +14,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
   </ItemGroup>
   <ItemGroup>
@@ -23,5 +24,8 @@
     <ProjectReference Include="..\ArcChat.LocalRpc\ArcChat.LocalRpc.csproj" />
     <ProjectReference Include="..\ArcChat.Presentation\ArcChat.Presentation.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Observability\ArcForges.Observability.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcChat.Tests.Ui" />
   </ItemGroup>
 </Project>

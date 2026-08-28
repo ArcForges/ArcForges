@@ -4,7 +4,7 @@ using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 
-namespace ArcForges.Web.BrowserTests;
+namespace ArcForges.Web.Tests.Browser;
 
 public sealed class SkeletonTests
 {

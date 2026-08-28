@@ -14,6 +14,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
   </ItemGroup>
   <ItemGroup>
@@ -23,5 +24,8 @@
     <ProjectReference Include="..\ArcScope.Infrastructure\ArcScope.Infrastructure.csproj" />
     <ProjectReference Include="..\ArcScope.LocalRpc\ArcScope.LocalRpc.csproj" />
     <ProjectReference Include="..\ArcScope.Presentation\ArcScope.Presentation.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcScope.Tests.Ui" />
   </ItemGroup>
 </Project>

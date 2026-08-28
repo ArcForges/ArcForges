@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Web.BrowserTests</AssemblyName>
-    <RootNamespace>ArcForges.Web.BrowserTests</RootNamespace>
+    <RootNamespace>ArcForges.Web.Tests.Browser</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>

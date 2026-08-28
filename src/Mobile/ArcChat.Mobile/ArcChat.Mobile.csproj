@@ -10,7 +10,7 @@
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
     <ApplicationTitle>ArcChat Mobile</ApplicationTitle>
-    <ApplicationId>com.arcforges.arcchat</ApplicationId>
+    <ApplicationId>com.arcforges.arcchat.mobile</ApplicationId>
     <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
     <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>

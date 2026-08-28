@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Testing\ArcForges.Testing.csproj" />
+    <ProjectReference Include="..\ArcNotes.Desktop\ArcNotes.Desktop.csproj" />
     <ProjectReference Include="..\ArcNotes.Presentation\ArcNotes.Presentation.csproj" />
   </ItemGroup>
 </Project>
