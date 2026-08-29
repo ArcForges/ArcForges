@@ -84,6 +84,38 @@ convention throughout (`capability_call`, `deletion_pending`). The provenance di
 | `ResourceRef` versus `ResourceRefDto` | Step 02.00 and architecture §5.2 call the type `ResourceRef`; the data catalog and Step 02.01's LocalRpc sketches call the same wire shape `ResourceRefDto`. This assembly uses `ResourceRef`. Step 02.01 has to settle whether the `Dto` suffix is a second name for one type or a separate projection. |
 | Layout §3 root namespace for `ArcForges.Contracts.Foundation` | Still open from Step 01. §3's table assigns the namespace `ArcForges.Contracts`; the project and this substep's body both use `ArcForges.Contracts.Foundation`, which is what is implemented. |
 
+## Build-system change carried on this branch, 2026-08-30
+
+Not part of the 02.00 completion gate and not a substep. A user instruction on 2026-08-30 asked for the
+Ninja/`sccache` build split to land on the existing branch, so it is a **separate commit** on
+`feat/af02-00-contracts-foundation` and updates PR #32 rather than opening a second pull request. It touches
+no contract source, so the 02.00 verdicts above stand unchanged.
+
+What changed:
+
+- Every CMake preset is Ninja and is named for the RID it produces (`win-x64-runtime-shared`,
+  `linux-x64-shim-static-asan`, ...), so configure, build and test share one preset name. The Visual Studio
+  generators and all VS-only preset settings are gone.
+- Both platforms compile through `sccache` (`CMAKE_C_COMPILER_LAUNCHER`/`CMAKE_CXX_COMPILER_LAUNCHER`), pinned
+  to 0.17.0 — Scoop on Windows, a SHA-256-verified tarball on Linux — with a real `actions/cache` entry per
+  platform. Windows sets `CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` to `Embedded`, without which every MSVC
+  compilation is non-cacheable.
+- `pr-gate.yml` keeps the Windows CMake/CTest/P-Invoke job and loses the `msbuild win.slnx` and pure-MSBuild
+  ABI-test steps. `win.slnx` is now built by the Windows-only `win-slnx-release-x64` `pre-push` hook, which
+  skips itself on non-Windows so the Ubuntu repository-hooks job is unaffected. No `win.slnx` CI hook was
+  added.
+
+Evidence is in [`docs/coverage/ci-evidence.md`](../coverage/ci-evidence.md) under *Step 02.00 — Ninja/sccache
+build split*: both Windows presets configure, build, install and pass CTest (1/1 and 4/4); `sccache` goes from
+15 misses / 0 hits cold to 15 hits / 0 misses warm with zero non-cacheable compilations; managed P/Invoke
+passes over the staged artifacts; and the `pre-push` hook builds all five `.vcxproj` with 0 warnings.
+
+**No Linux host was available.** The `linux-x64-*` presets were validated by parsing and `cmake
+--list-presets` only. Their compile, CTest and `sccache` behaviour is asserted by `deep-check.yml` and is not
+claimed here. Five deviation rows are recorded in [`docs/deviations.md`](../deviations.md): the preset
+renaming, the Ninja generator, the unlocked `sccache` tool, the `win.slnx` move out of CI, and this
+branch-sharing decision.
+
 ## Exact next action
 
 Step 02.01 — `Contracts.LocalRpc` StreamJsonRpc interface contracts — on its own branch and worktree. It

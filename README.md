@@ -27,9 +27,9 @@ There is exactly **one Mobile app** (`ArcChat.Mobile`) and exactly **one Web app
 
 ## Build
 
-Prerequisites are .NET SDK 10.0.400, CMake 4.3+, a C++20 compiler, and the `maui-android`
-and `wasm-tools` workloads. Native dependencies use a standard vcpkg installation; install and integration
-commands are documented in [deploy/README.md](deploy/README.md).
+Prerequisites are .NET SDK 10.0.400, CMake 4.3+, Ninja, `sccache`, a C++20 compiler, and the
+`maui-android` and `wasm-tools` workloads. Native dependencies use a standard vcpkg installation; install and
+integration commands are documented in [deploy/README.md](deploy/README.md).
 
 NuGet uses its standard per-user cache outside the checkout. Keeping dependency sources outside the repository
 prevents generated package files from being mistaken for ArcForges-owned source by static analysis.
@@ -38,25 +38,49 @@ prevents generated package files from being mistaken for ArcForges-owned source 
 dotnet restore ArcForges.slnx --locked-mode
 dotnet build ArcForges.slnx -c Release --no-restore
 dotnet test --solution ArcForges.slnx -c Release --no-build
-
-cmake --preset windows-msvc-x64-runtime-shared
-cmake --build --preset windows-msvc-x64-runtime-shared-release
-ctest --preset windows-msvc-x64-runtime-shared
-
-cmake --preset windows-msvc-x64-shim-static
-cmake --build --preset windows-msvc-x64-shim-static-release
-ctest --preset windows-msvc-x64-shim-static
 ```
+
+The CMake presets use Ninja on every platform and are named for the RID they produce, so the configure, build
+and test preset all share one name:
+
+```powershell
+# From a shell where cl.exe is on PATH - see the vcvars64 note below.
+cmake --preset win-x64-runtime-shared
+cmake --build --preset win-x64-runtime-shared
+ctest --preset win-x64-runtime-shared
+
+cmake --preset win-x64-shim-static
+cmake --build --preset win-x64-shim-static
+ctest --preset win-x64-shim-static
+```
+
+Ninja needs the MSVC environment, so initialise it with `vcvars64.bat` first. **`vcvars64.bat` overwrites
+`VCPKG_ROOT` with the vcpkg copy bundled inside Visual Studio.** `implementation-repository-layout.md` §9.1
+pins one vcpkg baseline and lock file as the only dependency root, so building against that second copy
+resolves a different package graph. Capture and restore the pinned value around it:
+
+```bat
+set "PINNED_VCPKG=%VCPKG_ROOT%"
+call "<VS install>\VC\Auxiliary\Build\vcvars64.bat"
+set "VCPKG_ROOT=%PINNED_VCPKG%"
+```
+
+Both platforms run the compiler through `sccache`, wired in by the presets as
+`CMAKE_C_COMPILER_LAUNCHER`/`CMAKE_CXX_COMPILER_LAUNCHER`. On Windows the presets also set
+`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` to `Embedded` for `Debug` and `RelWithDebInfo`, because separate PDB
+files make every compilation non-cacheable. `sccache --show-stats` reports whether a build was served from
+cache.
 
 Windows contributors can run `vcpkg integrate install` once and open `win.slnx`; its native projects are
 independent MSBuild `.vcxproj` definitions and do not call CMake. Build `Release|x64` or `Release|ARM64`
-directly in Visual Studio.
+directly in Visual Studio. CI does not build `win.slnx`; a Windows-only `pre-push` hook does, so the two
+Windows entry points cannot drift apart unnoticed.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full verification flow.
 
-Pull requests check the managed solution, both Windows native build paths, repository hooks, real
-application/browser smoke tests, one Android package, dependency review, and secret scanning. C# CodeQL plus
-Linux clang-tidy, sanitizers, and fuzzing run in the weekly/manual deep check. These gates do not depend on
-GitHub's paid Code Quality feature.
+Pull requests check the managed solution, the Windows CMake native path, repository hooks, real
+application/browser smoke tests, one Android package, dependency review, and secret scanning; `win.slnx` is
+covered by the local `pre-push` hook instead. C# CodeQL plus Linux clang-tidy, sanitizers, and fuzzing run in
+the weekly/manual deep check. These gates do not depend on GitHub's paid Code Quality feature.
 
 ## Architecture
 

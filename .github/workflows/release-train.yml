@@ -183,17 +183,22 @@ jobs:
             "--overlay-ports=${{ github.workspace }}/eng/native/vcpkg/ports"
           if ($LASTEXITCODE) { throw 'vcpkg install failed.' }
       - name: Build and stage both native profiles
-        shell: pwsh
+        shell: cmd
         run: |
-          foreach ($profile in 'runtime-shared', 'shim-static') {
-            $preset = "windows-msvc-x64-$profile"
-            cmake --preset $preset
-            if ($LASTEXITCODE) { throw "$preset configure failed." }
-            cmake --build --preset "$preset-release"
-            if ($LASTEXITCODE) { throw "$preset build failed." }
-            cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
-            if ($LASTEXITCODE) { throw "$preset install failed." }
-          }
+          @echo on
+          rem The presets use Ninja, so cl.exe has to be on PATH. vcvars64 also overwrites VCPKG_ROOT with
+          rem the Visual Studio bundled vcpkg, so the pinned checkout is captured and restored around it.
+          set "ARCFORGES_VCPKG_ROOT=%VCPKG_ROOT%"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "ARCFORGES_VS=%%i"
+          if not defined ARCFORGES_VS exit /b 1
+          call "%ARCFORGES_VS%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          set "VCPKG_ROOT=%ARCFORGES_VCPKG_ROOT%"
+          echo VCPKG_ROOT=%VCPKG_ROOT%
+          for %%p in (runtime-shared shim-static) do (
+            cmake --preset win-x64-%%p || exit /b 1
+            cmake --build --preset win-x64-%%p || exit /b 1
+            cmake --install artifacts/cmake/win-x64/%%p || exit /b 1
+          )
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: arcforges-native-win-x64

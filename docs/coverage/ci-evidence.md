@@ -196,11 +196,72 @@ AOT, so that is what the gate asserts. A type that is neither listed nor reachab
 was exactly that case and the gate caught it during development, and `UnregisteredProbe` holds the behaviour
 in place permanently.
 
+## Step 02.00 — Ninja/sccache build split, 2026-08-30
+
+Windows 11 Pro for Workstations 10.0.26200, Visual Studio 18 Community MSVC x64, CMake 4.3, Ninja,
+sccache 0.17.0, vcpkg `36677bbd0b3bf11da7376e62e14bffcc54d2eaeb` at `C:\vcpkg`, branch
+`feat/af02-00-contracts-foundation`.
+
+The Visual Studio CMake generators are gone; every preset is Ninja and is named for the RID it produces, so
+one name serves the configure, build and test preset. `win.slnx` moved out of CI and into a Windows-only
+`pre-push` hook.
+
+| Check | Command | Result |
+|---|---|---|
+| Preset inventory | `cmake --list-presets` / `--list-presets=build` / `=test` | Passed; only the `win-x64-*` presets are offered on this host, the `linux-x64-*`/`osx-*` presets are filtered out by their `hostSystemName` conditions |
+| CMake runtime-shared | `cmake --preset win-x64-runtime-shared`, `cmake --build --preset win-x64-runtime-shared`, `cmake --install artifacts/cmake/win-x64/runtime-shared` | Passed; configure, build and install all succeeded |
+| CTest runtime-shared | `ctest --preset win-x64-runtime-shared --output-on-failure` | Passed; 1/1 tests passed |
+| CMake shim-static | `cmake --preset win-x64-shim-static`, `cmake --build --preset win-x64-shim-static`, `cmake --install artifacts/cmake/win-x64/shim-static` | Passed; configure, build and install all succeeded |
+| CTest shim-static | `ctest --preset win-x64-shim-static --output-on-failure` | Passed; 4/4 tests passed |
+| sccache cold | `sccache --zero-stats`, both presets, `sccache --show-stats` | `Compile requests 15`, `Cache hits 0`, `Cache misses 15`, **`Non-cacheable compilations 0`** |
+| sccache warm | rebuild from a clean binary directory against the same `SCCACHE_DIR`, `sccache --show-stats` | `Compile requests 15`, **`Cache hits 15`**, `Cache misses 0`, hit rate `100.00%`, `Non-cacheable compilations 0` |
+| Managed P/Invoke over CMake artifacts | `ArcForges.Tests.NativeAbiTests.exe` against the DLLs staged into `artifacts/stage/native/win-x64/native` | Passed; `Total: 2, Errors: 0, Failed: 0, Skipped: 1` |
+| `win.slnx` pre-push hook | `pre-commit run --hook-stage pre-push win-slnx-release-x64` | Passed; MSBuild located through `vswhere`, all five `.vcxproj` built, `Build succeeded. 0 Warning(s) 0 Error(s) Time Elapsed 00:00:17.50` |
+| Hook stage separation | `pre-commit run --all-files` (default stage) | Passed; runs `clang-format` only — the `pre-push` hook is not selected, which is what keeps the Ubuntu repository-hooks job free of MSBuild |
+| Workflow syntax | all four workflows and `.pre-commit-config.yaml` parsed with a duplicate-key-strict YAML loader | Passed; no duplicate keys. `grep -rniE 'msbuild\|win\.slnx' .github/` returns only the pull-request template checklist item |
+| Pinned sccache identity | local `sccache --version`; `curl` the Linux musl release tarball and `sha256sum` it | `sccache 0.17.0` on Windows. `sccache-v0.17.0-x86_64-unknown-linux-musl.tar.gz` hashes to `67c4a96dd237c1f518f6b36083f270f9976d516f1e57fce891755ea782e50006`, which is exactly the `SCCACHE_SHA256` pinned in `deep-check.yml` |
+| Locked restore | `dotnet restore ArcForges.slnx --locked-mode` | Passed; all projects up to date |
+| Format | `dotnet format ArcForges.slnx --verify-no-changes --no-restore` | Passed; no output |
+| Release build | `dotnet build ArcForges.slnx -c Release --no-restore` | Passed; 0 warnings, 0 errors |
+| Full managed taxonomy | `dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture` | Passed; 300 total, 0 failed — unchanged by the build split |
+| Architecture + policy | `dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore` | Passed; 48 total, 0 failed, 0 skipped. `RepositoryPolicyTests` still finds the vcpkg toolchain line in the rewritten `CMakePresets.json`, still finds no tracked `.ps1`/`.sh`, and still finds `vcpkg.exe integrate install` in `deploy/README.md` |
+
+### `vcvars64.bat` overwrites `VCPKG_ROOT`
+
+Ninja needs `cl.exe` on `PATH`, so a Windows CMake build now has to run inside `vcvars64.bat`. Probing the
+variable either side of that call showed it is not preserved:
+
+```
+before  VCPKG_ROOT=C:\vcpkg
+after   VCPKG_ROOT=C:\Program Files\Microsoft Visual Studio\18\Community\VC\vcpkg
+```
+
+`implementation-repository-layout.md` §9.1 pins one vcpkg baseline and lock file as the only dependency
+root, and the substitution is not a harmless duplicate: configure failed in `FindFFMPEG.cmake` against the
+Visual Studio copy. Every
+Windows CMake entry point — the local run, `pr-gate.yml`, and `release-train.yml` — now captures the pinned
+value into `ARCFORGES_VCPKG_ROOT` before `vcvars64.bat` and restores it after, and `pr-gate.yml` fails the
+job if the restore did not take.
+
+### `Embedded` debug information is what makes MSVC cacheable
+
+`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>` is not a style choice.
+Separate PDB files make every MSVC compilation non-cacheable, so sccache would report a healthy-looking
+`Compile requests` count with a permanent 0% hit rate. The `Non-cacheable compilations` assertion in both
+workflows is there to fail loudly if anything reintroduces `/Zi`.
+
+### Not executed here
+
+No Linux host was available in this scope. The `linux-x64-*` presets were validated by parsing and by
+`cmake --list-presets` on Windows — which confirms they are well-formed and correctly host-filtered, and
+nothing more. Their compile, CTest, and sccache behaviour is asserted by `deep-check.yml`, and this document
+does not claim a Linux result that was not produced.
+
 ## Executed earlier
 
 | Check | Environment | Result |
 |---|---|---|
 | Android package | Windows | `android-arm64` Mono AOT signed APK publish passed locally, 2026-08-13 |
-| CMake native x64 | Windows | both `windows-msvc-x64-*` profiles: build + CTest + install + managed P/Invoke passed locally, 2026-08-13 |
-| Independent VCXPROJ x64 | Windows | `MSBuild win.slnx /p:Configuration=Release /p:Platform=x64` + managed P/Invoke passed locally, 2026-08-13 |
+| CMake native x64 | Windows | both `windows-msvc-x64-*` profiles: build + CTest + install + managed P/Invoke passed locally, 2026-08-13. Superseded on 2026-08-30 by the Ninja `win-x64-*` presets recorded above |
+| Independent VCXPROJ x64 | Windows | `MSBuild win.slnx /p:Configuration=Release /p:Platform=x64` + managed P/Invoke passed locally, 2026-08-13. Now covered by the `win-slnx-release-x64` `pre-push` hook rather than by CI |
 | Deep native/security | weekly/manual | C# CodeQL, Linux clang-tidy, ASan/UBSan, libFuzzer — reported by the Deep check workflow; not a pull-request blocker |

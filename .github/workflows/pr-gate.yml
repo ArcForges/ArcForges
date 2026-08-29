@@ -26,6 +26,7 @@ env:
   TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
   VCPKG_COMMIT: 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
   VCPKG_WINDOWS_X64_GRAPH_REVISION: runtime-gpu-and-static-shims-v1
+  SCCACHE_VERSION: 0.17.0
 
 jobs:
   locked-restore:
@@ -254,7 +255,6 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
-      - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
       - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
         with:
           cmakeVersion: '4.3.3'
@@ -308,7 +308,7 @@ jobs:
           key: vcpkg-classic-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-${{ hashFiles('eng/native/vcpkg/ports/**') }}
           restore-keys: |
             vcpkg-classic-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_WINDOWS_X64_GRAPH_REVISION }}-
-      - name: Install native dependencies and enable MSBuild integration
+      - name: Install native dependencies
         shell: pwsh
         run: |
           $root = $env:VCPKG_ROOT
@@ -327,23 +327,64 @@ jobs:
             'mdflib[core]:x64-windows-static-md' `
             "--overlay-ports=${{ github.workspace }}/eng/native/vcpkg/ports"
           if ($LASTEXITCODE) { throw 'vcpkg install failed.' }
-          & "$root/vcpkg.exe" integrate install
-          if ($LASTEXITCODE) { throw 'vcpkg integrate install failed.' }
+      - name: Install the pinned sccache
+        shell: pwsh
+        run: |
+          # Scoop pins the version explicitly so a compiler cache upgrade is a reviewed change, not a
+          # silent one that invalidates every cached object.
+          iwr -useb get.scoop.sh | iex
+          scoop install sccache@${{ env.SCCACHE_VERSION }}
+          if ($LASTEXITCODE) { throw 'sccache install failed.' }
+          "$env:USERPROFILE\scoop\shims" >> $env:GITHUB_PATH
+          "SCCACHE_DIR=$env:RUNNER_TEMP\sccache" >> $env:GITHUB_ENV
+      - name: Restore the sccache objects
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ env.SCCACHE_VERSION }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-${{ hashFiles('native/**', 'CMakePresets.json') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ env.SCCACHE_VERSION }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-
       - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
       - run: dotnet restore ArcForges.slnx --locked-mode
       - name: Build, test, and stage both CMake profiles
+        shell: cmd
+        run: |
+          @echo on
+          rem vcvars64 is required because the presets use Ninja, which needs cl.exe on PATH. It also
+          rem overwrites VCPKG_ROOT with the Visual Studio bundled vcpkg, so the pinned checkout is
+          rem captured first and restored after: implementation-repository-layout.md §9.1 pins one vcpkg
+          rem baseline and lock as the only dependency root, and the bundled copy resolves a different graph.
+          set "ARCFORGES_VCPKG_ROOT=%VCPKG_ROOT%"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "ARCFORGES_VS=%%i"
+          if not defined ARCFORGES_VS exit /b 1
+          call "%ARCFORGES_VS%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          set "VCPKG_ROOT=%ARCFORGES_VCPKG_ROOT%"
+          if /i not "%VCPKG_ROOT%"=="%ARCFORGES_VCPKG_ROOT%" exit /b 1
+          echo VCPKG_ROOT=%VCPKG_ROOT%
+
+          sccache --start-server || exit /b 1
+          sccache --zero-stats || exit /b 1
+
+          for %%p in (runtime-shared shim-static) do (
+            cmake --preset win-x64-%%p || exit /b 1
+            cmake --build --preset win-x64-%%p || exit /b 1
+            ctest --preset win-x64-%%p || exit /b 1
+            cmake --install artifacts/cmake/win-x64/%%p || exit /b 1
+          )
+
+          sccache --show-stats || exit /b 1
+      - name: Prove sccache actually cached
         shell: pwsh
         run: |
-          foreach ($profile in 'runtime-shared', 'shim-static') {
-            $preset = "windows-msvc-x64-$profile"
-            cmake --preset $preset
-            if ($LASTEXITCODE) { throw "$preset configure failed." }
-            cmake --build --preset "$preset-release"
-            if ($LASTEXITCODE) { throw "$preset build failed." }
-            ctest --preset $preset
-            if ($LASTEXITCODE) { throw "$preset tests failed." }
-            cmake --install "artifacts/cmake/windows-msvc-x64/$profile" --config Release
-            if ($LASTEXITCODE) { throw "$preset install failed." }
+          # A launcher that is configured but never consulted is worthless, and a build that produces only
+          # non-cacheable calls looks green while caching nothing. Both are checked, not assumed.
+          $stats = sccache --show-stats | Out-String
+          $stats | Write-Host
+          $requests = [int]([regex]::Match($stats, 'Compile requests\s+(\d+)').Groups[1].Value)
+          $nonCacheable = [int]([regex]::Match($stats, 'Non-cacheable compilations\s+(\d+)').Groups[1].Value)
+          if ($requests -le 0) { throw 'sccache saw no compile requests; the launcher is not wired up.' }
+          if ($nonCacheable -gt 0) {
+            throw "sccache reported $nonCacheable non-cacheable compilations; debug information must stay Embedded."
           }
       - name: Run managed P/Invoke over app-local CMake artifacts
         shell: pwsh
@@ -361,14 +402,6 @@ jobs:
           } finally {
             $nativeDlls | ForEach-Object { Remove-Item -LiteralPath (Join-Path $testOutput $_.Name) -Force -ErrorAction SilentlyContinue }
           }
-      - name: Build the independent Windows solution
-        run: msbuild win.slnx -m -restore:false -p:Configuration=Release -p:Platform=x64 -v:minimal -clp:Summary
-      - name: Run the app-local native ABI test executable
-        shell: pwsh
-        run: |
-          $test = Join-Path '${{ github.workspace }}' 'artifacts/bin/dotnet/windows/ArcForges.Tests.NativeAbiTests/Release/net10.0/ArcForges.Tests.NativeAbiTests.exe'
-          & $test
-          if ($LASTEXITCODE) { throw 'Managed P/Invoke over pure MSBuild artifacts failed.' }
 
   app-smoke:
     runs-on: ubuntu-latest
