@@ -108,10 +108,12 @@ must be asserted from the evaluated value rather than from the text of a project
 
 ## Step 01.06 — CI job-name contract, 2026-08-28
 
-`pr-gate.yml` now declares the ten mandated gate names, `runtime-publish-smoke.yml` exists with the desktop
-matrix and two separate Cloud jobs, and `release-train.yml` declares all seven `train-*` jobs. The names are
-themselves asserted by `RepositoryPolicyTests.MandatedCiJobNamesArePresent`, and the two gated placeholders
-are asserted to declare skip reason, owning step and tracking item by
+At the Step 01.06 checkpoint, `pr-gate.yml` declared the ten mandated gate names, `runtime-publish-smoke.yml`
+existed with the desktop matrix and two separate Cloud jobs, and `release-train.yml` declared all seven
+`train-*` jobs. The later authorized CI topology change removed only the redundant standalone `build` gate;
+the current `pr-gate.yml` retains the nine remaining managed names, which are asserted by
+`RepositoryPolicyTests.MandatedCiJobNamesArePresent`. The two gated placeholders are asserted to declare skip
+reason, owning step and tracking item by
 `GatedReleaseTrainJobsDeclareOwnerAndTracking`, so a placeholder cannot quietly start reading as done work.
 
 The five violation drills Step 01.06 makes release-blocking were executed against the exact command the
@@ -205,6 +207,11 @@ sccache 0.17.0, vcpkg `36677bbd0b3bf11da7376e62e14bffcc54d2eaeb` at `C:\vcpkg`, 
 The Visual Studio CMake generators are gone; every preset is Ninja and is named for the RID it produces, so
 one name serves the configure, build and test preset. `win.slnx` moved out of CI and into a Windows-only
 `pre-push` hook.
+
+The managed PR gate keeps Release compilation in the self-contained `unit-tests` and `integration-tests`
+jobs immediately before their `--no-build` test slices. The standalone `build` job and its separate Debug
+compilation are intentionally not part of the PR gate; this documents the CI topology and is not a hosted
+CI result.
 
 | Check | Command | Result |
 |---|---|---|

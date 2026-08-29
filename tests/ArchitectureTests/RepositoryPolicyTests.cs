@@ -165,11 +165,13 @@ public sealed class RepositoryPolicyTests
     {
         // Step 01.06 fixes these names so every later step's completion gate can reference a gate by name.
         // Renaming one silently would break those references, so the names are asserted, not just written.
+        // The standalone build gate was later removed by an authorized CI decision; Release compilation is
+        // retained in the self-contained unit/integration gates, and a separate Debug gate is not required.
         (string Workflow, string[] Jobs)[] contracts =
         [
             ("pr-gate.yml",
             [
-                "locked-restore", "format-analyzers", "build", "unit-tests", "integration-tests",
+                "locked-restore", "format-analyzers", "unit-tests", "integration-tests",
                 "architecture-tests", "suppression-audit", "no-inline-versions", "dependency-audit",
                 "secret-scan",
             ]),

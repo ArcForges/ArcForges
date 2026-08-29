@@ -1,9 +1,8 @@
 name: CI
 
-# Job names are a contract. Every numbered step's completion gate is allowed to reference these by name
-# (`locked-restore`, `architecture-tests`, `suppression-audit`, ...), so renaming one is a plan change, not
-# a refactor. Step 01.06 fixes the ten managed gate names; the native, app, android and hook jobs below
-# predate it and keep their own names.
+# Managed gate names are stable unless explicitly changed by an authorized CI decision. The standalone
+# `build` job is intentionally absent: Release compilation remains in the self-contained test jobs, and a
+# separate Debug PR gate is not required. The native, app, android and hook jobs keep their existing names.
 #
 # Each job is deliberately self-contained rather than sharing a build through artifacts. The cost is a
 # repeated restore; the benefit is that a red job names exactly one gate and can be re-run alone.
@@ -66,22 +65,9 @@ jobs:
       - run: dotnet restore ArcForges.slnx --locked-mode
       - run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
 
-  build:
-    runs-on: windows-latest
-    env:
-      NUGET_PACKAGES: ${{ github.workspace }}\..\nuget-packages
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
-        with:
-          global-json-file: global.json
-          cache: true
-          cache-dependency-path: '**/packages*.lock.json'
-      - run: dotnet workload install maui-android wasm-tools --skip-manifest-update
-      - run: dotnet restore ArcForges.slnx --locked-mode
-      - run: dotnet build ArcForges.slnx -c Debug --no-restore
-      - run: dotnet build ArcForges.slnx -c Release --no-restore
-
+  # There is no standalone `build` job. The unit/integration jobs run `dotnet build -c Release --no-restore`
+  # before their `--no-build` test commands, so compile, analyzer, and IL2026/IL3050 errors still fail the
+  # gate. A separate Debug configuration is no longer part of the PR gate.
   unit-tests:
     runs-on: windows-latest
     env:
@@ -497,7 +483,6 @@ jobs:
     needs:
       - locked-restore
       - format-analyzers
-      - build
       - unit-tests
       - integration-tests
       - architecture-tests

@@ -104,6 +104,9 @@ What changed:
   ABI-test steps. `win.slnx` is now built by the Windows-only `win-slnx-release-x64` `pre-push` hook, which
   skips itself on non-Windows so the Ubuntu repository-hooks job is unaffected. No `win.slnx` CI hook was
   added.
+- The standalone managed `build` job was removed from `pr-gate.yml`; Debug is not a required PR gate.
+  `unit-tests` and `integration-tests` retain their Release build immediately before `--no-build`, and the
+  aggregate `ci` job no longer lists the removed job.
 
 Evidence is in [`docs/coverage/ci-evidence.md`](../coverage/ci-evidence.md) under *Step 02.00 — Ninja/sccache
 build split*: both Windows presets configure, build, install and pass CTest (1/1 and 4/4); `sccache` goes from
@@ -112,9 +115,9 @@ passes over the staged artifacts; and the `pre-push` hook builds all five `.vcxp
 
 **No Linux host was available.** The `linux-x64-*` presets were validated by parsing and `cmake
 --list-presets` only. Their compile, CTest and `sccache` behaviour is asserted by `deep-check.yml` and is not
-claimed here. Five deviation rows are recorded in [`docs/deviations.md`](../deviations.md): the preset
-renaming, the Ninja generator, the unlocked `sccache` tool, the `win.slnx` move out of CI, and this
-branch-sharing decision.
+claimed here. Six deviation rows are recorded in [`docs/deviations.md`](../deviations.md): the preset
+renaming, the Ninja generator, the unlocked `sccache` tool, the `win.slnx` move out of CI, the standalone
+build-gate removal, and this branch-sharing decision.
 
 ## Exact next action
 
