@@ -8,7 +8,8 @@
 - [ ] Locked restore
 - [ ] Managed build and tests
 - [ ] Relevant Native AOT/JIT/Android/Web publish smoke
-- [ ] Relevant CMake and independent Windows MSBuild native build
+- [ ] Relevant CMake native presets (configure, build, CTest)
+- [ ] `win.slnx` built by the Windows `pre-push` hook, for native changes
 - [ ] Formatting, analyzers, CodeQL, licenses, and notices
 
 ## Architecture and compatibility

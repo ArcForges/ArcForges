@@ -165,11 +165,13 @@ public sealed class RepositoryPolicyTests
     {
         // Step 01.06 fixes these names so every later step's completion gate can reference a gate by name.
         // Renaming one silently would break those references, so the names are asserted, not just written.
+        // The standalone build gate was later removed by an authorized CI decision; Release compilation is
+        // retained in the self-contained unit/integration gates, and a separate Debug gate is not required.
         (string Workflow, string[] Jobs)[] contracts =
         [
             ("pr-gate.yml",
             [
-                "locked-restore", "format-analyzers", "build", "unit-tests", "integration-tests",
+                "locked-restore", "format-analyzers", "unit-tests", "integration-tests",
                 "architecture-tests", "suppression-audit", "no-inline-versions", "dependency-audit",
                 "secret-scan",
             ]),
@@ -680,6 +682,38 @@ public sealed class RepositoryPolicyTests
 
             Xunit.Assert.Equal(graph[name], actual);
         }
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
+    public void ContractFoundationEmitsNoForbiddenAssemblyReference()
+    {
+        // Step 02.00 names this assertion directly: the emitted reference list of Contracts.Foundation must
+        // not contain the runtime Guard helper, UI, a database provider or a transport. It complements the
+        // declared-graph rule rather than replacing it — the compiler prunes references a project declares
+        // but never uses, so emitted metadata can only ever prove the absence of *used* references, while
+        // ARC-005 proves the absence of declared ones. Both directions matter.
+        string[] forbidden =
+        [
+            "ArcForges.Foundation", "Avalonia", "Npgsql", "Microsoft.Data.", "StreamJsonRpc", "Refit",
+            "Microsoft.AspNetCore.SignalR", "SQLitePCLRaw",
+        ];
+
+        var assembly = Assembly.Load("ArcForges.Contracts.Foundation");
+        var referenced = assembly.GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        var violations = referenced
+            .Where(name => forbidden.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal)))
+            .ToArray();
+
+        Xunit.Assert.True(
+            violations.Length == 0,
+            $"ArcForges.Contracts.Foundation references: {string.Join(", ", violations)}");
+
+        // Guards the assertion itself: an assembly that referenced nothing would pass vacuously.
+        Xunit.Assert.Contains("System.Text.Json", referenced);
     }
 
     [Xunit.Fact]

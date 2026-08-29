@@ -150,18 +150,23 @@ dotnet build ArcForges.slnx -c Release --no-restore
 dotnet test --solution ArcForges.slnx -c Release --no-build
 ```
 
-Native (repeat for the `shim-static` profile; on Windows, run `vcpkg integrate install` once and build
-`win.slnx`):
+Native (repeat for the `shim-static` profile). Presets are Ninja everywhere and named for the RID, so
+configure, build and test share one name. On Windows, initialise MSVC with `vcvars64.bat` first and then
+**restore `VCPKG_ROOT`**, which vcvars64 overwrites with the Visual Studio bundled vcpkg:
 
 ```bash
-cmake --preset windows-msvc-x64-runtime-shared
-cmake --build --preset windows-msvc-x64-runtime-shared-release
-ctest --preset windows-msvc-x64-runtime-shared
+cmake --preset win-x64-runtime-shared
+cmake --build --preset win-x64-runtime-shared
+ctest --preset win-x64-runtime-shared
 ```
 
-Repository hooks: `pre-commit run --all-files`. The PR gate additionally runs the full managed test taxonomy,
-both Windows native build paths, app/browser smoke tests, one Android package, dependency review, and secret
-scanning; fill in [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md).
+The compiler runs through `sccache` on Windows and Linux; `sccache --show-stats` shows hits and misses.
+
+Repository hooks: `pre-commit run --all-files`. `win.slnx` is built by a Windows-only `pre-push` hook
+(`pre-commit run --hook-stage pre-push win-slnx-release-x64`) and never by CI. The PR gate additionally runs
+the full managed test taxonomy, the Windows CMake native path, app/browser smoke tests, one Android package,
+dependency review, and secret scanning; fill in
+[.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md).
 
 ## References
 

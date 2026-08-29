@@ -8,3 +8,33 @@ repos:
       - id: clang-format
         files: ^native/.*\.(c|h|cpp|hpp|cc|hh|cxx|hxx|ipp|tpp|inc|m|mm)$
         types_or: [c++, c, objective-c]
+
+  - repo: local
+    hooks:
+      # win.slnx is maintained independently of CMake and is deliberately not built by CI: the hosted
+      # Windows job builds the CMake presets only. Without a local gate the two Windows entry points would
+      # drift silently, so this runs on push, on Windows, where MSBuild and the user-wide vcpkg integration
+      # actually exist.
+      #
+      # It is a pre-push hook rather than pre-commit because a full native link is far too slow to sit in
+      # front of every commit. The Ubuntu repository-hooks job runs the default (pre-commit) stage and so
+      # never reaches this hook; the os.name guard makes the skip explicit rather than incidental, so the
+      # hook is also harmless if someone runs every stage on Linux.
+      #
+      # The body is an inline command by design: repository policy forbids tracked .ps1/.sh helpers, and
+      # RepositoryPolicyTests enforces that.
+      - id: win-slnx-release-x64
+        name: win.slnx Release|x64 (Windows only)
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+        entry: >-
+          python -c 'import os,subprocess,sys;
+          (sys.exit(0) if os.name != "nt" else None);
+          vswhere = os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe");
+          found = subprocess.run([vswhere, "-latest", "-products", "*", "-requires", "Microsoft.Component.MSBuild",
+          "-find", r"MSBuild\**\Bin\MSBuild.exe"], capture_output=True, text=True).stdout.splitlines();
+          (sys.exit("MSBuild was not found; install the Visual Studio C++ workload.") if not found else None);
+          sys.exit(subprocess.run([found[0].strip(), "win.slnx", "-m", "-restore:false",
+          "-p:Configuration=Release", "-p:Platform=x64", "-v:minimal", "-clp:Summary"]).returncode)'

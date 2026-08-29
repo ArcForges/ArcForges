@@ -9,12 +9,22 @@
     {
       "name": "base",
       "hidden": true,
+      "generator": "Ninja",
       "cacheVariables": {
         "ARCFORGES_BUILD_TESTS": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_STANDARD": "17",
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "sccache",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER_LAUNCHER": "sccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "sccache"
       }
     },
     {
@@ -34,69 +44,70 @@
       }
     },
     {
-      "name": "windows-msvc-x64-runtime-shared",
-      "displayName": "Windows MSVC x64 / shared dependencies",
-      "inherits": "runtime-shared",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "x64",
-      "binaryDir": "${sourceDir}/artifacts/cmake/windows-msvc-x64/runtime-shared",
+      "name": "win-x64",
+      "hidden": true,
+      "inherits": "sccache",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/win-x64",
+        "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux-x64",
+      "hidden": true,
+      "inherits": "sccache",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/linux-x64"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "win-x64-runtime-shared",
+      "displayName": "Windows x64 / shared dependencies",
+      "inherits": ["win-x64", "runtime-shared"],
+      "binaryDir": "${sourceDir}/artifacts/cmake/win-x64/runtime-shared",
+      "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows"
-      },
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+      }
     },
     {
-      "name": "windows-msvc-x64-shim-static",
-      "displayName": "Windows MSVC x64 / static shim dependencies",
-      "inherits": "shim-static",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "x64",
-      "binaryDir": "${sourceDir}/artifacts/cmake/windows-msvc-x64/shim-static",
+      "name": "win-x64-shim-static",
+      "displayName": "Windows x64 / static shim dependencies",
+      "inherits": ["win-x64", "shim-static"],
+      "binaryDir": "${sourceDir}/artifacts/cmake/win-x64/shim-static",
       "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/win-x64",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
-      },
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+      }
     },
     {
-      "name": "linux-clang-x64-runtime-shared",
-      "displayName": "Linux Clang x64 / shared dependencies",
-      "inherits": "runtime-shared",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/linux-clang-x64/runtime-shared",
+      "name": "linux-x64-runtime-shared",
+      "displayName": "Linux x64 / shared dependencies",
+      "inherits": ["linux-x64", "runtime-shared"],
+      "binaryDir": "${sourceDir}/artifacts/cmake/linux-x64/runtime-shared",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/linux-x64",
         "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic"
-      },
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+      }
     },
     {
-      "name": "linux-clang-x64-shim-static",
-      "displayName": "Linux Clang x64 / static shim dependencies",
-      "inherits": "shim-static",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/linux-clang-x64/shim-static",
+      "name": "linux-x64-shim-static",
+      "displayName": "Linux x64 / static shim dependencies",
+      "inherits": ["linux-x64", "shim-static"],
+      "binaryDir": "${sourceDir}/artifacts/cmake/linux-x64/shim-static",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/linux-x64",
         "VCPKG_TARGET_TRIPLET": "x64-linux"
-      },
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+      }
     },
     {
-      "name": "macos-clang-x64-runtime-shared",
-      "displayName": "macOS Clang x64 / shared dependencies",
+      "name": "osx-x64-runtime-shared",
+      "displayName": "macOS x64 / shared dependencies",
       "inherits": "runtime-shared",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-x64/runtime-shared",
+      "binaryDir": "${sourceDir}/artifacts/cmake/osx-x64/runtime-shared",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "x86_64",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/osx-x64",
         "VCPKG_TARGET_TRIPLET": "x64-osx-dynamic"
@@ -104,13 +115,11 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
-      "name": "macos-clang-x64-shim-static",
-      "displayName": "macOS Clang x64 / static shim dependencies",
+      "name": "osx-x64-shim-static",
+      "displayName": "macOS x64 / static shim dependencies",
       "inherits": "shim-static",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-x64/shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/osx-x64/shim-static",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "x86_64",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/osx-x64",
         "VCPKG_TARGET_TRIPLET": "x64-osx"
@@ -118,13 +127,11 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
-      "name": "macos-clang-arm64-runtime-shared",
-      "displayName": "macOS Clang arm64 / shared dependencies",
+      "name": "osx-arm64-runtime-shared",
+      "displayName": "macOS arm64 / shared dependencies",
       "inherits": "runtime-shared",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-arm64/runtime-shared",
+      "binaryDir": "${sourceDir}/artifacts/cmake/osx-arm64/runtime-shared",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/osx-arm64",
         "VCPKG_TARGET_TRIPLET": "arm64-osx-dynamic"
@@ -132,13 +139,11 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
-      "name": "macos-clang-arm64-shim-static",
-      "displayName": "macOS Clang arm64 / static shim dependencies",
+      "name": "osx-arm64-shim-static",
+      "displayName": "macOS arm64 / static shim dependencies",
       "inherits": "shim-static",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-arm64/shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/osx-arm64/shim-static",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/osx-arm64",
         "VCPKG_TARGET_TRIPLET": "arm64-osx"
@@ -146,24 +151,22 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
-      "name": "macos-clang-arm64-host-tools",
+      "name": "osx-arm64-host-tools",
       "displayName": "macOS arm64 / shader tools",
       "inherits": "base",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/artifacts/cmake/macos-clang-arm64/host-tools",
+      "binaryDir": "${sourceDir}/artifacts/cmake/osx-arm64/host-tools",
       "cacheVariables": {
         "ARCFORGES_NATIVE_PROFILE": "host-tools",
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "VCPKG_TARGET_TRIPLET": "arm64-osx"
       },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
-      "name": "linux-clang-x64-runtime-shared-asan",
-      "displayName": "Linux Clang x64 / shared / ASan+UBSan",
-      "inherits": "linux-clang-x64-runtime-shared",
-      "binaryDir": "${sourceDir}/artifacts/cmake/linux-clang-x64/runtime-shared-asan",
+      "name": "linux-x64-runtime-shared-asan",
+      "displayName": "Linux x64 / shared / ASan+UBSan",
+      "inherits": "linux-x64-runtime-shared",
+      "binaryDir": "${sourceDir}/artifacts/cmake/linux-x64/runtime-shared-asan",
       "cacheVariables": {
         "ARCFORGES_BUILD_FUZZERS": "ON",
         "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
@@ -173,10 +176,10 @@
       }
     },
     {
-      "name": "linux-clang-x64-shim-static-asan",
-      "displayName": "Linux Clang x64 / static / ASan+UBSan",
-      "inherits": "linux-clang-x64-shim-static",
-      "binaryDir": "${sourceDir}/artifacts/cmake/linux-clang-x64/shim-static-asan",
+      "name": "linux-x64-shim-static-asan",
+      "displayName": "Linux x64 / static / ASan+UBSan",
+      "inherits": "linux-x64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/linux-x64/shim-static-asan",
       "cacheVariables": {
         "ARCFORGES_BUILD_FUZZERS": "ON",
         "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
@@ -187,28 +190,28 @@
     }
   ],
   "buildPresets": [
-    { "name": "windows-msvc-x64-runtime-shared-release", "configurePreset": "windows-msvc-x64-runtime-shared", "configuration": "Release" },
-    { "name": "windows-msvc-x64-shim-static-release", "configurePreset": "windows-msvc-x64-shim-static", "configuration": "Release" },
-    { "name": "linux-clang-x64-runtime-shared-release", "configurePreset": "linux-clang-x64-runtime-shared" },
-    { "name": "linux-clang-x64-shim-static-release", "configurePreset": "linux-clang-x64-shim-static" },
-    { "name": "macos-clang-x64-runtime-shared-release", "configurePreset": "macos-clang-x64-runtime-shared" },
-    { "name": "macos-clang-x64-shim-static-release", "configurePreset": "macos-clang-x64-shim-static" },
-    { "name": "macos-clang-arm64-runtime-shared-release", "configurePreset": "macos-clang-arm64-runtime-shared" },
-    { "name": "macos-clang-arm64-shim-static-release", "configurePreset": "macos-clang-arm64-shim-static" },
-    { "name": "macos-clang-arm64-host-tools-release", "configurePreset": "macos-clang-arm64-host-tools" },
-    { "name": "linux-clang-x64-runtime-shared-asan", "configurePreset": "linux-clang-x64-runtime-shared-asan" },
-    { "name": "linux-clang-x64-shim-static-asan", "configurePreset": "linux-clang-x64-shim-static-asan" }
+    { "name": "win-x64-runtime-shared", "configurePreset": "win-x64-runtime-shared" },
+    { "name": "win-x64-shim-static", "configurePreset": "win-x64-shim-static" },
+    { "name": "linux-x64-runtime-shared", "configurePreset": "linux-x64-runtime-shared" },
+    { "name": "linux-x64-shim-static", "configurePreset": "linux-x64-shim-static" },
+    { "name": "osx-x64-runtime-shared", "configurePreset": "osx-x64-runtime-shared" },
+    { "name": "osx-x64-shim-static", "configurePreset": "osx-x64-shim-static" },
+    { "name": "osx-arm64-runtime-shared", "configurePreset": "osx-arm64-runtime-shared" },
+    { "name": "osx-arm64-shim-static", "configurePreset": "osx-arm64-shim-static" },
+    { "name": "osx-arm64-host-tools", "configurePreset": "osx-arm64-host-tools" },
+    { "name": "linux-x64-runtime-shared-asan", "configurePreset": "linux-x64-runtime-shared-asan" },
+    { "name": "linux-x64-shim-static-asan", "configurePreset": "linux-x64-shim-static-asan" }
   ],
   "testPresets": [
-    { "name": "windows-msvc-x64-runtime-shared", "configurePreset": "windows-msvc-x64-runtime-shared", "configuration": "Release", "output": { "outputOnFailure": true } },
-    { "name": "windows-msvc-x64-shim-static", "configurePreset": "windows-msvc-x64-shim-static", "configuration": "Release", "output": { "outputOnFailure": true } },
-    { "name": "linux-clang-x64-runtime-shared", "configurePreset": "linux-clang-x64-runtime-shared", "output": { "outputOnFailure": true } },
-    { "name": "linux-clang-x64-shim-static", "configurePreset": "linux-clang-x64-shim-static", "output": { "outputOnFailure": true } },
-    { "name": "macos-clang-x64-runtime-shared", "configurePreset": "macos-clang-x64-runtime-shared", "output": { "outputOnFailure": true } },
-    { "name": "macos-clang-x64-shim-static", "configurePreset": "macos-clang-x64-shim-static", "output": { "outputOnFailure": true } },
-    { "name": "macos-clang-arm64-runtime-shared", "configurePreset": "macos-clang-arm64-runtime-shared", "output": { "outputOnFailure": true } },
-    { "name": "macos-clang-arm64-shim-static", "configurePreset": "macos-clang-arm64-shim-static", "output": { "outputOnFailure": true } },
-    { "name": "linux-clang-x64-runtime-shared-asan", "configurePreset": "linux-clang-x64-runtime-shared-asan", "output": { "outputOnFailure": true } },
-    { "name": "linux-clang-x64-shim-static-asan", "configurePreset": "linux-clang-x64-shim-static-asan", "output": { "outputOnFailure": true } }
+    { "name": "win-x64-runtime-shared", "configurePreset": "win-x64-runtime-shared", "output": { "outputOnFailure": true } },
+    { "name": "win-x64-shim-static", "configurePreset": "win-x64-shim-static", "output": { "outputOnFailure": true } },
+    { "name": "linux-x64-runtime-shared", "configurePreset": "linux-x64-runtime-shared", "output": { "outputOnFailure": true } },
+    { "name": "linux-x64-shim-static", "configurePreset": "linux-x64-shim-static", "output": { "outputOnFailure": true } },
+    { "name": "osx-x64-runtime-shared", "configurePreset": "osx-x64-runtime-shared", "output": { "outputOnFailure": true } },
+    { "name": "osx-x64-shim-static", "configurePreset": "osx-x64-shim-static", "output": { "outputOnFailure": true } },
+    { "name": "osx-arm64-runtime-shared", "configurePreset": "osx-arm64-runtime-shared", "output": { "outputOnFailure": true } },
+    { "name": "osx-arm64-shim-static", "configurePreset": "osx-arm64-shim-static", "output": { "outputOnFailure": true } },
+    { "name": "linux-x64-runtime-shared-asan", "configurePreset": "linux-x64-runtime-shared-asan", "output": { "outputOnFailure": true } },
+    { "name": "linux-x64-shim-static-asan", "configurePreset": "linux-x64-shim-static-asan", "output": { "outputOnFailure": true } }
   ]
 }

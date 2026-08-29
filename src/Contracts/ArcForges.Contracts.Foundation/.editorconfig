@@ -1,0 +1,6 @@
+# Step 02.00 fixes the shape of ArcResult<T> including its static Success/Failure factories, which are the
+# named entry points the rest of the contract set calls. CA1000 discourages static members on generic types
+# because they force explicit type arguments; for a result type that is the intended, idiomatic API and the
+# alternative would be a second non-generic helper class holding the same two methods.
+[Results/ArcResult.cs]
+dotnet_diagnostic.CA1000.severity = none
