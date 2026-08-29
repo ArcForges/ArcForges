@@ -1,0 +1,4 @@
+# UnregisteredProbe exists precisely so the coverage check has a type that is never registered and never
+# instantiated. CA1812 asks for it to be removed, which would delete the counter-evidence.
+[FoundationSourceGenerationCoverageTests.cs]
+dotnet_diagnostic.CA1812.severity = none

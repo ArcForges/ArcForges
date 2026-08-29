@@ -15,7 +15,7 @@
 
 | TR | Requirement 摘要 | OwningStep | Test | FG |
 |---|---|---|---|---|
-| TR-ARC-01 | 稳定序列化 ID/Revision/Sequence/Error/ResourceRef/ArtifactRef 单一落点 `ArcForges.Contracts.Foundation` | 02 | `tests/ContractCompatibilityTests` / `PublicApiContractTests` | FG.2 |
+| TR-ARC-01 | 稳定序列化 ID/Revision/Sequence/Error/ResourceRef/ArtifactRef 单一落点 `ArcForges.Contracts.Foundation`；身份与版本原语透明序列化为裸标量，枚举为冻结小写字符串，未知值在边界拒绝；双源生成上下文（严格/入站）覆盖全部公共线类型 | 02.00 | `tests/ContractCompatibilityTests`（golden round-trip、源生成覆盖、演进与校验）/ `tests/ContractSchemaTests`（golden 文档形状） | FG.2 |
 | TR-ARC-02 | 七个合同项目引用图与 closed tagged unions（Layout §3）；合同内部可见性授予 Step 02 的四个测试程序集 | 01/02 | `RepositoryPolicyTests.ContractProjectsMatchTheFixedReferenceGraph` / `ContractAssembliesGrantInternalsToTheContractTestProjects` | FG.2 |
 | TR-IPC-01 | 产品间 StreamJsonRpc + Named Pipe/UDS JSON 本机通信 | 03 | `tests/ArchitectureTests` / `LocalRpcAotTests` | FG.2 |
 | TR-PERSIST-01 | 每产品独立 SQLite + WAL/journal/snapshot/崩溃恢复 | 04 | `tests/PersistenceRecoveryTests` | FG.3 |

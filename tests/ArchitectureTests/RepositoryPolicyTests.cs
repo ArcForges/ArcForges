@@ -684,6 +684,38 @@ public sealed class RepositoryPolicyTests
 
     [Xunit.Fact]
     [Xunit.Trait("Category", "Architecture")]
+    public void ContractFoundationEmitsNoForbiddenAssemblyReference()
+    {
+        // Step 02.00 names this assertion directly: the emitted reference list of Contracts.Foundation must
+        // not contain the runtime Guard helper, UI, a database provider or a transport. It complements the
+        // declared-graph rule rather than replacing it — the compiler prunes references a project declares
+        // but never uses, so emitted metadata can only ever prove the absence of *used* references, while
+        // ARC-005 proves the absence of declared ones. Both directions matter.
+        string[] forbidden =
+        [
+            "ArcForges.Foundation", "Avalonia", "Npgsql", "Microsoft.Data.", "StreamJsonRpc", "Refit",
+            "Microsoft.AspNetCore.SignalR", "SQLitePCLRaw",
+        ];
+
+        var assembly = Assembly.Load("ArcForges.Contracts.Foundation");
+        var referenced = assembly.GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        var violations = referenced
+            .Where(name => forbidden.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal)))
+            .ToArray();
+
+        Xunit.Assert.True(
+            violations.Length == 0,
+            $"ArcForges.Contracts.Foundation references: {string.Join(", ", violations)}");
+
+        // Guards the assertion itself: an assembly that referenced nothing would pass vacuously.
+        Xunit.Assert.Contains("System.Text.Json", referenced);
+    }
+
+    [Xunit.Fact]
+    [Xunit.Trait("Category", "Architecture")]
     public void ContractAssembliesGrantInternalsToTheContractTestProjects()
     {
         // Step 02's Required Inputs table names these four assemblies as the consumers of contract

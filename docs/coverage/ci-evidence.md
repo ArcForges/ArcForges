@@ -160,6 +160,42 @@ executing the old command. `RepositoryPolicyTests.WorkflowStepsDeclareEachKeyOnc
 sibling key inside any workflow list item. Drill: re-injecting a second `run:` fails it with
 `pr-gate.yml:82 repeats 'run' in one step`; reverted, green.
 
+## Step 02.00 — Contracts.Foundation stable primitives, 2026-08-29
+
+Windows 11 Pro for Workstations 10.0.26200, .NET SDK 10.0.400, branch `feat/af02-00-contracts-foundation`.
+
+| Check | Command | Result |
+|---|---|---|
+| Locked restore | `dotnet restore ArcForges.slnx --locked-mode` | Passed |
+| Format | `dotnet format ArcForges.slnx --verify-no-changes --no-restore` | Passed |
+| Release build | `dotnet build ArcForges.slnx -c Release --no-restore` | Passed; 0 warnings, 0 errors |
+| Full managed taxonomy | `dotnet test --solution ArcForges.slnx -c Release --no-build --no-restore -p:ArcForgesManagedTestTaxonomy=true --filter-trait Category=Unit Category=Integration Category=Contract Category=Ui Category=Architecture` | Passed; **300 total, 280 passed, 20 skipped, 0 failed** |
+| Contract compatibility | `dotnet test --project tests/ContractCompatibilityTests/ArcForges.Tests.ContractCompatibilityTests.csproj -c Release --no-build --no-restore` | Passed; 111 total, 111 passed |
+| Contract schema | `dotnet test --project tests/ContractSchemaTests/ArcForges.Tests.ContractSchemaTests.csproj -c Release --no-build --no-restore` | Passed; 69 total, 69 passed |
+| Architecture + policy | `dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build --no-restore` | Passed; 48 total, 48 passed |
+
+### Reverse-failure drills
+
+| Injected violation | Gate | Observed failure | Reverted |
+|---|---|---|---|
+| Changed `"revision":7` to `8` in `golden/foundation/v1/resource-ref-local.json` | `FoundationGoldenTests.SerialisingTheFixtureProducesTheCommittedBytes` | exit 2 — `Assert.Equal() Failure: Strings differ` | yes |
+| `Contracts.Foundation` given a ProjectReference to `ArcForges.Foundation` plus a `typeof` usage | `RepositoryPolicyTests.ContractFoundationEmitsNoForbiddenAssemblyReference`, `ARC-005`, and the contract reference graph | exit 2, three tests red — `ArcForges.Contracts.Foundation references: ArcForges.Foundation` and `[ARC-005 Contracts stay pure] ArcForges.Contracts.Foundation -> ArcForges.Foundation` | yes |
+
+Two results from these drills are worth recording because they bound what the gates can prove.
+
+**A `const` usage emits no assembly reference.** The purity drill first probed
+`ArcForges.Foundation.AssemblyPlaceholder.Name`, a `const string`, and the emitted-reference assertion did
+*not* fire — the compiler inlines constants, so no reference is written. Redone with `typeof(...)`, which does
+emit one, all three gates fired. This is precisely why the declared-graph rule (ARC-005) is the primary purity
+gate and the emitted-reference check only complements it.
+
+**Deleting a `[JsonSerializable]` for a still-reachable type does not fail coverage, correctly.** Removing the
+registration for `LocalResourceLocator` left the coverage assertion green, because the generator still emits
+metadata for it through `ResourceRef`. Having compile-time metadata is the property that matters for Native
+AOT, so that is what the gate asserts. A type that is neither listed nor reachable does fail: `ErrorCategory`
+was exactly that case and the gate caught it during development, and `UnregisteredProbe` holds the behaviour
+in place permanently.
+
 ## Executed earlier
 
 | Check | Environment | Result |

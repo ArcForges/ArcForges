@@ -175,6 +175,9 @@
           "xunit.v3.runner.common": "[4.0.0]"
         }
       },
+      "arcforges.contracts.foundation": {
+        "type": "Project"
+      },
       "arcforges.testing": {
         "type": "Project"
       }
