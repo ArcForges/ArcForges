@@ -69,7 +69,7 @@
     <PackageVersion Include="Refit" Version="15.0.0" />
     <PackageVersion Include="Refit.HttpClientFactory" Version="15.0.0" />
     <PackageVersion Include="Selenium.Support" Version="4.46.0" />
-    <PackageVersion Include="Selenium.WebDriver" Version="4.46.0" />
+    <PackageVersion Include="Selenium.WebDriver" Version="4.48.0" />
     <PackageVersion Include="Silk.NET.Direct3D11" Version="2.23.0" />
     <PackageVersion Include="Silk.NET.DXGI" Version="2.23.0" />
     <PackageVersion Include="Silk.NET.Vulkan" Version="2.23.0" />
