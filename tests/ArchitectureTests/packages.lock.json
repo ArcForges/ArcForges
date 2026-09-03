@@ -1240,7 +1240,9 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.Contracts.Agent": "[1.0.0, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0, )"
+          "ArcForges.Contracts.Foundation": "[1.0.0, )",
+          "PolyType": "[1.4.1, )",
+          "StreamJsonRpc": "[2.25.29, )"
         }
       },
       "arcforges.contracts.publicapi": {
@@ -1375,7 +1377,6 @@
         "dependencies": {
           "ArcForges.Contracts.PublicApi": "[1.0.0, )",
           "ArcForges.Contracts.Realtime": "[1.0.0, )",
-          "ArcForges.Contracts.Serialization": "[1.0.0, )",
           "ArcForges.Web.Application": "[1.0.0, )"
         }
       },

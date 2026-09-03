@@ -6,7 +6,7 @@ completion claim, Git objects and test artifacts win.
 
 ## Status
 
-**Step 02 is OPEN.** Substep 02.00 is complete; 02.01 through 02.06 have not started.
+**Step 02 is OPEN.** Substeps 02.00 and 02.01 are complete; 02.02 through 02.06 have not started.
 
 Step 01 closed before this began. Every Required Input 02.00 names was verified present on `main` at
 `6e3bc0f`: the seven contract shells, the `InternalsVisibleTo` grant to four test assemblies, the AOT and
@@ -19,7 +19,7 @@ trim analyzers, `eng/build/rpc-attach.props`, ARC-005/007/008/009 as real enforc
 | Substep | State | Evidence |
 |---|---|---|
 | 02.00 Contracts.Foundation stable primitives + dual source-generation context | Complete | 14 identity types, `Revision`/`Sequence`, `ArcError`/`ArcResult`, `ResourceRef`/`ArtifactRef`/`LocalResourceLocator`, the closed `ArtifactProvenance` union, paging, four wire enums, and both `JsonSerializerContext` types. 14 golden samples; 180 contract tests across the two contract test projects; purity asserted from emitted metadata as well as the declared graph |
-| 02.01 Contracts.LocalRpc StreamJsonRpc interfaces | Not started | — |
+| 02.01 Contracts.LocalRpc StreamJsonRpc interfaces | Complete | 96 RPC methods across 4 interfaces (ILocalHubControlRpc, IArcNotesRpcV1, IArcScopeRpcV1, IArcSlateRpcV1), IArcForgesProviderProxyGroup composite proxy, typed connection notices, dual STJ context (LocalRpcJsonContext, LocalRpcInboundJsonContext), PolyType shape witness, canonical contracts manifest (contracts/localrpc/v1/localrpc-contracts.v1.json), 18 golden JSON samples, 162 passing contract compatibility tests, 75 passing contract schema tests, 48 passing architecture tests |
 | 02.02 Contracts.PublicApi Refit generated-only | Not started | — |
 | 02.03 Contracts.Realtime SignalR | Not started | — |
 | 02.04 Agent / Remote Tool Bridge / Sync shared contracts | Not started | — |
@@ -119,8 +119,42 @@ claimed here. Six deviation rows are recorded in [`docs/deviations.md`](../devia
 renaming, the Ninja generator, the unlocked `sccache` tool, the `win.slnx` move out of CI, the standalone
 build-gate removal, and this branch-sharing decision.
 
+## 02.01 completion gate
+
+> Strongly typed StreamJsonRpc interface contracts complete; proxy group interface generated; ARC-007 interface
+> purity and ARC-009 proxy metadata asserted; write mutation envelopes complete; absence of NotImplementedException
+> verified; dual STJ context and PolyType shape witness registered; 18 JSON goldens committed and asserted.
+
+| Requirement | Verdict |
+|---|---|
+| StreamJsonRpc interface contracts complete | **Met** — 96 RPC methods across 4 interfaces (`ILocalHubControlRpc` 7 methods + 2 events, `IArcNotesRpcV1` 23 methods, `IArcScopeRpcV1` 27 methods, `IArcSlateRpcV1` 39 methods). All interfaces decorated with `[JsonRpcContract]`, `[GenerateShape(IncludeMethods = MethodShapeFlags.PublicInstance)]`, `partial`, and inherit `IDisposable` |
+| Composite proxy group | **Met** — `IArcForgesProviderProxyGroup` interface decorated with `[JsonRpcContract]`, `[GenerateShape]`, and `[JsonRpcProxyInterfaceGroup(typeof(IArcNotesRpcV1), typeof(IArcScopeRpcV1), typeof(IArcSlateRpcV1))]` |
+| Assembly proxy export & ARC-009 | **Met** — `[assembly: ExportRpcContractProxies]` in `Properties/AssemblyInfo.cs`; ARC-009 asserted by `ArchitectureTests` and `ContractCompatibilityTests` (with counter-evidence) |
+| Interface shape purity & ARC-007 | **Met** — No properties on contracts, no generic methods, no method overloads, return types `Task<ArcResult<T>>` or `ValueTask`/`ValueTask<T>`, last parameter `CancellationToken`, events `EventHandler<T>`, zero banned types (`object`, `dynamic`, `Type`, `JsonElement`, `Dictionary<*, object>`); counter-evidence tests pass |
+| Write mutation envelope & `ExpectedRevision` | **Met** — Every write mutation request on product interfaces carries `CommandId`, `Actor` (`ActorContextDto`), `TargetResource` (`ResourceRef`), `ExpectedRevision` (`long`), `IssuedAtUtc`, `DeadlineUtc`, `CorrelationId`; counter-evidence tests pass |
+| Absence of `NotImplementedException` | **Met** — Zero occurrences of `NotImplementedException` in `src/Contracts/ArcForges.Contracts.LocalRpc/` |
+| Dual STJ context and PolyType witness | **Met** — `LocalRpcJsonContext` (strict, Disallow unmapped members) and `LocalRpcInboundJsonContext` (tolerant, Skip unmapped members); `LocalRpcShapeWitness` PolyType shape witness for reflection-free formatting |
+| LocalRpc JSON goldens & schema validation | **Met** — 18 committed golden JSON samples under `tests/ContractCompatibilityTests/golden/localrpc/v1/`; byte equality, structural round-trip and repeatability asserted; independent schema parsing without internals access verified in `ArcForges.Tests.ContractSchemaTests` |
+| Canonical contract catalog manifest | **Met** — Committed at `contracts/localrpc/v1/localrpc-contracts.v1.json` cataloging all 96 methods, capabilities, risk levels (R0-R4), and operation flags matching `protocol-contract-catalog.md` §3.4 |
+
+## Decisions taken in 02.01
+
+**`ResourceRef` versus `ResourceRefDto` is settled.**
+`ArcForges.Contracts.Foundation.ResourceRef` is used directly across all LocalRpc contracts and DTOs.
+Creating a duplicate `ResourceRefDto` with identical fields would fragment type identity and require redundant
+mapping layers.
+
+**`IArcForgesProviderProxyGroup` is declared as an `interface`.**
+`StreamJsonRpc.JsonRpcProxyInterfaceGroupAttribute` enforces `AttributeTargets.Interface` at compile time.
+The design sketch in `02-contracts-and-code-generation.md` illustrated a class; declaring an interface extending
+the three product interfaces satisfies both StreamJsonRpc Roslyn analyzers and compile-time proxy generation.
+
+**`NEVER` compilation symbol defined in `ArcForges.Contracts.LocalRpc.csproj`.**
+PolyType's `GenerateShapeAttribute` carries `[Conditional("NEVER")]`, causing Roslyn to omit the attribute from
+IL metadata by default. Defining `NEVER` in the csproj ensures the attribute is emitted into assembly metadata,
+satisfying `ArchitectureRules.Arc009` and reflection assertions.
+
 ## Exact next action
 
-Step 02.01 — `Contracts.LocalRpc` StreamJsonRpc interface contracts — on its own branch and worktree. It
-consumes the primitives this substep froze and must settle the `ResourceRef`/`ResourceRefDto` naming before
-it declares its DTOs.
+Step 02.02 — `Contracts.PublicApi` Refit generated-only contracts on branch `feat/af02-02-contracts-publicapi`.
+

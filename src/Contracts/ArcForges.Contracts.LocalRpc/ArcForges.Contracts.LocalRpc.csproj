@@ -4,7 +4,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Contracts.LocalRpc</AssemblyName>
     <RootNamespace>ArcForges.Contracts.LocalRpc</RootNamespace>
+    <DefineConstants>$(DefineConstants);NEVER</DefineConstants>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PolyType" />
+    <PackageReference Include="StreamJsonRpc" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ArcForges.Contracts.Agent\ArcForges.Contracts.Agent.csproj" />
     <ProjectReference Include="..\ArcForges.Contracts.Foundation\ArcForges.Contracts.Foundation.csproj" />

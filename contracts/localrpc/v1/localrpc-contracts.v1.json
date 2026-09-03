@@ -1,0 +1,1666 @@
+{
+  "contractSet": "localrpc.v1",
+  "interfaces": {
+    "IArcNotesRpcV1": {
+      "methods": [
+        {
+          "risk": "R0",
+          "request": "SearchDocumentsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SearchDocumentsAsync",
+          "response": "SearchDocumentsResponse",
+          "capability": "arcnotes.search.documents"
+        },
+        {
+          "risk": "R0",
+          "request": "FindByTagRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "FindByTagAsync",
+          "response": "FindByTagResponse",
+          "capability": "arcnotes.search.by-tag"
+        },
+        {
+          "risk": "R0",
+          "request": "FindByPropertyRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "FindByPropertyAsync",
+          "response": "FindByPropertyResponse",
+          "capability": "arcnotes.search.by-property"
+        },
+        {
+          "risk": "R0",
+          "request": "GetDocumentSummaryRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetDocumentSummaryAsync",
+          "response": "GetDocumentSummaryResponse",
+          "capability": "arcnotes.document.summary"
+        },
+        {
+          "risk": "R0",
+          "request": "GetDocumentMetadataRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetDocumentMetadataAsync",
+          "response": "GetDocumentMetadataResponse",
+          "capability": "arcnotes.document.metadata"
+        },
+        {
+          "risk": "R0",
+          "request": "ReadDocumentRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ReadDocumentAsync",
+          "response": "ReadDocumentResponse",
+          "capability": "arcnotes.document.read"
+        },
+        {
+          "risk": "R0",
+          "request": "ReadBlocksRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ReadBlocksAsync",
+          "response": "ReadBlocksResponse",
+          "capability": "arcnotes.blocks.read"
+        },
+        {
+          "risk": "R0",
+          "request": "ReadSelectionRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ReadSelectionAsync",
+          "response": "ReadSelectionResponse",
+          "capability": "arcnotes.selection.read"
+        },
+        {
+          "risk": "R2",
+          "request": "CreateDocumentRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "CreateDocumentAsync",
+          "response": "CreateDocumentResponse",
+          "capability": "arcnotes.document.create"
+        },
+        {
+          "risk": "R2",
+          "request": "CreateFromArtifactRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "CreateFromArtifactAsync",
+          "response": "CreateFromArtifactResponse",
+          "capability": "arcnotes.document.create-from-artifact"
+        },
+        {
+          "risk": "R2",
+          "request": "InsertBlocksRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "InsertBlocksAsync",
+          "response": "InsertBlocksResponse",
+          "capability": "arcnotes.blocks.insert"
+        },
+        {
+          "risk": "R2",
+          "request": "ReplaceBlocksRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ReplaceBlocksAsync",
+          "response": "ReplaceBlocksResponse",
+          "capability": "arcnotes.blocks.replace"
+        },
+        {
+          "risk": "R1",
+          "request": "AppendBlocksRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "AppendBlocksAsync",
+          "response": "AppendBlocksResponse",
+          "capability": "arcnotes.blocks.append"
+        },
+        {
+          "risk": "R1",
+          "request": "UpdatePropertiesRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "UpdatePropertiesAsync",
+          "response": "UpdatePropertiesResponse",
+          "capability": "arcnotes.document.update-properties"
+        },
+        {
+          "risk": "R1",
+          "request": "AddTagsRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "AddTagsAsync",
+          "response": "AddTagsResponse",
+          "capability": "arcnotes.document.add-tags"
+        },
+        {
+          "risk": "R2",
+          "request": "MoveDocumentRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "MoveDocumentAsync",
+          "response": "MoveDocumentResponse",
+          "capability": "arcnotes.document.move"
+        },
+        {
+          "risk": "R2",
+          "request": "LinkDocumentsRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "LinkDocumentsAsync",
+          "response": "LinkDocumentsResponse",
+          "capability": "arcnotes.document.link"
+        },
+        {
+          "risk": "R0",
+          "request": "OpenArtifactRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "OpenArtifactAsync",
+          "response": "OpenArtifactResponse",
+          "capability": "arcnotes.artifact.open"
+        },
+        {
+          "risk": "R2",
+          "request": "ImportRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ImportAsync",
+          "response": "ImportResponse",
+          "capability": "arcnotes.import.start"
+        },
+        {
+          "risk": "R2",
+          "request": "ExportRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ExportAsync",
+          "response": "ExportResponse",
+          "capability": "arcnotes.export.start"
+        },
+        {
+          "risk": "R3",
+          "request": "TrashDocumentRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": true,
+            "requiresUi": false
+          },
+          "name": "TrashDocumentAsync",
+          "response": "TrashDocumentResponse",
+          "capability": "arcnotes.document.trash"
+        },
+        {
+          "risk": "R4",
+          "request": "DeleteDocumentPermanentRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": true,
+            "requiresUi": false
+          },
+          "name": "DeleteDocumentPermanentAsync",
+          "response": "DeleteDocumentPermanentResponse",
+          "capability": "arcnotes.document.delete-permanent"
+        },
+        {
+          "risk": "R0",
+          "request": "GetContextRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetContextAsync",
+          "response": "GetContextResponse",
+          "capability": "arcnotes.context.read"
+        }
+      ],
+      "interfaceType": "IArcNotesRpcV1",
+      "namespace": "ArcForges.Contracts.LocalRpc",
+      "methodCount": 23
+    },
+    "IArcScopeRpcV1": {
+      "methods": [
+        {
+          "risk": "R0",
+          "request": "SearchResourcesRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SearchResourcesAsync",
+          "response": "SearchResourcesResponse",
+          "capability": "arcscope.search.resources"
+        },
+        {
+          "risk": "R0",
+          "request": "ListSessionsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ListSessionsAsync",
+          "response": "ListSessionsResponse",
+          "capability": "arcscope.sessions.list"
+        },
+        {
+          "risk": "R0",
+          "request": "QuerySignalRangeRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "QuerySignalRangeAsync",
+          "response": "QuerySignalRangeResponse",
+          "capability": "arcscope.signal.query-range"
+        },
+        {
+          "risk": "R1",
+          "request": "StartCaptureRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "StartCaptureAsync",
+          "response": "StartCaptureResponse",
+          "capability": "arcscope.capture.start"
+        },
+        {
+          "risk": "R1",
+          "request": "StopCaptureRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "StopCaptureAsync",
+          "response": "StopCaptureResponse",
+          "capability": "arcscope.capture.stop"
+        },
+        {
+          "risk": "R1",
+          "request": "PauseCaptureRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "PauseCaptureAsync",
+          "response": "PauseCaptureResponse",
+          "capability": "arcscope.capture.pause"
+        },
+        {
+          "risk": "R1",
+          "request": "ResumeCaptureRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ResumeCaptureAsync",
+          "response": "ResumeCaptureResponse",
+          "capability": "arcscope.capture.resume"
+        },
+        {
+          "risk": "R0",
+          "request": "GetCaptureStatusRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetCaptureStatusAsync",
+          "response": "GetCaptureStatusResponse",
+          "capability": "arcscope.capture.get-status"
+        },
+        {
+          "risk": "R0",
+          "request": "ListDecodersRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ListDecodersAsync",
+          "response": "ListDecodersResponse",
+          "capability": "arcscope.decoder.list"
+        },
+        {
+          "risk": "R0",
+          "request": "DecodeRangeRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "DecodeRangeAsync",
+          "response": "DecodeRangeResponse",
+          "capability": "arcscope.decoder.decode-range"
+        },
+        {
+          "risk": "R0",
+          "request": "GetDecoderErrorsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetDecoderErrorsAsync",
+          "response": "GetDecoderErrorsResponse",
+          "capability": "arcscope.decoder.errors"
+        },
+        {
+          "risk": "R0",
+          "request": "ListPortsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ListPortsAsync",
+          "response": "ListPortsResponse",
+          "capability": "arcscope.connection.list-ports"
+        },
+        {
+          "risk": "R1",
+          "request": "TestConnectionRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "TestConnectionAsync",
+          "response": "TestConnectionResponse",
+          "capability": "arcscope.connection.test"
+        },
+        {
+          "risk": "R1",
+          "request": "ConnectRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ConnectAsync",
+          "response": "ConnectResponse",
+          "capability": "arcscope.connection.connect"
+        },
+        {
+          "risk": "R1",
+          "request": "DisconnectRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "DisconnectAsync",
+          "response": "DisconnectResponse",
+          "capability": "arcscope.connection.disconnect"
+        },
+        {
+          "risk": "R0",
+          "request": "GetConnectionsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetConnectionsAsync",
+          "response": "GetConnectionsResponse",
+          "capability": "arcscope.connection.list"
+        },
+        {
+          "risk": "R0",
+          "request": "PauseViewRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "PauseViewAsync",
+          "response": "PauseViewResponse",
+          "capability": "arcscope.live.pause-view"
+        },
+        {
+          "risk": "R0",
+          "request": "ResumeViewRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ResumeViewAsync",
+          "response": "ResumeViewResponse",
+          "capability": "arcscope.live.resume-view"
+        },
+        {
+          "risk": "R0",
+          "request": "GetLiveStateRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetLiveStateAsync",
+          "response": "GetLiveStateResponse",
+          "capability": "arcscope.live.get-state"
+        },
+        {
+          "risk": "R0",
+          "request": "ListFindingsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ListFindingsAsync",
+          "response": "ListFindingsResponse",
+          "capability": "arcscope.finding.list"
+        },
+        {
+          "risk": "R1",
+          "request": "PreviewAnalysisRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "PreviewAnalysisAsync",
+          "response": "PreviewAnalysisResponse",
+          "capability": "arcscope.analysis.preview"
+        },
+        {
+          "risk": "R2",
+          "request": "RunAnalysisRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RunAnalysisAsync",
+          "response": "RunAnalysisResponse",
+          "capability": "arcscope.analysis.run"
+        },
+        {
+          "risk": "R1",
+          "request": "CreateAnnotationRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "CreateAnnotationAsync",
+          "response": "CreateAnnotationResponse",
+          "capability": "arcscope.annotation.create"
+        },
+        {
+          "risk": "R2",
+          "request": "GenerateReportRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GenerateReportAsync",
+          "response": "GenerateReportResponse",
+          "capability": "arcscope.report.generate"
+        },
+        {
+          "risk": "R2",
+          "request": "StartExportRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "StartExportAsync",
+          "response": "StartExportResponse",
+          "capability": "arcscope.export.start"
+        },
+        {
+          "risk": "R0",
+          "request": "GetExportStatusRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetExportStatusAsync",
+          "response": "GetExportStatusResponse",
+          "capability": "arcscope.export.get-status"
+        },
+        {
+          "risk": "R0",
+          "request": "GetContextRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetContextAsync",
+          "response": "GetContextResponse",
+          "capability": "arcscope.context.read"
+        }
+      ],
+      "interfaceType": "IArcScopeRpcV1",
+      "namespace": "ArcForges.Contracts.LocalRpc",
+      "methodCount": 27
+    },
+    "ILocalHubControlRpc": {
+      "methods": [
+        {
+          "risk": "R0",
+          "request": "RegisterInstanceRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RegisterAsync",
+          "response": "RegisterInstanceResult",
+          "capability": "arch.hub.register"
+        },
+        {
+          "risk": "R0",
+          "request": "UnregisterInstanceRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "UnregisterAsync",
+          "response": "void",
+          "capability": "arch.hub.unregister"
+        },
+        {
+          "risk": "R0",
+          "request": "HeartbeatRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "HeartbeatAsync",
+          "response": "HeartbeatResult",
+          "capability": "arch.hub.heartbeat"
+        },
+        {
+          "risk": "R0",
+          "request": "DiscoverRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "DiscoverAsync",
+          "response": "DiscoverResult",
+          "capability": "arch.hub.discover"
+        },
+        {
+          "risk": "R0",
+          "request": "RouteRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ResolveRouteAsync",
+          "response": "RouteResult",
+          "capability": "arch.hub.route"
+        },
+        {
+          "risk": "R1",
+          "request": "RequestApprovalRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RequestApprovalAsync",
+          "response": "RequestApprovalResult",
+          "capability": "arch.hub.approval.request"
+        },
+        {
+          "risk": "R1",
+          "request": "ResolveApprovalRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ResolveApprovalAsync",
+          "response": "ResolveApprovalResult",
+          "capability": "arch.hub.approval.resolve"
+        }
+      ],
+      "interfaceType": "ILocalHubControlRpc",
+      "namespace": "ArcForges.Contracts.LocalRpc",
+      "methodCount": 7
+    },
+    "IArcSlateRpcV1": {
+      "methods": [
+        {
+          "risk": "R0",
+          "request": "SearchResourcesRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SearchResourcesAsync",
+          "response": "SearchResourcesResponse",
+          "capability": "arcslate.search.resources"
+        },
+        {
+          "risk": "R0",
+          "request": "GetProjectSnapshotRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetProjectSnapshotAsync",
+          "response": "GetProjectSnapshotResponse",
+          "capability": "arcslate.project.get"
+        },
+        {
+          "risk": "R1",
+          "request": "SaveProjectRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SaveProjectAsync",
+          "response": "SaveProjectResponse",
+          "capability": "arcslate.project.save"
+        },
+        {
+          "risk": "R1",
+          "request": "LoadProjectRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "LoadProjectAsync",
+          "response": "LoadProjectResponse",
+          "capability": "arcslate.project.load"
+        },
+        {
+          "risk": "R1",
+          "request": "UndoRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "UndoAsync",
+          "response": "UndoResponse",
+          "capability": "arcslate.history.undo"
+        },
+        {
+          "risk": "R1",
+          "request": "RedoRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RedoAsync",
+          "response": "RedoResponse",
+          "capability": "arcslate.history.redo"
+        },
+        {
+          "risk": "R2",
+          "request": "JumpToRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "JumpToAsync",
+          "response": "JumpToResponse",
+          "capability": "arcslate.history.jump"
+        },
+        {
+          "risk": "R0",
+          "request": "ListRecoveriesRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ListRecoveriesAsync",
+          "response": "ListRecoveriesResponse",
+          "capability": "arcslate.recovery.list"
+        },
+        {
+          "risk": "R2",
+          "request": "OpenRecoveryRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "OpenRecoveryAsync",
+          "response": "OpenRecoveryResponse",
+          "capability": "arcslate.recovery.open"
+        },
+        {
+          "risk": "R1",
+          "request": "CreateCheckpointRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "CreateCheckpointAsync",
+          "response": "CreateCheckpointResponse",
+          "capability": "arcslate.checkpoint.create"
+        },
+        {
+          "risk": "R2",
+          "request": "ImportMediaRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ImportMediaAsync",
+          "response": "ImportMediaResponse",
+          "capability": "arcslate.media.import"
+        },
+        {
+          "risk": "R0",
+          "request": "GetAssetRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetAssetAsync",
+          "response": "GetAssetResponse",
+          "capability": "arcslate.media.get"
+        },
+        {
+          "risk": "R0",
+          "request": "ListAssetsRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ListAssetsAsync",
+          "response": "ListAssetsResponse",
+          "capability": "arcslate.media.list"
+        },
+        {
+          "risk": "R2",
+          "request": "RelinkAssetRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RelinkAssetAsync",
+          "response": "RelinkAssetResponse",
+          "capability": "arcslate.media.relink"
+        },
+        {
+          "risk": "R0",
+          "request": "GetImportStatusRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetImportStatusAsync",
+          "response": "GetImportStatusResponse",
+          "capability": "arcslate.media.import-status"
+        },
+        {
+          "risk": "R0",
+          "request": "GetSequenceRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetSequenceAsync",
+          "response": "GetSequenceResponse",
+          "capability": "arcslate.sequence.get"
+        },
+        {
+          "risk": "R2",
+          "request": "InsertClipRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "InsertClipAsync",
+          "response": "InsertClipResponse",
+          "capability": "arcslate.timeline.insert-clip"
+        },
+        {
+          "risk": "R2",
+          "request": "MoveClipRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "MoveClipAsync",
+          "response": "MoveClipResponse",
+          "capability": "arcslate.timeline.move-clip"
+        },
+        {
+          "risk": "R2",
+          "request": "TrimClipRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "TrimClipAsync",
+          "response": "TrimClipResponse",
+          "capability": "arcslate.timeline.trim-clip"
+        },
+        {
+          "risk": "R2",
+          "request": "SplitClipRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SplitClipAsync",
+          "response": "SplitClipResponse",
+          "capability": "arcslate.timeline.split-clip"
+        },
+        {
+          "risk": "R2",
+          "request": "DeleteClipRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": true,
+            "requiresUi": false
+          },
+          "name": "DeleteClipAsync",
+          "response": "DeleteClipResponse",
+          "capability": "arcslate.timeline.delete-clip"
+        },
+        {
+          "risk": "R3",
+          "request": "RippleDeleteRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": true,
+            "requiresUi": false
+          },
+          "name": "RippleDeleteAsync",
+          "response": "RippleDeleteResponse",
+          "capability": "arcslate.timeline.ripple-delete"
+        },
+        {
+          "risk": "R3",
+          "request": "ExtractRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": true,
+            "requiresUi": false
+          },
+          "name": "ExtractAsync",
+          "response": "ExtractResponse",
+          "capability": "arcslate.timeline.extract"
+        },
+        {
+          "risk": "R2",
+          "request": "RippleTrimRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RippleTrimAsync",
+          "response": "RippleTrimResponse",
+          "capability": "arcslate.timeline.ripple-trim"
+        },
+        {
+          "risk": "R2",
+          "request": "RollRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "RollAsync",
+          "response": "RollResponse",
+          "capability": "arcslate.timeline.roll"
+        },
+        {
+          "risk": "R2",
+          "request": "SlipRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SlipAsync",
+          "response": "SlipResponse",
+          "capability": "arcslate.timeline.slip"
+        },
+        {
+          "risk": "R2",
+          "request": "SlideRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SlideAsync",
+          "response": "SlideResponse",
+          "capability": "arcslate.timeline.slide"
+        },
+        {
+          "risk": "R2",
+          "request": "LinkClipsRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "LinkClipsAsync",
+          "response": "LinkClipsResponse",
+          "capability": "arcslate.timeline.link-clips"
+        },
+        {
+          "risk": "R2",
+          "request": "UnlinkClipsRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "UnlinkClipsAsync",
+          "response": "UnlinkClipsResponse",
+          "capability": "arcslate.timeline.unlink-clips"
+        },
+        {
+          "risk": "R1",
+          "request": "AddMarkerRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "AddMarkerAsync",
+          "response": "AddMarkerResponse",
+          "capability": "arcslate.timeline.add-marker"
+        },
+        {
+          "risk": "R1",
+          "request": "MoveMarkerRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "MoveMarkerAsync",
+          "response": "MoveMarkerResponse",
+          "capability": "arcslate.timeline.move-marker"
+        },
+        {
+          "risk": "R1",
+          "request": "SetInOutRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "SetInOutAsync",
+          "response": "SetInOutResponse",
+          "capability": "arcslate.timeline.set-in-out"
+        },
+        {
+          "risk": "R1",
+          "request": "PreviewEditRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "PreviewEditAsync",
+          "response": "PreviewEditResponse",
+          "capability": "arcslate.timeline.preview-edit"
+        },
+        {
+          "risk": "R2",
+          "request": "ApplyEditRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": true,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "ApplyEditAsync",
+          "response": "ApplyEditResponse",
+          "capability": "arcslate.timeline.apply-edit"
+        },
+        {
+          "risk": "R2",
+          "request": "StartExportRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": true,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "StartExportAsync",
+          "response": "StartExportResponse",
+          "capability": "arcslate.export.start"
+        },
+        {
+          "risk": "R0",
+          "request": "GetExportRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetExportAsync",
+          "response": "GetExportResponse",
+          "capability": "arcslate.export.get"
+        },
+        {
+          "risk": "R1",
+          "request": "CancelExportRequest",
+          "flags": {
+            "write": true,
+            "read": false,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "CancelExportAsync",
+          "response": "CancelExportResponse",
+          "capability": "arcslate.export.cancel"
+        },
+        {
+          "risk": "R0",
+          "request": "GetArtifactRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetArtifactAsync",
+          "response": "GetArtifactResponse",
+          "capability": "arcslate.artifact.get"
+        },
+        {
+          "risk": "R0",
+          "request": "GetContextRequest",
+          "flags": {
+            "write": false,
+            "read": true,
+            "longRunning": false,
+            "undoable": false,
+            "cancellable": true,
+            "idempotent": true,
+            "destructive": false,
+            "requiresUi": false
+          },
+          "name": "GetContextAsync",
+          "response": "GetContextResponse",
+          "capability": "arcslate.context.read"
+        }
+      ],
+      "interfaceType": "IArcSlateRpcV1",
+      "namespace": "ArcForges.Contracts.LocalRpc",
+      "methodCount": 39
+    }
+  },
+  "schemaVersion": "1.0.0"
+}
