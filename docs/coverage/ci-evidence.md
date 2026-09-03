@@ -272,3 +272,18 @@ does not claim a Linux result that was not produced.
 | CMake native x64 | Windows | both `windows-msvc-x64-*` profiles: build + CTest + install + managed P/Invoke passed locally, 2026-08-13. Superseded on 2026-08-30 by the Ninja `win-x64-*` presets recorded above |
 | Independent VCXPROJ x64 | Windows | `MSBuild win.slnx /p:Configuration=Release /p:Platform=x64` + managed P/Invoke passed locally, 2026-08-13. Now covered by the `win-slnx-release-x64` `pre-push` hook rather than by CI |
 | Deep native/security | weekly/manual | C# CodeQL, Linux clang-tidy, ASan/UBSan, libFuzzer — reported by the Deep check workflow; not a pull-request blocker |
+
+## Executed — Step 02.01 Contracts.LocalRpc StreamJsonRpc interface contracts, 2026-09-02
+
+Windows 11, .NET SDK 10.0.400, branch `feat/af02-01-contracts-localrpc`.
+
+| Check | Command | Result |
+|---|---|---|
+| Locked restore | `dotnet restore ArcForges.slnx --locked-mode` | Passed; all projects up to date with zero lockfile drift |
+| Format | `dotnet format ArcForges.slnx --verify-no-changes --no-restore` | Passed; zero formatting errors |
+| Release build | `dotnet build ArcForges.slnx -c Release --no-restore` | Passed; 0 warnings, 0 errors across all 166 projects |
+| Contract compatibility tests | `dotnet test tests/ContractCompatibilityTests/ArcForges.Tests.ContractCompatibilityTests.csproj -c Release` | Passed; **162 total, 162 passed, 0 failed**. All 18 LocalRpc golden samples asserted for byte equality, structural round-trip, and repeatability |
+| Contract schema tests | `dotnet test tests/ContractSchemaTests/ArcForges.Tests.ContractSchemaTests.csproj -c Release` | Passed; **75 total, 75 passed, 0 failed**. Manifest and golden document schema verified without internals grant |
+| Architecture + policy | `dotnet test tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release` | Passed; **48 total, 48 passed, 0 failed**. ARC-007 (interface signature purity) and ARC-009 (proxy export & GenerateShape) verified with positive and counter-evidence |
+| Managed test taxonomy | `dotnet test --solution ArcForges.slnx -c Release --no-build --filter "Category!=Browser&Category!=NativeAbi"` | Passed; 337 passed, 21 skipped (`PendingScopeTests` future milestones), 0 failed |
+
