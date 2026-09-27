@@ -451,7 +451,10 @@ class SpecificationIntegrityTests(unittest.TestCase):
         self.assertTrue(corpus.superseded_names({'docs/architecture/new.md': old}, ('RetiredFixture',), exact)['findings'])
         self.assertEqual(corpus.superseded_names({path: 'ArcImageNative is a logical library.'}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'], [])
         self.assertEqual(corpus.superseded_names({path: '`native/arcimage-abi` is its directory.'}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'], [])
-        for name in ('RetiredFixtureWidget', 'ArcImageNative2', 'my_ArcImageNative', 'RetiredFixture2', 'arcimage-abi-extra'):
+        hostile = ['RetiredFixtureWidget', 'RetiredFixture2']
+        for technical in ('ArcImageNative', 'arcimage-abi'):
+            hostile.extend((technical + '2', 'my_' + technical, technical + '-extra'))
+        for name in hostile:
             with self.subTest(name=name):
                 self.assertTrue(corpus.superseded_names({path: 'Publish ' + name}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'])
 
