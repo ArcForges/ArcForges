@@ -9,6 +9,8 @@ internal class SqliteReadContext(Guid storeId, SqliteConnection connection, Sqli
     public Guid StoreId { get; } = storeId;
     public SqliteConnection Connection { get; } = connection;
     public SqliteTransaction Transaction { get; } = transaction;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "Internal controlled SQL sink: mechanism callers use literal SQL with parameter-bound data; explicit owner-authored migration SQL executes only under the SQLite authorizer. No request or content values form SQL. Reviewed source scope: Design PR91 / Plan PR62.")]
     public SqliteCommand CreateCommand(string sql)
     {
         var command = Connection.CreateCommand();
@@ -25,6 +27,8 @@ internal sealed class SqliteCommitContext(Guid storeId, SqliteConnection connect
     private static int Authorize(object state, int action, string first, string second, string database, string source)
     {
         if (action is raw.SQLITE_TRANSACTION or raw.SQLITE_SAVEPOINT or raw.SQLITE_ATTACH or raw.SQLITE_DETACH or raw.SQLITE_PRAGMA)
+            return raw.SQLITE_DENY;
+        if (action is raw.SQLITE_CREATE_TEMP_TRIGGER or raw.SQLITE_DROP_TEMP_TRIGGER or raw.SQLITE_CREATE_TEMP_INDEX or raw.SQLITE_DROP_TEMP_INDEX)
             return raw.SQLITE_DENY;
         if (action is raw.SQLITE_INSERT or raw.SQLITE_UPDATE or raw.SQLITE_DELETE or raw.SQLITE_DROP_TABLE or raw.SQLITE_ALTER_TABLE or raw.SQLITE_CREATE_TRIGGER or raw.SQLITE_DROP_TRIGGER or raw.SQLITE_CREATE_INDEX or raw.SQLITE_DROP_INDEX)
         {
@@ -103,7 +107,7 @@ internal sealed class StoreDatabase : IDisposable
         }
         finally { writer.Release(); }
     }
-    public T WithSchemaSession<T>(Func<SqliteSchemaSession, T> action)
+    public T RunSchemaExclusive<T>(Func<SqliteSchemaSession, T> action)
     {
         writer.Wait();
         try
@@ -118,3 +122,4 @@ internal sealed class StoreDatabase : IDisposable
     }
     public void Dispose() => writer.Dispose();
 }
+
