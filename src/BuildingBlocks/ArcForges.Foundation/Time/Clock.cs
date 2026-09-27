@@ -18,7 +18,7 @@ public interface IClock
 {
     Instant GetCurrentInstant();
     MonotonicTimestamp GetTimestamp();
-    TimeSpan GetElapsedTime(MonotonicTimestamp start, MonotonicTimestamp end);
+    TimeSpan GetElapsedTime(MonotonicTimestamp start, MonotonicTimestamp finish);
 }
 
 /// <summary>Uses TimeProvider's independent wall and monotonic sources, allowing deterministic injection.</summary>
@@ -37,17 +37,17 @@ public sealed class Clock : IClock
     public Instant GetCurrentInstant() => Instant.FromDateTimeOffset(_provider.GetUtcNow());
     public MonotonicTimestamp GetTimestamp() => new(_provider.GetTimestamp(), this);
 
-    public TimeSpan GetElapsedTime(MonotonicTimestamp start, MonotonicTimestamp end)
+    public TimeSpan GetElapsedTime(MonotonicTimestamp start, MonotonicTimestamp finish)
     {
-        if (!ReferenceEquals(start.Source, this) || !ReferenceEquals(end.Source, this))
+        if (!ReferenceEquals(start.Source, this) || !ReferenceEquals(finish.Source, this))
         {
             throw new ArgumentException("Timestamps must originate from this clock instance.", nameof(start));
         }
 
-        var elapsed = _provider.GetElapsedTime(start.Ticks, end.Ticks);
+        var elapsed = _provider.GetElapsedTime(start.Ticks, finish.Ticks);
         if (elapsed < TimeSpan.Zero)
         {
-            throw new ArgumentOutOfRangeException(nameof(end), "The end timestamp precedes the start.");
+            throw new ArgumentOutOfRangeException(nameof(finish), "The finish timestamp precedes the start.");
         }
 
         return elapsed;

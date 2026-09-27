@@ -13,10 +13,7 @@ public readonly record struct Instant : IComparable<Instant>
             throw new ArgumentOutOfRangeException(nameof(unixSeconds));
         }
 
-        if (nanoseconds >= 1_000_000_000)
-        {
-            throw new ArgumentOutOfRangeException(nameof(nanoseconds));
-        }
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(nanoseconds, 1_000_000_000U);
 
         UnixSeconds = unixSeconds;
         Nanoseconds = nanoseconds;
