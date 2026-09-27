@@ -22,6 +22,7 @@ public sealed class IdentityCompileNegativeTests
                     RealmId realm = workspace;
                     command = instance;
                     bool equal = workspace == command;
+                    bool revisionEqualsSequence = default(ArcForges.Foundation.Revision) == default(ArcForges.Foundation.SequenceNumber);
                   }
                 }
                 """);
@@ -35,7 +36,8 @@ public sealed class IdentityCompileNegativeTests
             var bracket = sdk.IndexOf('[', StringComparison.Ordinal);
             var sdkPath = Path.Combine(sdk[(bracket + 1)..^1], sdk[..bracket].Trim());
             var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-                .Append(Path.Combine(AppContext.BaseDirectory, "ArcForges.Contracts.Foundation.dll")).Distinct(StringComparer.OrdinalIgnoreCase);
+                .Append(Path.Combine(AppContext.BaseDirectory, "ArcForges.Contracts.Foundation.dll"))
+                .Append(Path.Combine(AppContext.BaseDirectory, "ArcForges.Foundation.dll")).Distinct(StringComparer.OrdinalIgnoreCase);
             var response = Path.Combine(directory, "compile.rsp");
             File.WriteAllLines(response, CompilerOptions
                 .Concat(references.Select(path => "-r:\"" + path + "\""))
@@ -54,7 +56,7 @@ public sealed class IdentityCompileNegativeTests
             process.WaitForExit();
             Assert.NotEqual(0, process.ExitCode);
             Assert.Equal(2, output.Split("error CS0029", StringSplitOptions.None).Length - 1);
-            Assert.Contains("error CS0019", output, StringComparison.Ordinal);
+            Assert.Equal(2, output.Split("error CS0019", StringSplitOptions.None).Length - 1);
         }
         finally
         {
