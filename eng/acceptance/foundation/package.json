@@ -1,0 +1,13 @@
+{
+  "name": "@arcforges/foundation-acceptance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Local opt-in acceptance of immutable published Foundation and Contracts candidates",
+  "dependencies": {
+    "@arcforges/contract-fixtures": "1.0.0-ci.113.1",
+    "@arcforges/proto": "1.0.0-ci.113.1",
+    "@bufbuild/protobuf": "2.15.0"
+  }
+}

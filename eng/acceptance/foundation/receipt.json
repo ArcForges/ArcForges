@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "task": "FND.07",
+  "recorded": "2026-09-27",
+  "worker": "w-20260927-web-lane",
+  "producer": {
+    "repository": "https://github.com/ArcForges/DesktopPlatform",
+    "sourceCommit": "ace60538849047184954baed09fb05ec7676d367",
+    "version": "1.0.0-ci.29.1",
+    "publicationRun": "https://github.com/ArcForges/DesktopPlatform/actions/runs/36347078380",
+    "publicationConclusion": "success",
+    "publishJob": 108699386505
+  },
+  "contracts": {
+    "sourceCommit": "b10b2f6f316bf0c007e00632c5442fc102ebbe6e",
+    "version": "1.0.0-ci.113.1",
+    "fixtureOrigin": "Published @arcforges/contract-fixtures wp03-01.json; no sibling source import"
+  },
+  "nuget": {
+    "ArcForges.Application.Abstractions": {
+      "version": "1.0.0-ci.29.1",
+      "sha512Base64": "8ICXm8LvJsaXgNz6RfiHSoxxqxE3jLJMz8IWCcweW0FIzv6isEl3SMH+pbBATNKIqApDmCN78FT/csCAqMBMRA=="
+    },
+    "ArcForges.Contracts.Foundation": {
+      "version": "1.0.0-ci.113.1",
+      "sha512Base64": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA=="
+    },
+    "ArcForges.Foundation": {
+      "version": "1.0.0-ci.29.1",
+      "sha512Base64": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg=="
+    },
+    "Microsoft.CodeAnalysis.NetAnalyzers": {
+      "version": "10.0.401",
+      "sha512Base64": "qGPLk4hknvVp6j9Lowa0qykw1cK7CyEyyy2aVs4dkOGroOMHJLRsMpUT53IKvYT6q78jxv96FZhzy3BrKCPgmA=="
+    },
+    "Google.Protobuf": {
+      "version": "3.36.1",
+      "sha512Base64": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
+    }
+  },
+  "npm": {
+    "@arcforges/contract-fixtures": {
+      "version": "1.0.0-ci.113.1",
+      "integrity": "sha512-i0oSa8yQOK4/+gk8dH54tVkyS2vm0oxcJd8+sdZY+QjNgI03gbVbgTI2DuHwdDIskBfq0jZ/H0kyVb1YQEn1mA=="
+    },
+    "@arcforges/proto": {
+      "version": "1.0.0-ci.113.1",
+      "integrity": "sha512-U50vIM791HkENJOlAWGkdJmWjM74H8jNr1S3myva+OIDL57lSLoSaMa5EvH0arYwhx4DGegr7E7I5da2S5zbIw=="
+    },
+    "@bufbuild/protobuf": {
+      "version": "2.15.0",
+      "integrity": "sha512-DAheWUkVr/SJTWCc+lg9dhY0eN4SaWlf4+bG1KzHeXbnqt0AfB/NX0Z+VunGlM1ki1B4zVvye27MpKh/svySUA=="
+    }
+  },
+  "execution": {
+    "result": "passed",
+    "os": "Windows-11-10.0.26200-SP0",
+    "architecture": "AMD64",
+    "sdk": "10.0.401 existing SDK selected by direct dotnet.dll; committed producer CI SDK10.0.400 unchanged",
+    "node": "26.7.0",
+    "npm": "11.19.0",
+    "python": "3.14.7",
+    "buildWarnings": 0,
+    "buildErrors": 0,
+    "buildSlot": "w-20260927-web-lane / FND.07",
+    "command": "python run.py --local --sdk-dll C:/Program Files/dotnet/sdk/10.0.401/dotnet.dll",
+    "registeredErrorsVerified": 44,
+    "exchange": "C# -> TypeScript -> C# plus independent TypeScript -> C# vectors"
+  },
+  "scenarios": [
+    "UUID network order",
+    "int64 > JavaScript safe integers and int64 max",
+    "uint64 max",
+    "exact decimal coefficient/scale",
+    "rational exactness",
+    "opaque cursor",
+    "absent versus explicit epoch",
+    "ProtoJSON integer strings and UUID base64",
+    "unknown protobuf field preservation",
+    "unknown enum preserved but refused for mutation",
+    "44 known producer error registrations",
+    "unknown reader code becomes non-retryable generic failure",
+    "same command with distinct retry attempt",
+    "unknown effects cannot authorize automatic retry",
+    "published Contracts fixture projections"
+  ],
+  "reality": {
+    "packages": "Real exact registry-published NuGet and npm dependencies, restored once for this consumer; source metadata inspected in the local cache",
+    "executionContext": "Local fixture implementation of the real published IExecutionContext interface",
+    "commandEffects": "Storage-free identity/retry rules only; no durable owner effects or receipts",
+    "provider": "Not applicable: local binary exchange, no service calls",
+    "device": "Not applicable: no physical device workflow",
+    "kotlin": "Inherited CON.91 generated compilation only; historical tests reported NO-SOURCE. No new Kotlin runtime conformance claimed."
+  },
+  "limitations": [
+    "No live RPC, provider, authentication, GUI, device, installed release or commercial acceptance",
+    "No durable exactly-once proof; owner persistence remains its own task",
+    "No Kotlin runtime conformance",
+    "Local SDK10.0.401 is not pinned SDK10.0.400 producer CI evidence",
+    "No tag, republish, repeated public archive download or post-publication install cycle"
+  ],
+  "inputSha256": {
+    "Program.cs": "854cc8da898bf2320bcb7ef01d34ee9cec66517326dd7a0684a7297243394f99",
+    "roundtrip.ts": "7dbd27bb90d29a74e739972e1459dee8180793c60da3a57a8809e9a5c2ba2270",
+    "run.py": "f225600a075e576617a20bae5b4dbe029441fcbf573d6f63908f861251784b2b",
+    "Foundation.Acceptance.csproj": "952e541a2c6dc495ab1582bf4a7cab6e2eb4cbf0672311cbb9cd9e7d09cfe5b9",
+    "Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
+    "packages.lock.json": "e32440bfa3b14408732b34ac5cb9ff18017482123f6a6b7d899b49d9926a892a",
+    "package.json": "4b3641edff1555a90a0ba403b14c430c9e5e1927ca6be08ecec64d28b0e05bc3",
+    "package-lock.json": "d82c260206ef464f809ceb0cd70150aa18fe3616c0402d3d695fb3d41197cb2d"
+  }
+}
