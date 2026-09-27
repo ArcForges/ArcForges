@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "id": "native-tiff-r4",
+  "kind": "generated",
+  "sourceRepository": "https://gitlab.com/libtiff/libtiff",
+  "sourceCommit": "d01a94be176f5f6a87f7ee1c0b32e65416aa2b4d",
+  "sourcePaths": [
+    "LICENSE.md",
+    "CMakeLists.txt"
+  ],
+  "licence": {
+    "spdx": "libtiff AND LicenseRef-Berkeley-LZW-Rescinded",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade",
+        "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+      }
+    ],
+    "scope": "Selected libtiff runtime sources under the libtiff grant, with original Berkeley LZW notice retained. UC Berkeley official 2012 amendment removes its advertising obligation for all officially Berkeley-licensed software; retain that amendment as supplementary evidence. Nonendorsement and original attribution remain. JBIG is disabled; docs/tests/contrib/tools are not runtime inputs.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Original copyright and full applicable terms are retained in licenses/tiff-x64-windows-static-md.txt.",
+    "Additional full notices: licenses/provenance/berkeley-bsd-amendment.pdf.",
+    "Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt."
+  ],
+  "targets": [],
+  "artifactTargets": [
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.win-x64",
+      "kind": "native-component-tiff",
+      "profile": "eng/provenance/artifact-profiles/native-win-x64-r4.json",
+      "sha256": "6512b8f896af19fd4a72e93aa77d27c5f3e69a4a4997a1b932ae409b5aa89038"
+    }
+  ],
+  "disposition": "Copy",
+  "verification": {
+    "kind": "regeneration",
+    "command": "python eng/native_provenance.py --stage artifacts/native-packages",
+    "expected": "Exact retained Image recipe/legal/source/feature closure and compiler-runtime identity; source-bound sealed candidate. Runtime consumer checks are explicit local opt-in, not CI gates. Existing revision 3 source/licence evidence is reused without a new source audit.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Original copyright and full applicable terms are retained in licenses/tiff-x64-windows-static-md.txt.\nAdditional full notices: licenses/provenance/berkeley-bsd-amendment.pdf. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.",
+    "files": [
+      "eng/provenance/NOTICE.txt"
+    ],
+    "distribution": "packages",
+    "reason": "Native package-specific attribution and full originals are independently checked. Build-only records describe retained recipes/legal material, not bundled host implementation."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": {
+    "generators": [
+      {
+        "repository": "https://github.com/Kitware/CMake",
+        "commit": "06cc1d04d8d5a4e13abdadfe20f6937787b1968e",
+        "paths": [
+          "CMakeLists.txt",
+          "LICENSE.rst"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.rst",
+            "sha256": "4382e7c1879ac90e3f101a395d23846fa4dbcaa1eed7265b43681e348754825d",
+            "finding": "CMake 4.3.3 is a BSD-3-Clause build generator. Its implementation/dependencies are not copied into compiled native outputs."
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/Kitware/CMake",
+        "commit": "44125a9e977c834f06ac1e5fe8db55355261ef87",
+        "paths": [
+          "CMakeLists.txt",
+          "LICENSE.rst"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.rst",
+            "sha256": "4382e7c1879ac90e3f101a395d23846fa4dbcaa1eed7265b43681e348754825d",
+            "finding": "CMake 4.4.0 is the BSD-3-Clause script/build generator selected by scripts/vcpkg-tools.json at vcpkg 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb. Actual installed ABI evidence must report this version. Its implementation is not copied into runtime outputs."
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "paths": [
+          "ports/tiff/FindCMath.patch",
+          "ports/tiff/jpeccodec.patch",
+          "ports/tiff/portfile.cmake",
+          "ports/tiff/prefer-config.diff",
+          "ports/tiff/usage",
+          "ports/tiff/vcpkg-cmake-wrapper.cmake.in",
+          "ports/tiff/vcpkg.json",
+          "triplets/x64-windows.cmake",
+          "triplets/x64-windows-static-md.cmake",
+          "scripts/vcpkg-tools.json"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+            "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "repository": "https://gitlab.com/libtiff/libtiff",
+        "commit": "d01a94be176f5f6a87f7ee1c0b32e65416aa2b4d",
+        "paths": [
+          "LICENSE.md",
+          "CMakeLists.txt"
+        ],
+        "spdx": "libtiff AND LicenseRef-Berkeley-LZW-Rescinded",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      }
+    ],
+    "command": "The pinned vcpkg recipes/features/triplets use CMake 4.4.0; every installed vcpkg_abi_info.txt proves that generator version and the exact owning overlay/base-triplet hashes. The profile-bound first-party overlays select MSVC 14.51.36231 without changing standard linkage semantics; their current source commit is bound by the candidate receipt. CMake 4.3.3 with Ninja 1.13.1 and that MSVC toolset builds the retained image ABI under the shim-static preset. The producer validates actual CMake caches, compiler paths and installed dependency root. python eng/packaging/native.py stage and independent candidate inspection seal those build records. Host tool implementations are not embedded source; copied CRT DLLs retain the separate reviewed platform-runtime record.",
+    "outputSpdx": "libtiff AND LicenseRef-Berkeley-LZW-Rescinded"
+  },
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "Codex, acting under the repository maintainer's implementation and review authorization",
+    "reviewedOn": "2026-09-27",
+    "decision": "approved",
+    "rationale": "Selected libtiff runtime sources under the libtiff grant, with original Berkeley LZW notice retained. UC Berkeley official 2012 amendment removes its advertising obligation for all officially Berkeley-licensed software; retain that amendment as supplementary evidence. Nonendorsement and original attribution remain. JBIG is disabled; docs/tests/contrib/tools are not runtime inputs. Generator correction: the vcpkg script engine uses CMake 4.4.0 from the pinned tools manifest; CMake 4.3.3 generates the owned wrappers. The producer and candidate validate actual build caches and each installed vcpkg ABI record. The retired record remains intact. Profile revision 3 records both independently reproduced cold/warm SPDX forms of the same Meson build-only helper. All other source, licence, toolchain, binary and legal membership is unchanged. Revisions 1 and 2 remain immutable. GOV.17 / P2-019 revision 4 retires Media, Colour and Otio target registrations, retains only the Image target, and changes the owned logical DLL to ArcImageNative. Exact upstream source, recipe, legal, dependency and compiler identities remain unchanged; no new source-byte audit is asserted. All predecessor records are preserved.",
+    "baselineCommit": "e5ce94221c13d0014781a760c0865b942350be4d",
+    "reconciliation": true
+  },
+  "supersedes": "native-tiff-r3"
+}

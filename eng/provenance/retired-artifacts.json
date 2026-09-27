@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "repository": "DesktopPlatform",
+  "authority": {
+    "decision": "P2-019",
+    "task": "GOV.17"
+  },
+  "targets": [
+    {
+      "record": "native-amd-amf-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-amd-amf"
+    },
+    {
+      "record": "native-bzip2-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-bzip2"
+    },
+    {
+      "record": "native-expat-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-expat"
+    },
+    {
+      "record": "native-ffmpeg-bin2c-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-ffmpeg-bin2c"
+    },
+    {
+      "record": "native-ffmpeg-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-ffmpeg"
+    },
+    {
+      "record": "native-ffnvcodec-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-ffnvcodec"
+    },
+    {
+      "record": "native-imath-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-imath"
+    },
+    {
+      "record": "native-imath-r3",
+      "project": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Otio.Runtime.win-x64",
+      "kind": "native-component-imath"
+    },
+    {
+      "record": "native-liblzma-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-liblzma"
+    },
+    {
+      "record": "native-libusb-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-libusb"
+    },
+    {
+      "record": "native-libvpl-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-libvpl"
+    },
+    {
+      "record": "native-miniaudio-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-miniaudio"
+    },
+    {
+      "record": "native-minizip-ng-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-minizip-ng"
+    },
+    {
+      "record": "native-opencolorio-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-opencolorio"
+    },
+    {
+      "record": "native-opentimelineio-r3",
+      "project": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Otio.Runtime.win-x64",
+      "kind": "native-component-opentimelineio"
+    },
+    {
+      "record": "native-pkgconf-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-pkgconf"
+    },
+    {
+      "record": "native-pystring-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-pystring"
+    },
+    {
+      "record": "native-rapidjson-r3",
+      "project": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Otio.Runtime.win-x64",
+      "kind": "native-component-rapidjson"
+    },
+    {
+      "record": "native-vcpkg-cmake-config-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake-config"
+    },
+    {
+      "record": "native-vcpkg-cmake-config-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake-config"
+    },
+    {
+      "record": "native-vcpkg-cmake-config-r3",
+      "project": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Otio.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake-config"
+    },
+    {
+      "record": "native-vcpkg-cmake-get-vars-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake-get-vars"
+    },
+    {
+      "record": "native-vcpkg-cmake-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake"
+    },
+    {
+      "record": "native-vcpkg-cmake-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake"
+    },
+    {
+      "record": "native-vcpkg-cmake-r3",
+      "project": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Otio.Runtime.win-x64",
+      "kind": "native-component-vcpkg-cmake"
+    },
+    {
+      "record": "native-vcpkg-msbuild-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vcpkg-msbuild"
+    },
+    {
+      "record": "native-vcpkg-pkgconfig-get-modules-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vcpkg-pkgconfig-get-modules"
+    },
+    {
+      "record": "native-vcpkg-tool-meson-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vcpkg-tool-meson"
+    },
+    {
+      "record": "native-vulkan-headers-r3",
+      "project": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Media.Runtime.win-x64",
+      "kind": "native-component-vulkan-headers"
+    },
+    {
+      "record": "native-yaml-cpp-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-yaml-cpp"
+    },
+    {
+      "record": "native-zlib-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-zlib"
+    },
+    {
+      "record": "native-zstd-r3",
+      "project": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
+      "package": "ArcForges.Native.Colour.Runtime.win-x64",
+      "kind": "native-component-zstd"
+    }
+  ]
+}

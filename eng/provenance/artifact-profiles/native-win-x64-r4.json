@@ -1,0 +1,1527 @@
+{
+  "schemaVersion": 1,
+  "id": "native-win-x64-r4",
+  "authority": {
+    "repository": "https://github.com/ArcForges/ArcForges-Design",
+    "commit": "5322d698a1b650a52a5a139d986dd85b00b48581",
+    "path": "docs/assurance/reference-coverage-and-provenance.md",
+    "sections": [
+      "3.3",
+      "3.4"
+    ]
+  },
+  "vcpkgCommit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+  "baseline": {
+    "sourceCommit": "3bc1917d5cb2d76261c0e27ceba774b9067da8c6",
+    "version": "1.0.0-ci.12.1",
+    "reviewedOn": "2026-09-19",
+    "recipeFiles": 97.0,
+    "sourceIdentityProof": "Git archive PAX commits and release checksums; bzip2 17 source files matched pinned Git; AMF 57 header Git blobs matched release archive. GOV.17 revision 4 retains the exact reviewed Image input/source/legal/tool identities from revision 3 and removes retired package targets; no fresh upstream byte audit is claimed."
+  },
+  "components": {
+    "bzip2": {
+      "record": "native-bzip2-r4",
+      "version": "1.0.8",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://sourceware.org/git/bzip2.git",
+        "commit": "6a8690fc8d26c815e798c588f796eabe9d684cf0",
+        "paths": [
+          "LICENSE"
+        ],
+        "spdx": "bzip2-1.0.6",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "bzip2.pc.in": "58bf9a668f1cfa12ca661c08b598c38c26cd6f3287d170d0f0afe16d3de63ca3",
+          "CMakeLists.txt": "23070639ab0347317bd4fd86a62f3f18ed48208e8fe23a3b45225dc2deb5d873",
+          "fix-import-export-macros.patch": "38918c1257c884cc5cde39d9f4235d0e71574f20c7e5ec686a506612f647495e",
+          "portfile.cmake": "f9214fef97e792ca76f2cf97343edb1b83d6457e7320ae36b06306d0f038b439",
+          "usage": "0851dbce86da856f4a416d9d4c8454caa9c390dc62b7c340a7131d14f144b9b1",
+          "vcpkg.json": "35206824e39f99a709f69465e685a93bca265aa9c83c812d1fa18f3b536a75d9"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains bzip2-1.0.6. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz",
+          "sha512": "083f5e675d73f3233c7930ebe20425a533feedeaaa9d8cc86831312a6581cefbe6ed0d08d2fa89be81082f2a5abdabca8b3c080bf97218a1bd59dc118a30b9f3",
+          "downloadUrl": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz",
+          "cacheName": "bzip2-1.0.8.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/bzip2-x64-windows-static-md.txt",
+          "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected bzip2 library/header input under bzip2-1.0.6. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "expat": {
+      "record": "native-expat-r4",
+      "version": "2.8.2",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/libexpat/libexpat",
+        "commit": "c61098da494eea1cbd091118118dcee417faacea",
+        "paths": [
+          "COPYING"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "COPYING",
+            "sha256": "73cc92f80889ab23c7287b1a11dd50fdec190c3f26ebe5938c579043817d651e",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "e0c3deecd1209c7d9abba8e23f4b0ea0b4501988e6149c52ad571ac45e110794",
+          "vcpkg-cmake-wrapper.cmake": "520fef485e85e69e3f0a9e12a75857a83899770e038cf3361a1737289ce362d3",
+          "vcpkg.json": "724b8acbb32c818c80b76374dbd6dc66a899db36e4567dd950caa537b647bc5f"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/libexpat/libexpat@R_2_8_2",
+          "sha512": "e60e6d6ae9d0115f41186f06f3854008054863f0b29a58d44142f5b30057a494337145d820b5e18270b8ca3e779e318a757fcc6bf64d6d204e5498df5eeb2195",
+          "downloadUrl": "https://github.com/libexpat/libexpat/archive/R_2_8_2.tar.gz",
+          "cacheName": "libexpat-libexpat-R_2_8_2.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/expat-x64-windows-static-md.txt",
+          "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected expat library/header input under MIT. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "fmt": {
+      "record": "native-fmt-r4",
+      "version": "12.2.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/fmtlib/fmt",
+        "commit": "1be298e1bd68957e4cd352e1f676f00e07dcfb57",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "a65fcc5a1095fc33cc37e4fff69366e49d7e92f613558a2b95ed1b70e33758b4",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "041c48f80df5d0a2ba4d1334d5887e723cfd231b0e18bf18d25480658e4b6231",
+          "usage": "ece096518c58df58cfc60f5ad8120d248a86383482455f539d91b8ca6eac14a7",
+          "vcpkg.json": "1a82f63057d79eb46c1c743079baed6aa36015acc54798cf6a86ba62bf3276db"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "https://github.com/fmtlib/fmt/commit/588b3a0f8f6a8bcf2a959cae882d5b2703e86737.patch?full_index=1",
+          "sha512": "afda8fdfcdcb4b0dd5df4d4dae96a57a85fb9c4b65d0b49d51258f0913d4aed93ed146ebf96ed7b277490b1dde6c7117f43332013071441a96c3147520de8368",
+          "downloadUrl": "https://github.com/fmtlib/fmt/commit/588b3a0f8f6a8bcf2a959cae882d5b2703e86737.patch?full_index=1",
+          "cacheName": "fmt-backport-4813.patch"
+        },
+        {
+          "url": "git+https://github.com/fmtlib/fmt@12.2.0",
+          "sha512": "5ac2ba0f54a484999ed5407d82b77aad170cea49a267decd2c0eedadf3b14413e2a83fcc8e9ca9c16640595e019b8636e160f72314d8be50653324e82ac745eb",
+          "downloadUrl": "https://github.com/fmtlib/fmt/archive/12.2.0.tar.gz",
+          "cacheName": "fmtlib-fmt-12.2.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/fmt-x64-windows-static-md.txt",
+          "sha256": "a65fcc5a1095fc33cc37e4fff69366e49d7e92f613558a2b95ed1b70e33758b4"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected fmt library/header input under MIT. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "imath": {
+      "record": "native-imath-r4",
+      "version": "3.2.2",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/AcademySoftwareFoundation/Imath",
+        "commit": "1e480d11cb98b032a2dece9b9a8730512effc7f6",
+        "paths": [
+          "LICENSE.md",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "4ebb49361820fd4fd31ecb30a7c62fc1010d51d880b09f0717a5a7ac10b45e9f",
+          "vcpkg.json": "2fbf2db9a76c92376722e92e909b51995cbb9aa5efc1b3e308cb8ad150c4b7ca"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-3-Clause. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/AcademySoftwareFoundation/Imath@v3.2.2",
+          "sha512": "492a624e4c0b59685d1ea58a3c2c63ddb4ba5ab9177c7d2a1b7e80be95d38ce02c74fafd2fe0982f7d21e5e75c938cc24a33a12d827dec32727cb8dcd5066450",
+          "downloadUrl": "https://github.com/AcademySoftwareFoundation/Imath/archive/v3.2.2.tar.gz",
+          "cacheName": "AcademySoftwareFoundation-Imath-v3.2.2.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/imath-x64-windows-static-md.txt",
+          "sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected imath library/header input under BSD-3-Clause. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "libdeflate": {
+      "record": "native-libdeflate-r4",
+      "version": "1.25",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/ebiggers/libdeflate",
+        "commit": "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+        "paths": [
+          "COPYING",
+          "CMakeLists.txt"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "COPYING",
+            "sha256": "4ad69099cb4374836fd27583d9991e2838cd86b6e4666ab26b2d32582c91e73a",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "08f1aa2018d68a57fc7c337b3b213cdcda4ca19b6660ac5542f6da4ebebc298b",
+          "remove_wrong_c_flags_modification.diff": "2ec1375bd9e85f34f92d4d0a10494b62766308447dacd44a1c2d52dd5999e8c5",
+          "usage": "c9498f7454d209706bb665d9ba6fb870abc51077166e7b0f1e98d625af698e79",
+          "vcpkg.json": "bdeaa03ed50573a1c11ab1763513e83712495940a315a79e7b442da3c4008ab8"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/ebiggers/libdeflate@v1.25",
+          "sha512": "fa02fa0a6d241d3f71cf4238a3ac58968cbea0b66613c1647d6eea575379d60e93f4647f8b3921e8c31322e20521aa9953213d5465f7d10a27c57bdd7186d318",
+          "downloadUrl": "https://github.com/ebiggers/libdeflate/archive/v1.25.tar.gz",
+          "cacheName": "ebiggers-libdeflate-v1.25.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/libdeflate-x64-windows-static-md.txt",
+          "sha256": "4ad69099cb4374836fd27583d9991e2838cd86b6e4666ab26b2d32582c91e73a"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected libdeflate library/header input under MIT. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "libjpeg-turbo": {
+      "record": "native-libjpeg-turbo-r4",
+      "version": "3.2.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/libjpeg-turbo/libjpeg-turbo",
+        "commit": "c85e6b905bf237038faa936dab160ebfc5da0344",
+        "paths": [
+          "LICENSE.md",
+          "README.ijg",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-3-Clause AND IJG AND Zlib",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "README.ijg",
+            "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "add-options-for-docs-headers.patch": "ca0974ee39b53aabbe2a1ee0fc02781cad5582d988b49e631b990c63019f770e",
+          "portfile.cmake": "7a3d4443ecb74757d6798e1280763da918b4ecee06a4e1c247fb2c3ec71994ff",
+          "usage": "b7ac84527ca4a1f0341492a7233c31e4b9bce1c2b23412300b324b81a5ab08ae",
+          "vcpkg-cmake-wrapper.cmake": "00aae183b99ef60f6a0f6975c8388b566d2323839f4f926c2575847409113bf9",
+          "vcpkg.json": "df7fbe43a017d5b93308e13b7945e95dc7851964c617287cdc877611b214d055",
+          "workaround_cmake_system_processor.patch": "d81f3b6d054e080fa16e52b1900785cf255de771277fa63dbc2c7e8b55776b5c"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-3-Clause AND IJG AND Zlib. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/libjpeg-turbo/libjpeg-turbo@3.2.0",
+          "sha512": "1ce063e9e126d55019385da3a6ff4521a9a3958edeab15e2465ae3435026dac6e598277eea066173ada47da37159d0f7812b2227869c10dd141dcfe2ddeab720",
+          "downloadUrl": "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/3.2.0.tar.gz",
+          "cacheName": "libjpeg-turbo-libjpeg-turbo-3.2.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/libjpeg-turbo-x64-windows-static-md.txt",
+          "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/libjpeg-turbo-ijg.txt",
+          "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/3.2.0.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "1ce063e9e126d55019385da3a6ff4521a9a3958edeab15e2465ae3435026dac6e598277eea066173ada47da37159d0f7812b2227869c10dd141dcfe2ddeab720",
+          "cacheName": "libjpeg-turbo-libjpeg-turbo-3.2.0.tar.gz",
+          "member": "README.ijg",
+          "memberSha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+          "start": 0,
+          "end": 12799,
+          "encoding": "utf-8",
+          "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+          "description": "Full Independent JPEG Group legal text and acknowledgement conditions."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "JPEG library and SIMD implementations under BSD-3-Clause/IJG/Zlib as detailed in LICENSE.md and README.ijg. Command-line tools, testimages, spng utilities and documentation are not packaged. Retain the required Independent JPEG Group acknowledgement."
+    },
+    "liblzma": {
+      "record": "native-liblzma-r4",
+      "version": "5.8.3",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/tukaani-project/xz",
+        "commit": "4b73f2ec19a99ef465282fbce633e8deb33691b3",
+        "paths": [
+          "COPYING",
+          "COPYING.0BSD",
+          "CMakeLists.txt"
+        ],
+        "spdx": "0BSD",
+        "evidence": [
+          {
+            "path": "COPYING",
+            "sha256": "616a3ad264ce29b8f1cb97e53037b139d406899ca8d1f799651e17bfa09830b8",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "COPYING.0BSD",
+            "sha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "build-tools.patch": "8cba136d077a7349bf40e8c990bff4624a705a5330df3a0b6e404b5717baade4",
+          "portfile.cmake": "a9be3166dd293694d1e8f018943b5e10071f5490923d3bbf79180307eca32970",
+          "usage": "0ed0e104f0bc44563551083a8ac5db3403a3e5e1354df1fb9b7705dfbde76aa0",
+          "vcpkg-cmake-wrapper.cmake": "a4611673d837ec6e94f0f0f9a85a1859b85ef169e762b48a99946b9436647b39",
+          "vcpkg.json": "16e3a65432de7781af1eefe19ab40fdb0e8ebda8087d3c07e622f15a1d9db668"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains 0BSD. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/tukaani-project/xz@v5.8.3",
+          "sha512": "8fb5e6a13397d259d8ff7484f9b63f8a6752ff1c63e1a4601170ad8175aadefb5126a1cae7f73370bfc6c2a0b4e1c0bad57a58fc5b781d3f7d45e5a483c091cc",
+          "downloadUrl": "https://github.com/tukaani-project/xz/archive/v5.8.3.tar.gz",
+          "cacheName": "tukaani-project-xz-v5.8.3.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/liblzma-x64-windows-static-md.txt",
+          "sha256": "616a3ad264ce29b8f1cb97e53037b139d406899ca8d1f799651e17bfa09830b8"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/liblzma-0bsd.txt",
+          "url": "https://github.com/tukaani-project/xz/archive/v5.8.3.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "8fb5e6a13397d259d8ff7484f9b63f8a6752ff1c63e1a4601170ad8175aadefb5126a1cae7f73370bfc6c2a0b4e1c0bad57a58fc5b781d3f7d45e5a483c091cc",
+          "cacheName": "tukaani-project-xz-v5.8.3.tar.gz",
+          "member": "COPYING.0BSD",
+          "memberSha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
+          "start": 0,
+          "end": 607,
+          "encoding": "utf-8",
+          "sha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
+          "description": "Complete selected 0BSD permission and disclaimer."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "Only liblzma library under 0BSD, including liblzma/common and common support selected by the recipe. GPL xz tools and GPL/LGPL build-only scripts are outside compiled library scope; retain COPYING summary and full COPYING.0BSD."
+    },
+    "libpng": {
+      "record": "native-libpng-r4",
+      "version": "1.6.58",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/pnggroup/libpng",
+        "commit": "3061454d980de7d53608f594194cfac722721d2a",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "libpng-2.0",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "cmake.patch": "e1c91b1739580791b8bfe770981cdb07bf65261caf6b2a99da988a8bb21d4094",
+          "libpng-config.cmake": "24086e8ff194402a0f2d68e9f992ca7a6899a194883a9df0054818e42d41c246",
+          "portfile.cmake": "5677ed31f47aa657854332f181f5497f22a7ce431c48e9036e0ce04639953af4",
+          "usage": "78d7cf48b6a62ad52b10cb5f2134b2f6b61128c08802e10092020e28fb992542",
+          "vcpkg-cmake-wrapper.cmake": "4267e69abf185f2228a4cc012e3fe87d5de21a187c75950b5a7615f41c3f6371",
+          "vcpkg.json": "3749b649ea8ce7bbe96346a7c0289ec5ca56418f4d9ef9881e30d90b7ec0b8ff"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains libpng-2.0. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/pnggroup/libpng@v1.6.58",
+          "sha512": "65f54d805e1f7c46a5fc335b984e4cbd4f934e0f02fbf6673c13800b49a4c11fbeb4098eebfb33079527a56c3d933e97631f91ab68dbb31442982784f9241ace",
+          "downloadUrl": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+          "cacheName": "pnggroup-libpng-v1.6.58.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/libpng-x64-windows-static-md.txt",
+          "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected libpng library/header input under libpng-2.0. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "minizip-ng": {
+      "record": "native-minizip-ng-r4",
+      "version": "4.1.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/zlib-ng/minizip-ng",
+        "commit": "cf4b58e17ebdcff8c6fbce1a9c3af5bf0485423c",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "Zlib",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "675181c03fc1302a1c8554c00f7be9bb420c5dbc9dcc2013433cec144413de03",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "dependencies.diff": "c74a122075106ec750ac6bd564688856711f60da1b32f4e819c5d6c562f43267",
+          "portfile.cmake": "a91087cc36d48e303da3c8a7e76eb757d5d97719319be7ab1400c04b8de49a5f",
+          "vcpkg.json": "926e3c968ed7af07a99ffa0b4682a98b01a4ddd9585181465023944ccc6fcb5f"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains Zlib. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/zlib-ng/minizip-ng@4.1.0",
+          "sha512": "9ea5dde14acd2f7d1efd0e38b11017b679d3aaabac61552f9c5f4c7f45f2563543e0fbb2d74429c6b1b9c37d8728ebc4f1cf0efad5f71807c11bb8a2a681a556",
+          "downloadUrl": "https://github.com/zlib-ng/minizip-ng/archive/4.1.0.tar.gz",
+          "cacheName": "zlib-ng-minizip-ng-4.1.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/minizip-ng-x64-windows-static-md.txt",
+          "sha256": "675181c03fc1302a1c8554c00f7be9bb420c5dbc9dcc2013433cec144413de03"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected minizip-ng library/header input under Zlib. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "opencolorio": {
+      "record": "native-opencolorio-r4",
+      "version": "2.5.2",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/AcademySoftwareFoundation/OpenColorIO",
+        "commit": "c52966a6677723d5bd2dbef0ccec3fed9cbc3790",
+        "paths": [
+          "LICENSE",
+          "ext/sampleicc/src/include/iccProfileReader.h",
+          "ext/sampleicc/src/include/icProfileHeader.h",
+          "ext/xxHash/src/include/xxhash.h",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-3-Clause AND BSD-2-Clause AND LicenseRef-ICC-Software-0.2 AND LicenseRef-SunSoft-1994",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "82a40c52065ee968aa62015735e84378ac11425db7a233e6a2dcd2c83fc24276",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "ext/sampleicc/src/include/iccProfileReader.h",
+            "sha256": "86d593549b4ba44aef5b7b2e0ee9e5bb8cb23604547f174028751110cf9cc9e2",
+            "finding": "Exact leading copyright and licence comments only; implementation is not copied into the legal companion."
+          },
+          {
+            "path": "ext/sampleicc/src/include/icProfileHeader.h",
+            "sha256": "310bf0fea7a146b87a727731a42c709a7fb8d22dbeaaccd2b4edbc3cce0856e1",
+            "finding": "ICC, Heidelberger and SunSoft copyright/terms blocks only. Excludes the preceding C example. Latin-1 source is explicitly transcoded to UTF-8."
+          },
+          {
+            "path": "ext/xxHash/src/include/xxhash.h",
+            "sha256": "d4f2b91b547c79061649186721a6b331609f2bf8595485a21ea631c82ec3ef93",
+            "finding": "Full first copyright/licence comment; no implementation."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "dependencies.diff": "c2a8da2e4bcbd571ce0d66293c57018fcc46e14801ebfb7e08b28912fffad8ee",
+          "glew-no-glu.diff": "8977768f5402d04c7f270e2b83d01be7bb2013e8d5affca48e2f8b8d3c5a6e8f",
+          "portfile.cmake": "ae32d51a4d914654e7826b371b2bc1aa8bc0a0762d03998397faaefae6cd16cf",
+          "pystring.diff": "b1f45ea8e9257ed00ea6bdfdf8f9cb949a6a2e7f599fcf03eab65dfcfe3a45e5",
+          "vcpkg.json": "a289a247fb32c507bd936db9d11e5568269603222597ee6472feb913c0928ecf"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-3-Clause AND BSD-2-Clause AND LicenseRef-ICC-Software-0.2 AND LicenseRef-SunSoft-1994. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/AcademySoftwareFoundation/OpenColorIO@v2.5.2",
+          "sha512": "99f222158a67ff8ba981f01a908915a9e08a76b1eb73c667ff38990b31dd9a4c1f5934e924daaff18eef2fc96dd10928b77be18c97489b1aff631409631122e3",
+          "downloadUrl": "https://github.com/AcademySoftwareFoundation/OpenColorIO/archive/v2.5.2.tar.gz",
+          "cacheName": "AcademySoftwareFoundation-OpenColorIO-v2.5.2.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/opencolorio-x64-windows-static-md.txt",
+          "sha256": "82a40c52065ee968aa62015735e84378ac11425db7a233e6a2dcd2c83fc24276"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/opencolorio-icc-reader.txt",
+          "url": "https://github.com/AcademySoftwareFoundation/OpenColorIO/archive/v2.5.2.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "99f222158a67ff8ba981f01a908915a9e08a76b1eb73c667ff38990b31dd9a4c1f5934e924daaff18eef2fc96dd10928b77be18c97489b1aff631409631122e3",
+          "cacheName": "AcademySoftwareFoundation-OpenColorIO-v2.5.2.tar.gz",
+          "member": "ext/sampleicc/src/include/iccProfileReader.h",
+          "memberSha256": "86d593549b4ba44aef5b7b2e0ee9e5bb8cb23604547f174028751110cf9cc9e2",
+          "start": 0,
+          "end": 2174,
+          "encoding": "utf-8",
+          "sha256": "d53a48311c133d250af89b05e67ea551a37ac91e986fb612f030447967f950f9",
+          "description": "Exact leading copyright and licence comments only; implementation is not copied into the legal companion."
+        },
+        {
+          "output": "licenses/provenance/opencolorio-icc-profile-header.txt",
+          "url": "https://github.com/AcademySoftwareFoundation/OpenColorIO/archive/v2.5.2.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "99f222158a67ff8ba981f01a908915a9e08a76b1eb73c667ff38990b31dd9a4c1f5934e924daaff18eef2fc96dd10928b77be18c97489b1aff631409631122e3",
+          "cacheName": "AcademySoftwareFoundation-OpenColorIO-v2.5.2.tar.gz",
+          "member": "ext/sampleicc/src/include/icProfileHeader.h",
+          "memberSha256": "310bf0fea7a146b87a727731a42c709a7fb8d22dbeaaccd2b4edbc3cce0856e1",
+          "start": 2674,
+          "end": 6315,
+          "encoding": "latin-1",
+          "sha256": "13b5cb489d392fd484c354cac49dc53f86bfccaa02a38ec3e5be7635cba0c0b2",
+          "description": "ICC, Heidelberger and SunSoft copyright/terms blocks only. Excludes the preceding C example. Latin-1 source is explicitly transcoded to UTF-8."
+        },
+        {
+          "output": "licenses/provenance/opencolorio-xxhash.txt",
+          "url": "https://github.com/AcademySoftwareFoundation/OpenColorIO/archive/v2.5.2.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "99f222158a67ff8ba981f01a908915a9e08a76b1eb73c667ff38990b31dd9a4c1f5934e924daaff18eef2fc96dd10928b77be18c97489b1aff631409631122e3",
+          "cacheName": "AcademySoftwareFoundation-OpenColorIO-v2.5.2.tar.gz",
+          "member": "ext/xxHash/src/include/xxhash.h",
+          "memberSha256": "d4f2b91b547c79061649186721a6b331609f2bf8595485a21ea631c82ec3ef93",
+          "start": 0,
+          "end": 1660,
+          "encoding": "utf-8",
+          "sha256": "680ae7d3902bd5235334f2bb1f7102671a5b957bcc70f6e986e8c848eac542a2",
+          "description": "Full first copyright/licence comment; no implementation."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "Selected core library and embedded xxHash BSD-2-Clause, sampleicc ICC Software License 0.2 and SunSoft 1994 permissive/nonendorsement text. ICC/Heidelberger disclaimers remain intact. LicenseRef identifiers denote these exact reviewed header texts, not new exceptions. Apps, tests, docs, Python/Java/OpenFX/Nuke and ARM sse2neon are disabled; external dependencies have separate records."
+    },
+    "openexr": {
+      "record": "native-openexr-r4",
+      "version": "3.4.14",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/AcademySoftwareFoundation/openexr",
+        "commit": "777d231a179de1711d2a942810d9559216ab3f4c",
+        "paths": [
+          "LICENSE.md",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "84853c91d4c2e0310741d4773469d98bb93e61029608e0ba0882a3fffdf330bd",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "30a220942368346ff945a006179cb21ddd6b21444df8aeabebf1808c69b15e6d",
+          "usage": "e8ca6c7ffde43f5c54e5ed559260bf385c0c1519ab5358f08df2757dcac2fe85",
+          "vcpkg.json": "850787b7a0eb5ee01c8ba651d830c2b01bffefa8428256ca5ef58e03482058e1"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-3-Clause. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/AcademySoftwareFoundation/openexr@v3.4.14",
+          "sha512": "dd7919417713c5407d41740dd219d6ba49c5defe234d332f83a914ce507d72ff9a656885149d94ee8f76c8bbbd710c7232e3a402bd3c49fd8df9943ef941aed3",
+          "downloadUrl": "https://github.com/AcademySoftwareFoundation/openexr/archive/v3.4.14.tar.gz",
+          "cacheName": "AcademySoftwareFoundation-openexr-v3.4.14.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/openexr-x64-windows-static-md.txt",
+          "sha256": "84853c91d4c2e0310741d4773469d98bb93e61029608e0ba0882a3fffdf330bd"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected OpenEXR libraries under BSD-3-Clause; OpenJPH and libdeflate resolve to separately recorded installed packages (verified current CMake cache). Internal fallback sources, tools, examples, tests and website are not the selected compiled input."
+    },
+    "openimageio": {
+      "record": "native-openimageio-r4",
+      "version": "3.1.14.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/AcademySoftwareFoundation/OpenImageIO",
+        "commit": "cfff4af80854f9fa4035929d64308cd253700bc1",
+        "paths": [
+          "LICENSE.md",
+          "THIRD-PARTY.md",
+          "src/include/OpenImageIO/function_view.h",
+          "CMakeLists.txt"
+        ],
+        "spdx": "Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "THIRD-PARTY.md",
+            "sha256": "1e86c485c25256a807b11c6f56014acac43bdc297944c2d6b4af16fd65188c2b",
+            "finding": "Full upstream third-party attribution and terms; individual header overrides are additional."
+          },
+          {
+            "path": "src/include/OpenImageIO/function_view.h",
+            "sha256": "ea16cb130503cf81f02aa0d3caf7c7a69a714385b093e334b951fda2dc48d333",
+            "finding": "Exact leading copyright and licence comments only; implementation is not copied into the legal companion."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "fix-dependencies.patch": "a011bb0a69ddf186cff25434ac7f919db0ed36c67fde527e9e5a978a6dbb20f7",
+          "fix-emscripten.patch": "6f9e2ab2f2b009a257a95ea14fe4654d968a2f40c6b27f1eaf22b4c1b3d4ec20",
+          "fix-openexr-target-missing.patch": "37e717809a8c8005a90cd596892cb7cf4e0ac9d2d0bad63a93f9ae7e391fe6a3",
+          "fix-openimageio_include_dir.patch": "c381d3f0e91807c1a5e7173dc59e96ac63646ba4d5aede62cc2a1b91d5c4e93e",
+          "fix-static-ffmpeg.patch": "5b9c1aa27be4f4081a02cdde93fbd01f1e38a13c622fe2aa6902dd253efc4fb8",
+          "imath-version-guard.patch": "3f05bdaee1bfd2ab6011d6c640ea3f60b7fe130072c4ba8a02838c8bb1587d0f",
+          "portfile.cmake": "a72fa0a73b5d660a3582a45ead6614135a7a55a975fbce9b7d3782299830f653",
+          "remove-agl-framework.patch": "afc37dad15826c488f0e4d4d37c754711b6b56f1f7d81ebd5156624fc534d4da",
+          "usage": "75a765b2b99ecac03a96e013e9bb754c7672b532cd6fda6e0e81136ef46f8b4e",
+          "vcpkg.json": "45a75f22ff03b5dc2ce143d9e5af6d8fa028d394cdabcf5b8bfef82023893c63"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/AcademySoftwareFoundation/OpenImageIO@v3.1.14.0",
+          "sha512": "dd5cb30edf8d6c2d61260cc2d91a7a29bbad11b18f83af93527f9308bff0e24b218584635fdad6a154a2c32f0c8c12a458a86261c76c36d9aa41106af8533a39",
+          "downloadUrl": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/v3.1.14.0.tar.gz",
+          "cacheName": "AcademySoftwareFoundation-OpenImageIO-v3.1.14.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/openimageio-x64-windows-static-md.txt",
+          "sha256": "95b56cf947151b6007f9b458bc9b7da974982715aabd2f5d25b366275f2142fa"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/openimageio-third-party.txt",
+          "url": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/v3.1.14.0.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "dd5cb30edf8d6c2d61260cc2d91a7a29bbad11b18f83af93527f9308bff0e24b218584635fdad6a154a2c32f0c8c12a458a86261c76c36d9aa41106af8533a39",
+          "cacheName": "AcademySoftwareFoundation-OpenImageIO-v3.1.14.0.tar.gz",
+          "member": "THIRD-PARTY.md",
+          "memberSha256": "1e86c485c25256a807b11c6f56014acac43bdc297944c2d6b4af16fd65188c2b",
+          "start": 0,
+          "end": 13418,
+          "encoding": "utf-8",
+          "sha256": "1e86c485c25256a807b11c6f56014acac43bdc297944c2d6b4af16fd65188c2b",
+          "description": "Full upstream third-party attribution and terms; individual header overrides are additional."
+        },
+        {
+          "output": "licenses/provenance/openimageio-function-view-ncsa.txt",
+          "url": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/v3.1.14.0.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "dd5cb30edf8d6c2d61260cc2d91a7a29bbad11b18f83af93527f9308bff0e24b218584635fdad6a154a2c32f0c8c12a458a86261c76c36d9aa41106af8533a39",
+          "cacheName": "AcademySoftwareFoundation-OpenImageIO-v3.1.14.0.tar.gz",
+          "member": "src/include/OpenImageIO/function_view.h",
+          "memberSha256": "ea16cb130503cf81f02aa0d3caf7c7a69a714385b093e334b951fda2dc48d333",
+          "start": 0,
+          "end": 2086,
+          "encoding": "utf-8",
+          "sha256": "32926fef54d2d18a30d990627825ceace5e2eafa4a1dec8854512cb2a59b1023",
+          "description": "Exact leading copyright and licence comments only; implementation is not copied into the legal companion."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "Core library and embedded permissive components identified by THIRD-PARTY.md. Retain its complete attribution plus the actual NCSA notice in function_view.h: its header governs over the summary LLVM label. Existing vcpkg removes ext and disables tools/viewer/tests/docs/Python/Freetype; fonts and CC-BY documentation are not copied. fmt/other external libraries are independently recorded. Public-domain lookup3/SHA1 acknowledgements remain in THIRD-PARTY.md."
+    },
+    "openjph": {
+      "record": "native-openjph-r4",
+      "version": "0.31.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/aous72/OpenJPH",
+        "commit": "c68064d0e4cad8e96bab9a068f6cc4e7799744fc",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-2-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "5ddf5177863dfc9ab65fa129d587db651241f00e21ed2427b218bea997591f98",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "fix-pkgconfig-library-name.patch": "51f587845caf724bde7808e72a47cbf4a0e28c7684a24698ddc2d31c02ba52b9",
+          "portfile.cmake": "6ecc1cf6744eedd92636adf4ca248acea5c4d822b283437c71887cd6468cd7e2",
+          "vcpkg.json": "5fd27d175cfb33f670b17a34300ea4b88efecd50582020ee6147ffcff0436cbe",
+          "xsi-strerror_r.patch": "48927101f7246652cf00e4078dd5dbb6a08d34c4941c391d7bfe697c44e86cba"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-2-Clause. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/aous72/OpenJPH@0.31.0",
+          "sha512": "2dfafe3db360ac177014c4b65ea0b62ea14ccf61714d80dbaa0c01ab2dbc2153f6d26df3d7af5e6b74e298eb72670a7670fca626a37d2fe7e4c224a3256af35a",
+          "downloadUrl": "https://github.com/aous72/OpenJPH/archive/0.31.0.tar.gz",
+          "cacheName": "aous72-OpenJPH-0.31.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/openjph-x64-windows-static-md.txt",
+          "sha256": "5ddf5177863dfc9ab65fa129d587db651241f00e21ed2427b218bea997591f98"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected openjph library/header input under BSD-2-Clause. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "pystring": {
+      "record": "native-pystring-r4",
+      "version": "1.2.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/imageworks/pystring",
+        "commit": "1922c8f2b48e3beb6831c27b4811b58995e986cf",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "f7f060301402ea0b5c507b865b1a9de037d4d7b24f37422a93b70fe9c7a9b78a",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "CMakeLists.txt": "2a96893a69b835b134878575f9c889a39b510cc50fd1cfc57978a883be450dc4",
+          "portfile.cmake": "c136ce79253ddbe095f06073915fad9fe12475434045a7abe31fe1d978301fb2",
+          "vcpkg.json": "e7129a6336d76f60c16b14237e7b5882b26ed6eb1c3ff0ca4f58260f3f0e85d1"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-3-Clause. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/imageworks/pystring@v1.2.0",
+          "sha512": "0696553f63a2622280449b513dd9ccf92a8d7c05fad41dfa927f2bc1c3815e381348375278f7b58d932b49ea297e8b99f002c903adae49258a71120278304e84",
+          "downloadUrl": "https://github.com/imageworks/pystring/archive/v1.2.0.tar.gz",
+          "cacheName": "imageworks-pystring-v1.2.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/pystring-x64-windows-static-md.txt",
+          "sha256": "f7f060301402ea0b5c507b865b1a9de037d4d7b24f37422a93b70fe9c7a9b78a"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected pystring library/header input under BSD-3-Clause. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "robin-map": {
+      "record": "native-robin-map-r4",
+      "version": "1.4.1",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/Tessil/robin-map",
+        "commit": "bd14e6830a1474fed9d2d03f5c3b0683d818d540",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "11f2c685ba565a31aef1219f63a7a8845602c97bff70016b9e3278dfe51a2ec5",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "f8d9f4413e490c2f779973aeb05790068beb265485bcf52ac022fa59bf0bf727",
+          "vcpkg.json": "cc8b82fa976192514420875a43ae9e514c469cca0e43ef5c9bb8e233ea302fed"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/Tessil/robin-map@v1.4.1",
+          "sha512": "c77dba232537e71f930a9a54f4e7575debcac10bbfa67f002a3b7262889871d146de583b774b5c8a0b5bf5a7471ee17c375bda6bb4f3f3cf52e1d33313231be2",
+          "downloadUrl": "https://github.com/Tessil/robin-map/archive/v1.4.1.tar.gz",
+          "cacheName": "Tessil-robin-map-v1.4.1.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/robin-map-x64-windows-static-md.txt",
+          "sha256": "11f2c685ba565a31aef1219f63a7a8845602c97bff70016b9e3278dfe51a2ec5"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected robin-map library/header input under MIT. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "tiff": {
+      "record": "native-tiff-r4",
+      "version": "4.7.2",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://gitlab.com/libtiff/libtiff",
+        "commit": "d01a94be176f5f6a87f7ee1c0b32e65416aa2b4d",
+        "paths": [
+          "LICENSE.md",
+          "CMakeLists.txt"
+        ],
+        "spdx": "libtiff AND LicenseRef-Berkeley-LZW-Rescinded",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "FindCMath.patch": "07d52177c2ea826e794359d1b48da54f14a8cf357cc45b5bacaca4a8693e4a3a",
+          "jpeccodec.patch": "a99800a191897ffd4d8fdd9ca59a705b97e464c446e6405f5d4f1417f86791ad",
+          "portfile.cmake": "1dc02de54678e64d69396cf809812a945cdcf8954146bacee6b6b9a3cf1e27c0",
+          "prefer-config.diff": "8a4fe79add129df0530e66c5e4507a099eef5ebe345ab0c80cbaad95b95037cd",
+          "usage": "dcd381c31423169c97bb5a109c91282657eb7b2b9cacadf7964c67dcd5495f1e",
+          "vcpkg-cmake-wrapper.cmake.in": "1a16c95aae11fa25f8593ce75a4334a7f55afbc580c4be6e1f88bb6afd07352f",
+          "vcpkg.json": "4b93b73c8eac970023a2133ec5eeee2d44afcdf9b26cf2c8bd3ea515c2109a35"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains libtiff AND LicenseRef-Berkeley-LZW-Rescinded. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://gitlab.com/libtiff/libtiff@v4.7.2",
+          "sha512": "c4dcde3c79e5d69c7231f8862e2e5a83d90d9cce694fb2a4804800b2f8f1bc9db504b9252d81dce872eec8358b33a3a1dbdddcbb6181f6fb8d1d7fc0e9a9fc6a",
+          "downloadUrl": "https://gitlab.com/libtiff/libtiff/archive/v4.7.2.tar.gz",
+          "cacheName": "libtiff-libtiff-v4.7.2.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/tiff-x64-windows-static-md.txt",
+          "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/berkeley-bsd-amendment.pdf",
+          "url": "https://ipira.berkeley.edu/sites/default/files/amendment_of_4-clause_bsd_software_license.pdf",
+          "sourceSha256": "5ce4b1789b0b7353a867d017a3a36b9881d0db9c3fddd07fc400d5f087c81d4f",
+          "sourceSha512": null,
+          "cacheName": "berkeley-bsd-amendment.pdf",
+          "member": null,
+          "memberSha256": null,
+          "start": 0,
+          "end": 373503,
+          "encoding": "raw",
+          "sha256": "5ce4b1789b0b7353a867d017a3a36b9881d0db9c3fddd07fc400d5f087c81d4f",
+          "description": "Original official UC Berkeley 2012 notice removing the advertising obligation. Retain alongside original LZW attribution."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "Selected libtiff runtime sources under the libtiff grant, with original Berkeley LZW notice retained. UC Berkeley official 2012 amendment removes its advertising obligation for all officially Berkeley-licensed software; retain that amendment as supplementary evidence. Nonendorsement and original attribution remain. JBIG is disabled; docs/tests/contrib/tools are not runtime inputs."
+    },
+    "vcpkg-cmake": {
+      "record": "native-vcpkg-cmake-r4",
+      "version": "2024-04-23",
+      "role": "build-only",
+      "source": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "paths": [
+          "ports/vcpkg-cmake/portfile.cmake"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+            "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "portfile.cmake": "a711531b7f13b7da16fa1f25d7c5737a423d4a126465dc9e6689a0f043fcc1aa",
+          "vcpkg-port-config.cmake": "f0a30f77c8f5e3ac40436fe2518a61ad067f2955c7ef3be6d6a0ca4b81cd2a45",
+          "vcpkg.json": "6fd546b781a1aa5df572bdd31672cf222e55698aa5bf7d3e5c11abf1ae56a45b",
+          "vcpkg_cmake_build.cmake": "6d1c27080fe3e768b5e7b968d6a28a37db154ebcb214297de25f10b6713511e1",
+          "vcpkg_cmake_configure.cmake": "a8bc92be2faf621d6183ed1f3eb2ac3b103f4418b95f8695cf0dc7f7c5e8f724",
+          "vcpkg_cmake_install.cmake": "3ae7886dc8434fac6f1e61190cc355fdec5fbd4f60758e2de20423cf49c91369"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [],
+      "legal": [
+        {
+          "path": "licenses/vcpkg-cmake-x64-windows.txt",
+          "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Authored MIT vcpkg CMake helper and recipe only. Build-time scripts/metadata are retained for reproducibility; no host tool implementation is a runtime dependency."
+    },
+    "vcpkg-cmake-config": {
+      "record": "native-vcpkg-cmake-config-r4",
+      "version": "2026-07-21",
+      "role": "build-only",
+      "source": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "paths": [
+          "ports/vcpkg-cmake-config/portfile.cmake"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+            "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "copyright": "04b60f99a43bfd7fefdc8364b24aac704a2160cef969b75ba6a38b62dc4c4b70",
+          "portfile.cmake": "832b34e63f5af41ad1b2e4aa79c5bfa507a005b120b51548e674accc706837d7",
+          "vcpkg-port-config.cmake": "72bc3093337e633bdd19fe5d4dd1f38ca1918def49608d676a9c98c686d38b1e",
+          "vcpkg.json": "480420178eb38f67a7825d5e6776776ea072bcd14b1839e0f495344a529d9f58",
+          "vcpkg_cmake_config_fixup.cmake": "4866f6e995abcde8f9d7add69a3206205158119dbd0547be13076ae3c1456f6b"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [],
+      "legal": [
+        {
+          "path": "licenses/vcpkg-cmake-config-x64-windows.txt",
+          "sha256": "04b60f99a43bfd7fefdc8364b24aac704a2160cef969b75ba6a38b62dc4c4b70"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Authored MIT vcpkg CMake helper and recipe only. Build-time scripts/metadata are retained for reproducibility; no host tool implementation is a runtime dependency."
+    },
+    "yaml-cpp": {
+      "record": "native-yaml-cpp-r4",
+      "version": "0.9.0",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/jbeder/yaml-cpp",
+        "commit": "56e3bb550c91fd7005566f19c079cb7a503223cf",
+        "paths": [
+          "LICENSE",
+          "src/contrib/dragonbox.h",
+          "CMakeLists.txt"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "aa6fcc27be034e41e21dd832f9175bfe694a48491d9e14ff0fa278e19ad14f1b",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "src/contrib/dragonbox.h",
+            "sha256": "32ae7986fcebe2b8d68833e8a8401cf5c1b406ce7f4e439ba347c2927128e9ec",
+            "finding": "Exact leading copyright and licence comments only; implementation is not copied into the legal companion."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "1422.patch": "f22b1fc4a90e149f22dab74412d48542dbdba968bc0e81a49e5e095f3e956e49",
+          "portfile.cmake": "c4ab0d57df2379f301e761bc040063cf871a9cedb1c4762175a4204cc6656665",
+          "vcpkg.json": "f9ce1302761c35690c4cd566a395e276d12c3b91af73612b33d579104fb1e71a"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/jbeder/yaml-cpp@yaml-cpp-0.9.0",
+          "sha512": "59f730e8c5744f1ccd542c1144db8d4d949012f72aab0b84ba4a818db25a0f847569b61238ab72ed5b0b2e9482b8d5007651b7185f4ca9e99045d5160259b565",
+          "downloadUrl": "https://github.com/jbeder/yaml-cpp/archive/yaml-cpp-0.9.0.tar.gz",
+          "cacheName": "jbeder-yaml-cpp-yaml-cpp-0.9.0.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/yaml-cpp-x64-windows-static-md.txt",
+          "sha256": "aa6fcc27be034e41e21dd832f9175bfe694a48491d9e14ff0fa278e19ad14f1b"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/yaml-cpp-dragonbox.txt",
+          "url": "https://github.com/jbeder/yaml-cpp/archive/yaml-cpp-0.9.0.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "59f730e8c5744f1ccd542c1144db8d4d949012f72aab0b84ba4a818db25a0f847569b61238ab72ed5b0b2e9482b8d5007651b7185f4ca9e99045d5160259b565",
+          "cacheName": "jbeder-yaml-cpp-yaml-cpp-0.9.0.tar.gz",
+          "member": "src/contrib/dragonbox.h",
+          "memberSha256": "32ae7986fcebe2b8d68833e8a8401cf5c1b406ce7f4e439ba347c2927128e9ec",
+          "start": 0,
+          "end": 532,
+          "encoding": "utf-8",
+          "sha256": "d5df5c966079f3000415e2841854060945148334dcb1457fca63d4ba011cc105",
+          "description": "Exact leading copyright and licence comments only; implementation is not copied into the legal companion."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "MIT library including Junekey Jeon dragonbox: the individual header expressly grants MIT for yaml-cpp. Retain its copyright and permission explanation; no Apache/BSL alternative is needed. Bundled test-only googletest is excluded."
+    },
+    "zlib": {
+      "record": "native-zlib-r4",
+      "version": "1.3.2",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/madler/zlib",
+        "commit": "da607da739fa6047df13e66a2af6b8bec7c2a498",
+        "paths": [
+          "LICENSE",
+          "CMakeLists.txt"
+        ],
+        "spdx": "Zlib",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "0001-no-version-script-on-ohos.patch": "f8c54d2dfd0a37d2f6e7473b1dba86b9e5ac423f522de9021b62c6c8c226ff76",
+          "portfile.cmake": "ea47bb5089d792f31127ad26e780e78bb940ad4372aa2d66649a4f446a1a2b72",
+          "usage": "2fdbc95707f61d7f468ece88e460b1bcc22713af34978c7a1b80b689fc39cb67",
+          "vcpkg-cmake-wrapper.cmake": "2b3c71f1615f0fa0e86d8a87713a12a794df218a90b6c3b6d625fa2f25f73716",
+          "vcpkg.json": "e3101aa948dfaeb1b3045d4b8e229f65cae6e277f7a86cf77cea2323e9bb8c79"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains Zlib. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/madler/zlib@v1.3.2",
+          "sha512": "16fea4df307a68cf0035858abe2fd550250618a97590e202037acd18a666f57afc10f8836cbbd472d54a0e76539d0e558cb26f059d53de52ff90634bbf4f47d4",
+          "downloadUrl": "https://github.com/madler/zlib/archive/v1.3.2.tar.gz",
+          "cacheName": "madler-zlib-v1.3.2.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/zlib-x64-windows-static-md.txt",
+          "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
+        }
+      ],
+      "extras": [],
+      "correspondingSource": null,
+      "scope": "Selected zlib library/header input under Zlib. The exact port recipe and recorded feature closure determine compilation; tests, examples and standalone host tools are not runtime payload."
+    },
+    "zstd": {
+      "record": "native-zstd-r4",
+      "version": "1.5.7",
+      "role": "runtime-input",
+      "source": {
+        "repository": "https://github.com/facebook/zstd",
+        "commit": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "paths": [
+          "LICENSE",
+          "lib/common/xxhash.h"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "lib/common/xxhash.h",
+            "sha256": "8cb837b21a8fe9a6b9dbcd0961ab16e733bfcbfa9e003f3a496ce07ae80aa8ee",
+            "finding": "Full first copyright/licence comment; no implementation."
+          }
+        ]
+      },
+      "recipe": {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "files": {
+          "fix-emscripten-and-clang-cl.patch": "eed141d2f80da0c549481ae928ea1a4ad226fb7dc90c16217a5fc4ea4b560cf0",
+          "fix-windows-rc-compile.patch": "24080a83a9d7b19b431fc499972f404e86fa96b188315d3fb8bca932da88fe66",
+          "no-static-suffix.patch": "639fedd3fc4cf634e4ae63ad0077e547a91d3fef1dd26a59f0e817378c5cc434",
+          "portfile.cmake": "b348bd1c831dcda55e55f2b251178c0e9414161a2474dab58e76be639e870575",
+          "usage": "dd373e885aea14820e812e58de22d2e8d83f42248d695d6877fe17bd0f3ff455",
+          "vcpkg.json": "1d6262377eaee174cc4934c4cc9cf13d0f679b26d129fb4b5707f49bf876d20a"
+        },
+        "licenceScope": "Authored port/build helpers: MIT; patch context retains BSD-3-Clause. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+      },
+      "resources": [
+        {
+          "url": "git+https://github.com/facebook/zstd@v1.5.7",
+          "sha512": "26e441267305f6e58080460f96ab98645219a90d290a533410b1b0b1d2f870721c95f8384e342ee647c5e968385a5b7e30c2d04340c37f59b3e6d86762c3260c",
+          "downloadUrl": "https://github.com/facebook/zstd/archive/v1.5.7.tar.gz",
+          "cacheName": "facebook-zstd-v1.5.7.tar.gz"
+        }
+      ],
+      "legal": [
+        {
+          "path": "licenses/zstd-x64-windows-static-md.txt",
+          "sha256": "ae73833b0ceb843626baec97a749ebc5c4df2bd4c09c3866a62ef263ce666a22"
+        }
+      ],
+      "extras": [
+        {
+          "output": "licenses/provenance/zstd-xxhash.txt",
+          "url": "https://github.com/facebook/zstd/archive/v1.5.7.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "26e441267305f6e58080460f96ab98645219a90d290a533410b1b0b1d2f870721c95f8384e342ee647c5e968385a5b7e30c2d04340c37f59b3e6d86762c3260c",
+          "cacheName": "facebook-zstd-v1.5.7.tar.gz",
+          "member": "lib/common/xxhash.h",
+          "memberSha256": "8cb837b21a8fe9a6b9dbcd0961ab16e733bfcbfa9e003f3a496ce07ae80aa8ee",
+          "start": 0,
+          "end": 412,
+          "encoding": "utf-8",
+          "sha256": "c2840bd10d1cd7a5f5fcff83b1317f18ce45f6f6df243d575a27048ee3aaf190",
+          "description": "Full first copyright/licence comment; no implementation."
+        }
+      ],
+      "correspondingSource": null,
+      "scope": "Select BSD-3-Clause instead of the GPL-2.0 alternative. The actual xxHash header shares the explicit dual selection; preserve its Yann Collet/Meta copyright. The GPL text in the upstream source tree does not change this selected grant."
+    }
+  },
+  "packages": {
+    "ArcForges.Native.Image.Runtime.win-x64": {
+      "dependencies": [
+        {
+          "name": "bzip2",
+          "triplet": "x64-windows-static-md",
+          "version": "1.0.8",
+          "features": [
+            "tool"
+          ]
+        },
+        {
+          "name": "expat",
+          "triplet": "x64-windows-static-md",
+          "version": "2.8.2",
+          "features": []
+        },
+        {
+          "name": "fmt",
+          "triplet": "x64-windows-static-md",
+          "version": "12.2.0",
+          "features": []
+        },
+        {
+          "name": "imath",
+          "triplet": "x64-windows-static-md",
+          "version": "3.2.2",
+          "features": []
+        },
+        {
+          "name": "libdeflate",
+          "triplet": "x64-windows-static-md",
+          "version": "1.25",
+          "features": [
+            "compression",
+            "decompression",
+            "gzip",
+            "zlib"
+          ]
+        },
+        {
+          "name": "libjpeg-turbo",
+          "triplet": "x64-windows-static-md",
+          "version": "3.2.0",
+          "features": []
+        },
+        {
+          "name": "liblzma",
+          "triplet": "x64-windows-static-md",
+          "version": "5.8.3",
+          "features": []
+        },
+        {
+          "name": "libpng",
+          "triplet": "x64-windows-static-md",
+          "version": "1.6.58",
+          "features": []
+        },
+        {
+          "name": "minizip-ng",
+          "triplet": "x64-windows-static-md",
+          "version": "4.1.0",
+          "features": [
+            "bzip2",
+            "lzma",
+            "pkcrypt",
+            "wzaes",
+            "zlib",
+            "zstd"
+          ]
+        },
+        {
+          "name": "opencolorio",
+          "triplet": "x64-windows-static-md",
+          "version": "2.5.2",
+          "features": []
+        },
+        {
+          "name": "openexr",
+          "triplet": "x64-windows-static-md",
+          "version": "3.4.14",
+          "features": []
+        },
+        {
+          "name": "openimageio",
+          "triplet": "x64-windows-static-md",
+          "version": "3.1.14.0",
+          "features": []
+        },
+        {
+          "name": "openjph",
+          "triplet": "x64-windows-static-md",
+          "version": "0.31.0",
+          "features": []
+        },
+        {
+          "name": "pystring",
+          "triplet": "x64-windows-static-md",
+          "version": "1.2.0",
+          "features": []
+        },
+        {
+          "name": "robin-map",
+          "triplet": "x64-windows-static-md",
+          "version": "1.4.1",
+          "features": []
+        },
+        {
+          "name": "tiff",
+          "triplet": "x64-windows-static-md",
+          "version": "4.7.2",
+          "features": [
+            "jpeg",
+            "lzma",
+            "zip"
+          ]
+        },
+        {
+          "name": "vcpkg-cmake",
+          "triplet": "x64-windows",
+          "version": "2024-04-23",
+          "features": []
+        },
+        {
+          "name": "vcpkg-cmake-config",
+          "triplet": "x64-windows",
+          "version": "2026-07-21",
+          "features": []
+        },
+        {
+          "name": "yaml-cpp",
+          "triplet": "x64-windows-static-md",
+          "version": "0.9.0",
+          "features": []
+        },
+        {
+          "name": "zlib",
+          "triplet": "x64-windows-static-md",
+          "version": "1.3.2",
+          "features": []
+        },
+        {
+          "name": "zstd",
+          "triplet": "x64-windows-static-md",
+          "version": "1.5.7",
+          "features": []
+        }
+      ],
+      "dlls": [
+        "ArcImageNative.dll",
+        "msvcp140.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll"
+      ]
+    }
+  },
+  "platformRuntime": {
+    "id": "microsoft-vc14-runtime-14-51-36247-r1",
+    "sourceRepository": null,
+    "sourceCommit": null,
+    "sourceUnavailable": "Microsoft publishes these compiler-runtime redistributables as signed binaries; no corresponding public Git source identity is asserted.",
+    "distributionIdentity": {
+      "vendor": "Microsoft Corporation",
+      "release": "Visual Studio 2026 GA, VC145 x64 CRT",
+      "directoryVersion": "14.51.36231",
+      "directory": "VC/Redist/MSVC/14.51.36231/x64/Microsoft.VC145.CRT",
+      "productVersion": "14.51.36247.0",
+      "guidance": "https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files",
+      "distributableList": "https://learn.microsoft.com/en-us/visualstudio/releases/2026/redistribution"
+    },
+    "licence": {
+      "spdx": "LicenseRef-Microsoft-VisualCpp-Runtime-2026",
+      "redistributionGrant": "Visual Studio 2026 Community terms, Distributable Code, together with the official 2026 distributable list: unchanged object code under VC/redist, as part of an application providing significant primary functionality. Only GA redistributable files; debug_nonredist and preview files excluded.",
+      "systemLibraries": "AGPL-3.0 section 1: standard C/C++ implementation runtime supplied with the major compiler component, facilitating use with that compiler and Windows. No vendor application or media SDK code. The separately distributed System Libraries retain vendor terms and are excluded from Corresponding Source. This finding is independent of the Microsoft redistribution grant.",
+      "obligations": "Distribute unchanged object code with the application, preserve Microsoft notices/terms, require recipients to protect the vendor code as specified by the original grant, and do not apply source-disclosure terms to these separate DLLs. Preserve all AGPL rights in ArcForges code; do not extend vendor restrictions to it."
+    },
+    "attribution": [
+      "Copyright Microsoft Corporation. All rights reserved."
+    ],
+    "targets": [
+      "ArcForges.Native.Image.Runtime.win-x64"
+    ],
+    "disposition": "Copy",
+    "verification": "Windows WinVerifyTrust checks Authenticode chain/revocation and CryptQueryObject identifies the signer; exact SHA256 and fixed product/file versions must equal the approved objects. The independent package verifier matches the same bytes and original terms.",
+    "notice": "Microsoft Visual C++ compiler-runtime DLLs are redistributed unmodified under separate Microsoft terms, retained in licenses/provenance/microsoft-community-2026.docx and microsoft-vc14-runtime.docx. The Community Distributable Code grant and official redist list authorize the distributor; the runtime end-user terms alone are not a redistribution grant. Vendor restrictions apply only to the listed Microsoft DLLs. ArcForges source retains AGPL-3.0-only rights. These narrow compiler System Libraries do not authorize other proprietary implementation reuse.",
+    "lifetime": {
+      "status": "permanent",
+      "owner": "DesktopPlatform Licensing and Provenance Owner",
+      "removalTrigger": null
+    },
+    "review": {
+      "licensingOwner": "Licensing and Provenance Owner",
+      "architectureOwner": "Architecture Owner",
+      "reviewer": "Codex under the maintainer's autonomous implementation/review authorization",
+      "reviewedOn": "2026-09-19",
+      "licensingDecision": "approved",
+      "architectureDecision": "approved",
+      "baselineCommit": "3bc1917d5cb2d76261c0e27ceba774b9067da8c6",
+      "rationale": "Current ci.12.1 has 11 matching DLL occurrences. Official Community licence permits individual commercial/OSI open-source development and unmodified listed redist distribution subject to the original grant. Confirmed role is standard compiler runtime only, not proprietary app source; reviewed under Design section 3.4."
+    },
+    "files": {
+      "msvcp140.dll": {
+        "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+        "productVersion": "14.51.36247.0",
+        "fileVersion": "14.51.36247.0",
+        "publisher": "Microsoft Windows Software Compatibility Publisher"
+      },
+      "vcruntime140.dll": {
+        "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+        "productVersion": "14.51.36247.0",
+        "fileVersion": "14.51.36247.0",
+        "publisher": "Microsoft Windows Software Compatibility Publisher"
+      },
+      "vcruntime140_1.dll": {
+        "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+        "productVersion": "14.51.36247.0",
+        "fileVersion": "14.51.36247.0",
+        "publisher": "Microsoft Windows Software Compatibility Publisher"
+      }
+    },
+    "legal": [
+      {
+        "output": "licenses/provenance/microsoft-community-2026.docx",
+        "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual_Studio_2026-License-Community_ENU.docx",
+        "sourceSha256": "02ac07637f4a513a807cd3721c7620433fc483bc049d25784b0c10c54b05e1fb",
+        "sourceSha512": null,
+        "cacheName": "vs2026-community-licence.docx",
+        "member": null,
+        "memberSha256": null,
+        "start": 0,
+        "end": 69066,
+        "encoding": "raw",
+        "sha256": "02ac07637f4a513a807cd3721c7620433fc483bc049d25784b0c10c54b05e1fb",
+        "description": "Original formatted redistribution-grant terms, including automatic clause numbering."
+      },
+      {
+        "output": "licenses/provenance/microsoft-vc14-runtime.docx",
+        "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+        "sourceSha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+        "sourceSha512": null,
+        "cacheName": "vc14-runtime-licence.docx",
+        "member": null,
+        "memberSha256": null,
+        "start": 0,
+        "end": 39553,
+        "encoding": "raw",
+        "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+        "description": "Original separate runtime end-user terms; not treated as a redistribution grant."
+      }
+    ]
+  },
+  "buildTools": {
+    "ownedCMake": "4.3.3",
+    "ownedNinja": "1.13.1",
+    "vcpkgCMake": "4.4.0",
+    "msvcToolset": "14.51.36231"
+  },
+  "triplets": {
+    "x64-windows": {
+      "path": "eng/native/vcpkg/triplets/x64-windows.cmake",
+      "sha256": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
+      "upstreamPath": "triplets/x64-windows.cmake",
+      "upstreamSha256": "3922d84998ffc00cb9a563f51775601e0da0a7bb603997824e665486cf1d928b",
+      "upstreamLicenceSha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460"
+    },
+    "x64-windows-static-md": {
+      "path": "eng/native/vcpkg/triplets/x64-windows-static-md.cmake",
+      "sha256": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
+      "upstreamPath": "triplets/x64-windows-static-md.cmake",
+      "upstreamSha256": "583a1b57956affe6c3daa5f6eea37867cf663792950ec52e0b91adecb8170c9c",
+      "upstreamLicenceSha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460"
+    }
+  },
+  "cachedResourceOmissions": []
+}

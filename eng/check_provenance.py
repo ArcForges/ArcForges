@@ -18,10 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 STORE = "eng/provenance/records/"
 INVENTORY = "eng/provenance/files.json"
 SUMMARY = "eng/provenance/NOTICE.txt"
+RETIREMENTS = "eng/provenance/retired-artifacts.json"
 POLICY = "eng/policy/reuse-policy.json"
 RECORD_FIELDS = "schemaVersion id kind sourceRepository sourceCommit sourcePaths licence attribution targets artifactTargets disposition verification notice lifetime generation review supersedes"
 OWNERS = {name: "Apache" if name in {"Contracts", "Mobile"} else "AGPL" for name in
-          ("DesktopPlatform", "Contracts", "ArcNotes", "ArcScope", "ArcSlate", "Cloud", "AI", "Web", "Mobile")}
+          ("DesktopPlatform", "Contracts", "ArcScope", "Cloud", "AI", "Web", "Mobile")}
 DECISIONS = {
     "permissive": {"AGPL": "audit", "Apache": "audit"},
     "agpl-compatible": {"AGPL": "exact-review", "Apache": "prohibited"},
@@ -255,6 +256,47 @@ def render(records: dict, active: set[str], packages: bool = False, documentatio
     return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
 
 
+def retirements(root: Path, owner: str, files: list[str], history: dict[str, bytes],
+                records: dict, active_artifacts: list[str]) -> set[tuple[str, str, str, str]]:
+    """Admit only the explicitly retired P2-019 native package registrations."""
+    if RETIREMENTS not in files:
+        return set()
+    value = document(read(root, RETIREMENTS))
+    fields(value, "schemaVersion repository authority targets")
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1 and
+            owner == value["repository"] == "DesktopPlatform", "Incorrect retirement owner")
+    require(value["authority"] == {"decision": "P2-019", "task": "GOV.17"}, "Incorrect retirement authority")
+    require(isinstance(value["targets"], list) and bool(value["targets"]), "Missing retirement targets")
+    catalogue = document(read(root, "eng/packaging/packages.json"))["packages"]
+    allowed = {"ArcForges.Native." + family + ".Runtime.win-x64" for family in ("Media", "Colour", "Otio")}
+    result = set()
+    for target in value["targets"]:
+        fields(target, "record project package kind")
+        name = target["record"]
+        identifier(name)
+        package = text(target["package"])
+        project = path(target["project"])
+        kind = text(target["kind"])
+        require(package in allowed and project == "src/Native/" + package + "/" + package + ".csproj",
+                "Unapproved retired package/project")
+        require(name.startswith("native-") and name.endswith("-r3") and kind == "native-component-" + name[7:-3],
+                "Unapproved retired material")
+        original = STORE + name + ".json"
+        require(name in records and original in history and any(
+            all(row[key] == target[key] for key in ("project", "package", "kind"))
+            for row in document(history[original])["artifactTargets"]), "Unregistered retirement target")
+        require(project not in files and not (root / project).exists() and not any(
+            row["id"] == package or row["project"] == project for row in catalogue),
+                "Retired project/package is still present")
+        require(not any(row["package"] == package or row["project"] == project
+                        for record_id in active_artifacts for row in records[record_id]["artifactTargets"]),
+                "Retired artifact is still active")
+        key = (name, project, package, kind)
+        require(key not in result, "Duplicate retirement target")
+        result.add(key)
+    return result
+
+
 def validate(root: Path, owner: str, files: list[str], history: dict[str, bytes], old_inventory: dict | None,
              write_notice: bool = False) -> dict:
     root = root.resolve()
@@ -335,6 +377,7 @@ def validate(root: Path, owner: str, files: list[str], history: dict[str, bytes]
         for notice_file in item["notice"]["files"]:
             require(notice_file in files, "Untracked or missing required notice: " + notice_file)
             read(root, notice_file)
+    retired = retirements(root, owner, files, history, records, inv["artifacts"])
     if old_inventory is not None:
         for old_name in old_inventory["artifacts"]:
             old_targets = document(history[STORE + old_name + ".json"])["artifactTargets"]
@@ -342,6 +385,9 @@ def validate(root: Path, owner: str, files: list[str], history: dict[str, bytes]
                 replacements = [name for name in inv["artifacts"] if any(
                     all(row[key] == target[key] for key in ("project", "package", "kind"))
                     for row in records[name]["artifactTargets"])]
+                if (old_name, target["project"], target["package"], target["kind"]) in retired:
+                    require(not replacements, "Retired artifact has an active replacement")
+                    continue
                 require(len(replacements) == 1, "Active artifact silently removed or multiply classified")
                 name = replacements[0]
                 while name != old_name and name is not None:

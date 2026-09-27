@@ -229,7 +229,7 @@ class ProducerBuildIdentityTests(unittest.TestCase):
                           "CMAKE_CXX_COMPILER:STRING=C:/VS/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe\n"
                           "VCPKG_INSTALLED_DIR:PATH=" + str(installed) + "\n")
             caches = []
-            for name in ("runtime-shared", "shim-static"):
+            for name in ("shim-static",):
                 cache = root / "artifacts/cmake/win-x64" / name / "CMakeCache.txt"
                 cache.parent.mkdir(parents=True)
                 cache.write_text(cache_text, encoding="utf-8")
@@ -239,30 +239,31 @@ class ProducerBuildIdentityTests(unittest.TestCase):
                 for old, new, error in [("MINOR_VERSION:INTERNAL=3", "MINOR_VERSION:INTERNAL=4", "CMake build generator"),
                                         (str(installed), str(root / "other"), "different installed dependency tree")]:
                     with self.subTest(error=error):
-                        caches[1].write_text(cache_text.replace(old, new), encoding="utf-8")
+                        caches[0].write_text(cache_text.replace(old, new), encoding="utf-8")
                         with self.assertRaisesRegex(ValueError, error):
                             producer.owned_build_tools(profile, installed, root)
-                        caches[1].write_text(cache_text, encoding="utf-8")
-                caches[1].write_text(cache_text.replace("14.51.36231", "14.52.36725"), encoding="utf-8")
+                        caches[0].write_text(cache_text, encoding="utf-8")
+                caches[0].write_text(cache_text.replace("14.51.36231", "14.52.36725"), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "owned MSVC compiler"):
                     producer.owned_build_tools(profile, installed, root)
-                caches[1].write_text(cache_text, encoding="utf-8")
+                caches[0].write_text(cache_text, encoding="utf-8")
             with patch.object(producer.subprocess, "check_output", return_value="1.13.2\n"):
                 with self.assertRaisesRegex(ValueError, "Ninja build tool"):
                     producer.owned_build_tools(profile, installed, root)
 
 
-class MesonResourceTests(unittest.TestCase):
+class RetainedImageResourceTests(unittest.TestCase):
     def setUp(self):
         self.value = native.profile()
-        resource = self.value["components"]["vcpkg-tool-meson"]["resources"][0]
+        self.name = "zlib"
+        resource = self.value["components"][self.name]["resources"][0]
         self.resource = {"SPDXID": "SPDXRef-resource-0", "downloadLocation": resource["url"],
                          "checksums": [{"algorithm": "SHA512", "checksumValue": resource["sha512"]}]}
 
-    def test_cold_and_cached_helper_receipts_are_both_exactly_admitted(self):
-        for packages in ([], [self.resource]):
-            with self.subTest(packages=packages):
-                native.check_sources(self.value, "vcpkg-tool-meson", {"packages": packages})
+    def test_exact_retained_source_is_admitted(self):
+        native.check_sources(self.value, self.name, {"packages": [self.resource]})
+        self.assertEqual(self.value["cachedResourceOmissions"], [])
+        self.assertEqual(set(self.value["packages"]), {"ArcForges.Native.Image.Runtime.win-x64"})
 
     def test_wrong_url_digest_extra_and_duplicate_resources_are_rejected(self):
         for field, changed in [("downloadLocation", "https://example.org/other.tar.gz"),
@@ -271,18 +272,15 @@ class MesonResourceTests(unittest.TestCase):
             value[field] = changed
             for packages in ([value], [self.resource, value]):
                 with self.subTest(field=field, count=len(packages)), self.assertRaisesRegex(ValueError, "Changed native source archives"):
-                    native.check_sources(self.value, "vcpkg-tool-meson", {"packages": packages})
+                    native.check_sources(self.value, self.name, {"packages": packages})
         with self.assertRaisesRegex(ValueError, "Changed native source archives"):
-            native.check_sources(self.value, "vcpkg-tool-meson", {"packages": [self.resource, self.resource]})
+            native.check_sources(self.value, self.name, {"packages": [self.resource, self.resource]})
 
-    def test_no_runtime_source_or_other_tool_omission_is_admitted(self):
-        for name in ("ffmpeg", "libusb", "zlib", "pkgconf"):
-            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Changed native source archives"):
-                native.check_sources(self.value, name, {"packages": []})
-        self.value["components"]["vcpkg-tool-meson"]["role"] = "runtime-input"
-        with self.assertRaisesRegex(ValueError, "Changed native source archives"):
-            native.check_sources(self.value, "vcpkg-tool-meson", {"packages": []})
-
+    def test_no_retained_source_omission_is_admitted(self):
+        for name, component in self.value["components"].items():
+            if component["resources"]:
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Changed native source archives"):
+                    native.check_sources(self.value, name, {"packages": []})
 
 class LegalExtractionTests(unittest.TestCase):
     def test_extracts_only_reviewed_legal_bytes_without_unpacking_links(self):

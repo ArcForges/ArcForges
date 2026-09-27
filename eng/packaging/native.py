@@ -214,8 +214,8 @@ def upstream_records(vcpkg, installed_root, database, entry, destination, profil
 
 
 def owned_build_tools(profile, installed_root, root=ROOT):
-    """Read the two actual producer caches instead of asserting versions from PATH."""
-    for name in ("runtime-shared", "shim-static"):
+    """Read the actual retained producer cache instead of asserting versions from PATH."""
+    for name in ("shim-static",):
         cache = root / "artifacts/cmake/win-x64" / name / "CMakeCache.txt"
         values = dict(line.split("=", 1) for line in cache.read_text(encoding="utf-8").splitlines()
                       if line and not line.startswith(("#", "//")) and "=" in line)
@@ -292,18 +292,6 @@ def stage(directory, vcpkg, installed_root):
         metadata = {"schemaVersion": 1, "sourceCommit": commit, "rid": "win-x64", "library": entry["library"],
                     "abi": {"major": 1, "minor": 0}, "vcpkgCommit": actual,
                     "files": sorted(selected.values(), key=lambda f: f["name"])}
-        if entry["prefix"] == "arc_media":
-            codec_path = next(runtime.glob("avcodec-*.dll"))
-            codec = ctypes.CDLL(str(codec_path), winmode=0x900)
-            codec.avcodec_configuration.restype = ctypes.c_char_p
-            codec.avcodec_license.restype = ctypes.c_char_p
-            configuration = codec.avcodec_configuration().decode("utf-8")
-            license_name = codec.avcodec_license().decode("utf-8")
-            require(license_name == "LGPL version 2.1 or later" and "--enable-gpl" not in configuration
-                    and "--enable-nonfree" not in configuration and "--enable-version3" not in configuration
-                    and "--enable-shared" in configuration and "--disable-static" in configuration,
-                    "FFmpeg binary is outside the admitted LGPL configuration.")
-            metadata["ffmpeg"] = {"license": license_name, "configuration": configuration}
         write_json(destination / "native-manifest.json", metadata)
         write_json(runtime / (entry["library"] + ".manifest.json"), metadata)
         write_json(destination / "sbom.json", {"schemaVersion": 1, "sourceCommit": commit, "buildTools": build_tools,
@@ -317,8 +305,8 @@ def stage(directory, vcpkg, installed_root):
                                         "redistributionTerms": "https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files"}})
         (destination / "NOTICE.md").write_text("# Native package notices\n\nArcForges owned ABI: AGPL-3.0-only.\n\n"
             + "All upstream build dependencies (including static inputs) have licence text and SPDX/source records under licenses/.\n"
-            + "FFmpeg/libusb matching source archives and every applied vcpkg recipe/patch accompany the Media package.\n"
-            + "Build with the recorded vcpkg commit and the repository's CMake presets; dependencies are dynamically replaceable.\n"
+            + "Every applied vcpkg recipe/patch and reviewed source identity accompany the retained Image package.\n"
+            + "Build with the recorded vcpkg commit and the repository's shim-static CMake preset; dependency linkage follows the reviewed Image profile.\n"
             + "Visual C++ runtime files are redistributed unmodified from the Microsoft x64 CRT redist directory.\n"
             + "Microsoft redistribution terms: https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files\n"
             + "Windows API sets/system libraries are OS prerequisites; no system DLL is bundled.\n", encoding="utf-8")
