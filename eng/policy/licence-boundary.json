@@ -107,6 +107,10 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+      "kind": "msbuild"
     }
   ]
 }

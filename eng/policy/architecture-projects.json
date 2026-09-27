@@ -174,5 +174,13 @@
     "module": "",
     "production": false,
     "aot": false
+  },
+  {
+    "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
   }
 ]
