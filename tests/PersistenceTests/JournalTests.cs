@@ -9,6 +9,53 @@ namespace ArcForges.Tests.PersistenceTests;
 
 public sealed class JournalTests
 {
+    [Fact]
+    public void LocalEditIdentitySurvivesReplayAndShadowAcknowledgementWithoutUsingJournalOrder()
+    {
+        using var fixture = new JournalFixture();
+        var journal = new SqliteJournal();
+        var template = fixture.Entry(new JournalSequence(fixture.StoreId, 1), 1);
+        JournalEntry Local(long journalOrder, StoreVersion previous, StoreVersion next, long? localSequence) =>
+            JournalEntry.Create(new JournalSequence(fixture.StoreId, journalOrder), "local", template.AggregateId,
+                previous, next, new CommandId(Guid.NewGuid()), "edit-or-shadow", 1, "body"u8, null,
+                template.ActorId, template.CorrelationId, null, template.CommittedAt, localSequence);
+        // Another aggregate uses the first journal position; local edits still begin at one.
+        fixture.Append(journal, template);
+        fixture.Append(journal, Local(2, StoreVersion.NewRoot, StoreVersion.Local(null, 1), 1));
+        fixture.Append(journal, Local(3, StoreVersion.Local(null, 1), StoreVersion.Local(null, 2), 2));
+        fixture.Append(journal, Local(4, StoreVersion.Local(null, 2), StoreVersion.Local(new CloudRevision(7), 2), null));
+        fixture.Append(journal, Local(5, StoreVersion.Local(new CloudRevision(7), 2), StoreVersion.Local(new CloudRevision(7), 3), 3));
+        using var connection = fixture.Open();
+        using var transaction = connection.BeginTransaction(deferred: true);
+        var entries = journal.Read(new SqliteReadContext(fixture.StoreId, connection, transaction), null, 10);
+        Assert.Equal(new long?[] { null, 1, 2, null, 3 }, entries.Select(entry => entry.LocalSequence));
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5 }, entries.Select(entry => entry.Sequence.Value));
+        Assert.Throws<ArgumentException>(() => Local(6, StoreVersion.Local(new CloudRevision(7), 3),
+            StoreVersion.Local(new CloudRevision(7), 4), 6));
+        Assert.Throws<ArgumentException>(() => Local(6, StoreVersion.Local(new CloudRevision(7), 3),
+            StoreVersion.Local(new CloudRevision(8), 3), 3));
+        Assert.Throws<ArgumentException>(() => Local(6, StoreVersion.Local(new CloudRevision(7), 3),
+            StoreVersion.Local(new CloudRevision(7), 4), null));
+    }
+
+    [Fact]
+    public void NativeSyncEditIdentityIsIndependentOfNativeRevision()
+    {
+        using var fixture = new JournalFixture();
+        var template = fixture.Entry(new JournalSequence(fixture.StoreId, 1), 1);
+        var entry = JournalEntry.Create(template.Sequence, "native", template.AggregateId,
+            StoreVersion.Native(new NativeRevision(20)), StoreVersion.Native(new NativeRevision(21)),
+            template.CommandId, template.Operation, 1, template.Payload.Span, null, template.ActorId,
+            template.CorrelationId, null, template.CommittedAt, 3);
+        var journal = new SqliteJournal();
+        fixture.Append(journal, entry);
+        using var connection = fixture.Open();
+        using var transaction = connection.BeginTransaction(deferred: true);
+        var restored = Assert.Single(journal.Read(new SqliteReadContext(fixture.StoreId, connection, transaction), null, 10));
+        Assert.Equal(3, restored.LocalSequence);
+        Assert.Equal(entry.Next, restored.Next);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -101,6 +148,7 @@ public sealed class JournalTests
     [InlineData("UPDATE journal SET operation='modified' WHERE sequence=2")]
     [InlineData("DELETE FROM journal WHERE sequence=1")]
     [InlineData("DELETE FROM journal WHERE sequence=2")]
+    [InlineData("UPDATE journal SET local_seq=1 WHERE sequence=2")]
     public void ReplayRefusesChangedMetadataMissingMiddleAndMissingTail(string corruption)
     {
         using var fixture = new JournalFixture();

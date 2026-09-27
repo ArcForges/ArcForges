@@ -9,6 +9,12 @@ abort the owner's commit unit.
 The journal owns its two tables and aggregate replay index. Its store-bound
 sequence is separate from transport delivery positions and per-aggregate local
 edit positions. The durable high watermark survives prefix truncation. Entries
+carry a separate nullable `local_seq` for a device-local edit. Local projection
+edits bind it to the advanced per-aggregate head; a Cloud shadow acknowledgement
+leaves it null without resetting that head. Native sync metadata may carry its
+own local edit identity independently of the native content revision. The owner
+allocates that identity; the store-wide journal position never substitutes for it.
+Entries
 include aggregate identity, typed previous/next versions, command identity and
 operation version, one payload or durable reference, actor, correlation,
 causation and nanosecond commit time. SHA256 covers a versioned, length-prefixed

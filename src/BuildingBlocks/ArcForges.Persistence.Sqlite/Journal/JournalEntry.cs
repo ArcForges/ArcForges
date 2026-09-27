@@ -15,7 +15,7 @@ public sealed class JournalEntry
     private JournalEntry(JournalSequence sequence, string aggregateKind, Guid aggregateId,
         StoreVersion previous, StoreVersion next, CommandId commandId, string operation,
         int operationVersion, ReadOnlySpan<byte> payload, string? durableReference,
-        UserId actorId, Guid correlationId, Guid? causationId, Instant committedAt)
+        UserId actorId, Guid correlationId, Guid? causationId, Instant committedAt, long? localSequence)
     {
         sequence.RequireStore(sequence.StoreId);
         ArgumentException.ThrowIfNullOrWhiteSpace(aggregateKind);
@@ -30,6 +30,18 @@ public sealed class JournalEntry
         if (durableReference is not null) ArgumentException.ThrowIfNullOrWhiteSpace(durableReference);
         if (!next.IsSuccessorOf(previous))
             throw new ArgumentException("A journal commit must advance the typed source version without changing its domain.");
+        if (localSequence is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(localSequence));
+        if (next.Kind == StoreVersionKind.LocalProjection)
+        {
+            var oldHead = previous.LocalVersion?.HeadLocalSequence ?? 0;
+            var newHead = next.LocalVersion!.Value.HeadLocalSequence;
+            long? expectedLocalSequence = newHead > oldHead ? newHead : null;
+            if (localSequence != expectedLocalSequence)
+                throw new ArgumentException("A local edit must name its per-aggregate sequence; shadow acknowledgement creates no local edit.", nameof(localSequence));
+        }
+        else if (next.Kind == StoreVersionKind.Cloud && localSequence is not null)
+            throw new ArgumentException("A Cloud revision does not allocate a device-local edit identity.", nameof(localSequence));
         Sequence = sequence;
         AggregateKind = aggregateKind;
         AggregateId = aggregateId;
@@ -44,6 +56,7 @@ public sealed class JournalEntry
         CorrelationId = correlationId;
         CausationId = causationId;
         CommittedAt = committedAt;
+        LocalSequence = localSequence;
         var canonical = CanonicalBytes();
         EncodedLength = canonical.Length;
         checksum = SHA256.HashData(canonical);
@@ -63,15 +76,17 @@ public sealed class JournalEntry
     public Guid CorrelationId { get; }
     public Guid? CausationId { get; }
     public Instant CommittedAt { get; }
+    /// <summary>Per-aggregate device-local edit identity, independent of journal order and native revision.</summary>
+    public long? LocalSequence { get; }
     public ReadOnlyMemory<byte> Checksum => checksum.ToArray();
     internal int EncodedLength { get; }
 
     public static JournalEntry Create(JournalSequence sequence, string aggregateKind, Guid aggregateId,
         StoreVersion previous, StoreVersion next, CommandId commandId, string operation,
         int operationVersion, ReadOnlySpan<byte> payload, string? durableReference,
-        UserId actorId, Guid correlationId, Guid? causationId, Instant committedAt) =>
+        UserId actorId, Guid correlationId, Guid? causationId, Instant committedAt, long? localSequence = null) =>
         new(sequence, aggregateKind, aggregateId, previous, next, commandId, operation,
-            operationVersion, payload, durableReference, actorId, correlationId, causationId, committedAt);
+            operationVersion, payload, durableReference, actorId, correlationId, causationId, committedAt, localSequence);
 
     internal void Verify(ReadOnlySpan<byte> expected)
     {
@@ -86,6 +101,8 @@ public sealed class JournalEntry
         writer.Write("ArcForges.Journal.v1");
         writer.Write(Sequence.StoreId.ToString("D"));
         writer.Write(Sequence.Value);
+        writer.Write(LocalSequence.HasValue);
+        if (LocalSequence.HasValue) writer.Write(LocalSequence.Value);
         writer.Write(AggregateKind);
         writer.Write(AggregateId.ToString("D"));
         writer.Write(Previous.CanonicalText);

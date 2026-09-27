@@ -22,6 +22,7 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
             CREATE TABLE IF NOT EXISTS journal (
                 store_id TEXT NOT NULL,
                 sequence INTEGER NOT NULL CHECK(sequence > 0),
+                local_seq INTEGER CHECK(local_seq > 0),
                 aggregate_kind TEXT NOT NULL,
                 aggregate_id TEXT NOT NULL,
                 previous_version TEXT NOT NULL,
@@ -80,12 +81,21 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
             if (previous.ExecuteScalar() is string version && version != entry.Previous.CanonicalText)
                 throw new InvalidOperationException("The journal does not continue the aggregate's committed source version.");
         }
+        if (entry.LocalSequence is { } localSequence)
+        {
+            using var previousLocal = context.CreateCommand("SELECT MAX(local_seq) FROM journal WHERE store_id=$store AND aggregate_kind=$kind AND aggregate_id=$aggregate");
+            previousLocal.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));
+            previousLocal.Parameters.AddWithValue("$kind", entry.AggregateKind);
+            previousLocal.Parameters.AddWithValue("$aggregate", entry.AggregateId.ToString("D"));
+            if (previousLocal.ExecuteScalar() is long prior && localSequence <= prior)
+                throw new InvalidOperationException("A per-aggregate local edit identity cannot be reused or reset.");
+        }
         using var command = context.CreateCommand("""
             INSERT INTO journal(store_id,sequence,aggregate_kind,aggregate_id,previous_version,next_version,
                 command_id,operation,operation_version,payload,durable_reference,actor_id,correlation_id,
-                causation_id,committed_seconds,committed_nanos,encoded_length,checksum)
+                causation_id,committed_seconds,committed_nanos,encoded_length,checksum,local_seq)
             VALUES($store,$sequence,$kind,$aggregate,$previous,$next,$command,$operation,$operationVersion,
-                $payload,$reference,$actor,$correlation,$causation,$seconds,$nanos,$length,$checksum);
+                $payload,$reference,$actor,$correlation,$causation,$seconds,$nanos,$length,$checksum,$localSequence);
             UPDATE journal_state SET last_sequence=$sequence WHERE store_id=$store AND last_sequence=$expected;
             """);
         command.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));
@@ -107,6 +117,7 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
         command.Parameters.AddWithValue("$nanos", entry.CommittedAt.Nanoseconds);
         command.Parameters.AddWithValue("$length", entry.EncodedLength);
         command.Parameters.AddWithValue("$checksum", entry.Checksum.ToArray());
+        command.Parameters.AddWithValue("$localSequence", (object?)entry.LocalSequence ?? DBNull.Value);
         if (command.ExecuteNonQuery() != 2) throw new InvalidDataException("The journal append and high watermark must advance together.");
     }
 
@@ -144,7 +155,7 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
         using var command = context.CreateCommand("""
             SELECT sequence,aggregate_kind,aggregate_id,previous_version,next_version,command_id,
                 operation,operation_version,payload,durable_reference,actor_id,correlation_id,causation_id,
-                committed_seconds,committed_nanos,checksum,encoded_length
+                committed_seconds,committed_nanos,checksum,encoded_length,local_seq
             FROM journal WHERE store_id=$store AND sequence>$after ORDER BY sequence LIMIT $limit
             """);
         command.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));
@@ -198,7 +209,8 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
                 row.GetString(6), row.GetInt32(7), (byte[])row.GetValue(8), row.IsDBNull(9) ? null : row.GetString(9),
                 new UserId(Guid.ParseExact(row.GetString(10), "D")), Guid.ParseExact(row.GetString(11), "D"),
                 row.IsDBNull(12) ? null : Guid.ParseExact(row.GetString(12), "D"),
-                new Instant(row.GetInt64(13), checked((uint)row.GetInt64(14))));
+                new Instant(row.GetInt64(13), checked((uint)row.GetInt64(14))),
+                row.IsDBNull(17) ? null : row.GetInt64(17));
             entry.Verify((byte[])row.GetValue(15));
             if (entry.EncodedLength != row.GetInt64(16))
                 throw new InvalidDataException("The journal size accounting differs from its verified replay record.");
