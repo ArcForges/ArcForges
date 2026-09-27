@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.Serialization;
-using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Foundation.Values;
 using Xunit;
 
 namespace ArcForges.Foundation.Tests;
