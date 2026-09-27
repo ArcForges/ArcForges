@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import design_corpus as corpus
 import design_policy as policy
@@ -111,6 +112,9 @@ def register(items=None):
 
 class Fixture(unittest.TestCase):
     def setUp(self):
+        authority = patch.object(policy, 'naming_authority', return_value=(('RetiredFixture',), {'fixture': True}))
+        authority.start()
+        self.addCleanup(authority.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve() / 'design'
@@ -439,17 +443,17 @@ class GraphTests(Fixture):
 class SpecificationIntegrityTests(unittest.TestCase):
     def test_new_or_modified_superseded_name_cannot_reuse_a_classification(self):
         path = 'docs/architecture/names.md'
-        old = 'ArcCanvas is excluded.'
+        old = 'RetiredFixture is excluded.'
         exact = {(path, policy.text_hash(old)): 1}
-        self.assertEqual(corpus.superseded_names({path: old}, exact)['findings'], [])
-        for changed in (old + ' Ship ArcCanvas now.', old + '\n' + old, 'Ship arccanvas now.'):
-            self.assertTrue(corpus.superseded_names({path: changed}, exact)['findings'])
-        self.assertTrue(corpus.superseded_names({'docs/architecture/new.md': old}, exact)['findings'])
-        self.assertEqual(corpus.superseded_names({path: 'ArcImageNative is a logical library.'}, {})['findings'], [])
-        self.assertEqual(corpus.superseded_names({path: '`native/arcimage-abi` is its directory.'}, {})['findings'], [])
-        for name in ('ArcImageWidget', 'ArcImageNative2', 'my_ArcImageNative', 'ArcCanvas2', 'arcimage-abi-extra'):
+        self.assertEqual(corpus.superseded_names({path: old}, ('RetiredFixture',), exact)['findings'], [])
+        for changed in (old + ' Ship RetiredFixture now.', old + '\n' + old, 'Ship retiredfixture now.'):
+            self.assertTrue(corpus.superseded_names({path: changed}, ('RetiredFixture',), exact)['findings'])
+        self.assertTrue(corpus.superseded_names({'docs/architecture/new.md': old}, ('RetiredFixture',), exact)['findings'])
+        self.assertEqual(corpus.superseded_names({path: 'ArcImageNative is a logical library.'}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'], [])
+        self.assertEqual(corpus.superseded_names({path: '`native/arcimage-abi` is its directory.'}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'], [])
+        for name in ('RetiredFixtureWidget', 'ArcImageNative2', 'my_ArcImageNative', 'RetiredFixture2', 'arcimage-abi-extra'):
             with self.subTest(name=name):
-                self.assertTrue(corpus.superseded_names({path: 'Publish ' + name}, {})['findings'])
+                self.assertTrue(corpus.superseded_names({path: 'Publish ' + name}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'])
 
     def test_archived_inputs_cannot_become_authority_through_tables_or_renames(self):
         bad = [

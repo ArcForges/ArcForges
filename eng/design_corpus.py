@@ -138,10 +138,10 @@ NAME_OCCURRENCES = {
     ('docs/requirements/products/arcscope.md', '1e81d8c321d50e9d6bd17d61261817bb3a6bc27e8d48580684ee31a3a9b5cc09'): 1,
     ('docs/requirements/products/arcscope.md', 'eb7a8bd1b32897587f6c2cde7c8a1896b2b1ec64e58df2b6a5888a09c1eafe9f'): 1,
 }
-SUPERSEDED_NAMES = re.compile(r'[A-Za-z0-9_-]*(?:ArcCanvas|ArcMusic|ArcImage|ArcVideo|Waffo)[A-Za-z0-9_-]*', re.IGNORECASE)
 
 
-def superseded_names(docs, expected=None):
+def superseded_names(docs, names, expected=None):
+    pattern = re.compile(r'[A-Za-z0-9_-]*(?:' + '|'.join(re.escape(name) for name in names) + r')[A-Za-z0-9_-]*', re.IGNORECASE)
     expected = NAME_OCCURRENCES if expected is None else expected
     observed = collections.Counter()
     findings = []
@@ -149,7 +149,7 @@ def superseded_names(docs, expected=None):
         for number, line in lines(text):
             # P2-019 admits exactly these complete technical tokens, not prefixes.
             if any(match[0] not in {'ArcImageNative', 'arcimage-abi'}
-                   for match in SUPERSEDED_NAMES.finditer(line)):
+                   for match in pattern.finditer(line)):
                 key = (path, hashlib.sha256(line.encode('utf-8')).hexdigest())
                 observed[key] += 1
                 if key not in expected:
