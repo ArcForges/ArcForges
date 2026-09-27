@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsPackable>false</IsPackable>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+    <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
+    <InternalsVisibleTo Include="ArcForges.Persistence.Resources.Tests" />
+  </ItemGroup>
+</Project>

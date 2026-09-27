@@ -1,30 +1,44 @@
 # ArcForges.Persistence.Resources
 
-The large append store is a domain-free, single-writer mechanism for raw capture
-bytes. It is independent of the SQLite working store. Product schemas, device
-decoders, acquisition scheduling and canonical transaction ownership stay with
-their owners.
+A domain-free, single-writer append store for raw capture bytes. It owns no
+relational tables, product schema, decoder, acquisition scheduler or device.
+This project is nonpackable; PLT.08 owns package/integration acceptance.
 
-PLT.06 implementation plan:
+`AppendStore.Create` creates new evidence exclusively. `AppendChunk`,
+`MapSegment` and `RecordGap` append and flush to stable storage before returning.
+A failed write faults that writer permanently. `Seal` appends the explicit end
+marker and forbids subsequent writes. Existing captures cannot be reopened for
+writing through this API.
 
-1. Add a bounded, versioned binary append format with checksum-protected frame
-   metadata and payloads, monotonically numbered frames and an explicit seal.
-   Flush each accepted frame to stable storage before acknowledging it.
-2. Keep domain segment identifiers separate from physical chunk identifiers.
-   Persist segment-to-chunk slice manifests and explicit overflow/drop/pressure
-   gap records. Reads verify complete touched chunks while returning only the
-   requested bounded range.
-3. Recover the verified prefix without modifying damaged capture evidence.
-   Persist a separately checksummed recovery-loss record. A missing seal is
-   never a successful complete capture; unknown lost counts/time bounds remain
-   unknown. Recovered captures are read-only and require a new stream to resume.
-4. Exercise truncation at every frame byte and committed boundary, checksum and
-   header damage, malformed bounds, explicit gaps, sealing, concurrent writers,
-   segment manifests and bounded reads using isolated offline file fixtures.
-5. Admit only this implemented managed package, reuse the delivered Foundation
-   primitives and existing test toolchain, and bind source/dependency/provenance
-   inventories. Retain all existing CI and obtain independent exact-head review.
+Every frame has a 64-byte little-endian header: `AFAPPEND`, version 1, kind,
+reserved zero bytes, monotonically increasing sequence, bounded payload length,
+and SHA-256 over its 32 metadata bytes and payload. Payloads are at most 4 MiB;
+a capture has at most one million frames including its seal. Segment manifests
+map independent nonempty GUID identities to up to 1024 ordered physical chunk
+slices. Range reads return at most 4 MiB and verify each touched chunk in full.
+Timestamps in gap records use the caller's monotonic acquisition units; overflow,
+drop and back-pressure causes and intervals are explicit. Decoder output belongs
+in a derived store, never this raw capture store.
 
-The planned format is a local persistence implementation, not a wire contract,
-portable archive, domain schema or cryptographic authenticity proof. Native
-device/process tests and installed-consumer acceptance are separate tasks.
+`CaptureSnapshot.Open` scans without modifying capture bytes. Missing seals,
+truncation, damaged checksums, trailing data or invalid manifests produce a
+verified prefix and `CaptureLoss`, with unknown effect/count/time kept unknown.
+The separately checksummed `.loss` receipt binds the full capture digest, length,
+verified boundary and cause. It is flushed to a unique pending file and moved
+without overwrite; interrupted pending receipts remain evidence. A conflicting
+or damaged final receipt is refused. Recovery never silently resumes or reseals
+the capture. The SHA-256 checksums detect corruption, not malicious authenticity.
+
+Offline tests cover every byte truncation, checksum/header/bound violations,
+segment mappings, bounded range reads, explicit gaps, writer exclusion and
+receipt integrity. Explicit local diagnostics additionally kill an actual
+`AppendStore` child after a committed segment and during the next chunk's payload
+write. Enable `ARCFORGES_APPEND_KILL_DIAGNOSTICS=1` only for that local run; these
+two process diagnostics are skipped in hosted/default tests. The test-only
+intercepted FileStream creates a deterministic midwrite boundary, while the
+production append/flush path writes all acknowledged preceding frames.
+
+Observed local .NET SDK 10.0.401 compatibility build: zero warnings/errors; all
+13 tests passed including both real writer process interruptions. The committed
+SDK 10.0.400 and retained CI remain authoritative. No native/device, installed
+consumer or power-loss hardware guarantee is claimed.
