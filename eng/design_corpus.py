@@ -17,8 +17,11 @@ STANDARD = {'SHA-256', 'SHA-512', 'UTF-16', 'UTF-32', 'IEEE-754', 'P-256'}
 # SV-09 keeps these dated extraction/review records distinct from current inputs.
 HISTORICAL_INPUT_RECORDS = {
     'phase-1-input-review-ledger.md', 'phase-1-official-verification.md',
-    'invariant-coverage.md', 'design-repair-verification.md',
+    'design-repair-verification.md',
     'phase-2-design-closure-review.md', 'web-typescript-redesign-review.md',
+}
+HISTORICAL_INPUT_LINES = {
+    ('docs/assurance/invariant-coverage.md', 'b7a2ad0647b60e571ea807afe775682f98828db4797337e15cfe643666aa9aae'),
 }
 ARCHIVED_INPUT = re.compile(
     r'\bI[1-4]\b|\bStage\s+\d+\s*(?:§|Invariant|\.\d)|'
@@ -42,6 +45,10 @@ def archived_input_dependencies(docs):
             continue
         checked += 1
         for number, line in lines(text):
+            # Only the original extraction-source statement is historical here;
+            # current invariant mappings and gate inputs in this file are checked.
+            if (path, hashlib.sha256(line.encode('utf-8')).hexdigest()) in HISTORICAL_INPUT_LINES:
+                continue
             decoded = unquote(html.unescape(line))
             if ARCHIVED_INPUT.search(decoded):
                 findings.append([path, number, 'archived input used by current specification'])
@@ -88,6 +95,7 @@ DECISION_HOMES = {
 # Exact reviewed historical quotations and normative exclusion statements at the
 # Design source pin. Neither a negative word nor an entire file grants exemption.
 NAME_OCCURRENCES = {
+    ('docs/assurance/phase-1-input-review-ledger.md', '6af1575a2ee822936f3ce1b4ad2d6bab7abc62c79fd046f6c20fbade27fa68ab'): 1,
     ('docs/architecture/01-solution-and-project-layout.md', 'e3aa5cda44bbc82ca072c78e0f8cfe060859b415e6a1753007994b0ecc2d2455'): 1,
     ('docs/architecture/28-product-naming-policy.md', '1c6f6141f83ac67642688587f77d6cade460de6a56a7ec3e596e7c9b10e5c486'): 1,
     ('docs/architecture/README.md', 'd457f8ce1b9cee5ec6637cfe3b4f012f9efde3203905e3649fdcc99d070af397'): 1,
@@ -130,7 +138,7 @@ NAME_OCCURRENCES = {
     ('docs/requirements/products/arcscope.md', '1e81d8c321d50e9d6bd17d61261817bb3a6bc27e8d48580684ee31a3a9b5cc09'): 1,
     ('docs/requirements/products/arcscope.md', 'eb7a8bd1b32897587f6c2cde7c8a1896b2b1ec64e58df2b6a5888a09c1eafe9f'): 1,
 }
-SUPERSEDED_NAMES = re.compile(r'(?<![A-Za-z0-9_])(?:ArcCanvas|ArcMusic|ArcImage|ArcVideo|Waffo)(?![A-Za-z0-9_])', re.IGNORECASE)
+SUPERSEDED_NAMES = re.compile(r'[A-Za-z0-9_-]*(?:ArcCanvas|ArcMusic|ArcImage|ArcVideo|Waffo)[A-Za-z0-9_-]*', re.IGNORECASE)
 
 
 def superseded_names(docs, expected=None):
@@ -139,9 +147,9 @@ def superseded_names(docs, expected=None):
     findings = []
     for path, text in docs.items():
         for number, line in lines(text):
-            # P2-019 admits this complete directory token, never a product alias.
-            checked = re.sub(r'(?<![A-Za-z0-9_-])arcimage-abi(?![A-Za-z0-9_-])', '', line)
-            if SUPERSEDED_NAMES.search(checked):
+            # P2-019 admits exactly these complete technical tokens, not prefixes.
+            if any(match[0] not in {'ArcImageNative', 'arcimage-abi'}
+                   for match in SUPERSEDED_NAMES.finditer(line)):
                 key = (path, hashlib.sha256(line.encode('utf-8')).hexdigest())
                 observed[key] += 1
                 if key not in expected:

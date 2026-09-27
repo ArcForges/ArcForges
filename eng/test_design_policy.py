@@ -446,6 +446,10 @@ class SpecificationIntegrityTests(unittest.TestCase):
             self.assertTrue(corpus.superseded_names({path: changed}, exact)['findings'])
         self.assertTrue(corpus.superseded_names({'docs/architecture/new.md': old}, exact)['findings'])
         self.assertEqual(corpus.superseded_names({path: 'ArcImageNative is a logical library.'}, {})['findings'], [])
+        self.assertEqual(corpus.superseded_names({path: '`native/arcimage-abi` is its directory.'}, {})['findings'], [])
+        for name in ('ArcImageWidget', 'ArcImageNative2', 'my_ArcImageNative', 'ArcCanvas2', 'arcimage-abi-extra'):
+            with self.subTest(name=name):
+                self.assertTrue(corpus.superseded_names({path: 'Publish ' + name}, {})['findings'])
 
     def test_archived_inputs_cannot_become_authority_through_tables_or_renames(self):
         bad = [
@@ -455,6 +459,7 @@ class SpecificationIntegrityTests(unittest.TestCase):
             ('docs/assurance/new-gate.md', '[source](../deprecated-inputs/%72enamed.md)'),
             ('docs/architecture/new.md', '[source](../inputs/arbitrary-new-name.md)'),
             ('docs/architecture/new.md', 'Read platform-architecture-concept.md.'),
+            ('docs/assurance/invariant-coverage.md', '| Current gate | Required input I4 |'),
         ]
         for path, text in bad:
             with self.subTest(path=path, text=text):
