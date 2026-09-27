@@ -377,7 +377,6 @@
     "src/BuildingBlocks/ArcForges.Observability/README.md",
     "src/BuildingBlocks/ArcForges.Observability/packages.lock.json",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
-    "src/BuildingBlocks/ArcForges.Persistence.Sqlite/AssemblyPlaceholder.cs",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/Journal/JournalCapacityException.cs",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/Journal/JournalContracts.cs",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/Journal/JournalEntry.cs",
