@@ -21,39 +21,11 @@
           "role": "native-build"
         },
         {
-          "path": "native/arcgraphics-metal-abi/CMakeLists.txt",
+          "path": "native/arcimage-abi/CMakeLists.txt",
           "role": "native-build"
         },
         {
-          "path": "native/arcmedia-ffmpeg-abi/CMakeLists.txt",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcmedia-ffmpeg-abi/windows/arcmedia_ffmpeg_abi.vcxproj",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcslate-color-abi/CMakeLists.txt",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcslate-color-abi/windows/arcslate_color_abi.vcxproj",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcslate-image-abi/CMakeLists.txt",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcslate-image-abi/windows/arcslate_image_abi.vcxproj",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcslate-otio-abi/CMakeLists.txt",
-          "role": "native-build"
-        },
-        {
-          "path": "native/arcslate-otio-abi/windows/arcslate_otio_abi.vcxproj",
+          "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
           "role": "native-build"
         },
         {
@@ -113,35 +85,11 @@
           "role": "aot-library"
         },
         {
-          "path": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
-          "role": "package-container"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Colour/ArcForges.Native.Colour.csproj",
-          "role": "aot-library"
-        },
-        {
           "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
           "role": "package-container"
         },
         {
           "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
-          "role": "package-container"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Media/ArcForges.Native.Media.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
-          "role": "package-container"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Otio/ArcForges.Native.Otio.csproj",
           "role": "aot-library"
         },
         {
@@ -222,29 +170,6 @@
       ]
     },
     {
-      "repository": "ArcNotes",
-      "runtime": "avalonia-nativeaot",
-      "sourceCommit": "e40423a1b14ce8341de35748cc2a093c7c9b77a7",
-      "projects": [
-        {
-          "path": "eng/ArcForges.Repository/ArcForges.Repository.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "src/ArcForges.ArcNotes.Core/ArcForges.ArcNotes.Core.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/ArcForges.ArcNotes/ArcForges.ArcNotes.csproj",
-          "role": "aot-host"
-        },
-        {
-          "path": "tests/ArcForges.ArcNotes.Tests/ArcForges.ArcNotes.Tests.csproj",
-          "role": "test-or-build-tool"
-        }
-      ]
-    },
-    {
       "repository": "ArcScope",
       "runtime": "avalonia-nativeaot",
       "sourceCommit": "d247dcff36fd1123a70e5e59967a9b2294a2eeac",
@@ -263,29 +188,6 @@
         },
         {
           "path": "tests/ArcForges.ArcScope.Tests/ArcForges.ArcScope.Tests.csproj",
-          "role": "test-or-build-tool"
-        }
-      ]
-    },
-    {
-      "repository": "ArcSlate",
-      "runtime": "avalonia-nativeaot",
-      "sourceCommit": "b0d255f54fb560a534cc493d5645ca4bc7b4bd0e",
-      "projects": [
-        {
-          "path": "eng/ArcForges.Repository/ArcForges.Repository.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "src/ArcForges.ArcSlate.Core/ArcForges.ArcSlate.Core.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/ArcForges.ArcSlate/ArcForges.ArcSlate.csproj",
-          "role": "aot-host"
-        },
-        {
-          "path": "tests/ArcForges.ArcSlate.Tests/ArcForges.ArcSlate.Tests.csproj",
           "role": "test-or-build-tool"
         }
       ]
@@ -381,28 +283,12 @@
       "reason": "Standalone host retired; reusable embedded assistant features remain assigned to WP14-17."
     },
     {
-      "path": "src/ArcNotes",
-      "observedRepository": "DesktopPlatform",
-      "sourceCommit": "99bfe7d695ed0d65a0d035af7d219fc9b86100f5",
-      "disposition": "extracted",
-      "owner": "ArcNotes",
-      "reason": "Independent native product. Edgeless and Slides scaffolds are excluded, without a future hook."
-    },
-    {
       "path": "src/ArcScope",
       "observedRepository": "DesktopPlatform",
       "sourceCommit": "99bfe7d695ed0d65a0d035af7d219fc9b86100f5",
       "disposition": "extracted",
       "owner": "ArcScope",
       "reason": "Independent acquisition/measurement product; no product source in shared platform."
-    },
-    {
-      "path": "src/ArcSlate",
-      "observedRepository": "DesktopPlatform",
-      "sourceCommit": "99bfe7d695ed0d65a0d035af7d219fc9b86100f5",
-      "disposition": "extracted",
-      "owner": "ArcSlate",
-      "reason": "Independent media/timeline product; native mechanism packages remain platform-owned."
     },
     {
       "path": "src/Cloud",
@@ -456,9 +342,7 @@
   "bootstrapBoundaries": {
     "DesktopPlatform": "Eleven non-packable shared placeholders and ContentSandbox scaffold are not capability acceptance; native packages expose existing probes. WP01/04/07-17/53 retain their full obligations.",
     "Contracts": "Hello schema and native-gRPC compatibility fixtures retained. Public business clients select binary gRPC-Web; WP03 completes production schemas and retires native-only Kotlin client at the first business release.",
-    "ArcNotes": "Hello native UI/transport only. Five-RID bootstrap is not full platform or Notes behavior acceptance.",
     "ArcScope": "Hello native UI/transport only. Five-RID bootstrap is not full platform or acquisition behavior acceptance.",
-    "ArcSlate": "Hello native UI/transport only. Five-RID bootstrap is not full platform or media behavior acceptance.",
     "Cloud": "Hello anonymous stateless AOT service. Full D1 modules and Container production profile remain WP21 onward.",
     "AI": "Private Workflow model/tool/model Hello. Full sole production Harness remains WP52.",
     "Web": "Site Hello only; account/chat/operations remain required at their scheduled producers.",

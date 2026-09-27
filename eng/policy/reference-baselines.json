@@ -19,19 +19,6 @@
       ]
     },
     {
-      "id": "notes",
-      "owner": "ArcNotes",
-      "maintenance": [
-        "18.08"
-      ],
-      "rows": 41,
-      "prefix": "an",
-      "sources": [
-        "s2",
-        "s3"
-      ]
-    },
-    {
       "id": "scope",
       "owner": "ArcScope",
       "maintenance": [
@@ -41,19 +28,6 @@
       "prefix": "as",
       "sources": [
         "s4"
-      ]
-    },
-    {
-      "id": "slate",
-      "owner": "ArcSlate",
-      "maintenance": [
-        "36.07"
-      ],
-      "rows": 31,
-      "prefix": "al",
-      "sources": [
-        "s5",
-        "s6"
       ]
     },
     {

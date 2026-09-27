@@ -50,3 +50,7 @@ The normal owner CI needs no adjacent checkout or future shared policy package.
 Actual package and native/AOT consumers, registry publication and product acceptance
 remain distinct evidence. Mobile's distributable third-party audit stays with its
 Apache owner; a passing family reference-direction result cannot close that gate.
+
+## Reduced-family adoption (GOV.18)
+
+The current owner allowlist contains DesktopPlatform, Contracts, ArcScope, Cloud, AI, Web and Mobile. DesktopPlatform licence declarations enumerate the actual retained projects; removed native family projects are no longer active. OpenColorIO may remain an admitted transitive OpenImageIO dependency without restoring a Colour capability package.

@@ -83,6 +83,20 @@ class RuntimeOwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unassigned runtime host'):
             policy.role('Cloud', 'src/AnotherHost/AnotherHost.csproj')
 
+    def test_nested_test_role_requires_explicit_unconditional_test_identity(self):
+        project = 'src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj'
+        self.assertEqual(policy.role('DesktopPlatform', project), 'test-or-build-tool')
+        for declaration, passes in [('<IsTestProject>true</IsTestProject>', True), ('', False),
+                                    ('<IsTestProject>false</IsTestProject>', False),
+                                    ('<IsTestProject Condition="false">true</IsTestProject>', False)]:
+            self.write(project, '<Project><PropertyGroup><OutputType>Exe</OutputType>' + declaration + '</PropertyGroup></Project>')
+            if passes:
+                policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+            else:
+                with self.assertRaisesRegex(ValueError, 'IsTestProject'):
+                    policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+        self.assertEqual(policy.role('DesktopPlatform', 'src/BuildingBlocks/ArcForges.Foundation/Foundation.csproj'), 'aot-library')
+
     def test_javascript_ide_never_inherits_managed_runtime(self):
         self.write('Web.esproj', '<Project><PropertyGroup><PublishAot>true</PublishAot></PropertyGroup></Project>')
         with self.assertRaisesRegex(ValueError, 'IDE adapter'):

@@ -1,89 +1,15 @@
-# WP00.01: Design policy exports and continuing integrity
+# Design policy export
 
-Design remains the authored authority. [P2-016](https://github.com/ArcForges/ArcForges-Design/blob/1607374e81955f0a47f319cd6cc8ba1c6e254157/docs/decisions/phase-2-specification-decisions.md#rule-p2-016)
-assigns this AGPL exporter, derived data and CI check to DesktopPlatform. Consumers
-can read the checked-in JSON without a Design checkout. These files are policy data;
-distribution through build packages belongs to WP02/WP05, and this change adds no
-packable capability or product source dependency.
+DesktopPlatform validates a reviewed immutable ArcForges-Design documentation commit and exports its glossary and invariant mapping. `eng/policy/design-source.json` pins that commit, the graph and policy source hashes, and the Markdown corpus digest. The exporter executes no Design programs or hooks and reads no sibling implementation source.
 
-The current reviewed pin is `5322d698a1b650a52a5a139d986dd85b00b48581`, including
-the WP00.02 declaration profile and Android licence closure, plus the WP00.03
-source, documentation-resource and native-distribution provenance profiles, including the explicit Windows compiler pin. The original WP00.01 collection and
-negative fixtures found missing scoped anchors, ambiguous and compound citations,
-sentence-final citations, an omitted reverse dependency and stale mechanism totals.
-Design PRs [15](https://github.com/ArcForges/ArcForges-Design/pull/15),
-[16](https://github.com/ArcForges/ArcForges-Design/pull/16) and
-[17](https://github.com/ArcForges/ArcForges-Design/pull/17) repair those at their owner.
+The graph validator in `eng/design_graph.py` adapts the pure Plan delivery validator and renderer at the source identity recorded in `eng/provenance/records/plan-delivery-graph-r1.json`. It checks typed start/completion events, obligation coverage, adoption slices, substitute replacement, repository/lane identities and freshly generated Design-owned views. Active invariant owners derive from tasks' mapped obligation packages. It also checks required work-package sections and each owned final evidence row. Retired serial tables and package-edge counts are not execution authorities.
 
-The exported 135 term rows preserve 148 marked names, five explicit spaces and all
-16 contextual forbidden-alias rows. The 429 invariant records retain both catalogue
-and coverage locations, statements, architecture homes, mechanisms, planned
-verification, owning packages and completion gates. Three retired rows keep their
-absence tests. `verificationState: planned-only` does not close PG-11 or prove runtime
-behavior. Contracts recognizes only the digest-bound forbidden-alias array at its
-registered path; all remaining values and files stay subject to naming scans.
+## Reviewed refresh
 
-The checker reads 172 current Markdown documents while excluding deprecated input
-bodies before reading. The current receipt indexes 7,601 document-scoped rules and
-9,453 explicit rule citations, checks 11,444 local links and validates 166 exact
-occurrence classifications covering 172 occurrences. It compares both forward
-graphs, every active package header/dependency section and the exact reverse graph:
-51 active nodes and 158 edges. It checks topological order, unique numbered sections,
-mandatory package sections and the owned `.90` evidence row. Future/retired packages
-have no active edges. The commerce substep ordering remains explicit.
+Preview a proposed Design worktree with `python eng/design_policy.py --design-root <absolute-root> --preview`. After the Design PR merges, record its exact commit and normalized source hashes in the pin; then run `python eng/design_policy.py --design-root <clean-pinned-root> --refresh` and independently run the same command without `--refresh`. CI fetches that exact documentation commit in isolation. Any source identity, occurrence classification, generated view or export drift fails.
 
-## Source updates and review
+GOV.18 migrates the graph checker, reduces policy ownership and performs the initial repin. GOV.14 retains broader current specification-integrity acceptance; the migration does not close that task. The reduced export currently contains107 term rows (116 names),406 invariant rows and15 contextual forbidden aliases. These are planned verification records, not implemented behavior or commercial evidence; current counts always derive from the pinned sources.
 
-For a proposed Design worktree, run the read-only preview before its documentation
-PR merges. Its report includes commit/dirty state and cannot be used as an immutable
-export result:
+The independent small delivery-graph fixtures mutate edges, obligation coverage, substitute replacements, owners, generated views and work-package evidence. Existing exact export, glossary, citation, anchor, occurrence, dirty-tree and wrong-pin rejection fixtures remain. Run `python -m unittest discover -s eng -p test_design_policy.py -v`. Retained CI also compiles and packages the admitted Windows/Linux outputs; no runtime consumer or public-download verification cycle is added.
 
-```text
-python eng/design_policy.py --design-root /absolute/path/to/design-worktree --preview --report artifacts/evidence/design-preview.json
-```
-
-After reviewing and merging the Design change, update the exact commit and source
-hashes in `eng/policy/design-source.json` on a DesktopPlatform worktree. Source hashes
-use UTF-8 text with normalized LF newlines, matching Git's text content on Windows
-and Linux. The corpus digest covers the sorted array of document path and text digest
-pairs using compact JSON with sorted keys and unescaped UTF-8. Obtain these values
-from the reviewed preview, then generate and independently verify the exports:
-
-```text
-python eng/design_policy.py --refresh
-python eng/design_policy.py
-```
-
-A supplied `--design-root` must be the canonical repository, clean and at the exact
-pin for immutable mode. The default obtains a fresh isolated public checkout at that
-commit, with checkout hooks disabled. It runs no source programs and never advances
-to a branch tip. A source change also requires Contracts to update its exact derived
-declaration registration before the family scan accepts the new glossary identity.
-
-## Verification and limits
-
-The 15 test groups use independent small documents and real temporary Git repositories.
-They remove, duplicate, reorder and edit export records; alter source statements,
-spaces, owners and architecture homes; corrupt links, anchors and classification
-counts/hashes; and break every graph representation, node ordering and evidence rows.
-They exercise dirty/wrong-pin refusal, preview immutability, deprecated-body exclusion,
-sentence punctuation, same-spelled rules in different documents and the CLI's real
-failure exit/report. A current-corpus pass alone is insufficient.
-
-The Linux policy job runs these platform-independent fixtures and verifies the pinned corpus before
-package creation. Their full reports are retained as `design-policy-*` artifacts.
-Native/managed compilation, package and publication checks remain required under P2-017;
-package consumers and native execution are local opt-in only. Local immutable export verification passed before merge; WP00 is accepted in the Design
-[WP00 stage acceptance](https://github.com/ArcForges/ArcForges-Design/blob/7e56614ced01a12c84eb2047071d14399249ee90/docs/assurance/wp00-stage-acceptance.md). Policy checks
-establish no provider, device, product behavior or commercial activation evidence.
-
-## Delivery model (P2-018)
-
-[P2-018](https://github.com/ArcForges/ArcForges-Design-B/blob/f8dff2d0144c7db020d35711d606334639dd078b/docs/decisions/phase-2-specification-decisions.md#rule-p2-018) replaces the numbered serial
-sequence with the [delivery graph](https://github.com/ArcForges/ArcForges-Design-B/blob/f8dff2d0144c7db020d35711d606334639dd078b/docs/planning/delivery/README.md). This checker still validates the
-retired package-level forward and reverse graphs, package header dependencies, topological order and serial
-execution line, so it cannot accept a Design commit that contains P2-018. Keep the pin at a pre-P2-018 commit,
-which remains valid for the glossary and invariant exports, until the governance task `GOV.14` replaces the
-graph check with the delivery-graph validation specified in the
-[design policy export](https://github.com/ArcForges/ArcForges-Design-B/blob/f8dff2d0144c7db020d35711d606334639dd078b/docs/architecture/29-design-policy-export.md). DesktopPlatform then moves the pin
-through the normal reviewed refresh above. The P2-018 alignment changed no checker code, pin or export.
+Contracts owns canonical naming rules and scanner publication. A consumer pins its immutable naming candidate, and the derived declaration binds the exact Design commit, glossary source hash and forbidden-alias array digest. Contextual aliases never become an independent global substring registry.

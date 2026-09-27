@@ -68,3 +68,7 @@ still a scaffold. Full business schemas, assistant implementations, all native
 functional families/RIDs, four Web surfaces, Android identity/toolchain migration
 and commercial operation remain at their named stages. Existing snapshot evidence
 does not close those gates or require recreating already absent legacy source.
+
+## Reduced-family adoption (GOV.18)
+
+The active runtime policy enumerates the seven retained owners only. The DesktopPlatform project inventory tracks the retained image ABI and current owned managed projects. Removed repository entries are not fetched or audited as current owners. Historical source identities and retired-scaffold evidence remain historical; product functionality is not inferred.

@@ -1,96 +1,94 @@
 {
   "schemaVersion": 1,
-  "repository": "DesktopPlatform",
-  "spdxLicense": "AGPL-3.0-only",
-  "licenceBoundary": "AGPL",
+  "authority": "GOV.18",
   "projects": [
     {
       "path": "CMakeLists.txt",
-      "kind": "cmake"
+      "blob": "25e7846ac9304adad34abb1d784955820da5b66e"
     },
     {
       "path": "native/CMakeLists.txt",
-      "kind": "cmake"
+      "blob": "55e7b681ce93ffa02aa395e479effb1d00e5d4f5"
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
-      "kind": "cmake"
+      "blob": "58f6e17fc12468f2966f11c662be94a47c79ec63"
     },
     {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
-      "kind": "msbuild"
+      "blob": "0bb08be2c7631e3771239e36a71a9ea31dc19f39"
     },
     {
       "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
-      "kind": "msbuild"
+      "blob": "26d6279f18250960eafcfd24876f215c7f151bee"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
-      "kind": "msbuild"
+      "blob": "1c053fa658f7bbb17153e840891ba744b891d81f"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
-      "kind": "msbuild"
+      "blob": "3772961605c198c4e204dec02af39b607dd7a615"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj",
-      "kind": "msbuild"
+      "blob": "5880b50b0f64f5a64b450350b1a13795278b3e6b"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Preview/ArcForges.Desktop.Preview.csproj",
-      "kind": "msbuild"
+      "blob": "19f944d4ff43ef37cc7559d5f4f16ae6581163d8"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.RichContent/ArcForges.Desktop.RichContent.csproj",
-      "kind": "msbuild"
+      "blob": "44ca1edfc5e7063cd769ae4d51853e0e7ed35527"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj",
-      "kind": "msbuild"
+      "blob": "87793aa3addd8366b664f4494520c9a97c7ca514"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj",
-      "kind": "msbuild"
+      "blob": "41ed903c7e00ec2e3d93647912052a5a40bac9ba"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",
-      "kind": "msbuild"
+      "blob": "4296a8d469d84de3d133c0dd56385baf800dbf77"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
-      "kind": "msbuild"
+      "blob": "2240e37c65a0756ab39187fd6cc6d463443e30fc"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
-      "kind": "msbuild"
+      "blob": "6b4a9d54a67da08b17f2ae1d5842ac05d712d15d"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
-      "kind": "msbuild"
+      "blob": "87fa93b3448a701333fc2a74219b8e320ba0d65d"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
-      "kind": "msbuild"
+      "blob": "63f22e07804e1b9af3a7955fed864187a14366c4"
     },
     {
       "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
-      "kind": "msbuild"
+      "blob": "32742a65b4e25d04b40e0dfb519ef3201359c6ba"
     },
     {
       "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
-      "kind": "msbuild"
+      "blob": "8ce75f3a4ee0f369121196de6095fb8b87be2d50"
     },
     {
       "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-      "kind": "msbuild"
+      "blob": "9132f77575e4d1940f4648f7f208d86cf6087bca"
     },
     {
       "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
-      "kind": "msbuild"
+      "blob": "f1c0f3c9c1eed1a1e286ce1449f38bd16c2a3d6b"
     },
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
-      "kind": "msbuild"
+      "blob": "87b5bfceadd816497a18225b52a1149c53355dbe"
     }
   ]
 }

@@ -41,7 +41,7 @@ def tree(root, ref):
     return result
 
 
-def decisions(rows, fields, key):
+def decisions(rows, fields, key, *, historical=False):
     seen = set()
     for row in rows:
         runtime.fields(row, fields)
@@ -53,7 +53,7 @@ def decisions(rows, fields, key):
         require(isinstance(row['producer'], str) and re.fullmatch(r'WP\d{2}(?:\.\d{2})?', row['producer']), 'missing producer')
         require(isinstance(row['reason'], str) and row['reason'].strip(), 'missing reason')
         if 'owner' in row:
-            require(row['owner'] in OWNERS, 'unknown owner')
+            require(row['owner'] in (OWNERS | {'ArcNotes', 'ArcSlate'} if historical else OWNERS), 'unknown owner')
     return seen
 
 
@@ -64,7 +64,7 @@ def validate(source, current, historical, directories, native):
     require(source['historicalCommit'] == 'ede43db5b2237104dd0008b99398090c54a2cf94', 'historical baseline changed')
     require(set(source['designFiles']) == {'docs/assurance/wp01-00-inventory-policy.md', 'docs/assurance/wp00-stage-acceptance.json', 'docs/architecture/27-platform-projects-and-application-assistants.md', 'docs/architecture/01-solution-and-project-layout.md'}, 'incomplete authority')
     for digest in source['designFiles'].values(): runtime.digest(digest, 64)
-    require(len(current) == 9 and {r['repository'] for r in current} == OWNERS, 'missing or duplicate owner')
+    require(len(current) == len(OWNERS) and {r['repository'] for r in current} == OWNERS, 'missing or duplicate owner')
     for row in current:
         runtime.fields(row, 'repository origin commit tree clean worktrees candidate mainCi projects')
         require(row['origin'] == 'https://github.com/ArcForges/' + row['repository'] + '.git', 'wrong origin')
@@ -79,13 +79,14 @@ def validate(source, current, historical, directories, native):
             require(type(worktree['clean']) is bool and worktree['path'] and worktree['branch'], 'invalid worktree observation')
         decisions(row['projects'], 'path blob disposition producer reason', ['path'])
         for project in row['projects']: runtime.digest(project['blob'])
-    decisions(historical, 'path blob observedInDesktopPlatform owner target disposition producer reason', ['path'])
+    decisions(historical, 'path blob observedInDesktopPlatform owner target disposition producer reason', ['path'], historical=True)
     for row in historical:
         runtime.digest(row['blob']); runtime.path(row['target'])
         require(row['observedInDesktopPlatform'] in {'absent', 'changed', 'unchanged'}, 'invalid historical observation')
     keys = decisions(directories, 'owner path disposition present producer reason', ['owner', 'path'])
     for row in directories: require(type(row['present']) is bool, 'invalid presence')
-    for row in historical: require((row['owner'], row['target']) in keys, 'unassigned historical target')
+    for row in historical:
+        if row['owner'] in OWNERS: require((row['owner'], row['target']) in keys, 'unassigned historical target')
     for row in current:
         for project in row['projects']:
             parent = Path(project['path']).parent.as_posix()
@@ -141,9 +142,38 @@ def check_directories(directories, trees):
         require(row['present'] == present, 'directory presence drift: ' + row['owner'] + '/' + row['path'])
 
 
+
+# Frozen current/native/directories are accepted historical receipts. This separate
+# reviewed active inventory evolves by producer tasks without inventing a new
+# publication receipt for the historical source snapshot.
+RETIRED_NATIVE = ('native/arcmedia-ffmpeg-abi/', 'native/arcslate-color-abi/',
+                  'native/arcslate-otio-abi/', 'native/arcgraphics-metal-abi/',
+                  'native/arcslate-image-abi/', 'src/Native/ArcForges.Native.Media',
+                  'src/Native/ArcForges.Native.Colour', 'src/Native/ArcForges.Native.Otio')
+
+def check_retirement(files):
+    require(not any(path.startswith(RETIRED_NATIVE) for path in files), 'retired native binding restored')
+    require(any(path.startswith('native/arcimage-abi/') for path in files), 'retained image family missing')
+
+
+def active_projects(row):
+    value = read('active-projects')
+    runtime.fields(value, 'schemaVersion authority projects')
+    require(value['schemaVersion'] == 1 and value['authority'] == 'GOV.18', 'invalid active inventory authority')
+    projects = value['projects']
+    require(isinstance(projects, list) and projects, 'empty active project inventory')
+    seen = set()
+    for item in projects:
+        runtime.fields(item, 'path blob'); runtime.path(item['path']); runtime.digest(item['blob'])
+        require(item['path'] not in seen and inventory.kind(item['path']), 'duplicate or invalid active project')
+        require(not item['path'].startswith(RETIRED_NATIVE), 'retired native project in active inventory')
+        seen.add(item['path'])
+    return dict(row, projects=projects)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--repository', action='append', help='Owner=absolute-root; all nine, read-only, fresh observation')
+    parser.add_argument('--repository', action='append', help='Owner=absolute-root; all seven, read-only, fresh observation')
     parser.add_argument('--design-root', type=Path)
     parser.add_argument('--report', type=Path, default=ROOT/'artifacts/evidence/reconciliation.json')
     args = parser.parse_args()
@@ -167,7 +197,7 @@ def main():
                     owner, sep, location = entry.partition('=')
                     require(sep and owner in OWNERS and owner not in roots and Path(location).is_absolute(), 'invalid repository selection')
                     roots[owner] = Path(location).resolve()
-                require(set(roots) == OWNERS and len({str(p) for p in roots.values()}) == 9, 'fresh audit requires nine independent roots')
+                require(set(roots) == OWNERS and len({str(p) for p in roots.values()}) == len(OWNERS), 'fresh audit requires seven independent roots')
             else:
                 for row in current:
                     n = row['repository']
@@ -183,13 +213,14 @@ def main():
                 require({p:b for p,b in pinned_trees[n].items() if inventory.kind(p)} == {p['path']:p['blob'] for p in row['projects']}, 'recorded project blob mismatch')
                 files = tree(root, 'HEAD')
                 actual_trees[n] = files
-                audit = check_projects(root, reviewed_projects(row, read('project-updates')), files, pinned=True)
+                active_row = active_projects(row) if n == 'DesktopPlatform' else row
+                audit = check_projects(root, active_row, files, pinned=True)
                 report['repositories'].append({'repository':n,'commit':before[n][0],'clean':not bool(before[n][1]),'snapshotCommit':row['commit'],'snapshotIsHead':before[n][0]==row['commit'],'projects':len(audit['projects']),'result':'passed'})
             check_history(tree(roots['DesktopPlatform'], source['historicalCommit']), historical, pinned_trees['DesktopPlatform'])
             check_directories(directories, pinned_trees)
             check_directories(native, pinned_trees)
-            check_directories(directories, actual_trees)
-            check_directories(native, actual_trees)
+            check_directories([x for x in directories if x['owner'] != 'DesktopPlatform'], actual_trees)
+            check_retirement(actual_trees['DesktopPlatform'])
             require(before == {n:(inventory.git(p,'rev-parse','HEAD'),inventory.git(p,'status','--porcelain')) for n,p in roots.items()}, 'source changed during audit')
             report.update(result='passed',counts=source['counts'],historicalCommit=source['historicalCommit'],designCommit=source['designCommit'])
         code = 0

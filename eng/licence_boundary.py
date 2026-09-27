@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY = 'eng/policy/licence-boundary.json'
 OWNERS = {name: ('Apache-2.0', 'Apache') if name in {'Contracts', 'Mobile'}
           else ('AGPL-3.0-only', 'AGPL') for name in
-          ('DesktopPlatform', 'Contracts', 'ArcNotes', 'ArcScope', 'ArcSlate', 'Cloud', 'AI', 'Web', 'Mobile')}
+          ('DesktopPlatform', 'Contracts', 'ArcScope', 'Cloud', 'AI', 'Web', 'Mobile')}
 MSBUILD = {'.csproj', '.fsproj', '.vbproj', '.vcxproj', '.esproj'}
 
 
@@ -82,7 +82,7 @@ def first_party(name):
     if lower.startswith('arcforges.'):
         if lower.startswith(('arcforges.contracts.', 'arcforges.sdk.')) or lower == 'arcforges.cli':
             return 'Apache'
-        if lower.startswith(('arcforges.arcnotes', 'arcforges.arcscope', 'arcforges.arcslate')):
+        if lower.startswith(('arcforges.arcscope',)):
             return 'AGPL'
         platform = ('foundation', 'application.', 'localrpc', 'capabilities', 'observability',
                     'persistence.', 'security', 'update', 'execution', 'designsystem', 'desktop.',

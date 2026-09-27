@@ -57,3 +57,7 @@ reviewed registration before the family naming scan passes. Metadata is authored
 identity/provenance information, not reused source or a second naming authority.
 No capability package, runtime behavior or commercial readiness follows from
 planning-input verification.
+
+## Reduced-family adoption (GOV.18)
+
+The active registry selects assistant, scope and distribution only. The immutable original provenance metadata retains all historical registrations unchanged; verification resolves only the two Git references consumed by active matrices. Removed Notes/Slate sources are not fetched. Optional packaged-reference inspection remains read-only and explicitly requested; no binary is executed or unpacked.
