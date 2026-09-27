@@ -139,7 +139,7 @@ cmake_language(DEFER CALL arcforges_verify_native_licences)
         self.write('toolchain.cmake', '# Empty toolchain for a LANGUAGES NONE policy fixture.\n')
         for enabled in ('ON', 'OFF'):
             output = self.run_tool('cmake', '-S', '.', '-B', 'ctest-' + enabled,
-                '-DARCFORGES_NATIVE_PROFILE=runtime-shared', '-DVCPKG_TARGET_TRIPLET=fixture',
+                '-DARCFORGES_NATIVE_PROFILE=shim-static', '-DVCPKG_TARGET_TRIPLET=fixture',
                 '-DCMAKE_TOOLCHAIN_FILE=' + str(self.root / 'toolchain.cmake'),
                 '-DARCFORGES_BUILD_TESTS=' + enabled, success=False)
             self.assertIn('AFL001: missing or incorrect native target licence: early_unregistered', output)

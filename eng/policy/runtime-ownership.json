@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reviewedOn": "2026-09-20",
+  "reviewedOn": "2026-09-27",
   "design": {
-    "commit": "e2dd78058ce2d4bd1a8434a34d049bbc1158eacb",
+    "commit": "7aa84e69ad6808461b34181de261fab03bede076",
     "path": "docs/architecture/30-runtime-and-source-ownership-policy.md",
-    "sha256": "3be292a0fffc23dbdb0f7d1d0fe41ad250e03661d02fee79e4d4c58b8af33e2b"
+    "sha256": "5139ed1b36328cc6277bb8b2b549c3204e2e9974a68933858428da3b243ce3ab"
   },
   "owners": [
     {

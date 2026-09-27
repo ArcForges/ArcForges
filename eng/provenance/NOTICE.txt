@@ -27,8 +27,8 @@ Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/L
 DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.
 DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.
 
-design-policy-export-r2
-Source: https://github.com/ArcForges/ArcForges-Design @ 5322d698a1b650a52a5a139d986dd85b00b48581
+design-policy-export-r3
+Source: https://github.com/ArcForges/ArcForges-Design @ 7aa84e69ad6808461b34181de261fab03bede076
 Material licence: AGPL-3.0-only
 Notice scope: source
 Copyright ArcForges contributors. AGPL-3.0-only.
@@ -224,3 +224,12 @@ Copyright Contributors to the OpenTimelineIO project. All rights reserved.
 This product includes software developed at Pixar (http://www.pixar.com/).
 Copyright Contributors to the OpenTimelineIO project. All rights reserved.
 This product includes software developed at Pixar (http://www.pixar.com/).
+
+plan-delivery-graph-r1
+Source: https://github.com/ArcForges/Plan @ c6b39898014135d1a12052522a9afe460c10da8a
+Material licence: AGPL-3.0-only
+Notice scope: source
+Copyright ArcForges contributors. AGPL-3.0-only; full text in LICENSE.
+DesktopPlatform adaptation: self-contained Design read-only graph validator and generated-view comparison.
+Copyright ArcForges contributors. AGPL-3.0-only; full text in LICENSE.
+DesktopPlatform adaptation: self-contained Design read-only graph validator and generated-view comparison.

@@ -4,11 +4,11 @@
   "projects": [
     {
       "path": "CMakeLists.txt",
-      "blob": "25e7846ac9304adad34abb1d784955820da5b66e"
+      "blob": "77177ca01ea3406e2caa6048ffe094d54f5734bf"
     },
     {
       "path": "native/CMakeLists.txt",
-      "blob": "55e7b681ce93ffa02aa395e479effb1d00e5d4f5"
+      "blob": "f223097639a9bf7398a843f3c478e121ea40d05b"
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
