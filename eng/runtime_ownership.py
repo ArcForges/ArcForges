@@ -4,16 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from datetime import date, datetime, timezone
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 
 import licence_boundary as inventory
 
@@ -307,8 +313,45 @@ def checkout(parent, owner, commit):
     return target
 
 
-def naming(roots):
-    source = roots['Contracts'] / 'eng/check_naming.py'
+def naming_package(pin, parent):
+    fields(pin, 'package version contentHash sourceCommit')
+    require(pin['package'] == 'ArcForges.Contracts.Validation', 'wrong canonical naming package')
+    require(isinstance(pin['version'], str) and re.fullmatch(r'\d+\.\d+\.\d+(?:-ci\.\d+\.\d+)?', pin['version']),
+            'naming package must have an exact version')
+    digest(pin['sourceCommit'])
+    try:
+        expected = base64.b64decode(pin['contentHash'], validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError('invalid naming package content hash') from error
+    require(len(expected) == 64, 'invalid naming package content hash')
+    package, version = pin['package'].lower(), pin['version'].lower()
+    url = f'https://api.nuget.org/v3-flatcontainer/{package}/{version}/{package}.{version}.nupkg'
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                body = response.read(32 * 1024 * 1024 + 1)
+            break
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+    require(len(body) <= 32 * 1024 * 1024 and hashlib.sha512(body).digest() == expected,
+            'canonical naming package identity mismatch')
+    # Consume only the canonical published build-time scanner and data. No sibling
+    # source execution and no whole-archive extraction or second naming registry.
+    selected = ('tools/naming/eng/check_naming.py', 'tools/naming/eng/policy/product-names.json')
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        for relative in selected:
+            entries = [entry for entry in archive.infolist() if entry.filename == relative]
+            require(len(entries) == 1 and not entries[0].is_dir() and entries[0].file_size <= 4 * 1024 * 1024,
+                    'missing or ambiguous canonical naming asset')
+            target = parent / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(entries[0]))
+    return parent / selected[0]
+
+
+def naming(roots, source):
     spec = importlib.util.spec_from_file_location('owned_naming', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -350,7 +393,10 @@ def main():
             result['historicalDispositionSource'] = historical
             for row in value['owners']:
                 result['repositories'].append(audit(roots[row['repository']], row))
-            result['naming'] = naming(roots)
+            naming_pin = document(ROOT, 'eng/policy/naming-package.json')
+            scanner = naming_package(naming_pin, temporary / 'naming-package')
+            result['namingPackage'] = naming_pin
+            result['naming'] = naming(roots, scanner)
             require(all(not row['findings'] for row in result['naming']), 'naming policy failed')
             if args.evaluate_managed:
                 managed = []

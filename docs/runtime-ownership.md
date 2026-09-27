@@ -1,7 +1,7 @@
 # Runtime and source ownership
 
-WP00.05 implements the [current Design profile](https://github.com/ArcForges/ArcForges-Design/blob/e2dd78058ce2d4bd1a8434a34d049bbc1158eacb/docs/architecture/30-runtime-and-source-ownership-policy.md).
-The registry is `eng/policy/runtime-ownership.json`. Nine implementation owners
+WP00.05 originally implemented the [historical Design profile](https://github.com/ArcForges/ArcForges-Design/blob/e2dd78058ce2d4bd1a8434a34d049bbc1158eacb/docs/architecture/30-runtime-and-source-ownership-policy.md).
+The current registry is `eng/policy/runtime-ownership.json`. Seven implementation owners
 are independent; Design is documentation authority, and ArcChat is an embedded
 assistant/companion feature. Policy does not create another runtime package.
 
@@ -10,12 +10,12 @@ python -m unittest discover -s eng -p test_runtime_ownership.py -v
 python eng/runtime_ownership.py --evaluate-managed
 ```
 
-Default verification reads this checkout and fetches the eight other owners at
+Default verification reads this checkout and fetches the six other owners at
 their exact recorded commits into disposable isolated checkouts. It validates the
 fixed Design identity, real historical extraction tree, all current project and
 source inventories, declared runtime configuration, and the Contracts naming scan.
 It never builds adjacent source. Contracts and Mobile do not import AGPL tooling.
-Pass all nine `--repository Owner=absolute-root` arguments for a fresh family audit;
+Pass all seven `--repository Owner=absolute-root` arguments for a fresh family audit;
 `--design-root` may use a local Design Git checkout containing the bound commit.
 Reports retain actual source commit/dirty state, file/project counts, policy digest
 and findings under ignored `artifacts/evidence/`. A current family audit is required
@@ -32,8 +32,7 @@ build files, rejects false/conditional required declarations and unknown dynamic
 imports, and distinguishes libraries, hosts and build/test programs. It does not
 implement an MSBuild evaluator. `--evaluate-managed` additionally invokes the pinned
 SDK only for this owner's production hosts/libraries in Debug and Release; their
-actual evaluated property must agree. Existing native/managed package-consumer CI
-continues to prove execution. JavaScript IDE adapters cannot inherit .NET runtime
+actual evaluated property must agree. P2-017 restricts CI to compilation, packaging and permitted static or offline unit checks. JavaScript IDE adapters cannot inherit .NET runtime
 properties. The runtime check parses project/dependency/deployment inputs, not
 arbitrary historical prose; its bounded checks do not prove whole-program behavior.
 
@@ -63,8 +62,8 @@ existing Hello/probe APIs, published package identities and runtime behavior.
 
 The registry records old monorepo groups against extraction commit
 `99bfe7d695ed0d65a0d035af7d219fc9b86100f5`, together with their current owners and
-dispositions. Eleven shared placeholders remain non-packable, and the helper is
-still a scaffold. Full business schemas, assistant implementations, all native
+dispositions. At that frozen baseline, eleven shared placeholders were non-packable, and the helper was
+a scaffold. The baseline did not complete business schemas, assistant implementations, all native
 functional families/RIDs, four Web surfaces, Android identity/toolchain migration
 and commercial operation remain at their named stages. Existing snapshot evidence
 does not close those gates or require recreating already absent legacy source.
