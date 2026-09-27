@@ -1,6 +1,6 @@
 # ArcForges.Native.Image.Runtime.win-x64
 
-Actual Windows x64 `ArcSlateImageNative.dll`, its non-system DLL dependencies, public C headers and import
+Actual Windows x64 `ArcImageNative.dll`, its non-system DLL dependencies, public C headers and import
 library. Pair with `ArcForges.Native.Image` at the same exact version and set `RuntimeIdentifier` to `win-x64`.
 Native assets deploy through `runtimes/win-x64/native`; ordinary consumer builds never invoke CMake or
 vcpkg. The existing ABI consists only of version, build-information and error queries.

@@ -33,7 +33,7 @@ def files(root):
 def inputs(root):
     return [p for p in files(root) if p.endswith(('.csproj', '.props', '.targets', 'packages.lock.json'))
             or p in {'global.json', 'NuGet.config', '.python-version', 'eng/requirements-ci.txt',
-                     'eng/native-toolchain.json', 'eng/packaging/packages.json', 'vcpkg.json',
+                     'eng/native-toolchain.json', 'eng/packaging/packages.json', 'eng/policy/naming-package.json', 'vcpkg.json',
                      'vcpkg-configuration.json'}
             or p.startswith(('eng/native/vcpkg/', 'eng/provenance/artifact-profiles/',
                              'eng/provenance/records/'))]

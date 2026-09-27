@@ -340,5 +340,84 @@ class ProvenanceTests(unittest.TestCase):
                     self.assertEqual(provenance.run(self.fixture.root, "Contracts")["comparisonCommit"], commit)
 
 
+class NativeRetirementTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.fixture = Fixture(Path(self.temp.name))
+        package = "ArcForges.Native.Media.Runtime.win-x64"
+        self.target = {"record": "native-ffmpeg-r3", "package": package,
+                       "project": "src/Native/" + package + "/" + package + ".csproj",
+                       "kind": "native-component-ffmpeg"}
+        self.receipt = {"schemaVersion": 1, "repository": "DesktopPlatform",
+                        "authority": {"decision": "P2-019", "task": "GOV.17"}, "targets": [self.target]}
+        self.records = {"native-ffmpeg-r3": {"artifactTargets": [dict(self.target)]}}
+        self.history = {provenance.STORE + "native-ffmpeg-r3.json": json.dumps(self.records["native-ffmpeg-r3"]).encode()}
+        self.fixture.put("eng/packaging/packages.json", {"packages": []})
+
+    def validate(self, owner="DesktopPlatform", active=()):
+        self.fixture.put(provenance.RETIREMENTS, self.receipt)
+        return provenance.retirements(self.fixture.root, owner, self.fixture.files(), self.history, self.records, active)
+
+    def test_exact_deleted_historical_target_can_retire(self):
+        self.assertEqual(len(self.validate()), 1)
+
+    def test_retained_artifact_cannot_disappear_from_active_inventory(self):
+        value = copy.deepcopy(self.fixture.value)
+        value["id"] = "retained-image-r1"
+        value["kind"] = "generated"
+        value["targets"] = []
+        origin = {"repository": value["sourceRepository"], "commit": value["sourceCommit"],
+                  "paths": value["sourcePaths"], "spdx": "MIT", "evidence": value["licence"]["evidence"]}
+        value["generation"] = {"generators": [origin], "inputs": [origin], "command": "Synthetic generation", "outputSpdx": "MIT"}
+        value["artifactTargets"] = [{"project": "retained", "package": "ArcForges.Native.Image.Runtime.win-x64",
+                                     "kind": "native-component-image", "profile": "eng/provenance/artifact-profiles/image.json",
+                                     "sha256": "a" * 64}]
+        filename = provenance.STORE + value["id"] + ".json"
+        self.fixture.put(filename, value)
+        self.fixture.inventory()
+        previous = self.fixture.get(provenance.INVENTORY)
+        previous["artifacts"] = [value["id"]]
+        with self.assertRaisesRegex(ValueError, "Active artifact silently removed"):
+            self.fixture.validate({filename: (self.fixture.root / filename).read_bytes()}, previous)
+
+    def test_retained_image_cannot_retire_even_with_matching_history(self):
+        self.target["package"] = "ArcForges.Native.Image.Runtime.win-x64"
+        self.target["project"] = "src/Native/" + self.target["package"] + "/" + self.target["package"] + ".csproj"
+        with self.assertRaisesRegex(ValueError, "Unapproved retired package/project"):
+            self.validate()
+
+    def test_unregistered_and_mismatched_material_fail(self):
+        self.history.clear()
+        with self.assertRaisesRegex(ValueError, "Unregistered retirement target"):
+            self.validate()
+        self.target["kind"] = "native-component-other"
+        with self.assertRaisesRegex(ValueError, "Unapproved retired material"):
+            self.validate()
+
+    def test_live_project_catalogue_or_registration_cannot_retire(self):
+        self.fixture.write(self.target["project"], b"<Project />")
+        with self.assertRaisesRegex(ValueError, "still present"):
+            self.validate()
+        (self.fixture.root / self.target["project"]).unlink()
+        self.fixture.put("eng/packaging/packages.json", {"packages": [{"id": self.target["package"], "project": self.target["project"]}]})
+        with self.assertRaisesRegex(ValueError, "still present"):
+            self.validate()
+        self.fixture.put("eng/packaging/packages.json", {"packages": []})
+        with self.assertRaisesRegex(ValueError, "still active"):
+            self.validate(active=["native-ffmpeg-r3"])
+
+    def test_wrong_owner_authority_and_duplicate_fail(self):
+        with self.assertRaisesRegex(ValueError, "retirement owner"):
+            self.validate(owner="Contracts")
+        self.receipt["authority"]["task"] = "OTHER"
+        with self.assertRaisesRegex(ValueError, "retirement authority"):
+            self.validate()
+        self.receipt["authority"]["task"] = "GOV.17"
+        self.receipt["targets"].append(dict(self.target))
+        with self.assertRaisesRegex(ValueError, "Duplicate retirement"):
+            self.validate()
+
+
 if __name__ == "__main__":
     unittest.main()

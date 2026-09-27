@@ -28,27 +28,14 @@ git -C C:\vcpkg checkout --detach 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
 & C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
 ```
 
-Install the shared runtime dependencies:
+Install the static implementation dependencies used inside the retained image ABI:
 
 ```powershell
 & C:\vcpkg\vcpkg.exe install `
-  'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,amf]:x64-windows' `
-  'libusb[core]:x64-windows' `
-  'miniaudio[core]:x64-windows' `
-  "--x-install-root=$PWD/artifacts/vcpkg-installed" `
-  '--overlay-triplets=eng/native/vcpkg/triplets'
-```
-
-Install the static implementation dependencies used inside the owned ABI shims:
-
-```powershell
-& C:\vcpkg\vcpkg.exe install `
-  'opentimelineio[core]:x64-windows-static-md' `
   'opencolorio[core]:x64-windows-static-md' `
   'openimageio[core]:x64-windows-static-md' `
   'openexr[core]:x64-windows-static-md' `
   'imath[core]:x64-windows-static-md' `
-  '--overlay-ports=eng/native/vcpkg/ports' `
   "--x-install-root=$PWD/artifacts/vcpkg-installed" `
   '--overlay-triplets=eng/native/vcpkg/triplets'
 ```
@@ -75,9 +62,7 @@ call "<VS install>\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.51.36231
 set "VCPKG_ROOT=%PINNED_VCPKG%"
 ```
 
-Other operating systems install the same two dependency groups
-under the standard triplets named by their presets. The optional macOS shader-tool preset additionally requires
-`glslang[tools]` and `spirv-cross` for its host triplet.
+Other operating systems use the retained image dependency group under the standard triplets named by their local presets.
 
 `win.slnx` builds the owned ABI projects before the managed native ABI test and deploys their complete DLL runtime
 app-local for both Debug and Release. The generated test executable therefore runs directly from its output
@@ -87,12 +72,9 @@ CI builds the Windows CMake presets only. `win.slnx` remains a local IDE entry p
 its full build is an explicit command when relevant, not an automatic pre-push hook.
 CTest and native ABI execution are local opt-in diagnostics, never CI gates.
 
-Build and stage each profile from the existing configured compiler shell:
+Build and stage the retained profile from the existing configured compiler shell:
 
 ```powershell
-cmake --preset win-x64-runtime-shared
-cmake --build --preset win-x64-runtime-shared
-cmake --install artifacts/cmake/win-x64/runtime-shared
 cmake --preset win-x64-shim-static
 cmake --build --preset win-x64-shim-static
 cmake --install artifacts/cmake/win-x64/shim-static

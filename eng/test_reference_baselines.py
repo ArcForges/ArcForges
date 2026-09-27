@@ -71,6 +71,23 @@ class RegistrationTests(unittest.TestCase):
             with patch.object(r, 'remote_snapshot', side_effect=AssertionError('must not fetch')):
                 with self.assertRaisesRegex(ValueError, 'metadata digest mismatch'): r.verify(root, {})
 
+    def test_retired_references_are_not_resolved(self):
+        from contextlib import contextmanager
+        requested=[]
+        @contextmanager
+        def snapshot(repository, revision):
+            requested.append(repository)
+            yield r.ROOT
+        with patch.object(r,'remote_snapshot',snapshot), patch.object(r,'origin'), \
+             patch.object(r,'state',return_value={}), patch.object(r,'commit',side_effect=lambda root, revision: revision), \
+             patch.object(r,'matrix_check'):
+            result=r.verify(r.ROOT,{})
+        expected={self.metadata['design']['repository'],self.metadata['sources']['s1']['repository'],
+                  self.metadata['sources']['s4']['repository']}
+        self.assertEqual(set(requested),expected)
+        self.assertEqual(result['gitReferences'],2)
+        self.assertEqual(result['matrices'],3)
+
     def test_packaged_observation_reads_notices_only(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); product = root/'product'; product.mkdir()

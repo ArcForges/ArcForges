@@ -3,9 +3,9 @@
   "license": "AGPL-3.0-only",
   "source": {
     "repository": "ArcForges/ArcForges-Design",
-    "commit": "5322d698a1b650a52a5a139d986dd85b00b48581",
+    "commit": "7aa84e69ad6808461b34181de261fab03bede076",
     "path": "docs/requirements/01-normative-glossary-and-invariants.md",
-    "sha256": "fa60f160fe6c28685cd904f590f8d74ed1ead03295e4b9e42023f2a8f2b09a88"
+    "sha256": "9041df86987324c25446dc3a5cfbfbabd6b6df1ea20381135a8caf84f98e44d4"
   },
   "spaces": [
     {
@@ -77,7 +77,7 @@
         "domain"
       ],
       "status": "active",
-      "definition": "A signed-out native operator without a Cloud UserId. May use product-specific native functions; has no official AI access or account-free notebook service."
+      "definition": "A signed-out native operator without a Cloud UserId. May use product-specific native functions; has no official AI access."
     },
     {
       "section": "1",
@@ -181,7 +181,7 @@
         "wire"
       ],
       "status": "active",
-      "definition": "The stable product identity: `arcnotes`, `arcscope`, `arcslate`, `companion`. Never a process id, never a product-scope, never a licence unit."
+      "definition": "The stable product identity: `arcscope`, `companion`. Never a process id, never a product-scope, never a licence unit."
     },
     {
       "section": "1",
@@ -382,7 +382,7 @@
         "wire"
       ],
       "status": "active",
-      "definition": "The namespaced type of a Resource, e.g. `arcnotes.document`, `arcscope.session`, `arcslate.project`."
+      "definition": "The namespaced type of a Resource, e.g. `arcscope.session`."
     },
     {
       "section": "2",
@@ -439,7 +439,7 @@
         "wire"
       ],
       "status": "active",
-      "definition": "A meaningful work result produced by a Task, Agent or App — a document, report, session, rendered video, project or ordinary file. Never \"an ArcChat file\"."
+      "definition": "A meaningful work result produced by a Task, Agent or App — a report, session, measurement, project or ordinary file. Never \"an ArcChat file\"."
     },
     {
       "section": "2",
@@ -1155,7 +1155,7 @@
         "domain"
       ],
       "status": "active",
-      "definition": "An ArcChat-scoped grouping of conversations, context references and settings. **Not** a Workspace, **not** an `ArcScope.Project`, **not** an `ArcSlate.Project`."
+      "definition": "An ArcChat-scoped grouping of conversations, context references and settings. **Not** a Workspace, **not** an `ArcScope.Project`."
     },
     {
       "section": "5.1",
@@ -1197,7 +1197,7 @@
         "domain"
       ],
       "status": "active",
-      "definition": "ArcChat-owned durable user-preference recall. Not ArcNotes knowledge; not a conversation summary."
+      "definition": "ArcChat-owned durable user-preference recall. Not a conversation summary."
     },
     {
       "section": "5.1",
@@ -1229,171 +1229,7 @@
     },
     {
       "section": "5.2",
-      "line": 160,
-      "term": "`ArcNotes.Notebook`",
-      "names": [
-        "ArcNotes.Notebook"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The top-level ArcNotes container. **Not** a Workspace."
-    },
-    {
-      "section": "5.2",
-      "line": 161,
-      "term": "`ArcNotes.Folder`",
-      "names": [
-        "ArcNotes.Folder"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A hierarchical container. **Not** a Tag."
-    },
-    {
-      "section": "5.2",
-      "line": 162,
-      "term": "`ArcNotes.Document`",
-      "names": [
-        "ArcNotes.Document"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The canonical document object. **Not** a file; **not** a Markdown file."
-    },
-    {
-      "section": "5.2",
-      "line": 163,
-      "term": "`ArcNotes.Block`",
-      "names": [
-        "ArcNotes.Block"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The addressable unit inside a Document, with a stable `BlockId`. **Not** a Markdown line."
-    },
-    {
-      "section": "5.2",
-      "line": 164,
-      "term": "`ArcNotes.Property`",
-      "names": [
-        "ArcNotes.Property"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "Typed metadata on a Document or Block. **Not** document content."
-    },
-    {
-      "section": "5.2",
-      "line": 165,
-      "term": "`ArcNotes.Tag`",
-      "names": [
-        "ArcNotes.Tag"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A non-hierarchical label."
-    },
-    {
-      "section": "5.2",
-      "line": 166,
-      "term": "`ArcNotes.SavedView`",
-      "names": [
-        "ArcNotes.SavedView"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A stored query and presentation over typed properties. Confers **no ownership** of the objects it lists."
-    },
-    {
-      "section": "5.2",
-      "line": 167,
-      "term": "`ArcNotes.Attachment`",
-      "names": [
-        "ArcNotes.Attachment"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A referenced binary managed by ArcNotes. Never base64 embedded in canonical content."
-    },
-    {
-      "section": "5.2",
-      "line": 168,
-      "term": "`ArcNotes.Canvas` (Edgeless)",
-      "names": [
-        "ArcNotes.Canvas"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [],
-      "status": "retired",
-      "definition": "Retired by [P2-006](../decisions/phase-2-specification-decisions.md#rule-p2-006). Edgeless, whiteboard, shape/connector/frame workspaces are excluded."
-    },
-    {
-      "section": "5.2",
-      "line": 169,
-      "term": "`ArcNotes.Database`",
-      "names": [
-        "ArcNotes.Database"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "Bounded note organization through scalar properties, queries and table/list Saved Views; not the SQLite/D1 storage schema or a formula/relation/rollup platform."
-    },
-    {
-      "section": "5.2",
-      "line": 170,
-      "term": "`ArcNotes.Slides`",
-      "names": [
-        "ArcNotes.Slides"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [],
-      "status": "retired",
-      "definition": "Retired by [P2-006](../decisions/phase-2-specification-decisions.md#rule-p2-006). Presentations, slide generation, frame ordering and presentation navigation are excluded."
-    },
-    {
-      "section": "5.2",
-      "line": 171,
-      "term": "`ArcNotes.ChecklistItem`",
-      "names": [
-        "ArcNotes.ChecklistItem"
-      ],
-      "namespace": "ArcNotes",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A document-local task item. **Not** an ArcChat Agent Task."
-    },
-    {
-      "section": "5.3",
-      "line": 177,
+      "line": 158,
       "term": "`ArcScope.Project`",
       "names": [
         "ArcScope.Project"
@@ -1406,8 +1242,8 @@
       "definition": "An ArcScope-scoped container of sources, sessions and analyses. **Not** an ArcForges Workspace."
     },
     {
-      "section": "5.3",
-      "line": 178,
+      "section": "5.2",
+      "line": 159,
       "term": "`ArcScope.Device`",
       "names": [
         "ArcScope.Device"
@@ -1420,8 +1256,8 @@
       "definition": "Physical or logical hardware. **Not** a DataSource."
     },
     {
-      "section": "5.3",
-      "line": 179,
+      "section": "5.2",
+      "line": 160,
       "term": "`ArcScope.DataSource`",
       "names": [
         "ArcScope.DataSource"
@@ -1434,8 +1270,8 @@
       "definition": "A configured source definition."
     },
     {
-      "section": "5.3",
-      "line": 180,
+      "section": "5.2",
+      "line": 161,
       "term": "`ArcScope.ConnectionProfile`",
       "names": [
         "ArcScope.ConnectionProfile"
@@ -1448,8 +1284,8 @@
       "definition": "Stored connection settings. **Not** a live Connection."
     },
     {
-      "section": "5.3",
-      "line": 181,
+      "section": "5.2",
+      "line": 162,
       "term": "`ArcScope.Session`",
       "names": [
         "ArcScope.Session"
@@ -1462,8 +1298,8 @@
       "definition": "An observation lifetime. **Not** a Connection; **not** a Capture."
     },
     {
-      "section": "5.3",
-      "line": 182,
+      "section": "5.2",
+      "line": 163,
       "term": "`ArcScope.Capture`",
       "names": [
         "ArcScope.Capture"
@@ -1476,8 +1312,8 @@
       "definition": "A recorded data acquisition within a Session."
     },
     {
-      "section": "5.3",
-      "line": 183,
+      "section": "5.2",
+      "line": 164,
       "term": "`ArcScope.Channel`",
       "names": [
         "ArcScope.Channel"
@@ -1490,8 +1326,8 @@
       "definition": "A transport-level stream of values. **Not** a Signal."
     },
     {
-      "section": "5.3",
-      "line": 184,
+      "section": "5.2",
+      "line": 165,
       "term": "`ArcScope.Signal`",
       "names": [
         "ArcScope.Signal"
@@ -1504,8 +1340,8 @@
       "definition": "A semantically typed, named quantity. **Not** an Event."
     },
     {
-      "section": "5.3",
-      "line": 185,
+      "section": "5.2",
+      "line": 166,
       "term": "`ArcScope.Event`",
       "names": [
         "ArcScope.Event"
@@ -1518,8 +1354,8 @@
       "definition": "A discrete occurrence in time."
     },
     {
-      "section": "5.3",
-      "line": 186,
+      "section": "5.2",
+      "line": 167,
       "term": "`ArcScope.RawSignal` / `ArcScope.DerivedSignal`",
       "names": [
         "ArcScope.RawSignal",
@@ -1533,8 +1369,8 @@
       "definition": "Acquired versus computed. Never conflated."
     },
     {
-      "section": "5.3",
-      "line": 187,
+      "section": "5.2",
+      "line": 168,
       "term": "`ArcScope.Measurement`",
       "names": [
         "ArcScope.Measurement"
@@ -1547,8 +1383,8 @@
       "definition": "A quantified reading with units and uncertainty. **Not** an Analysis."
     },
     {
-      "section": "5.3",
-      "line": 188,
+      "section": "5.2",
+      "line": 169,
       "term": "`ArcScope.Analysis`",
       "names": [
         "ArcScope.Analysis"
@@ -1561,8 +1397,8 @@
       "definition": "An interpretation over measurements."
     },
     {
-      "section": "5.3",
-      "line": 189,
+      "section": "5.2",
+      "line": 170,
       "term": "`ArcScope.Decoder`",
       "names": [
         "ArcScope.Decoder"
@@ -1575,8 +1411,8 @@
       "definition": "A protocol interpreter producing Decoder Output. **Decoder Output ≠ Raw Data.**"
     },
     {
-      "section": "5.3",
-      "line": 190,
+      "section": "5.2",
+      "line": 171,
       "term": "`ArcScope.Annotation`",
       "names": [
         "ArcScope.Annotation"
@@ -1589,8 +1425,8 @@
       "definition": "A non-destructive marking. **Never** a data mutation."
     },
     {
-      "section": "5.3",
-      "line": 191,
+      "section": "5.2",
+      "line": 172,
       "term": "`ArcScope.Comparison`",
       "names": [
         "ArcScope.Comparison"
@@ -1603,8 +1439,8 @@
       "definition": "A side-by-side relation between sessions or captures. **Not** a merge."
     },
     {
-      "section": "5.3",
-      "line": 192,
+      "section": "5.2",
+      "line": 173,
       "term": "`ArcScope.Report`",
       "names": [
         "ArcScope.Report"
@@ -1614,11 +1450,11 @@
         "domain"
       ],
       "status": "active",
-      "definition": "An ArcScope-owned report artifact. **Not** an ArcNotes Document."
+      "definition": "An ArcScope-owned report artifact."
     },
     {
-      "section": "5.3",
-      "line": 193,
+      "section": "5.2",
+      "line": 174,
       "term": "`ArcScope.LiveView`",
       "names": [
         "ArcScope.LiveView"
@@ -1631,8 +1467,8 @@
       "definition": "Display state. Pausing the view never pauses the capture."
     },
     {
-      "section": "5.3",
-      "line": 194,
+      "section": "5.2",
+      "line": 175,
       "term": "`ArcScope.Recording`",
       "names": [
         "ArcScope.Recording"
@@ -1645,8 +1481,8 @@
       "definition": "Persisted capture data, distinct from LiveView display state."
     },
     {
-      "section": "5.3",
-      "line": 195,
+      "section": "5.2",
+      "line": 176,
       "term": "`ArcScope.DisplayDecimation`",
       "names": [
         "ArcScope.DisplayDecimation"
@@ -1659,8 +1495,8 @@
       "definition": "Downsampling for rendering only. Never the measurement data."
     },
     {
-      "section": "5.3",
-      "line": 201,
+      "section": "5.2",
+      "line": 182,
       "term": "`ArcScope.SimulationDefinition`",
       "names": [
         "ArcScope.SimulationDefinition"
@@ -1673,8 +1509,8 @@
       "definition": "A Cloud-owned simulator definition."
     },
     {
-      "section": "5.3",
-      "line": 202,
+      "section": "5.2",
+      "line": 183,
       "term": "`ArcScope.ScenarioVersion`",
       "names": [
         "ArcScope.ScenarioVersion"
@@ -1687,8 +1523,8 @@
       "definition": "An immutable scenario version."
     },
     {
-      "section": "5.3",
-      "line": 203,
+      "section": "5.2",
+      "line": 184,
       "term": "`ArcScope.SimulationRun`",
       "names": [
         "ArcScope.SimulationRun"
@@ -1701,8 +1537,8 @@
       "definition": "A non-agent simulator product job."
     },
     {
-      "section": "5.3",
-      "line": 204,
+      "section": "5.2",
+      "line": 185,
       "term": "`ArcScope.SimulationSegment`",
       "names": [
         "ArcScope.SimulationSegment"
@@ -1715,8 +1551,8 @@
       "definition": "An immutable segment of a simulation result."
     },
     {
-      "section": "5.3",
-      "line": 205,
+      "section": "5.2",
+      "line": 186,
       "term": "`ArcScope.SimulationEvent`",
       "names": [
         "ArcScope.SimulationEvent"
@@ -1727,345 +1563,110 @@
       ],
       "status": "active",
       "definition": "An ordered event in a simulation run."
-    },
-    {
-      "section": "5.4",
-      "line": 211,
-      "term": "`ArcSlate.Project`",
-      "names": [
-        "ArcSlate.Project"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The editing project. **Not** a Sequence; **not** a media folder."
-    },
-    {
-      "section": "5.4",
-      "line": 212,
-      "term": "`ArcSlate.Sequence`",
-      "names": [
-        "ArcSlate.Sequence"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A timeline composition. **Not** a Timeline Clip."
-    },
-    {
-      "section": "5.4",
-      "line": 213,
-      "term": "`ArcSlate.Timeline`",
-      "names": [
-        "ArcSlate.Timeline"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The temporal arrangement inside a Sequence."
-    },
-    {
-      "section": "5.4",
-      "line": 214,
-      "term": "`ArcSlate.Track`",
-      "names": [
-        "ArcSlate.Track"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A lane within a Timeline."
-    },
-    {
-      "section": "5.4",
-      "line": 215,
-      "term": "`ArcSlate.Clip`",
-      "names": [
-        "ArcSlate.Clip"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A placed reference to source media with in/out points. **Not** the source media."
-    },
-    {
-      "section": "5.4",
-      "line": 216,
-      "term": "`ArcSlate.MediaAsset`",
-      "names": [
-        "ArcSlate.MediaAsset"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The managed identity of a piece of media. **Not** a file path; **not** a Clip."
-    },
-    {
-      "section": "5.4",
-      "line": 217,
-      "term": "`ArcSlate.SourceTime` / `ArcSlate.TimelineTime`",
-      "names": [
-        "ArcSlate.SourceTime",
-        "ArcSlate.TimelineTime"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "Source-relative versus composition-relative time. Never interchangeable."
-    },
-    {
-      "section": "5.4",
-      "line": 218,
-      "term": "`ArcSlate.VideoFrameTime` / `ArcSlate.AudioSampleTime`",
-      "names": [
-        "ArcSlate.VideoFrameTime",
-        "ArcSlate.AudioSampleTime"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "Distinct rate domains. Never the same clock."
-    },
-    {
-      "section": "5.4",
-      "line": 219,
-      "term": "`ArcSlate.Transition`",
-      "names": [
-        "ArcSlate.Transition"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A declared relation between adjacent clips. **Not** an incidental overlap."
-    },
-    {
-      "section": "5.4",
-      "line": 220,
-      "term": "`ArcSlate.EffectDefinition` / `ArcSlate.EffectInstance`",
-      "names": [
-        "ArcSlate.EffectDefinition",
-        "ArcSlate.EffectInstance"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "Type versus applied instance with parameters."
-    },
-    {
-      "section": "5.4",
-      "line": 221,
-      "term": "`ArcSlate.Keyframe`",
-      "names": [
-        "ArcSlate.Keyframe"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "A time-anchored parameter value. **Not** the current parameter value."
-    },
-    {
-      "section": "5.4",
-      "line": 222,
-      "term": "`ArcSlate.Proxy`",
-      "names": [
-        "ArcSlate.Proxy"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "storage"
-      ],
-      "status": "active",
-      "definition": "A lower-cost stand-in for original media. **Not** the original; **not** a render cache."
-    },
-    {
-      "section": "5.4",
-      "line": 223,
-      "term": "`ArcSlate.RenderCache`",
-      "names": [
-        "ArcSlate.RenderCache"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "storage"
-      ],
-      "status": "active",
-      "definition": "Rebuildable rendered output. **Never** project authority."
-    },
-    {
-      "section": "5.4",
-      "line": 224,
-      "term": "`ArcSlate.RenderJob`",
-      "names": [
-        "ArcSlate.RenderJob"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "An ArcSlate-owned native product render/export Job, distinct from a Cloud Agent Task and UI progress dialog."
-    },
-    {
-      "section": "5.4",
-      "line": 225,
-      "term": "`ArcSlate.RenderedArtifact`",
-      "names": [
-        "ArcSlate.RenderedArtifact"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "The produced media file. **Not** the ArcSlate Project."
-    },
-    {
-      "section": "5.4",
-      "line": 226,
-      "term": "`ArcSlate.Transcript` / `ArcSlate.Subtitle`",
-      "names": [
-        "ArcSlate.Transcript",
-        "ArcSlate.Subtitle"
-      ],
-      "namespace": "ArcSlate",
-      "spaces": [
-        "domain"
-      ],
-      "status": "active",
-      "definition": "Machine text versus authored, timed, styled display text."
     }
   ],
   "forbiddenAliases": [
     {
       "section": "8",
-      "line": 752,
+      "line": 689,
       "term": "`ArcCanvas`, `ArcMusic`, `ArcImage`",
       "reason": "`SUPERSEDED` product names (**[D-002](../decisions/phase-1-foundation-decisions.md#rule-d-002)**)",
       "instead": "No replacement product or runtime alias. ArcScope is independently defined; image-editor concepts do not migrate into it."
     },
     {
       "section": "8",
-      "line": 753,
-      "term": "`ArcVideo`",
-      "reason": "`SUPERSEDED` product name; reference-repository identity only",
-      "instead": "ArcSlate retains product direction only, not a model, identity or automatic migration."
-    },
-    {
-      "section": "8",
-      "line": 754,
+      "line": 690,
       "term": "\"Workspace\" meaning a panel layout",
       "reason": "Collides with the cloud tenancy boundary",
       "instead": "**Layout**"
     },
     {
       "section": "8",
-      "line": 755,
+      "line": 691,
       "term": "Bare \"Project\" in shared family text",
-      "reason": "Three incompatible product meanings",
-      "instead": "`ArcChat.Project` / `ArcScope.Project` / `ArcSlate.Project`"
+      "reason": "Two incompatible product meanings",
+      "instead": "`ArcChat.Project` / `ArcScope.Project`"
     },
     {
       "section": "8",
-      "line": 756,
+      "line": 692,
       "term": "Bare \"Scope\"",
       "reason": "Eight distinct meanings exist",
       "instead": "Name the scope explicitly: Knowledge Scope, Sync Scope, Permission Scope, Policy Scope, Product Scope, Search Scope, Egress Scope, Resource Scope"
     },
     {
       "section": "8",
-      "line": 757,
+      "line": 693,
       "term": "\"ArcForges Suite 2.0\" as a version",
       "reason": "No mandatory suite release train",
       "instead": "Per-product versions plus an optional release campaign name"
     },
     {
       "section": "8",
-      "line": 758,
+      "line": 694,
       "term": "\"Central desktop service\", `ArcForgesService.exe`",
       "reason": "Prohibited architecture",
       "instead": "application-owned assistant"
     },
     {
       "section": "8",
-      "line": 759,
+      "line": 695,
       "term": "Unqualified \"Unlimited AI\" / \"unlimited storage\"",
       "reason": "Prohibited unbounded commercial claims",
       "instead": "Disclosed AI capacity recovery/rate/concurrency/model limits and storage tier"
     },
     {
       "section": "8",
-      "line": 760,
+      "line": 696,
       "term": "\".NET AOT\" applied to Kotlin Android",
       "reason": "Kotlin/Jetpack Compose is its own runtime under [P2-009](../decisions/phase-2-specification-decisions.md#rule-p2-009)",
       "instead": "\"Kotlin/Jetpack Compose release build\""
     },
     {
       "section": "8",
-      "line": 761,
+      "line": 697,
       "term": "\"Cloud may remain JIT\"",
       "reason": "Superseded by [P2-009](../decisions/phase-2-specification-decisions.md#rule-p2-009)",
       "instead": "\"C# Cloud publishes Native AOT\""
     },
     {
       "section": "8",
-      "line": 762,
+      "line": 698,
       "term": "\"A realtime connection is durable authority\"",
       "reason": "Hints are projections",
       "instead": "\"Reconcile using the typed authoritative read\""
     },
     {
       "section": "8",
-      "line": 763,
+      "line": 699,
       "term": "Waffo Pancake and every Waffo-specific mechanic",
       "reason": "`SUPERSEDED` provider (**[D-005](../decisions/phase-1-foundation-decisions.md#rule-d-005)**)",
       "instead": "Paddle (MoR) and Payoneer (payout destination)"
     },
     {
       "section": "8",
-      "line": 764,
+      "line": 700,
       "term": "\"License key unlock\" in Android companion",
       "reason": "Excluded by the accepted Android companion entitlement/distribution policy and **[D-022](../decisions/phase-1-foundation-decisions.md#rule-d-022)**",
       "instead": "Cloud-resolved entitlement"
     },
     {
       "section": "8",
-      "line": 765,
+      "line": 701,
       "term": "`InvokeAsync(string, object)` / `Dictionary<string,object>` capability calls",
       "reason": "Bypasses contracts, permissions and versioning",
       "instead": "Strongly typed capability interfaces"
     },
     {
       "section": "8",
-      "line": 766,
-      "term": "`ArcForges.Foundation.Document`, `.VideoTimeline`, `.TelemetrySession`",
+      "line": 702,
+      "term": "`ArcForges.Foundation.TelemetrySession`",
       "reason": "Shared foundation must not hold domain",
       "instead": "Product-owned domain types"
     },
     {
       "section": "8",
-      "line": 767,
+      "line": 703,
       "term": "`ArcProductBase` domain hierarchy",
       "reason": "Product classification is not inheritance",
       "instead": "Independent domains + platform contracts"

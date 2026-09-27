@@ -22,23 +22,11 @@
   </Folder>
   <Folder Name="/tests/NativeAbiTests/">
     <Project Path="tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj">
-      <BuildDependency Project="native/arcmedia-ffmpeg-abi/windows/arcmedia_ffmpeg_abi.vcxproj" />
-      <BuildDependency Project="native/arcslate-otio-abi/windows/arcslate_otio_abi.vcxproj" />
-      <BuildDependency Project="native/arcslate-color-abi/windows/arcslate_color_abi.vcxproj" />
-      <BuildDependency Project="native/arcslate-image-abi/windows/arcslate_image_abi.vcxproj" />
+      <BuildDependency Project="native/arcimage-abi/windows/arcslate_image_abi.vcxproj" />
     </Project>
   </Folder>
   <Folder Name="/native/windows/">
-    <Project Path="native/arcmedia-ffmpeg-abi/windows/arcmedia_ffmpeg_abi.vcxproj" Id="9d2b516e-2367-4a9d-a06e-c41b2db52101">
-      <Platform Solution="*|Any CPU" Project="x64" />
-    </Project>
-    <Project Path="native/arcslate-otio-abi/windows/arcslate_otio_abi.vcxproj" Id="ef9cb27f-8494-4c9b-b93e-504fe782ba03">
-      <Platform Solution="*|Any CPU" Project="x64" />
-    </Project>
-    <Project Path="native/arcslate-color-abi/windows/arcslate_color_abi.vcxproj" Id="f498e99e-4422-4910-8646-220180f91404">
-      <Platform Solution="*|Any CPU" Project="x64" />
-    </Project>
-    <Project Path="native/arcslate-image-abi/windows/arcslate_image_abi.vcxproj" Id="4052c777-f42a-4f27-a122-595884bac505">
+    <Project Path="native/arcimage-abi/windows/arcslate_image_abi.vcxproj" Id="4052c777-f42a-4f27-a122-595884bac505">
       <Platform Solution="*|Any CPU" Project="x64" />
     </Project>
   </Folder>
@@ -46,13 +34,7 @@
   <Project Path="tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj" />
   <Folder Name="/src/Native/">
     <Project Path="src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Media/ArcForges.Native.Media.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Colour/ArcForges.Native.Colour.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Otio/ArcForges.Native.Otio.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj" />
   </Folder>
 </Solution>

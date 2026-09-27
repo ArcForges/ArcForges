@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import reconciliation as policy
 
@@ -97,6 +98,23 @@ class ReconciliationTests(unittest.TestCase):
         fixture = dict(row, projects=[{'path':project,'blob':updates[0]['reviewedBlob']}])
         with self.assertRaisesRegex(ValueError,'pinned project blob drift'):
             policy.check_projects(self.root, fixture, {project:'0'*40}, True)
+
+    def test_active_inventory_is_reviewed_and_retired_roots_cannot_return(self):
+        row={'repository':'DesktopPlatform','projects':[]}
+        original=policy.read('active-projects')
+        with patch.object(policy,'read',return_value=original):
+            self.assertEqual(policy.active_projects(row)['projects'],original['projects'])
+        for mutate in [lambda x:x['projects'].append(x['projects'][0]),
+                       lambda x:x['projects'][0].update(path='../outside.csproj'),
+                       lambda x:x['projects'][0].update(blob='HEAD'),
+                       lambda x:x['projects'][0].update(path='native/arcmedia-ffmpeg-abi/CMakeLists.txt'),
+                       lambda x:x.update(authority='unreviewed')]:
+            value=copy.deepcopy(original);mutate(value)
+            with patch.object(policy,'read',return_value=value),self.assertRaises(ValueError):
+                policy.active_projects(row)
+        policy.check_retirement({'native/arcimage-abi/CMakeLists.txt':'a'})
+        for files in [{}, {'native/arcimage-abi/CMakeLists.txt':'a','native/arcslate-color-abi/CMakeLists.txt':'b'}]:
+            with self.assertRaises(ValueError): policy.check_retirement(files)
 
     def test_present_absent_and_foreign_directory(self):
         self.commit({'src/A/A.csproj':'<Project />'})

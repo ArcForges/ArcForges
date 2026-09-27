@@ -19,9 +19,7 @@ META = 'eng/provenance/reference-inputs.json'
 POLICY = 'eng/policy/reference-baselines.json'
 EXPECTED = {
     'assistant': ('DesktopPlatform', ['15.07'], 30, 'ac', ['s1']),
-    'notes': ('ArcNotes', ['18.08'], 41, 'an', ['s2', 's3']),
     'scope': ('ArcScope', ['33.07'], 31, 'as', ['s4']),
-    'slate': ('ArcSlate', ['36.07'], 31, 'al', ['s5', 's6']),
     'distribution': ('DesktopPlatform', ['50.01', '50.02'], 12, 'sd', []),
 }
 
@@ -115,7 +113,7 @@ def validate(registry, metadata):
     fields(registry['metadata'], 'path sha256')
     require(registry['metadata']['path'] == META, 'wrong metadata path')
     digest(registry['metadata']['sha256'])
-    require(isinstance(registry['matrices'], list) and len(registry['matrices']) == 5, 'five matrices required')
+    require(isinstance(registry['matrices'], list) and len(registry['matrices']) == len(EXPECTED), 'three retained matrices required')
     seen = set()
     for item in registry['matrices']:
         fields(item, 'id owner maintenance rows prefix sources')
@@ -129,7 +127,7 @@ def validate(registry, metadata):
     fields(metadata['design'], 'repository commit')
     require(metadata['design']['repository'] == 'ArcForges/ArcForges-Design', 'wrong Design identity')
     digest(metadata['design']['commit'], 40)
-    require(isinstance(metadata['matrices'], dict) and set(metadata['matrices']) == set(EXPECTED), 'matrix set mismatch')
+    require(isinstance(metadata['matrices'], dict) and set(metadata['matrices']) == set(EXPECTED) | {'notes', 'slate'}, 'matrix set mismatch')
     paths = set()
     for item in metadata['matrices'].values():
         fields(item, 'path sha256')
@@ -260,11 +258,12 @@ def verify(root, local, packaged_root=None, drift_id=None, candidate=None):
     registry, metadata = read(root / POLICY), read(root / META)
     validate(registry, metadata)
     require(sha(normalized((root / META).read_bytes())) == registry['metadata']['sha256'], 'metadata digest mismatch')
-    allowed = {'design'} | set(metadata['sources'])
+    active_sources = {s for row in registry['matrices'] for s in row['sources']}
+    allowed = {'design'} | active_sources
     require(set(local) <= allowed, 'unknown local source')
     receipts = {}
     with ExitStack() as stack:
-        identities = {'design': metadata['design'], **metadata['sources']}
+        identities = {'design': metadata['design'], **{k: metadata['sources'][k] for k in active_sources}}
         roots = {}
         for key, identity in identities.items():
             target = local.get(key)
@@ -279,7 +278,7 @@ def verify(root, local, packaged_root=None, drift_id=None, candidate=None):
                              'state': snapshot, 'result': 'resolved'}
             roots[key] = target
         matrix_check(roots['design'], metadata, registry)
-        report = {'result': 'passed', 'matrices': len(registry['matrices']), 'gitReferences': 6,
+        report = {'result': 'passed', 'matrices': len(registry['matrices']), 'gitReferences': len(active_sources),
                   'registrySha256': sha(normalized((root / POLICY).read_bytes())),
                   'metadataSha256': registry['metadata']['sha256'], 'sources': receipts,
                   'packaged': {'result': 'registered-not-reobserved', 'observedOn': metadata['packaged']['observedOn']}}
@@ -287,7 +286,7 @@ def verify(root, local, packaged_root=None, drift_id=None, candidate=None):
             require(observe(packaged_root, metadata['packaged']) == metadata['packaged']['observation'], 'packaged observation drift')
             report['packaged']['result'] = 'live-observation-matched'
         if drift_id is not None:
-            require(drift_id in metadata['sources'] and candidate, 'drift requires source ID and candidate')
+            require(drift_id in active_sources and candidate, 'drift requires source ID and candidate')
             report['drift'] = drift(roots[drift_id], metadata['sources'][drift_id], candidate)
         for key, target in roots.items():
             require(state(target) == receipts[key]['state'], 'source state changed during verification')

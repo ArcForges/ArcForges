@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import check_provenance as provenance
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILE = "eng/provenance/artifact-profiles/native-win-x64-r3.json"
+PROFILE = "eng/provenance/artifact-profiles/native-win-x64-r4.json"
 RECEIPT = "provenance/native-closure.json"
 NOTICE = "provenance/NOTICE.txt"
 require = provenance.require
@@ -66,13 +66,8 @@ def check_sources(value: dict, name: str, sbom: dict) -> None:
 def profile(root: Path = ROOT) -> dict:
     value = provenance.document(provenance.read(root, PROFILE))
     provenance.fields(value, "schemaVersion id authority vcpkgCommit baseline buildTools triplets components packages platformRuntime cachedResourceOmissions")
-    require(value["schemaVersion"] == 1 and value["id"] == "native-win-x64-r3", "Unknown native profile")
-    require(value["cachedResourceOmissions"] == ["vcpkg-tool-meson"], "Unreviewed cached resource omission")
-    meson = value["components"]["vcpkg-tool-meson"]
-    legal = meson["extras"][0]
-    require(meson["role"] == "build-only" and meson["resources"] == [{"url": legal["url"],
-            "sha512": legal["sourceSha512"], "downloadUrl": legal["url"], "cacheName": legal["cacheName"]}],
-            "Meson source receipt differs from the reviewed legal source")
+    require(value["schemaVersion"] == 1 and value["id"] == "native-win-x64-r4", "Unknown native profile")
+    require(value["cachedResourceOmissions"] == [], "Unreviewed cached resource omission")
     require(value["buildTools"] == {"ownedCMake": "4.3.3", "ownedNinja": "1.13.1", "vcpkgCMake": "4.4.0", "msvcToolset": "14.51.36231"},
             "Unreviewed native build generators")
     require(set(value["triplets"]) == {"x64-windows", "x64-windows-static-md"}, "Unreviewed native triplets")

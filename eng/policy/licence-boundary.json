@@ -13,39 +13,11 @@
       "kind": "cmake"
     },
     {
-      "path": "native/arcgraphics-metal-abi/CMakeLists.txt",
+      "path": "native/arcimage-abi/CMakeLists.txt",
       "kind": "cmake"
     },
     {
-      "path": "native/arcmedia-ffmpeg-abi/CMakeLists.txt",
-      "kind": "cmake"
-    },
-    {
-      "path": "native/arcmedia-ffmpeg-abi/windows/arcmedia_ffmpeg_abi.vcxproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "native/arcslate-color-abi/CMakeLists.txt",
-      "kind": "cmake"
-    },
-    {
-      "path": "native/arcslate-color-abi/windows/arcslate_color_abi.vcxproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "native/arcslate-image-abi/CMakeLists.txt",
-      "kind": "cmake"
-    },
-    {
-      "path": "native/arcslate-image-abi/windows/arcslate_image_abi.vcxproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "native/arcslate-otio-abi/CMakeLists.txt",
-      "kind": "cmake"
-    },
-    {
-      "path": "native/arcslate-otio-abi/windows/arcslate_otio_abi.vcxproj",
+      "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
       "kind": "msbuild"
     },
     {
@@ -105,35 +77,11 @@
       "kind": "msbuild"
     },
     {
-      "path": "src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/Native/ArcForges.Native.Colour/ArcForges.Native.Colour.csproj",
-      "kind": "msbuild"
-    },
-    {
       "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
       "kind": "msbuild"
     },
     {
       "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/Native/ArcForges.Native.Media/ArcForges.Native.Media.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/Native/ArcForges.Native.Otio/ArcForges.Native.Otio.csproj",
       "kind": "msbuild"
     },
     {

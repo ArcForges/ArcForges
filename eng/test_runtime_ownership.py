@@ -2,11 +2,16 @@
 """Independent invalid runtime/ownership fixtures; no provider or model calls."""
 
 import copy
+import base64
+import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+import zipfile
 
 import runtime_ownership as policy
 
@@ -42,6 +47,55 @@ class RuntimeOwnershipTests(unittest.TestCase):
                 if mutation == 'field': value['allowEverything'] = True
                 if mutation == 'retired': value['retiredScaffolds'].pop()
                 with self.assertRaises(ValueError): policy.validate_policy(value)
+
+    def test_published_naming_assets_are_exact_and_never_extract_other_entries(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as archive:
+            archive.writestr('tools/naming/eng/check_naming.py', '# canonical fixture')
+            archive.writestr('tools/naming/eng/policy/product-names.json', '{}')
+            archive.writestr('../outside.py', 'unselected')
+        body = stream.getvalue()
+        pin = dict(package='ArcForges.Contracts.Validation', version='1.0.0-ci.123.1',
+                   contentHash=base64.b64encode(hashlib.sha512(body).digest()).decode(), sourceCommit='a' * 40)
+        with patch.object(policy.urllib.request, 'urlopen', return_value=io.BytesIO(body)) as download:
+            scanner = policy.naming_package(pin, self.root)
+        self.assertEqual(scanner.read_text(), '# canonical fixture')
+        self.assertEqual(sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob('*') if p.is_file()),
+                         ['tools/naming/eng/check_naming.py', 'tools/naming/eng/policy/product-names.json'])
+        self.assertEqual(download.call_args.args[0], 'https://api.nuget.org/v3-flatcontainer/arcforges.contracts.validation/1.0.0-ci.123.1/arcforges.contracts.validation.1.0.0-ci.123.1.nupkg')
+        with patch.object(policy.urllib.request, 'urlopen', return_value=io.BytesIO(body + b'changed')):
+            with self.assertRaisesRegex(ValueError, 'identity mismatch'):
+                policy.naming_package(pin, self.root)
+        for key, value in [('package', 'Other.Package'), ('version', 'latest'), ('contentHash', 'bad')]:
+            with self.subTest(key=key), self.assertRaises(ValueError), patch.object(policy.urllib.request, 'urlopen') as download:
+                policy.naming_package(dict(pin, **{key: value}), self.root)
+            download.assert_not_called()
+
+    def test_published_naming_asset_missing_after_verified_download_fails(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as archive:
+            archive.writestr('tools/naming/eng/check_naming.py', '# missing canonical policy')
+        body = stream.getvalue()
+        pin = dict(package='ArcForges.Contracts.Validation', version='1.0.0',
+                   contentHash=base64.b64encode(hashlib.sha512(body).digest()).decode(), sourceCommit='a' * 40)
+        with patch.object(policy.urllib.request, 'urlopen', return_value=io.BytesIO(body)):
+            with self.assertRaisesRegex(ValueError, 'canonical naming asset'):
+                policy.naming_package(pin, self.root)
+
+    def test_immutable_snapshot_fetch_retries_without_changing_connection_settings(self):
+        fetches = []
+        def run(arguments, **kwargs):
+            if 'fetch' in arguments:
+                fetches.append(arguments)
+                if len(fetches) == 1:
+                    raise subprocess.CalledProcessError(128, arguments)
+            return subprocess.CompletedProcess(arguments, 0)
+        with patch.object(policy.subprocess, 'run', side_effect=run), patch.object(policy.time, 'sleep') as pause, \
+             patch.object(policy.inventory, 'git', return_value='a' * 40):
+            self.assertEqual(policy.checkout(self.root, 'Contracts', 'a' * 40), self.root / 'Contracts')
+        self.assertEqual(fetches[0], fetches[1])
+        self.assertEqual(len(fetches), 2)
+        pause.assert_called_once_with(1)
 
     def test_unsafe_policy_paths_and_ambiguous_json(self):
         for path in ('../outside', '/absolute', 'C:/absolute', 'src\\app', 'a/../b', './src'):
@@ -82,6 +136,34 @@ class RuntimeOwnershipTests(unittest.TestCase):
             policy.check_managed(self.root, 'Library.csproj', 'aot-library', self.files)
         with self.assertRaisesRegex(ValueError, 'unassigned runtime host'):
             policy.role('Cloud', 'src/AnotherHost/AnotherHost.csproj')
+
+    def test_nested_test_role_requires_explicit_unconditional_test_identity(self):
+        project = 'src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj'
+        self.assertEqual(policy.role('DesktopPlatform', project), 'test-or-build-tool')
+        for declaration, passes in [('<IsTestProject>true</IsTestProject>', True), ('', False),
+                                    ('<IsTestProject>false</IsTestProject>', False),
+                                    ('<IsTestProject Condition="false">true</IsTestProject>', False)]:
+            self.write(project, '<Project><PropertyGroup><OutputType>Exe</OutputType>' + declaration + '</PropertyGroup></Project>')
+            if passes:
+                policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+            else:
+                with self.assertRaisesRegex(ValueError, 'IsTestProject'):
+                    policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+        self.assertEqual(policy.role('DesktopPlatform', 'src/BuildingBlocks/ArcForges.Foundation/Foundation.csproj'), 'aot-library')
+
+    def test_existing_contract_cli_retains_explicit_tool_and_aot_identity(self):
+        project = policy.CONTRACT_CLI
+        properties = '<TargetFramework>net10.0</TargetFramework><IsAotCompatible>true</IsAotCompatible><PackAsTool>true</PackAsTool><OutputType>Exe</OutputType>'
+        self.assertEqual(policy.role('Contracts', project), 'test-or-build-tool')
+        self.assertEqual(policy.role('Contracts', 'src/public/dotnet/Other/Other.csproj'), 'aot-library')
+        self.write(project, '<Project><PropertyGroup>' + properties + '</PropertyGroup></Project>')
+        policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+        for before, after in [('<PackAsTool>true</PackAsTool>', ''), ('<IsAotCompatible>true', '<IsAotCompatible>false'),
+                              ('<PackAsTool>true', '<PackAsTool Condition="false">true'),
+                              ('net10.0', 'net9.0'), ('<OutputType>Exe', '<OutputType>Library')]:
+            self.write(project, '<Project><PropertyGroup>' + properties.replace(before, after) + '</PropertyGroup></Project>')
+            with self.subTest(before=before, after=after), self.assertRaises(ValueError):
+                policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
 
     def test_javascript_ide_never_inherits_managed_runtime(self):
         self.write('Web.esproj', '<Project><PropertyGroup><PublishAot>true</PublishAot></PropertyGroup></Project>')

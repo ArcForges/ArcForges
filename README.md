@@ -1,17 +1,15 @@
 # ArcForges DesktopPlatform
 
-Shared desktop mechanisms and native interoperability for ArcChat, ArcNotes, ArcScope and ArcSlate.
+Shared desktop mechanisms and native interoperability for ArcScope and its embedded assistant.
 This repository owns the CMake/vcpkg toolchain, narrow C ABIs, C# wrappers and capability NuGet packages.
 Product applications and services build independently from published packages.
 
 ## Current implementation
 
-- Five native shim foundations: media, OpenTimelineIO, colour, image and macOS Metal. Their existing
-  ABI/version/error probes are retained; full product capabilities are still implementation work.
+- The retained still-image shim, ArcImageNative, exposes ABI/version/error probes; full image preview behavior remains implementation work.
 - Shared C# mechanism and ContentSandbox scaffolds, explicitly excluded from NuGet publication.
 - `ArcForges.Build.Policy`: portable C# build defaults and enforced central package-version rules.
-- Five managed native packages and four Windows x64 runtime packages deliver the existing version,
-  build-information and error APIs, real DLL dependencies, C headers, import libraries and source records.
+- Native.Abstractions, Native.Image and the Windows x64 Image runtime package deliver the existing version, build-information and error APIs, dependency closure, C headers, import library and source records.
 - Platform-only managed and Windows IDE solutions, native ABI CI, package verification and NuGet OIDC CI.
 
 See [extraction scope and evidence](docs/platform-bootstrap.md). The accepted product family design is

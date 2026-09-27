@@ -26,7 +26,7 @@ class PackageGuards(unittest.TestCase):
 
     def mutate_native(self, change):
         target, manifest = self.fixture()
-        row = next(row for row in manifest["packages"] if row["id"] == "ArcForges.Native.Media.Runtime.win-x64")
+        row = next(row for row in manifest["packages"] if row["id"] == "ArcForges.Native.Image.Runtime.win-x64")
         path = target / row["file"]
         with zipfile.ZipFile(path) as archive:
             files = {name: archive.read(name) for name in archive.namelist()}
@@ -74,13 +74,13 @@ class PackageGuards(unittest.TestCase):
             packages.pack(target, manifest["version"])
 
     def test_missing_transitive_dll_is_rejected(self):
-        target, manifest = self.mutate_native(lambda files, _: files.pop("runtimes/win-x64/native/libvpl.dll"))
+        target, manifest = self.mutate_native(lambda files, _: files.pop("runtimes/win-x64/native/msvcp140.dll"))
         with self.assertRaisesRegex(ValueError, "DLL closure"):
             packages.verify(target, manifest["version"], manifest["sourceCommit"])
 
     def test_changed_native_binary_is_rejected(self):
         def tamper(files, _):
-            files["runtimes/win-x64/native/ArcMediaNative.dll"] += b"altered"
+            files["runtimes/win-x64/native/ArcImageNative.dll"] += b"altered"
         target, manifest = self.mutate_native(tamper)
         with self.assertRaisesRegex(ValueError, "Native DLL hash mismatch"):
             packages.verify(target, manifest["version"], manifest["sourceCommit"])
@@ -110,7 +110,7 @@ class PackageGuards(unittest.TestCase):
             packages.verify(target, manifest["version"], manifest["sourceCommit"])
 
     def test_missing_upstream_notice_is_rejected(self):
-        target, manifest = self.mutate_native(lambda files, _: files.pop("licenses/ffmpeg-x64-windows.txt"))
+        target, manifest = self.mutate_native(lambda files, _: files.pop("licenses/openimageio-x64-windows-static-md.txt"))
         with self.assertRaisesRegex(ValueError, "Missing upstream licence/source"):
             packages.verify(target, manifest["version"], manifest["sourceCommit"])
 

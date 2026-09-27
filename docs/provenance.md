@@ -43,45 +43,52 @@ The Python checker and its original tests are reused under Apache-2.0 from Contr
 18a970c67c463f1971ca05773b80f31a1b1ba1a7; the local extension records the exact native
 expressions already audited here. This does not import AGPL tooling into Contracts.
 
-## Existing Windows native closure
+## Current Windows native closure
 
-The immutable `native-win-x64-r3.json` artifact profile records 36 components, all 174
-port recipe files, the four toolchain definitions, and the exact four package
-dependency/feature closures and source identities.
-Original archive SHA512 values are independently bound to Git archive commits; the
-bzip2 release's 17 source files and all 57 AMF headers were also compared to their Git
-objects. Fixed legal/recipe bytes are reviewed inputs; rebuilt native binary hashes
-belong to the actual producer receipt and installed SPDX evidence.
+The immutable `native-win-x64-r4.json` artifact profile records the retained Image
+package's 21 components, 97 port recipe files, four toolchain definitions and exact
+dependency/feature closure. The owned logical library is `ArcImageNative`; the public
+`arc_image_*` symbols and C header remain unchanged. Media, Colour and Otio package
+registrations, their native wrappers and the Metal probe are retired under P2-019/GOV.17.
+OpenColorIO remains an Image dependency; retiring the owned Colour wrapper does not
+remove the Image dependency closure.
 
-The owned wrappers use CMake 4.3.3 and Ninja 1.13.1. The pinned vcpkg tool manifest
-selects CMake 4.4.0 for upstream dependency builds. The producer reads both actual
-CMake caches and their dependency roots; each distributed dependency retains its
-installed `vcpkg_abi_info.txt`. Candidate inspection rejects another generator version.
-Two minimal overlays include the unchanged standard triplets and pin MSVC 14.51.36231,
-matching the reviewed compiler-runtime relationship. Their hashes and included upstream
-definitions are verified from the installed ABI records and retained in every package
-with the full vcpkg MIT licence. The owned compiler path is checked independently.
-Revision 2 supersedes the initial records to distinguish these roles, while preserving
-revision 1 unchanged. Local development builds with other tools do not prove this gate.
+Revision 4 reuses the exact reviewed source identities, legal/recipe bytes, features,
+generator versions and compiler-runtime identities from revision 3. It does not claim
+a new upstream byte audit. Twenty-one new component records supersede their revision 3
+predecessors and bind the new Image-only profile. Every earlier record and profile
+remains unchanged. `retired-artifacts.json` names each exact former project/package/material
+registration and its historical record. The checker rejects unregistered or still-active
+retirements and cannot use this exception to remove Image or another retained producer.
 
-Revision 3 preserves both earlier revisions and records the two verified SPDX forms
-of the Meson build helper. Its pinned recipe downloads the exact Meson 1.9.0 archive
-when the patched host tool is absent, adding one source resource to the helper receipt.
-An existing tool produces no resource entry. Only these two forms are admitted for
-this build-only helper; both retain the full Apache text, MIT recipes and patch hashes.
-Changed URLs/hashes, additional resources and missing runtime sources fail validation.
+The owned image wrapper uses CMake 4.3.3 and Ninja 1.13.1 with the `shim-static` preset.
+The pinned vcpkg tool manifest selects CMake 4.4.0 for upstream dependency builds. The
+producer reads the actual retained CMake cache and its dependency root; each distributed
+dependency retains its installed `vcpkg_abi_info.txt`. Candidate inspection rejects
+another generator version. Two minimal overlays include unchanged standard triplets
+and pin MSVC 14.51.36231. Their hashes and included upstream definitions are verified
+from installed ABI records and retained with the full vcpkg MIT licence. The owned
+compiler path is checked independently. Local builds with other tools do not prove
+this production gate.
 
-The selected source/configuration matters. liblzma uses 0BSD, zstd selects BSD,
-miniaudio selects MIT-0, and the RapidJSON examples with different terms are excluded.
-Full referenced companions are preserved for IJG, Vulkan, OpenColorIO and OpenImageIO.
-OpenImageIO's `function_view.h` retains an NCSA header despite its summary's LLVM
-description; the actual header notice is included. ICC/SunSoft and pkgconf LicenseRef
-identifiers name the exact recorded permissive texts. libtiff retains its original LZW
-notice and the official UC Berkeley advertising-clause amendment. The complete LGPL
-source archives preserve their own mixed original licences; this does not enable GPL
-or nonfree FFmpeg compilation. The bin2c copyright companion contains the complete MIT
-source file: it is admitted source material, not a legal-document exemption. Other
-build-only tools are absent from the runtime DLL closure.
+The retained source/configuration matters: liblzma uses 0BSD and zstd selects BSD.
+Full referenced companions remain for IJG, OpenColorIO and OpenImageIO. OpenImageIO's
+`function_view.h` retains its actual NCSA header notice despite the summary's LLVM
+description. ICC/SunSoft identifiers name exact recorded permissive texts. libtiff
+retains its original LZW notice and the official UC Berkeley advertising-clause
+amendment. Build-only tools are absent from the runtime DLL closure.
+
+## Historical native evidence
+
+Revision 3 recorded 36 components, 174 recipe files and four native package closures.
+Those historical receipts include AMF header comparisons, FFmpeg/libusb source archives,
+miniaudio, RapidJSON, Vulkan, pkgconf and bin2c legal material, and the two verified
+cold/cached SPDX forms of the Meson helper. They remain evidence for their original
+published versions; none of those retired-family receipts authorizes a new Image
+payload or a new retired-family publication. The current Image closure does not use
+Meson and admits no cached source-resource omission. Original archive/source/license
+identities and vendor terms remain authoritative; new binary hashes belong to each
+actual producer receipt. No historical publication is deleted or rewritten.
 
 The separate compiler-runtime record binds the three currently distributed Microsoft
 DLLs to approved hashes, publisher and actual file/product version **14.51.36247.0**.

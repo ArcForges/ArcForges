@@ -11,10 +11,10 @@
     "docs/architecture/01-solution-and-project-layout.md": "ff8241d91e460ba35ae55e92b5b55cba0968b1a1fd788f7a5dc2242e52815658"
   },
   "counts": {
-    "owners": 9,
-    "projects": 75,
+    "owners": 7,
+    "projects": 67,
     "historical": 166,
-    "directories": 359,
+    "directories": 323,
     "native": 7
   }
 }

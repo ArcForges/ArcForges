@@ -12,7 +12,7 @@ env:
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
   VCPKG_COMMIT: 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
-  VCPKG_WINDOWS_X64_GRAPH_REVISION: platform-no-mdf-v2
+  VCPKG_WINDOWS_X64_GRAPH_REVISION: platform-image-only-v3
   SCCACHE_VERSION: 0.17.0
 jobs:
   native-win-x64:
@@ -58,7 +58,7 @@ jobs:
           $installationPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
           $installationVersion = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion).Trim()
           if (-not $installationPath -or -not $installationVersion) { throw 'Visual Studio C++ tools were not found.' }
-          $profile = Get-Content -Raw eng/provenance/artifact-profiles/native-win-x64-r3.json | ConvertFrom-Json
+          $profile = Get-Content -Raw eng/provenance/artifact-profiles/native-win-x64-r4.json | ConvertFrom-Json
           $vcToolsVersion = $profile.buildTools.msvcToolset
           $compiler = Join-Path $installationPath "VC\Tools\MSVC\$vcToolsVersion\bin\Hostx64\x64\cl.exe"
           $compilerVersion = (Get-Item -LiteralPath $compiler).VersionInfo.FileVersion
@@ -99,16 +99,11 @@ jobs:
           New-Item -ItemType Directory -Force $archives | Out-Null
           $env:VCPKG_BINARY_SOURCES = "clear;files,$archives,readwrite"
           & "$root/vcpkg.exe" install `
-            'ffmpeg[core,avcodec,avfilter,avformat,swresample,swscale,vulkan,qsv,nvcodec,amf]:x64-windows' `
-            'libusb[core]:x64-windows' `
-            'miniaudio[core]:x64-windows' `
-            'opentimelineio[core]:x64-windows-static-md' `
             'opencolorio[core]:x64-windows-static-md' `
             'openimageio[core]:x64-windows-static-md' `
             'openexr[core]:x64-windows-static-md' `
             'imath[core]:x64-windows-static-md' `
             "--x-install-root=${{ github.workspace }}/artifacts/vcpkg-installed" `
-            "--overlay-ports=${{ github.workspace }}/eng/native/vcpkg/ports" `
             "--overlay-triplets=${{ github.workspace }}/eng/native/vcpkg/triplets"
           if ($LASTEXITCODE) { throw 'vcpkg install failed.' }
       - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
@@ -133,7 +128,7 @@ jobs:
           restore-keys: |
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ env.SCCACHE_VERSION }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-
       - run: dotnet restore DesktopPlatform.slnx --locked-mode
-      - name: Build and stage both CMake profiles
+      - name: Build and stage the retained image CMake profile
         shell: cmd
         run: |
           @echo on
@@ -152,7 +147,7 @@ jobs:
           sccache --start-server || exit /b 1
           sccache --zero-stats || exit /b 1
 
-          for %%p in (runtime-shared shim-static) do (
+          for %%p in (shim-static) do (
             cmake --preset win-x64-%%p || exit /b 1
             cmake --build --preset win-x64-%%p || exit /b 1
             cmake --install artifacts/cmake/win-x64/%%p || exit /b 1

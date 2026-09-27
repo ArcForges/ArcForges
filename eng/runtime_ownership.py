@@ -4,37 +4,43 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from datetime import date, datetime, timezone
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 
 import licence_boundary as inventory
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = 'eng/policy/runtime-ownership.json'
+CONTRACT_CLI = 'src/public/dotnet/ArcForges.Cli/ArcForges.Cli.csproj'
 RUNTIMES = {
     'DesktopPlatform': 'dotnet-nativeaot-libraries-and-native-cabi',
     'Contracts': 'proto-generated-clients',
-    'ArcNotes': 'avalonia-nativeaot', 'ArcScope': 'avalonia-nativeaot', 'ArcSlate': 'avalonia-nativeaot',
+    'ArcScope': 'avalonia-nativeaot',
     'Cloud': 'dotnet-nativeaot-cloudflare-container', 'AI': 'cloudflare-workflow-workers-ai',
     'Web': 'react-typescript-static', 'Mobile': 'kotlin-compose-android',
 }
-RETIRED = {'ArcChat': ('retired', 'DesktopPlatform'), 'ArcNotes': ('extracted', 'ArcNotes'),
-           'ArcScope': ('extracted', 'ArcScope'), 'ArcSlate': ('extracted', 'ArcSlate'),
+RETIRED = {'ArcChat': ('retired', 'DesktopPlatform'), 'ArcScope': ('extracted', 'ArcScope'),
            'Cloud': ('replaced', 'Cloud'), 'Mobile': ('replaced', 'Mobile'), 'Web': ('replaced', 'Web'),
            'Contracts': ('extracted', 'Contracts'), 'SDK': ('extracted', 'Contracts'),
            'Extensions': ('extracted', 'DesktopPlatform')}
 TRUE = {'PublishAot', 'IsAotCompatible'}
 HOSTS = {'DesktopPlatform': 'src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj',
          'Cloud': 'src/ArcForges.Cloud/ArcForges.Cloud.csproj',
-         **{name: f'src/ArcForges.{name}/ArcForges.{name}.csproj' for name in ('ArcNotes', 'ArcScope', 'ArcSlate')}}
+         **{name: f'src/ArcForges.{name}/ArcForges.{name}.csproj' for name in ('ArcScope',)}}
 
 
 def require(value, message):
@@ -64,16 +70,18 @@ def document(root, relative):
 
 def role(owner, relative):
     if relative.endswith('.csproj'):
-        if relative.startswith(('tests/', 'eng/')):
+        if owner == 'Contracts' and relative == CONTRACT_CLI:
+            return 'test-or-build-tool'
+        if relative.startswith(('tests/', 'eng/')) or (relative.startswith('src/') and '/Tests/' in relative):
             return 'test-or-build-tool'
         require(relative.startswith('src/'), 'unassigned managed source project')
         if '/Build/' in relative or '.Runtime.' in relative:
             require(owner == 'DesktopPlatform', 'unassigned runtime package')
             return 'package-container'
-        if owner == 'Cloud' or (owner in {'ArcNotes', 'ArcScope', 'ArcSlate'} and '.Core/' not in relative) or '/DesktopHelpers/' in relative:
+        if owner == 'Cloud' or (owner in {'ArcScope'} and '.Core/' not in relative) or '/DesktopHelpers/' in relative:
             require(HOSTS.get(owner) == relative, 'unassigned runtime host')
             return 'aot-host'
-        require(owner in {'DesktopPlatform', 'Contracts', 'ArcNotes', 'ArcScope', 'ArcSlate'}, 'unassigned managed runtime')
+        require(owner in {'DesktopPlatform', 'Contracts', 'ArcScope'}, 'unassigned managed runtime')
         return 'aot-library'
     if relative.endswith('.esproj'):
         require(owner == 'Web', 'unassigned JavaScript IDE project')
@@ -181,11 +189,24 @@ def managed_inputs(root, project, files):
 
 def check_managed(root, project, selected_role, files):
     rows = managed_inputs(root, project, files)
-    needed = {'PublishAot'} if selected_role == 'aot-host' else {'IsAotCompatible'} if selected_role == 'aot-library' else set()
+    packaged_cli = project == CONTRACT_CLI
+    if packaged_cli:
+        require(selected_role == 'test-or-build-tool', 'Contracts CLI role mismatch')
+        outputs = [(element, conditional) for _, element, conditional in rows if element.tag == 'OutputType']
+        require(bool(outputs) and all((element.text or '').strip().lower() == 'exe' and not conditional
+                                     for element, conditional in outputs), 'Contracts CLI must remain an explicit executable tool')
+    nested_test = project.startswith('src/') and '/Tests/' in project
+    if nested_test:
+        require(selected_role == 'test-or-build-tool', 'nested test project role mismatch')
+        declarations = [(element, conditional) for _, element, conditional in rows if element.tag == 'IsTestProject']
+        require(bool(declarations) and all((element.text or '').strip().lower() == 'true' and not conditional
+                                         for element, conditional in declarations),
+                'nested test project requires unconditional IsTestProject=true: ' + project)
+    needed = {'IsAotCompatible', 'PackAsTool'} if packaged_cli else {'PublishAot'} if selected_role == 'aot-host' else {'IsAotCompatible'} if selected_role == 'aot-library' else set()
     observed = set()
     framework = False
     for relative, element, conditional in rows:
-        if selected_role in {'aot-host', 'aot-library'} and element.tag in {'TargetFramework', 'TargetFrameworks'}:
+        if (selected_role in {'aot-host', 'aot-library'} or packaged_cli) and element.tag in {'TargetFramework', 'TargetFrameworks'}:
             require(element.tag == 'TargetFramework' and (element.text or '').strip() == 'net10.0' and not conditional,
                     'unregistered managed framework: ' + project)
             framework = True
@@ -295,14 +316,58 @@ def checkout(parent, owner, commit):
     target = parent / owner
     subprocess.run(['git', 'init', '-q', str(target)], check=True)
     subprocess.run(['git', '-C', str(target), 'remote', 'add', 'origin', 'https://github.com/ArcForges/' + owner + '.git'], check=True)
-    subprocess.run(['git', '-C', str(target), '-c', 'core.autocrlf=false', 'fetch', '--quiet', '--depth=1', 'origin', commit], check=True)
+    for attempt in range(3):
+        try:
+            subprocess.run(['git', '-C', str(target), '-c', 'core.autocrlf=false', 'fetch', '--quiet', '--depth=1', 'origin', commit], check=True)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
     subprocess.run(['git', '-C', str(target), '-c', 'core.autocrlf=false', 'checkout', '--quiet', '--detach', 'FETCH_HEAD'], check=True)
     require(inventory.git(target, 'rev-parse', 'HEAD') == commit, 'fetched snapshot identity mismatch')
     return target
 
 
-def naming(roots):
-    source = roots['Contracts'] / 'eng/check_naming.py'
+def naming_package(pin, parent):
+    fields(pin, 'package version contentHash sourceCommit')
+    require(pin['package'] == 'ArcForges.Contracts.Validation', 'wrong canonical naming package')
+    require(isinstance(pin['version'], str) and re.fullmatch(r'\d+\.\d+\.\d+(?:-ci\.\d+\.\d+)?', pin['version']),
+            'naming package must have an exact version')
+    digest(pin['sourceCommit'])
+    try:
+        expected = base64.b64decode(pin['contentHash'], validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError('invalid naming package content hash') from error
+    require(len(expected) == 64, 'invalid naming package content hash')
+    package, version = pin['package'].lower(), pin['version'].lower()
+    url = f'https://api.nuget.org/v3-flatcontainer/{package}/{version}/{package}.{version}.nupkg'
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                body = response.read(32 * 1024 * 1024 + 1)
+            break
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+    require(len(body) <= 32 * 1024 * 1024 and hashlib.sha512(body).digest() == expected,
+            'canonical naming package identity mismatch')
+    # Consume only the canonical published build-time scanner and data. No sibling
+    # source execution and no whole-archive extraction or second naming registry.
+    selected = ('tools/naming/eng/check_naming.py', 'tools/naming/eng/policy/product-names.json')
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        for relative in selected:
+            entries = [entry for entry in archive.infolist() if entry.filename == relative]
+            require(len(entries) == 1 and not entries[0].is_dir() and entries[0].file_size <= 4 * 1024 * 1024,
+                    'missing or ambiguous canonical naming asset')
+            target = parent / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(entries[0]))
+    return parent / selected[0]
+
+
+def naming(roots, source):
     spec = importlib.util.spec_from_file_location('owned_naming', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -312,7 +377,7 @@ def naming(roots):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--repository', action='append', help='Owner=absolute-root; supply all nine for fresh family audit')
+    parser.add_argument('--repository', action='append', help='Owner=absolute-root; supply all seven for fresh family audit')
     parser.add_argument('--design-root', type=Path)
     parser.add_argument('--evaluate-managed', action='store_true', help='evaluate only this DesktopPlatform checkout')
     parser.add_argument('--report', type=Path, default=ROOT / 'artifacts/evidence/runtime-ownership.json')
@@ -335,7 +400,7 @@ def main():
                     owner, separator, location = entry.partition('=')
                     require(separator and owner in RUNTIMES and owner not in roots and Path(location).is_absolute(), 'invalid selected root')
                     roots[owner] = Path(location).resolve()
-                require(set(roots) == set(RUNTIMES), 'fresh audit requires all nine roots')
+                require(set(roots) == set(RUNTIMES), 'fresh audit requires all seven roots')
             else:
                 roots = {row['repository']: ROOT if row['repository'] == 'DesktopPlatform' else checkout(temporary, row['repository'], row['sourceCommit']) for row in value['owners']}
             historical = value['retiredScaffolds'][0]['sourceCommit']
@@ -344,7 +409,10 @@ def main():
             result['historicalDispositionSource'] = historical
             for row in value['owners']:
                 result['repositories'].append(audit(roots[row['repository']], row))
-            result['naming'] = naming(roots)
+            naming_pin = document(ROOT, 'eng/policy/naming-package.json')
+            scanner = naming_package(naming_pin, temporary / 'naming-package')
+            result['namingPackage'] = naming_pin
+            result['naming'] = naming(roots, scanner)
             require(all(not row['findings'] for row in result['naming']), 'naming policy failed')
             if args.evaluate_managed:
                 managed = []

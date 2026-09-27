@@ -9,7 +9,7 @@ public sealed class NativeAbiSmokeTests
     public void ManagedBindingsLoadAndExecuteEveryOwnedWindowsShim()
     {
         IReadOnlyList<ArcForges.NativeInterop.NativeProbeResult> results = ArcForges.NativeInterop.NativeSmoke.VerifyAll();
-        Xunit.Assert.Equal(4, results.Count);
+        Xunit.Assert.Single(results);
         Xunit.Assert.All(results, result =>
         {
             Xunit.Assert.Equal(1u, result.AbiMajor);
