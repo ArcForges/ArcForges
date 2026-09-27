@@ -57,6 +57,9 @@ public sealed class TypedFailure
         var copy = wire.Clone();
         bool known = copy.HasCode && ReasonCodes.TryGet(copy.Code, out _);
         var reason = known ? ReasonCodes.Get(copy.Code) : ReasonCodes.Get("internal.unexpected");
+        bool metadataValid = copy.HasCategory && copy.Category == reason.Category &&
+            copy.HasEffect && IsKnownEffect(copy.Effect) &&
+            (reason.Effect != EffectCertainty.DidNotHappen || copy.Effect == EffectCertainty.DidNotHappen);
         copy.Category = reason.Category;
         copy.MessageKey = known ? reason.MessageKey : "error.generic";
         if (!copy.HasEffect || !IsKnownEffect(copy.Effect))
@@ -66,7 +69,7 @@ public sealed class TypedFailure
 
         // A reader never infers retry authority from a future code or unrecognised metadata.
         var retry = copy.Retry;
-        bool retryValid = known && retry is not null;
+        bool retryValid = known && metadataValid && retry is not null;
         if (retryValid)
         {
             try
@@ -98,6 +101,12 @@ public sealed class TypedFailure
         if (!IsKnownCode)
         {
             throw new InvalidOperationException("An unknown reader code cannot become a producer code.");
+        }
+
+        var reason = ReasonCodes.Get(Code);
+        if (reason.Effect == EffectCertainty.DidNotHappen && Effect != reason.Effect)
+        {
+            throw new InvalidOperationException("A reader cannot emit contradictory before-effect metadata.");
         }
 
         return _wire.Clone();

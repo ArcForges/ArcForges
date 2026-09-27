@@ -95,6 +95,21 @@ public sealed class OutcomeTests
     }
 
     [Xunit.Fact]
+    public void UnknownCategoryOrContradictoryEffectCannotAuthorizeRetry()
+    {
+        var input = TypedFailure.Create("resource.unavailable").ToWire();
+        input.Category = (ErrorCategory)999;
+        input.Retry = new RetryAdvice { Mode = RetryMode.SameCommand };
+        Xunit.Assert.Equal(RetryMode.Never, TypedFailure.FromWire(input).Retry);
+        input.Category = ErrorCategory.Resource;
+        input.Effect = EffectCertainty.Happened;
+        var reader = TypedFailure.FromWire(input);
+        Xunit.Assert.Equal(EffectCertainty.Happened, reader.Effect);
+        Xunit.Assert.Equal(RetryMode.Never, reader.Retry);
+        Xunit.Assert.Throws<InvalidOperationException>(() => reader.ToWire());
+    }
+
+    [Xunit.Fact]
     public void RetryRequiresRegisteredModeAndRecoveryEvidence()
     {
         Xunit.Assert.Throws<ArgumentException>(() => TypedFailure.Create("capacity.busy", retry: new RetryAdvice { Mode = RetryMode.AfterTime }));
