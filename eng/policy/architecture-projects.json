@@ -150,5 +150,13 @@
     "module": "",
     "production": false,
     "aot": false
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
   }
 ]
