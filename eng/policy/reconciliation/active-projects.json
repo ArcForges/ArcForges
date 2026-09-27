@@ -24,7 +24,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
-      "blob": "1c053fa658f7bbb17153e840891ba744b891d81f"
+      "blob": "02ff1201122fde30678a74607a9173e59ac0b8db"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
@@ -48,7 +48,11 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj",
-      "blob": "41ed903c7e00ec2e3d93647912052a5a40bac9ba"
+      "blob": "aab03ef21b99098dec9b91be4bfb61c26b1d6bac"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+      "blob": "d788d3fc83da121b960f1e78132b838dfc278368"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",

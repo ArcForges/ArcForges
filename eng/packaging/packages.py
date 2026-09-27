@@ -53,13 +53,55 @@ def source_commit():
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
 
+def dependency_versions(entry, package_version):
+    """Keep owned release pairs separate from exact, independently published dependencies."""
+    owned = entry.get("dependencies", [])
+    external = entry.get("externalDependencies", {})
+    require(isinstance(owned, list) and isinstance(external, dict), "Invalid dependency declarations.")
+    require(not external or entry["kind"] == "managed", "External dependencies require a managed package.")
+    names = owned + list(external)
+    require(all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names),
+            "Invalid dependency ID.")
+    require(len({name.lower() for name in names}) == len(names), "Duplicate or overlapping dependency ID.")
+    result = {name: package_version for name in owned}
+    for name, pin in external.items():
+        require(isinstance(pin, str), "External dependency version must be a canonical exact string.")
+        result[name] = version(pin)
+    return result
+
+
+def nuspec_dependencies(metadata):
+    rows = metadata.findall(".//{*}dependency")
+    names = [node.get("id") for node in rows]
+    require(all(isinstance(name, str) and name for name in names), "Missing nuspec dependency ID.")
+    require(len({name.lower() for name in names}) == len(names), "Duplicate nuspec dependency ID.")
+    return {node.get("id"): node.get("version") for node in rows}
+
+
+def validate_generated_dependencies(metadata, entry, package_version):
+    generated = nuspec_dependencies(metadata)
+    pins = dependency_versions(entry, package_version)
+    expected = set(pins) if entry["kind"] == "managed" else set()
+    require(set(generated) == expected, "Generated dependency set differs from the reviewed package closure.")
+    for name, pin in entry.get("externalDependencies", {}).items():
+        require(generated[name] in {pin, f"[{pin}]"},
+                "Generated external dependency version differs from its exact admitted pin.")
+    return pins
+
+
 def catalogue():
     document = json.loads((ROOT / "eng/packaging/packages.json").read_text())
     require(document["schemaVersion"] == 1 and document["packages"], "Invalid/empty publication allowlist.")
     packages = document["packages"]
     require(len({p["id"].lower() for p in packages}) == len(packages), "Duplicate package ID.")
+    owned_ids = {entry["id"].lower() for entry in packages}
     for entry in packages:
         require(entry["kind"] in {"build", "managed", "native"}, "Unreviewed package kind.")
+        dependency_versions(entry, "0.0.0")
+        require(all(name.lower() in owned_ids for name in entry.get("dependencies", [])),
+                "Owned dependency is absent from the publication allowlist.")
+        require(not any(name.lower() in owned_ids for name in entry.get("externalDependencies", {})),
+                "External dependency aliases an owned package.")
         project = (ROOT / entry["project"]).resolve()
         require(project.is_relative_to(ROOT) and project.is_file(), "Package project escapes the repository or is absent.")
         require(not list(project.parent.rglob("*Placeholder.cs")), "A placeholder cannot be published.")
@@ -85,8 +127,8 @@ def inspect(path, entry, expected_version, commit):
         require(license_node is not None and license_node.get("type") == "expression"
                 and license_node.text == "AGPL-3.0-only", "Package licence mismatch.")
         require(metadata.findtext("{*}readme") == "README.md", "Missing package readme metadata.")
-        expected_dependencies = {name: f"[{expected_version}]" for name in entry.get("dependencies", [])}
-        dependencies = {node.get("id"): node.get("version") for node in metadata.findall(".//{*}dependency")}
+        expected_dependencies = {name: f"[{pin}]" for name, pin in dependency_versions(entry, expected_version).items()}
+        dependencies = nuspec_dependencies(metadata)
         require(dependencies == expected_dependencies, "Package dependency closure/version mismatch.")
         if entry["kind"] == "build":
             require(not any(name.startswith(("lib/", "ref/", "runtimes/")) for name in names),
@@ -166,16 +208,14 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
                 ET.register_namespace("", namespace)
                 metadata = specification.find("{*}metadata")
                 dependencies = metadata.find("{*}dependencies")
-                generated = {node.get("id") for node in metadata.findall(".//{*}dependency")}
-                expected = set(entry.get("dependencies", [])) if entry["kind"] == "managed" else set()
-                require(generated == expected, "Generated dependency set differs from the reviewed package closure.")
+                pins = validate_generated_dependencies(metadata, entry, package_version)
                 if dependencies is not None:
                     metadata.remove(dependencies)
-                if entry.get("dependencies"):
+                if pins:
                     dependencies = ET.SubElement(metadata, f"{{{namespace}}}dependencies")
                     group = ET.SubElement(dependencies, f"{{{namespace}}}group", targetFramework="net10.0")
-                    for dependency in entry["dependencies"]:
-                        ET.SubElement(group, f"{{{namespace}}}dependency", id=dependency, version=f"[{package_version}]")
+                    for dependency, pin in pins.items():
+                        ET.SubElement(group, f"{{{namespace}}}dependency", id=dependency, version=f"[{pin}]")
                 contents[index] = (info, ET.tostring(specification, encoding="utf-8", xml_declaration=True))
         with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for info, data in contents:

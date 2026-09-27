@@ -7,7 +7,11 @@ Product applications and services build independently from published packages.
 ## Current implementation
 
 - The retained still-image shim, ArcImageNative, exposes ABI/version/error probes; full image preview behavior remains implementation work.
-- Shared C# mechanism and ContentSandbox scaffolds, explicitly excluded from NuGet publication.
+- `ArcForges.Foundation` and `ArcForges.Application.Abstractions`: exact-value adapters, execution
+  identities, revision/sequence, clocks, errors, version axes and storage-free application ports.
+  Their verified package entries join the normal candidate publication; durable owner receipts
+  and cross-language closure acceptance remain tracked delivery tasks.
+- Other shared C# mechanisms and ContentSandbox remain scaffolds excluded from NuGet publication.
 - `ArcForges.Build.Policy`: portable C# build defaults and enforced central package-version rules.
 - Native.Abstractions, Native.Image and the Windows x64 Image runtime package deliver the existing version, build-information and error APIs, dependency closure, C headers, import library and source records.
 - Platform-only managed and Windows IDE solutions, native ABI CI, package verification and NuGet OIDC CI.

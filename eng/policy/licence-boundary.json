@@ -53,6 +53,10 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",
       "kind": "msbuild"
     },

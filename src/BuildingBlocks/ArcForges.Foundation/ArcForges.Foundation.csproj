@@ -4,9 +4,21 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Foundation</AssemblyName>
     <RootNamespace>ArcForges.Foundation</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Foundation</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Exact identity adapters, execution, revision, clock, error and version primitives.</Description>
   </PropertyGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.Foundation" />
+    <Compile Remove="Tests/**/*.cs" />
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>

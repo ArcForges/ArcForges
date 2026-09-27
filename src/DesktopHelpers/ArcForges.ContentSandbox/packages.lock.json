@@ -20,14 +20,31 @@
         "resolved": "10.0.11",
         "contentHash": "IBf7lbovvjGWVWXZX5cJ/cO0WXbId0Zq4BuSeT94mGZuOAP66oMeH9PTBZ9Jpp3Jb6jtK0qm/NyUbPRo1gC/wQ=="
       },
+      "Google.Protobuf": {
+        "type": "Transitive",
+        "resolved": "3.36.1",
+        "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
+      },
       "arcforges.desktop.richcontent": {
         "type": "Project"
       },
       "arcforges.foundation": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.113.1, )"
+        }
       },
       "arcforges.nativeinterop": {
         "type": "Project"
+      },
+      "ArcForges.Contracts.Foundation": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.0-ci.113.1, )",
+        "resolved": "1.0.0-ci.113.1",
+        "contentHash": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA==",
+        "dependencies": {
+          "Google.Protobuf": "3.36.1"
+        }
       }
     },
     "net10.0/linux-x64": {
