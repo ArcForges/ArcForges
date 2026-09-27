@@ -96,6 +96,9 @@
       "dependencies": [
         "ArcForges.Foundation"
       ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+      },
       "requiredFiles": [
         "lib/net10.0/ArcForges.Application.Abstractions.dll",
         "README.md",
