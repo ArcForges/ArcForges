@@ -169,7 +169,7 @@ class Fixture(unittest.TestCase):
                 self.docs[path] += f'<a id="{fragment}"></a>\n'
         self.docs[matrix] = '\n'.join(rows) + '\n'
         self.docs['docs/architecture/fixture.md'] += '\n'.join(active_citations) + '\n'
-        self.docs['docs/assurance/phase-2-design-closure-review.md'] = '# Closure\n' + '\n'.join(
+        self.docs['docs/assurance/phase-2-design-closure-review.md'] = '# Closure\n## 2. Twelve repaired groups\n' + '\n'.join(
             f'| {i} | Design repair | Owning producer |' for i in range(1, 13)) + '\n'
         for name, body in self.docs.items(): self.write(name, body)
         for name, body in design_views(Graph(self.root)).items(): self.write(name, body)
