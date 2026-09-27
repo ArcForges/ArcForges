@@ -13,6 +13,8 @@
     <Project Path="src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
   </Folder>
