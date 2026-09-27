@@ -10,6 +10,37 @@ namespace ArcForges.Tests.PersistenceTests;
 public sealed class JournalTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StoreTransactionAcknowledgesOnlyAtomicBodyAndJournal(bool interrupt)
+    {
+        using var fixture = new JournalFixture();
+        var journal = new SqliteJournal();
+        using (var store = new StoreDatabase(fixture.DatabasePath, fixture.StoreId))
+        {
+            bool Commit() => store.WithTransaction(context =>
+            {
+                using var body = context.CreateCommand("INSERT INTO replay_state(value) VALUES('owner body')");
+                body.ExecuteNonQuery();
+                journal.Append(context, fixture.Entry(journal.GetNextSequence(context), 1));
+                if (interrupt) throw new IOException("Injected interruption after journal append before owner commit.");
+                return true;
+            });
+            if (interrupt) Assert.Throws<IOException>(() => Commit());
+            else Assert.True(Commit());
+        }
+        using var reopened = new StoreDatabase(fixture.DatabasePath, fixture.StoreId);
+        reopened.Read(context =>
+        {
+            var entries = journal.Read(context, null, 10);
+            using var body = context.CreateCommand("SELECT COUNT(*) FROM replay_state");
+            Assert.Equal(interrupt ? 0L : 1L, (long)body.ExecuteScalar()!);
+            Assert.Equal(interrupt ? 0 : 1, entries.Count);
+            return 0;
+        });
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]
@@ -185,6 +216,7 @@ public sealed class JournalTests
         private readonly string directory = Path.Combine(Path.GetTempPath(), "arcforges-journal-" + Guid.NewGuid().ToString("N"));
         private readonly Guid aggregateId = Guid.NewGuid();
         internal Guid StoreId { get; } = Guid.NewGuid();
+        internal string DatabasePath => Path.Combine(directory, "journal.db");
 
         internal JournalFixture()
         {
@@ -207,7 +239,7 @@ public sealed class JournalTests
         {
             var connection = new SqliteConnection(new SqliteConnectionStringBuilder
             {
-                DataSource = Path.Combine(directory, "journal.db"),
+                DataSource = DatabasePath,
                 Pooling = false,
                 DefaultTimeout = 1,
             }.ToString());
