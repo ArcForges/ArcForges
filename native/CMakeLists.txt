@@ -43,12 +43,4 @@ endfunction()
 if(ARCFORGES_NATIVE_PROFILE STREQUAL "shim-static")
     find_package(OpenImageIO CONFIG REQUIRED)
     add_subdirectory(arcimage-abi)
-elseif(ARCFORGES_NATIVE_PROFILE STREQUAL "host-tools")
-    find_program(GLSLANG_VALIDATOR_EXECUTABLE NAMES glslangValidator REQUIRED)
-    find_program(SPIRV_CROSS_EXECUTABLE NAMES spirv-cross REQUIRED)
-    add_custom_target(arcforges_host_tools ALL
-        COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" --version
-        COMMAND "${SPIRV_CROSS_EXECUTABLE}" --version
-        COMMENT "Verifying the locked shader host-tool graph")
-    arcforges_declare_target_licence(arcforges_host_tools)
 endif()
