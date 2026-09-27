@@ -105,7 +105,7 @@
     {
       "repository": "Contracts",
       "runtime": "proto-generated-clients",
-      "sourceCommit": "d716045854e2e401a1a536ba2ee5c62ad1c4e8ab",
+      "sourceCommit": "05bf7986478440719e3fae944cb4ecdfa5e3cbfc",
       "projects": [
         {
           "path": "build.gradle.kts",
@@ -124,15 +124,63 @@
           "role": "typescript-build"
         },
         {
+          "path": "src/internal/dotnet/ArcForges.Contracts.CloudInternal/ArcForges.Contracts.CloudInternal.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Chat/ArcForges.Contracts.LocalRpc.Chat.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Platform/ArcForges.Contracts.LocalRpc.Platform.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Sandbox/ArcForges.Contracts.LocalRpc.Sandbox.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Scope/ArcForges.Contracts.LocalRpc.Scope.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/internal/ts/ai-internal/package.json",
+          "role": "typescript-build"
+        },
+        {
+          "path": "src/internal/ts/operator-client/package.json",
+          "role": "typescript-build"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Cli/ArcForges.Cli.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Contracts.Events/ArcForges.Contracts.Events.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Contracts.Foundation/ArcForges.Contracts.Foundation.csproj",
+          "role": "aot-library"
+        },
+        {
           "path": "src/public/dotnet/ArcForges.Contracts.PublicApi/ArcForges.Contracts.PublicApi.csproj",
           "role": "aot-library"
         },
         {
-          "path": "src/public/kotlin/contract-fixtures/build.gradle.kts",
-          "role": "contract-or-test-build"
+          "path": "src/public/dotnet/ArcForges.Contracts.Validation/ArcForges.Contracts.Validation.csproj",
+          "role": "aot-library"
         },
         {
-          "path": "src/public/kotlin/contracts-client/build.gradle.kts",
+          "path": "src/public/dotnet/ArcForges.Sdk.Client/ArcForges.Sdk.Client.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Sdk.Contracts/ArcForges.Sdk.Contracts.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/public/kotlin/contract-fixtures/build.gradle.kts",
           "role": "contract-or-test-build"
         },
         {
@@ -148,8 +196,16 @@
           "role": "typescript-build"
         },
         {
+          "path": "src/public/ts/contract-fixtures/package.json",
+          "role": "typescript-build"
+        },
+        {
           "path": "src/public/ts/proto/package.json",
           "role": "typescript-build"
+        },
+        {
+          "path": "tests/StructureTests/StructureTests.csproj",
+          "role": "test-or-build-tool"
         },
         {
           "path": "tests/public/HelloClient/HelloClient.csproj",
@@ -160,12 +216,12 @@
           "role": "test-or-build-tool"
         },
         {
-          "path": "tests/public/KotlinClient/build.gradle.kts",
+          "path": "tests/public/KotlinConnectClient/build.gradle.kts",
           "role": "contract-or-test-build"
         },
         {
-          "path": "tests/public/KotlinConnectClient/build.gradle.kts",
-          "role": "contract-or-test-build"
+          "path": "tests/public/SerializationProbe/SerializationProbe.csproj",
+          "role": "test-or-build-tool"
         }
       ]
     },

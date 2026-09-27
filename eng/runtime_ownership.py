@@ -25,6 +25,7 @@ import licence_boundary as inventory
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = 'eng/policy/runtime-ownership.json'
+CONTRACT_CLI = 'src/public/dotnet/ArcForges.Cli/ArcForges.Cli.csproj'
 RUNTIMES = {
     'DesktopPlatform': 'dotnet-nativeaot-libraries-and-native-cabi',
     'Contracts': 'proto-generated-clients',
@@ -69,6 +70,8 @@ def document(root, relative):
 
 def role(owner, relative):
     if relative.endswith('.csproj'):
+        if owner == 'Contracts' and relative == CONTRACT_CLI:
+            return 'test-or-build-tool'
         if relative.startswith(('tests/', 'eng/')) or (relative.startswith('src/') and '/Tests/' in relative):
             return 'test-or-build-tool'
         require(relative.startswith('src/'), 'unassigned managed source project')
@@ -186,6 +189,12 @@ def managed_inputs(root, project, files):
 
 def check_managed(root, project, selected_role, files):
     rows = managed_inputs(root, project, files)
+    packaged_cli = project == CONTRACT_CLI
+    if packaged_cli:
+        require(selected_role == 'test-or-build-tool', 'Contracts CLI role mismatch')
+        outputs = [(element, conditional) for _, element, conditional in rows if element.tag == 'OutputType']
+        require(bool(outputs) and all((element.text or '').strip().lower() == 'exe' and not conditional
+                                     for element, conditional in outputs), 'Contracts CLI must remain an explicit executable tool')
     nested_test = project.startswith('src/') and '/Tests/' in project
     if nested_test:
         require(selected_role == 'test-or-build-tool', 'nested test project role mismatch')
@@ -193,11 +202,11 @@ def check_managed(root, project, selected_role, files):
         require(bool(declarations) and all((element.text or '').strip().lower() == 'true' and not conditional
                                          for element, conditional in declarations),
                 'nested test project requires unconditional IsTestProject=true: ' + project)
-    needed = {'PublishAot'} if selected_role == 'aot-host' else {'IsAotCompatible'} if selected_role == 'aot-library' else set()
+    needed = {'IsAotCompatible', 'PackAsTool'} if packaged_cli else {'PublishAot'} if selected_role == 'aot-host' else {'IsAotCompatible'} if selected_role == 'aot-library' else set()
     observed = set()
     framework = False
     for relative, element, conditional in rows:
-        if selected_role in {'aot-host', 'aot-library'} and element.tag in {'TargetFramework', 'TargetFrameworks'}:
+        if (selected_role in {'aot-host', 'aot-library'} or packaged_cli) and element.tag in {'TargetFramework', 'TargetFrameworks'}:
             require(element.tag == 'TargetFramework' and (element.text or '').strip() == 'net10.0' and not conditional,
                     'unregistered managed framework: ' + project)
             framework = True

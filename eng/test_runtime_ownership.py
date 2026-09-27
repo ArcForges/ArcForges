@@ -151,6 +151,20 @@ class RuntimeOwnershipTests(unittest.TestCase):
                     policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
         self.assertEqual(policy.role('DesktopPlatform', 'src/BuildingBlocks/ArcForges.Foundation/Foundation.csproj'), 'aot-library')
 
+    def test_existing_contract_cli_retains_explicit_tool_and_aot_identity(self):
+        project = policy.CONTRACT_CLI
+        properties = '<TargetFramework>net10.0</TargetFramework><IsAotCompatible>true</IsAotCompatible><PackAsTool>true</PackAsTool><OutputType>Exe</OutputType>'
+        self.assertEqual(policy.role('Contracts', project), 'test-or-build-tool')
+        self.assertEqual(policy.role('Contracts', 'src/public/dotnet/Other/Other.csproj'), 'aot-library')
+        self.write(project, '<Project><PropertyGroup>' + properties + '</PropertyGroup></Project>')
+        policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+        for before, after in [('<PackAsTool>true</PackAsTool>', ''), ('<IsAotCompatible>true', '<IsAotCompatible>false'),
+                              ('<PackAsTool>true', '<PackAsTool Condition="false">true'),
+                              ('net10.0', 'net9.0'), ('<OutputType>Exe', '<OutputType>Library')]:
+            self.write(project, '<Project><PropertyGroup>' + properties.replace(before, after) + '</PropertyGroup></Project>')
+            with self.subTest(before=before, after=after), self.assertRaises(ValueError):
+                policy.check_managed(self.root, project, 'test-or-build-tool', self.files)
+
     def test_javascript_ide_never_inherits_managed_runtime(self):
         self.write('Web.esproj', '<Project><PropertyGroup><PublishAot>true</PublishAot></PropertyGroup></Project>')
         with self.assertRaisesRegex(ValueError, 'IDE adapter'):

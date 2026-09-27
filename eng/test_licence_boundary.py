@@ -46,6 +46,25 @@ class LicenceBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inventory drift'):
             policy.audit(self.root, 'Contracts')
 
+    def test_existing_contract_access_metadata_is_exact_and_cannot_change_boundary(self):
+        path = 'src/internal/ts/operator-client/package.json'
+        valid = {'name': '@arcforges/operator-client', 'license': 'Apache-2.0',
+                 'arcforges': {'licenceBoundary': 'Apache', 'contractAccess': 'internal'}}
+        self.write(path, valid)
+        self.assertEqual(policy.metadata(self.root, path, 'npm'), ('Apache-2.0', 'Apache'))
+        self.assertEqual(policy.first_party('@arcforges/operator-client'), 'Apache')
+        for key, value in [('contractAccess', 'public'), ('contractAccess', 'anything'),
+                           ('licenceBoundary', 'AGPL'), ('unknown', True)]:
+            self.write(path, dict(valid, arcforges=dict(valid['arcforges'], **{key: value})))
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                policy.metadata(self.root, path, 'npm')
+        self.write(path, dict(valid, name='@arcforges/other'))
+        with self.assertRaises(ValueError):
+            policy.metadata(self.root, path, 'npm')
+        self.write('other/package.json', valid)
+        with self.assertRaises(ValueError):
+            policy.metadata(self.root, 'other/package.json', 'npm')
+
     def test_missing_inconsistent_and_overridden_metadata(self):
         self.register()
         for boundary, spdx in [('', 'Apache-2.0'), ('Apache', 'AGPL-3.0-only'), ('AGPL', 'Apache-2.0')]:
