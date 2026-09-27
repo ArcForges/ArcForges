@@ -3,7 +3,11 @@
 > Historical implementation and evidence. Current CI/local execution is governed by
 > [AGENTS.md](../AGENTS.md) and P2-017; the runtime and package-consumer gates recorded below are no longer required.
 
-## Scope fixed before implementation
+## Current retained publication
+
+GOV.17 retires Media, Colour and Otio from future publication and moves the image producer to native/arcimage-abi under ArcImageNative, keeping arc_image_* exports unchanged. The current allowlist is Build.Policy, Native.Abstractions, Native.Image and Native.Image.Runtime.win-x64. The evidence below describes the original four-family candidate only; it is not rerun or rewritten as evidence for the reduced candidate.
+
+## Historical scope fixed before implementation
 
 Base: DesktopPlatform `7bdbf6c4656721088081cdf85c9f1ec8d78bc848`. The requested delivery is the
 complete existing Windows x64 ABI and its actual dependencies, not new media/timeline business APIs.

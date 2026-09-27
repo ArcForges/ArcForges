@@ -53,10 +53,7 @@ public sealed class RepositoryPolicyTests
     {
         var owners = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["ArcMediaNative"] = "ArcForges.Native.Media",
-            ["ArcSlateColorNative"] = "ArcForges.Native.Colour",
-            ["ArcSlateImageNative"] = "ArcForges.Native.Image",
-            ["ArcSlateOtioNative"] = "ArcForges.Native.Otio",
+            ["ArcImageNative"] = "ArcForges.Native.Image",
         };
         var exports = new HashSet<string>(StringComparer.Ordinal);
         foreach (string file in Files("*.cs").Where(file => Path.GetRelativePath(Root, file)

@@ -7,10 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-[assembly: InternalsVisibleTo("ArcForges.Native.Media")]
-[assembly: InternalsVisibleTo("ArcForges.Native.Colour")]
 [assembly: InternalsVisibleTo("ArcForges.Native.Image")]
-[assembly: InternalsVisibleTo("ArcForges.Native.Otio")]
 
 namespace ArcForges.Native.Abstractions;
 
