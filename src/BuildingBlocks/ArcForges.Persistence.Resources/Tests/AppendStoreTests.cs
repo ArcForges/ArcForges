@@ -60,7 +60,10 @@ public sealed class AppendStoreTests
         Assert.Throws<ArgumentException>(() => writer.RecordGap(new(CaptureGapCause.Dropped, 1, 2, -1)));
         Assert.Throws<ArgumentOutOfRangeException>(() => writer.AppendChunk([]));
         Assert.Throws<IOException>(() => AppendStore.Create(fixture.Capture));
-        Assert.Throws<IOException>(() => new FileStream(fixture.Capture, FileMode.Open, FileAccess.Write, FileShare.ReadWrite));
+        // Windows enforces deny-write sharing; Unix sharing does not prohibit an
+        // unrelated process from opening an existing file for arbitrary writes.
+        if (OperatingSystem.IsWindows())
+            Assert.Throws<IOException>(() => new FileStream(fixture.Capture, FileMode.Open, FileAccess.Write, FileShare.ReadWrite));
     }
 
     [Fact]

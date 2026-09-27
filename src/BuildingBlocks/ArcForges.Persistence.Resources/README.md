@@ -8,7 +8,10 @@ This project is nonpackable; PLT.08 owns package/integration acceptance.
 `MapSegment` and `RecordGap` append and flush to stable storage before returning.
 A failed write faults that writer permanently. `Seal` appends the explicit end
 marker and forbids subsequent writes. Existing captures cannot be reopened for
-writing through this API.
+writing through this API. Atomic create-new exclusion applies on every platform.
+Windows additionally enforces deny-write file sharing; Unix callers must protect
+capture paths against unrelated filesystem writers. Checksums detect changed
+frames but do not make the file an access-control boundary.
 
 Every frame has a 64-byte little-endian header: `AFAPPEND`, version 1, kind,
 reserved zero bytes, monotonically increasing sequence, bounded payload length,
