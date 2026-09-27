@@ -117,7 +117,7 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
         command.Parameters.AddWithValue("$nanos", entry.CommittedAt.Nanoseconds);
         command.Parameters.AddWithValue("$length", entry.EncodedLength);
         command.Parameters.AddWithValue("$checksum", entry.Checksum.ToArray());
-        command.Parameters.AddWithValue("$localSequence", (object?)entry.LocalSequence ?? DBNull.Value);
+        command.Parameters.AddWithValue("$localSequence", entry.LocalSequence.HasValue ? entry.LocalSequence.Value : DBNull.Value);
         if (command.ExecuteNonQuery() != 2) throw new InvalidDataException("The journal append and high watermark must advance together.");
     }
 
