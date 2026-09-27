@@ -8,7 +8,11 @@ Product applications and services build independently from published packages.
 
 - Five native shim foundations: media, OpenTimelineIO, colour, image and macOS Metal. Their existing
   ABI/version/error probes are retained; full product capabilities are still implementation work.
-- Shared C# mechanism and ContentSandbox scaffolds, explicitly excluded from NuGet publication.
+- `ArcForges.Foundation` and `ArcForges.Application.Abstractions`: exact-value adapters, execution
+  identities, revision/sequence, clocks, errors, version axes and storage-free application ports.
+  Their verified package entries join the normal candidate publication; durable owner receipts
+  and cross-language closure acceptance remain tracked delivery tasks.
+- Other shared C# mechanisms and ContentSandbox remain scaffolds excluded from NuGet publication.
 - `ArcForges.Build.Policy`: portable C# build defaults and enforced central package-version rules.
 - Five managed native packages and four Windows x64 runtime packages deliver the existing version,
   build-information and error APIs, real DLL dependencies, C headers, import libraries and source records.

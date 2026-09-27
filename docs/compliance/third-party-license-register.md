@@ -1,7 +1,14 @@
 # DesktopPlatform dependency register
 
 The authoritative managed versions and hashes are the central manifest and per-project package locks.
-The present runtime scaffolds have no external runtime package references. Build/test-only dependencies
+Foundation consumes the exact published `ArcForges.Contracts.Foundation` `1.0.0-ci.113.1`
+(Apache-2.0, Contracts source `b10b2f6f316bf0c007e00632c5442fc102ebbe6e`) and its
+`Google.Protobuf` `3.36.1` runtime (BSD-3-Clause). Application.Abstractions depends on
+the same-candidate Foundation package. These licences permit the AGPL-3.0-only consumer
+boundary; upstream packages retain their own licences and notices. Exact lock hashes,
+cached nuspec metadata and the reviewed closure are recorded in
+`eng/policy/dependency-reviews/fnd-01-06-r1.json`. No wire schema is copied here.
+Other retained runtime scaffolds have no new external runtime package references. Build/test-only dependencies
 are Microsoft.CodeAnalysis.NetAnalyzers (MIT), Microsoft.NET.Test.Sdk and its platform dependencies (MIT),
 xunit.v3 and xunit.runner.visualstudio (Apache-2.0), and coverlet.collector (MIT).
 `ArcForges.Build.Policy` includes none of those dependencies in its NuGet closure.
