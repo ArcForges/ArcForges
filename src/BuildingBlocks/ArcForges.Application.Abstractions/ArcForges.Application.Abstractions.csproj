@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Application.Abstractions</AssemblyName>
     <RootNamespace>ArcForges.Application.Abstractions</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Application.Abstractions</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Per-application storage-free execution, cancellation and lifecycle ports.</Description>
   </PropertyGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>
@@ -11,5 +15,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

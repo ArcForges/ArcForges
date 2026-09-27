@@ -44,6 +44,21 @@ public sealed class ExecutionTests
     }
 
     [Fact]
+    public void CanonicalHashMatchesIndependentUtf8ProfileVector()
+    {
+        // Fixed preimage written directly from registry-04's profile, independently
+        // hashed with PowerShell/System.Security.Cryptography, not this canonicalizer.
+        const string canonical = """
+            {"actor":"00112233-4455-6677-8899-aabbccddeeff","operation":"Scope.Update","profile":"arcforges.command.v1","realm":"00112233-4455-6677-8899-aabbccddeeff","revisionKind":"cloud","revisionValue":"1","semantic":{"a":null,"wide":"9007199254740993"},"workspace":"00112233-4455-6677-8899-aabbccddeeff"}
+            """;
+        const string expected = "d7b9a9244885a45919a34fda3b75047c0d2bf4ed5fa3a1e8a9ec58eeacc03e4b";
+        Assert.Equal(expected, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical))));
+        Assert.Equal(expected, Hash("{\"wide\":\"9007199254740993\",\"a\":null}"));
+        Assert.Equal("b77b5dca4e94810e8a6e32c373c1962ba4023be6ef43578ee1d03e4ba0a3c990", Hash("{\"wide\":\"9007199254740993\"}"));
+        Assert.Equal("544b0734d5df0aa63001508ac16dfad9718618a729dab733ee17ef10f1c09c1d", Hash("{\"wide\":\"9007199254740993\"}", "2"));
+    }
+
+    [Fact]
     public void SemanticHashIgnoresObjectOrderingButDistinguishesPresenceAndRevision()
     {
         Assert.Equal(Hash("{\"b\":\"9007199254740993\",\"a\":true}"), Hash("{ \"a\":true, \"b\":\"9007199254740993\" }"));

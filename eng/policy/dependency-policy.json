@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "f272ea30477a252562e648a8e53380e9e39eae5ee5f8c6670675066e24187c0b",
+    "Directory.Packages.props": "1911a17a7c291ff4c7f7c58aaa8397d446002055cc65ee7e168592c0f486858d",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
     "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
@@ -15,7 +15,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "8f8a4445ec2c6cc7844307b09d898132405b41eaf0608c8b4dc5a80383a45930",
+    "eng/packaging/packages.json": "98549daad08683aed67e8d3e029649ca4f9a339ba35a9e09b6c78efc5984b7bb",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
     "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
@@ -142,8 +142,8 @@
     "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
     "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.targets": "8c15dc21c5bf599b458e41ea126d2a22157d70f32c81512d25d7f886c504e34e",
     "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "f93e71dfab380f847dae8d6f34c2e40b97b7f7ae6c06f5b13650ebf10b7e8bf3",
-    "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+    "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
+    "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
     "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
     "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -154,8 +154,10 @@
     "src/BuildingBlocks/ArcForges.Desktop.RichContent/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj": "fad00ed9768093a4b5ac43855c4cbcd15a9fec6e4b3bdde7a183398b88fbc664",
     "src/BuildingBlocks/ArcForges.Desktop.Text/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj": "6cddc2dd9a541f896262719bcf85c0bc152a268138bd992a40dd6dafbec14343",
-    "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+    "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj": "a8eaa0048788cad95cbb73f66b0edad0bab27b312d39f9134aea6e854eb8d2b6",
+    "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj": "a3dd1928395674cabc3d0a1a88fd2d15c081165620e796767dbe85f5b29d8d1f",
+    "src/BuildingBlocks/ArcForges.Foundation/Tests/packages.lock.json": "3c74a39020c8f1617406613846f0c937261f19ec0033d000e84f4a418871eb0b",
+    "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "e497179dcd202af6385dbbef3e7664479bd53cb3419e9e39e0f333d2872e2650",
     "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
     "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
@@ -191,12 +193,26 @@
     "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095"
   },
   "nugetClosure": {
+    "arcforges.contracts.foundation/1.0.0-ci.113.1": {
+      "contentHash": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "7726a233f9ce81c4373a2ab9423c33d566b919bb2cb90d2b5577cf844bbbbfc4",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.113.1/arcforges.contracts.foundation.nuspec",
+      "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
     "coverlet.collector/10.0.1": {
       "contentHash": "27jXSV/0DbVqF5jDrAxuQFZ9oaz6gmG03p8ttxAFk+X0M4woFYj7MoWDLCna5EGLb0CE6OE7X6ZH3Wt5smTtaA==",
       "licence": "MIT",
       "nuspecSha256": "d73992a0c9eb178bf52fde96055930e0ac5b05e53c73ca5c0595f01e61210910",
       "source": "https://api.nuget.org/v3-flatcontainer/coverlet.collector/10.0.1/coverlet.collector.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "google.protobuf/3.36.1": {
+      "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ==",
+      "licence": "BSD-3-Clause",
+      "nuspecSha256": "d6a4a567ce4889e25d098fd39d13a65ce05c847e8574818edc0d1eee6277eb40",
+      "source": "https://api.nuget.org/v3-flatcontainer/google.protobuf/3.36.1/google.protobuf.nuspec",
+      "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
     },
     "microsoft.applicationinsights/2.23.0": {
       "contentHash": "nWArUZTdU7iqZLycLKWe0TDms48KKGE6pONH2terYNa8REXiqixrMOkf1sk5DHGMaUTqONU2YkS4SAXBhLStgw==",
@@ -424,25 +440,25 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "DesktopPlatform maintainers",
-    "reviewer": "Codex under maintainer authorization",
-    "reviewedOn": "2026-09-21",
-    "baselineCommit": "940532d91c64d65d3d654ab031ad1985c466f91c",
-    "maintenanceAssessment": "Existing Microsoft, xUnit and coverlet build/test closure retained without upgrade. Version maintenance remains reviewed dependency updates and existing security checks; this offline review does not claim upstream latest or live security status. Native components use the existing component-specific provenance/recipe admission. Existing exact Python hook tooling metadata and licence files were reviewed locally; requirements and versions are unchanged.",
+    "owner": "w-20260927-foundation",
+    "reviewer": "Independent exact-head reviewer recorded in DesktopPlatform PR65",
+    "reviewedOn": "2026-09-27",
+    "baselineCommit": "e5ce94221c13d0014781a760c0865b942350be4d",
+    "maintenanceAssessment": "Retain current build/test/framework/native closure. Admit immutable Contracts.Foundation1.0.0-ci.113.1 from source b10b2f6f316bf0c007e00632c5442fc102ebbe6e and Google.Protobuf3.36.1 (BSD-3-Clause), maintained by Contracts generated-schema updates and upstream protobuf patch review. Cached exact nuspec metadata inspected; no copied wire schema. No framework upgrade or new runtime host.",
     "upgradeChecks": {
-      "compilation": "No dependency or compiler changes; existing required Windows/Linux compilation remains CI gate.",
-      "aot-trim": "No framework upgrade; existing AOT/trim declarations and diagnostics retained.",
-      "compatibility": "Current locked identities preserved; dependency admission changes only.",
-      "licence-provenance": "Cached exact NuGet nuspec expressions reviewed; source/native immutable records and legal inspectors unchanged.",
-      "security-sbom": "Existing dependency review, NuGet audit and native SBOM checks retained; no assertion of current vulnerability absence from offline check.",
-      "runtime-performance-migration": "Not triggered: no runtime dependency, framework or product behavior change. Future affected changes require local evidence or explicit unmet coverage.",
-      "framework-runtime-posture": "Not triggered: no major upgrade. Future upgrade must assess Native AOT, ABI and target support, and record Android Kotlin/JVM/ART/R8 impact when shared frameworks affect Mobile."
+      "compilation": "Foundation47 offline tests and Application.Abstractions Release build pass existingSDK10.0.401. Exact pinned10.0.400 Windows/Linux compilation remains retained CI; no SDK installation.",
+      "aot-trim": "Keep IsAotCompatible and trim/AOT diagnostics errors; generated Contracts parser and known codecs used, no dynamic serializer authority. ExistingSDK10.0.401 local checks retained original10.0.11 ILLink via invocation-only target override.",
+      "compatibility": "Published source/version and locked hash retained; source adapters use exact Contracts values and preserve unknown read values; independent UUID/hash vectors and compiler-negative IDs/axes pass.",
+      "licence-provenance": "Cached exact Foundation Apache-2.0 and Google.Protobuf BSD-3-Clause nuspec licences/source commits inspected; all existing legal/source/native provenance unchanged.",
+      "security-sbom": "Retain NuGet audit and PR dependency review. Exact locks include producer/protobuf; no claim of offline current vulnerability absence.",
+      "runtime-performance-migration": "Only storage-free managed primitives and injectable lifecycle ports added;47 deterministic offline tests. No installed-consumer/device/live-service/runtime benchmark performed; durable owner receipt proof remains PLT01.",
+      "framework-runtime-posture": "No framework major upgrade; .NET10.0.400 remains selected. No Android Kotlin/JVM/ART/R8 dependency change; no native ABI change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "f272ea30477a252562e648a8e53380e9e39eae5ee5f8c6670675066e24187c0b",
+      "Directory.Packages.props": "1911a17a7c291ff4c7f7c58aaa8397d446002055cc65ee7e168592c0f486858d",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
       "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
@@ -452,7 +468,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "8f8a4445ec2c6cc7844307b09d898132405b41eaf0608c8b4dc5a80383a45930",
+      "eng/packaging/packages.json": "98549daad08683aed67e8d3e029649ca4f9a339ba35a9e09b6c78efc5984b7bb",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
       "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
@@ -579,8 +595,8 @@
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.targets": "8c15dc21c5bf599b458e41ea126d2a22157d70f32c81512d25d7f886c504e34e",
       "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "f93e71dfab380f847dae8d6f34c2e40b97b7f7ae6c06f5b13650ebf10b7e8bf3",
-      "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
+      "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -591,8 +607,10 @@
       "src/BuildingBlocks/ArcForges.Desktop.RichContent/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj": "fad00ed9768093a4b5ac43855c4cbcd15a9fec6e4b3bdde7a183398b88fbc664",
       "src/BuildingBlocks/ArcForges.Desktop.Text/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj": "6cddc2dd9a541f896262719bcf85c0bc152a268138bd992a40dd6dafbec14343",
-      "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj": "a8eaa0048788cad95cbb73f66b0edad0bab27b312d39f9134aea6e854eb8d2b6",
+      "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj": "a3dd1928395674cabc3d0a1a88fd2d15c081165620e796767dbe85f5b29d8d1f",
+      "src/BuildingBlocks/ArcForges.Foundation/Tests/packages.lock.json": "3c74a39020c8f1617406613846f0c937261f19ec0033d000e84f4a418871eb0b",
+      "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "e497179dcd202af6385dbbef3e7664479bd53cb3419e9e39e0f333d2872e2650",
       "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
@@ -630,9 +648,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": null
+    "previousReceipt": "eng/policy/dependency-reviews/wp02-05-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/wp02-05-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/fnd-01-06-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
