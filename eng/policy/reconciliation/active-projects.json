@@ -64,11 +64,11 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj",
-      "blob": "697fc163c32c4ac1d75d051f1a08b8cda239cdff"
+      "blob": "59f154e4ef202ec7d6253a31e7e02755c9060ac6"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
-      "blob": "ddb145fe2884c6db183f5c1685d637a2878a286a"
+      "blob": "c41659889976ff208b34c1050bfbcf0fa3feb7b8"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",

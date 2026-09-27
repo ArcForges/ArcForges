@@ -65,6 +65,14 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
       "kind": "msbuild"
     },
