@@ -9,4 +9,9 @@
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
+    <InternalsVisibleTo Include="ArcForges.Tests.PersistenceTests" />
+  </ItemGroup>
 </Project>
