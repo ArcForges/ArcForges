@@ -60,7 +60,8 @@ public sealed class TypedFailure
         bool metadataValid = copy.HasCategory && copy.Category == reason.Category &&
             copy.HasEffect && IsKnownEffect(copy.Effect) &&
             (reason.Effect != EffectCertainty.DidNotHappen || copy.Effect == EffectCertainty.DidNotHappen);
-        copy.Category = reason.Category;
+        copy.Category = !known && copy.HasCategory && copy.Category != ErrorCategory.Unspecified && Enum.IsDefined(copy.Category)
+            ? copy.Category : reason.Category;
         copy.MessageKey = known ? reason.MessageKey : "error.generic";
         if (!copy.HasEffect || !IsKnownEffect(copy.Effect))
         {

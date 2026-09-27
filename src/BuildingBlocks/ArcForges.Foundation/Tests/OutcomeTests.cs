@@ -78,6 +78,8 @@ public sealed class OutcomeTests
         Xunit.Assert.Equal(16, failure.CorrelationId!.Value.Length);
         Xunit.Assert.Throws<InvalidOperationException>(() => failure.ToWire());
         Xunit.Assert.Throws<ArgumentException>(() => TypedFailure.Create("future.condition"));
+        wire.Category = ErrorCategory.Validation;
+        Xunit.Assert.Equal(ErrorCategory.Validation, TypedFailure.FromWire(wire).Category);
     }
 
     [Xunit.Theory]
