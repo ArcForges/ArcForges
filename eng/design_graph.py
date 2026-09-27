@@ -306,8 +306,9 @@ class Graph:
                     q.append(s)
         return order, [t for t, d in indeg.items() if d > 0]
 
-    def ancestors(self, tid, cache={}):
-        key = (id(self), tid)
+    def ancestors(self, tid):
+        cache = self.__dict__.setdefault("_ancestor_cache", {})
+        key = tid
         if key in cache:
             return cache[key]
         seen, stack = set(), list(self.preds(tid))
