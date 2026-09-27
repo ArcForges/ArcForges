@@ -7,9 +7,130 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
+import xml.etree.ElementTree as ET
 import zipfile
 
 import packages
+
+
+class ExternalDependencyGuards(unittest.TestCase):
+    owned_version = "2.0.0-ci.20.1"
+    external_version = "1.0.0-ci.113.1"
+
+    def entry(self):
+        return {"id": "ArcForges.Consumer", "kind": "managed", "dependencies": ["ArcForges.Foundation"],
+                "externalDependencies": {"ArcForges.Contracts.Foundation": self.external_version},
+                "requiredFiles": ["README.md"]}
+
+    def metadata(self, rows):
+        metadata = ET.Element("metadata")
+        group = ET.SubElement(ET.SubElement(metadata, "dependencies"), "group", targetFramework="net10.0")
+        for name, pin in rows:
+            ET.SubElement(group, "dependency", id=name, version=pin)
+        return metadata
+
+    def test_mixed_dependencies_keep_independent_versions(self):
+        expected = {"ArcForges.Foundation": self.owned_version,
+                    "ArcForges.Contracts.Foundation": self.external_version}
+        self.assertEqual(expected, packages.dependency_versions(self.entry(), self.owned_version))
+        for external in [self.external_version, f"[{self.external_version}]"]:
+            metadata = self.metadata([("ArcForges.Foundation", self.owned_version),
+                                      ("ArcForges.Contracts.Foundation", external)])
+            self.assertEqual(expected, packages.validate_generated_dependencies(metadata, self.entry(), self.owned_version))
+
+    def test_invalid_external_pins_are_rejected(self):
+        for pin in ["1.*", "[1.0.0,2.0.0)", "[1.0.0]", "1.0.0+build", "1.0.0-ci.01", "", 1]:
+            entry = self.entry()
+            entry["externalDependencies"]["ArcForges.Contracts.Foundation"] = pin
+            with self.subTest(pin=pin), self.assertRaises(ValueError):
+                packages.dependency_versions(entry, self.owned_version)
+
+    def test_duplicate_and_overlapping_ids_are_rejected(self):
+        for mutation in [lambda entry: entry["dependencies"].append("arcforges.foundation"),
+                         lambda entry: entry["externalDependencies"].update({"arcforges.foundation": "1.0.0"}),
+                         lambda entry: entry["externalDependencies"].update({"arcforges.contracts.foundation": "1.0.0"})]:
+            entry = self.entry()
+            mutation(entry)
+            with self.assertRaisesRegex(ValueError, "Duplicate or overlapping"):
+                packages.dependency_versions(entry, self.owned_version)
+
+    def test_nonmanaged_external_dependencies_are_rejected(self):
+        for kind in ["build", "native"]:
+            entry = self.entry()
+            entry["kind"] = kind
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "managed"):
+                packages.dependency_versions(entry, self.owned_version)
+
+    def test_external_generated_version_cannot_be_rewritten_into_admission(self):
+        for pin in [self.owned_version, "1.0.0", f"[{self.external_version}, )", "1.*"]:
+            metadata = self.metadata([("ArcForges.Foundation", self.owned_version),
+                                      ("ArcForges.Contracts.Foundation", pin)])
+            with self.subTest(pin=pin), self.assertRaisesRegex(ValueError, "exact admitted pin"):
+                packages.validate_generated_dependencies(metadata, self.entry(), self.owned_version)
+
+    def test_generated_dependency_set_and_duplicate_ids_fail_closed(self):
+        correct = [("ArcForges.Foundation", self.owned_version), ("ArcForges.Contracts.Foundation", self.external_version)]
+        for rows in [correct[:1], correct + [("Unexpected", "1.0.0")],
+                     correct + [("arcforges.contracts.foundation", self.external_version)]]:
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                packages.validate_generated_dependencies(self.metadata(rows), self.entry(), self.owned_version)
+
+    def test_native_owned_pairs_remain_injected_after_generation(self):
+        entry = {"kind": "native", "dependencies": ["ArcForges.Native.Image"]}
+        self.assertEqual({"ArcForges.Native.Image": self.owned_version},
+                         packages.validate_generated_dependencies(self.metadata([]), entry, self.owned_version))
+
+    def test_catalogue_separates_external_and_owned_identities(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "eng/packaging").mkdir(parents=True)
+            (root / "consumer.csproj").write_text("<Project />", encoding="utf-8")
+            entry = self.entry()
+            entry["project"] = "consumer.csproj"
+            owned = {"id": "ArcForges.Foundation", "kind": "managed", "project": "consumer.csproj"}
+            document = {"schemaVersion": 1, "packages": [entry, owned]}
+            inventory = root / "eng/packaging/packages.json"
+            with patch.object(packages, "ROOT", root):
+                inventory.write_text(json.dumps(document), encoding="utf-8")
+                self.assertEqual(2, len(packages.catalogue()))
+                entry["externalDependencies"]["arcforges.consumer"] = "1.0.0"
+                inventory.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "aliases an owned"):
+                    packages.catalogue()
+                del entry["externalDependencies"]["arcforges.consumer"]
+                entry["dependencies"] = ["Missing"]
+                inventory.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "absent from the publication"):
+                    packages.catalogue()
+
+    def test_synthetic_nuspec_inspection_enforces_exact_external_pin(self):
+        entry = self.entry()
+        commit = "a" * 40
+        expected = [("ArcForges.Foundation", f"[{self.owned_version}]"),
+                    ("ArcForges.Contracts.Foundation", f"[{self.external_version}]")]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.nupkg"
+            for rows, valid in [(expected, True), (expected[:1], False),
+                                ([expected[0], (expected[1][0], self.external_version)], False),
+                                ([expected[0], (expected[1][0], f"[{self.owned_version}]")], False),
+                                (expected + [("arcforges.contracts.foundation", expected[1][1])], False)]:
+                metadata = self.metadata(rows)
+                for name, value in [("id", entry["id"]), ("version", self.owned_version), ("readme", "README.md")]:
+                    ET.SubElement(metadata, name).text = value
+                ET.SubElement(metadata, "repository", url=packages.REPOSITORY, commit=commit)
+                ET.SubElement(metadata, "license", type="expression").text = "AGPL-3.0-only"
+                specification = ET.Element("package")
+                specification.append(metadata)
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("fixture.nuspec", ET.tostring(specification))
+                    archive.writestr("README.md", "Synthetic metadata guard fixture, not a compiled candidate.")
+                with self.subTest(rows=rows):
+                    if valid:
+                        self.assertEqual(64, len(packages.inspect(path, entry, self.owned_version, commit)))
+                    else:
+                        with self.assertRaises(ValueError):
+                            packages.inspect(path, entry, self.owned_version, commit)
 
 
 class PackageGuards(unittest.TestCase):
