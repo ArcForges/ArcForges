@@ -114,6 +114,38 @@ public sealed class AppendStoreTests
         Assert.Empty(recovered.Segments);
     }
 
+    [Fact]
+    public void EveryTruncatedCapturePersistsTheVerifiedBoundaryWithoutChangingEvidence()
+    {
+        using var fixture = new Files();
+        var segment = Guid.NewGuid();
+        using (var writer = AppendStore.Create(fixture.Capture))
+        {
+            long chunk = writer.AppendChunk([11, 22, 33]);
+            writer.MapSegment(segment, [new(chunk, 0, 3)]);
+            writer.Seal();
+        }
+        byte[] complete = File.ReadAllBytes(fixture.Capture);
+        // Independent physical boundaries: chunk(64+3), manifest(64+20+16), seal(64).
+        const int chunkEnd = 67;
+        const int manifestEnd = 167;
+        Assert.Equal(231, complete.Length);
+        for (int length = 0; length < complete.Length; length++)
+        {
+            string interrupted = fixture.Capture + "." + length.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            File.WriteAllBytes(interrupted, complete.AsSpan(0, length).ToArray());
+            using var recovered = CaptureSnapshot.Open(interrupted);
+            Assert.False(recovered.IsSealed);
+            Assert.NotNull(recovered.Loss);
+            Assert.Equal(length >= manifestEnd ? manifestEnd : length >= chunkEnd ? chunkEnd : 0, recovered.Loss.VerifiedBytes);
+            Assert.Equal(length, recovered.Loss.ObservedBytes);
+            Assert.True(File.Exists(interrupted + ".loss"));
+            Assert.Equal(complete.AsSpan(0, length).ToArray(), File.ReadAllBytes(interrupted));
+            if (length >= manifestEnd) Assert.Equal(new byte[] { 11, 22, 33 }, recovered.ReadRange(segment, 0, 3));
+            else Assert.Empty(recovered.Segments);
+        }
+    }
+
     [Theory(Skip = "Explicit local process-kill diagnostics only.", SkipUnless = nameof(LocalKillEnabled))]
     [InlineData(false)]
     [InlineData(true)]

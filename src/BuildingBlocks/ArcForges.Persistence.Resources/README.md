@@ -29,7 +29,7 @@ without overwrite; interrupted pending receipts remain evidence. A conflicting
 or damaged final receipt is refused. Recovery never silently resumes or reseals
 the capture. The SHA-256 checksums detect corruption, not malicious authenticity.
 
-Offline tests cover every byte truncation, checksum/header/bound violations,
+Offline tests cover every byte truncation (including 231 distinct persisted-loss recoveries), checksum/header/bound violations,
 segment mappings, bounded range reads, explicit gaps, writer exclusion and
 receipt integrity. Explicit local diagnostics additionally kill an actual
 `AppendStore` child after a committed segment and during the next chunk's payload
@@ -39,6 +39,7 @@ intercepted FileStream creates a deterministic midwrite boundary, while the
 production append/flush path writes all acknowledged preceding frames.
 
 Observed local .NET SDK 10.0.401 compatibility build: zero warnings/errors; all
-13 tests passed including both real writer process interruptions. The committed
+13 tests passed including both real writer process interruptions. The expanded default
+suite then passed 12 tests with both local process diagnostics explicitly skipped. The committed
 SDK 10.0.400 and retained CI remain authoritative. No native/device, installed
 consumer or power-loss hardware guarantee is claimed.
