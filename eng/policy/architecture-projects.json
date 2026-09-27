@@ -1,5 +1,13 @@
 [
   {
+    "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
+    "role": "BuildTool",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
     "role": "BuildTool",
     "owner": "DesktopPlatform",

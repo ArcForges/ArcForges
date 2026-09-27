@@ -11,6 +11,18 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = 'eng/policy/dependency-policy.json'
+# Exact existing publication admitted only for FND.07's local acceptance consumer.
+FOUNDATION_ACCEPTANCE = {
+    'arcforges.foundation/1.0.0-ci.29.1': 'P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==',
+    'arcforges.application.abstractions/1.0.0-ci.29.1': '8ICXm8LvJsaXgNz6RfiHSoxxqxE3jLJMz8IWCcweW0FIzv6isEl3SMH+pbBATNKIqApDmCN78FT/csCAqMBMRA==',
+}
+FOUNDATION_PUBLISHER = {
+    'repository': 'ArcForges/DesktopPlatform',
+    'workflow': 'publish-nuget.yml',
+    'sourceCommit': 'ace60538849047184954baed09fb05ec7676d367',
+    'feed': 'https://api.nuget.org/v3/index.json',
+}
+
 UPGRADE_CHECKS = {'compilation', 'aot-trim', 'compatibility', 'licence-provenance',
                   'security-sbom', 'runtime-performance-migration', 'framework-runtime-posture'}
 
@@ -33,7 +45,8 @@ def files(root):
 def inputs(root):
     return [p for p in files(root) if p.endswith(('.csproj', '.props', '.targets', 'packages.lock.json'))
             or p in {'global.json', 'NuGet.config', '.python-version', 'eng/requirements-ci.txt',
-                     'eng/native-toolchain.json', 'eng/packaging/packages.json', 'eng/policy/naming-package.json', 'vcpkg.json',
+                     'eng/native-toolchain.json', 'eng/packaging/packages.json', 'eng/policy/naming-package.json',
+                     'eng/acceptance/foundation/package.json', 'eng/acceptance/foundation/package-lock.json', 'vcpkg.json',
                      'vcpkg-configuration.json'}
             or p.startswith(('eng/native/vcpkg/', 'eng/provenance/artifact-profiles/',
                              'eng/provenance/records/'))]
@@ -67,8 +80,16 @@ def check_admission(policy, actual):
         row = admitted[key]
         exact(key.rsplit('/', 1)[1])
         require(row['contentHash'] == content, 'Mutable admitted version: ' + key)
-        require(row['licence'] in {'MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC'},
-                'Forbidden or unreviewed licence: ' + key)
+        if key in FOUNDATION_ACCEPTANCE:
+            package, version = key.rsplit('/', 1)
+            require(row['licence'] == 'AGPL-3.0-only'
+                    and content == FOUNDATION_ACCEPTANCE[key]
+                    and row.get('internalPublisher') == FOUNDATION_PUBLISHER
+                    and row['source'] == f'https://api.nuget.org/v3-flatcontainer/{package}/{version}/{package}.nuspec',
+                    'Forbidden or invalid exact Foundation acceptance admission: ' + key)
+        else:
+            require(row['licence'] in {'MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC'},
+                    'Forbidden or unreviewed licence: ' + key)
         require(re.fullmatch('[0-9a-f]{64}', row['nuspecSha256']) and row['source'], 'Missing source evidence')
     review = policy['review']
     require(review['owner'] and review['reviewer'] and review['maintenanceAssessment'], 'Missing admission review')

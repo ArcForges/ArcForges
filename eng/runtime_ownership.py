@@ -90,6 +90,8 @@ def role(owner, relative):
         require(owner == 'DesktopPlatform', 'native build outside its owner')
         return 'native-build'
     if relative.endswith('package.json'):
+        if owner == 'DesktopPlatform' and relative == 'eng/acceptance/foundation/package.json':
+            return 'test-or-build-tool'
         require(owner in {'Contracts', 'Cloud', 'AI', 'Web'}, 'unassigned npm runtime')
         return 'typescript-build'
     if relative.endswith('build.gradle.kts'):

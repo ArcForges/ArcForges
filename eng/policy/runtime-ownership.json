@@ -17,6 +17,14 @@
           "role": "native-build"
         },
         {
+          "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "eng/acceptance/foundation/package.json",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "native/CMakeLists.txt",
           "role": "native-build"
         },

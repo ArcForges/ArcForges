@@ -32,6 +32,16 @@ class RuntimeOwnershipTests(unittest.TestCase):
     def check(self, owner):
         policy.check_runtime_configuration(self.root, owner, self.files)
 
+    def test_foundation_acceptance_npm_is_only_a_local_tool(self):
+        path = 'eng/acceptance/foundation/package.json'
+        self.assertEqual(policy.role('DesktopPlatform', path), 'test-or-build-tool')
+        for owner, relative in [('ArcScope', path), ('Mobile', path),
+                                ('DesktopPlatform', 'eng/acceptance/other/package.json'),
+                                ('DesktopPlatform', 'src/foundation/package.json')]:
+            with self.subTest(owner=owner, path=relative), self.assertRaises(ValueError):
+                policy.role(owner, relative)
+        self.assertEqual(policy.role('Contracts', path), 'typescript-build')
+
     def test_registry_rejects_missing_duplicate_and_extra_owner(self):
         original = policy.document(policy.ROOT, policy.POLICY)
         policy.validate_policy(original)
