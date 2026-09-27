@@ -50,7 +50,7 @@ public sealed class OutcomeTests
         Xunit.Assert.Throws<ArgumentException>(() => TypedFailure.Create(code, retry: new RetryAdvice { Mode = RetryMode.SameCommand }));
         int effects = 0;
         // The owner supplies its already-decided validation refusal; this primitive never runs the effect.
-        var refused = Outcome<int>.Failure(failure).Map(value => { effects++; return value + 1; });
+        var refused = Outcome.Failure<int>(failure).Map(value => { effects++; return value + 1; });
         Xunit.Assert.Equal(0, effects);
         Xunit.Assert.True(refused.TryGetFailure(out var preserved));
         Xunit.Assert.Same(failure, preserved);
@@ -66,7 +66,7 @@ public sealed class OutcomeTests
             Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
             CorrelationId = new Id { Value = ByteString.CopyFrom(new byte[16]) },
         };
-        var result = Outcome<int>.Failure(TypedFailure.FromWire(wire));
+        var result = Outcome.Failure<int>(TypedFailure.FromWire(wire));
         wire.Effect = EffectCertainty.DidNotHappen;
         Xunit.Assert.False(result.TryGetValue(out _));
         Xunit.Assert.True(result.TryGetFailure(out var failure));
@@ -131,14 +131,14 @@ public sealed class OutcomeTests
     public void CancellationSurvivesMappingAndNeverBecomesFailure()
     {
         int calls = 0;
-        var cancelled = Outcome<int>.Cancelled(EffectCertainty.Unknown).Map(value => { calls++; return value.ToString(System.Globalization.CultureInfo.InvariantCulture); });
+        var cancelled = Outcome.Cancelled<int>(EffectCertainty.Unknown).Map(value => { calls++; return value.ToString(System.Globalization.CultureInfo.InvariantCulture); });
         Xunit.Assert.Equal(OutcomeKind.Cancelled, cancelled.Kind);
         Xunit.Assert.Equal(EffectCertainty.Unknown, cancelled.CancellationEffect);
         Xunit.Assert.False(cancelled.TryGetFailure(out _));
         Xunit.Assert.False(cancelled.TryGetValue(out _));
         Xunit.Assert.Equal(0, calls);
-        Xunit.Assert.Throws<ArgumentOutOfRangeException>(() => Outcome<int>.Cancelled(EffectCertainty.Unspecified));
-        var success = Outcome<int>.Success(0).Map(value => value + 1);
+        Xunit.Assert.Throws<ArgumentOutOfRangeException>(() => Outcome.Cancelled<int>(EffectCertainty.Unspecified));
+        var success = Outcome.Success(0).Map(value => value + 1);
         Xunit.Assert.True(success.TryGetValue(out int result));
         Xunit.Assert.Equal(1, result);
         Xunit.Assert.Throws<InvalidOperationException>(() => success.CancellationEffect);
