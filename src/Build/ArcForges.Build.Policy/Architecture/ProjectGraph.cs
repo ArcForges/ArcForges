@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+using System.Diagnostics;
+using System.Text.Json;
+
+namespace ArcForges.Build.Policy.Architecture;
+
+/// <summary>Reads effective MSBuild inputs after the owning build. It never restores packages or builds references.</summary>
+internal sealed class ProjectGraph
+{
+    private readonly IReadOnlyDictionary<string, ProjectFacts> _projects;
+
+    public ProjectGraph(IEnumerable<ProjectFacts> projects)
+    {
+        ArgumentNullException.ThrowIfNull(projects);
+        _projects = projects.ToDictionary(project => Normalize(project.Classification.Path), StringComparer.Ordinal);
+        foreach (var project in _projects.Values)
+        {
+            foreach (string reference in project.ProjectReferences)
+            {
+                if (!_projects.ContainsKey(Normalize(reference)))
+                {
+                    throw new InvalidOperationException($"Unclassified project reference: {project.Classification.Path} -> {reference}");
+                }
+            }
+        }
+
+        foreach (string path in _projects.Keys)
+        {
+            Visit(path, [], []);
+        }
+    }
+
+    public IReadOnlyCollection<ProjectFacts> Projects => _projects.Values.ToArray();
+
+    public IEnumerable<ProjectFacts> Closure(string path)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>(_projects[Normalize(path)].ProjectReferences.Select(Normalize));
+        while (pending.TryPop(out string? current))
+        {
+            if (!visited.Add(current))
+            {
+                continue;
+            }
+
+            var project = _projects[current];
+            yield return project;
+            foreach (string reference in project.ProjectReferences)
+            {
+                pending.Push(Normalize(reference));
+            }
+        }
+    }
+
+    public static ProjectFacts Evaluate(string root, ProjectClassification classification,
+        string configuration = "Release", string? sdkDriver = null, string? compatibilityTargets = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(root);
+        ArgumentNullException.ThrowIfNull(classification);
+        string projectPath = ContainedPath(root, classification.Path);
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        if (sdkDriver is not null)
+        {
+            start.ArgumentList.Add(sdkDriver);
+        }
+
+        foreach (string argument in new[]
+        {
+            "msbuild", projectPath, "-nologo", "-target:ResolveReferences", "-p:BuildProjectReferences=false",
+            "-p:Configuration=" + configuration,
+            "-getProperty:TargetFramework,OutputType,PackageLicenseExpression,LicenceBoundary,IsAotCompatible,PublishAot,ManagePackageVersionsCentrally,RestorePackagesWithLockFile,NoWarn,SuppressTrimAnalysisWarnings,EnableTrimAnalyzer,EnableAotAnalyzer,MSBuildProjectFullPath,ProjectAssetsFile",
+            "-getItem:Compile,ProjectReference,ReferencePath,PackageReference,PackageVersion",
+        })
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        if (compatibilityTargets is not null)
+        {
+            start.ArgumentList.Add("-p:CustomAfterMicrosoftCommonTargets=" + compatibilityTargets);
+        }
+
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("MSBuild did not start.");
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(120_000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("Bounded project evaluation timed out: " + classification.Path);
+        }
+
+        string output = outputTask.GetAwaiter().GetResult();
+        string error = errorTask.GetAwaiter().GetResult();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Project evaluation failed: {classification.Path}\n{output}\n{error}");
+        }
+
+        using var document = JsonDocument.Parse(output);
+        var properties = document.RootElement.GetProperty("Properties").EnumerateObject()
+            .ToDictionary(property => property.Name, property => property.Value.GetString() ?? "", StringComparer.Ordinal);
+        var items = document.RootElement.GetProperty("Items");
+        var versions = ReadItems(items, "PackageVersion").ToDictionary(item => Text(item, "Identity"),
+            item => Text(item, "Version"), StringComparer.OrdinalIgnoreCase);
+        var packages = ReadItems(items, "PackageReference").ToDictionary(item => Text(item, "Identity"), item =>
+        {
+            string version = Text(item, "Version");
+            return version.Length > 0 ? version : versions.GetValueOrDefault(Text(item, "Identity"), "");
+        }, StringComparer.OrdinalIgnoreCase);
+        string assetsPath = properties["ProjectAssetsFile"];
+        if (!File.Exists(assetsPath))
+        {
+            throw new InvalidOperationException("Locked restore assets are required before graph evaluation: " + classification.Path);
+        }
+
+        using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
+        foreach (var library in assets.RootElement.GetProperty("libraries").EnumerateObject())
+        {
+            if (library.Value.GetProperty("type").GetString() != "package")
+            {
+                continue;
+            }
+
+            int separator = library.Name.LastIndexOf('/');
+            if (separator < 1)
+            {
+                throw new InvalidOperationException("Malformed resolved dependency identity: " + library.Name);
+            }
+
+            packages[library.Name[..separator]] = library.Name[(separator + 1)..];
+        }
+        return new ProjectFacts(classification, properties["TargetFramework"], properties["OutputType"],
+            properties["PackageLicenseExpression"], properties["LicenceBoundary"],
+            ReadItems(items, "ProjectReference").Select(item => Relative(root, Text(item, "FullPath"))).ToArray(),
+            ReadItems(items, "Compile").Select(item => Text(item, "FullPath")).ToArray(),
+            ReadItems(items, "ReferencePath").Select(item => Text(item, "FullPath")).ToArray(), properties, packages);
+    }
+
+    public static string Normalize(string path) => path.Replace('\\', '/');
+
+    public static string ContainedPath(string root, string relative)
+    {
+        string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string full = Path.GetFullPath(Path.Combine(fullRoot, relative));
+        if (!full.StartsWith(fullRoot, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Project input escapes the owning repository: " + relative);
+        }
+
+        return full;
+    }
+
+    private static string Relative(string root, string full)
+    {
+        string relative = Normalize(Path.GetRelativePath(root, full));
+        _ = ContainedPath(root, relative);
+        return relative;
+    }
+
+    private static JsonElement.ArrayEnumerator ReadItems(JsonElement items, string name) =>
+        items.GetProperty(name).EnumerateArray();
+
+    private static string Text(JsonElement item, string name) =>
+        item.TryGetProperty(name, out var value) ? value.GetString() ?? "" : "";
+
+    private void Visit(string path, HashSet<string> active, HashSet<string> complete)
+    {
+        if (complete.Contains(path))
+        {
+            return;
+        }
+
+        if (!active.Add(path))
+        {
+            throw new InvalidOperationException("Project reference cycle at " + path);
+        }
+
+        foreach (string reference in _projects[path].ProjectReferences)
+        {
+            Visit(Normalize(reference), active, complete);
+        }
+
+        active.Remove(path);
+        complete.Add(path);
+    }
+}

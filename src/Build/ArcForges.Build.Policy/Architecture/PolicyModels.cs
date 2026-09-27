@@ -3,7 +3,7 @@
 namespace ArcForges.Build.Policy.Architecture;
 
 /// <summary>Stable classifications supplied by the owning repository, never inferred from a package name.</summary>
-public enum ProjectRole
+internal enum ProjectRole
 {
     Domain,
     Application,
@@ -25,10 +25,10 @@ public enum ProjectRole
 }
 
 /// <summary>A finding is a failing rule, not a warning or a coverage declaration.</summary>
-public sealed record PolicyFinding(string Rule, string Path, string Message, int Line = 0);
+internal sealed record PolicyFinding(string Rule, string Path, string Message, int Line = 0);
 
 /// <summary>Repository-owned classification of one evaluated project.</summary>
-public sealed record ProjectClassification(
+internal sealed record ProjectClassification(
     string Path,
     ProjectRole Role,
     string Owner,
@@ -37,7 +37,7 @@ public sealed record ProjectClassification(
     bool Aot = false);
 
 /// <summary>Effective project data captured from MSBuild evaluation and locked dependency inputs.</summary>
-public sealed record ProjectFacts(
+internal sealed record ProjectFacts(
     ProjectClassification Classification,
     string TargetFramework,
     string OutputType,
@@ -50,7 +50,7 @@ public sealed record ProjectFacts(
     IReadOnlyDictionary<string, string> Packages);
 
 /// <summary>A precise, owned and expiring exception. Wildcard rules and paths are not supported.</summary>
-public sealed record PolicyException(
+internal sealed record PolicyException(
     string Rule,
     string Path,
     string Owner,
@@ -58,10 +58,31 @@ public sealed record PolicyException(
     DateOnly Expires);
 
 /// <summary>Explicit correspondence between a production API symbol and a real contract-test method.</summary>
-public sealed record ContractTestBinding(string ApiSymbol, string TestProject, string TestMethod);
+internal sealed record ContractTestBinding(string ApiSymbol, string TestProject, string TestMethod);
+
+/// <summary>Canonical generated-interface to application-port association for an owned local service.</summary>
+internal sealed record LocalServiceBinding(string ServiceSymbol, string ContractSymbol, string PortSymbol);
+
+/// <summary>Generated wire-type source and its immutable owned schema evidence.</summary>
+internal sealed record WireTypeBinding(string TypeSymbol, string SchemaPath, string SchemaSha256);
+
+/// <summary>Evidence from an existing required gate, bound to the exact source commit.</summary>
+internal sealed record ExternalPolicyEvidence(string Rule, string SourceCommit, bool Passed, IReadOnlyList<PolicyFinding> Findings);
+
+/// <summary>Exact lock inputs and licence classifications supplied by the owning repository.</summary>
+internal sealed record RepositoryPolicyConfiguration(
+    string SourceCommit,
+    IReadOnlyDictionary<string, string> ToolchainHashes,
+    IReadOnlyDictionary<string, string> DependencyLicenses,
+    IReadOnlySet<string> AllowedMobileLicenses,
+    IReadOnlyList<LocalServiceBinding> LocalServices,
+    IReadOnlyList<WireTypeBinding> WireTypes,
+    IReadOnlyList<ExternalPolicyEvidence> ExternalEvidence,
+    string? WebRoot = null,
+    bool MobileDistributable = false);
 
 /// <summary>Structured inputs for non-managed consumers and canonical producer results.</summary>
-public sealed record RepositoryFacts(
+internal sealed record RepositoryFacts(
     string Root,
     string Owner,
     IReadOnlyList<ProjectFacts> Projects,
