@@ -11,7 +11,7 @@ import unittest
 
 import design_corpus as corpus
 import design_policy as policy
-from design_graph import graph
+from design_graph import graph, Graph, design_views, GRAPH_REL, BEGIN, END
 
 
 INDEX = 'docs/planning/work-packages/README.md'
@@ -30,9 +30,9 @@ def fixture():
 |---|---|---|
 | **Workspace** | domain, wire | An owned workspace. |
 ## 5. Product terms
-### 5.1 Notes
-| **ArcNotes.Document** / **ArcNotes.Note** | domain, storage | Two names, preserved as written. |
-| **ArcNotes.OldView** | retired | Removed by scope. |
+### 5.1 Scope
+| **ArcScope.Report** / **ArcScope.Annotation** | domain, storage | Two names, preserved as written. |
+| **ArcScope.OldView** | retired | Removed by scope. |
 ## 6. Term spaces
 | Space | Meaning |
 |---|---|
@@ -90,7 +90,7 @@ Total active dependency edges: 2.
     }
     for key, title, up, down in [('00', 'first', '—', '`01`'), ('01', 'second', '`00`', '`02`'),
                                   ('02', 'third', '`01`', '—')]:
-        text = f'# Package {key}\n> Upstream: {up} · Downstream: {down}\n'
+        text = f'<a id="rule-wp-{key}"></a>\n# WP-{key} — Package\n> Upstream: {up} · Downstream: {down}\n'
         for number in range(1, 10):
             text += f'## {number}. Section\n'
             if number == 6:
@@ -119,6 +119,34 @@ class Fixture(unittest.TestCase):
         self.docs = fixture()
         for name, value in self.docs.items():
             self.write(name, value)
+        # Small independently authored delivery graph, not a copy of the production graph.
+        self.graph_data = {
+            'schemaVersion': 1, 'decision': 'P2-018', 'baselineDate': '2026-09-27',
+            'paths': {'design': 'Design', 'plan': 'Plan'}, 'sizeUnits': {'S': 1, 'M': 2, 'L': 4, 'XL': 8},
+            'repositories': [{'id': 'DesktopPlatform', 'root': 'DesktopPlatform', 'remote': 'ArcForges/DesktopPlatform',
+                              'ci': True, 'integrationOwner': 'Fixture owner'}],
+            'lanes': [{'id': 'governance', 'prefix': 'GOV', 'repo': 'DesktopPlatform', 'title': 'Governance', 'description': 'Fixture'}],
+            'tasks': [], 'adoptionSlices': [], 'substitutes': [], 'sharedResources': [], 'packageObligations': [], 'gates': []}
+        for i in range(3):
+            self.graph_data['tasks'].append({'id': f'GOV.{i:02}', 'title': f'Task {i}', 'lane': 'governance',
+                'repo': 'DesktopPlatform', 'kind': 'governance', 'size': 'S',
+                'obligations': [{'ref': f'WP-{i:02}.90', 'part': 'full'}], 'outcome': 'Fixture result',
+                'start': [] if i == 0 else [{'type': 'artifact', 'task': f'GOV.{i-1:02}', 'need': 'Input', 'why': 'Required'}],
+                'complete': [], 'writes': [], 'validation': 'Offline', 'evidence': 'Fixture receipt',
+                'baseline': {'state': 'accepted', 'evidence': 'Accepted fixture'}})
+        self.write(GRAPH_REL, json.dumps(self.graph_data))
+        for key in ('00-first', '01-second', '02-third'):
+            name = f'docs/planning/work-packages/{key}.md'
+            body = self.docs[name]
+            body = body.split('## 9. Section')[0] + '## 9. Section\n' + BEGIN + '\n' + END + '\n'
+            self.docs[name] = body
+            self.write(name, body)
+        self.docs['docs/planning/delivery/README.md'] = '# Model\n' + ''.join(
+            f'<a id="rule-dlv-{i:02}"></a>\n| DLV-{i:02} | Fixture |\n' for i in range(1,43))
+        self.docs['docs/decisions/phase-2-specification-decisions.md'] = '# Decisions\n<a id="rule-p2-018"></a>\n## P2-018 — Fixture\n'
+        for name, body in self.docs.items(): self.write(name, body)
+        for name, body in design_views(Graph(self.root)).items(): self.write(name, body)
+        self.docs.update(design_views(Graph(self.root)))
         self.write(policy.CLASSIFICATIONS, policy.encode(register()).decode())
         self.git('init', '--quiet')
         self.git('config', 'core.autocrlf', 'false')
@@ -130,7 +158,7 @@ class Fixture(unittest.TestCase):
         self.pin = {'schemaVersion': 1, 'license': 'AGPL-3.0-only', 'repository': policy.REPOSITORY,
                     'commit': self.git('rev-parse', 'HEAD'),
                     'sourceHashes': {p: policy.text_hash(corpus.read_document(self.root, p))
-                                     for p in [policy.GLOSSARY, policy.COVERAGE, policy.CLASSIFICATIONS]},
+                                     for p in [policy.GLOSSARY, policy.COVERAGE, policy.CLASSIFICATIONS, GRAPH_REL]},
                     'corpusSha256': policy.canonical_hash([{'path': p, 'sha256': policy.text_hash(t)}
                                                           for p, t in sorted(self.docs.items())])}
         self.save_pin()
@@ -155,7 +183,7 @@ class ExportTests(Fixture):
         result = self.export()
         self.assertEqual(result['counts'], {'terms': 3, 'names': 4, 'invariants': 2, 'forbiddenAliases': 1})
         vocabulary = policy.read_json(self.output / 'glossary-terms.json')
-        self.assertEqual(vocabulary['terms'][1]['names'], ['ArcNotes.Document', 'ArcNotes.Note'])
+        self.assertEqual(vocabulary['terms'][1]['names'], ['ArcScope.Report', 'ArcScope.Annotation'])
         self.assertEqual(vocabulary['terms'][2]['spaces'], [])
         mapping = policy.read_json(self.output / 'invariants.json')
         self.assertEqual(mapping['verificationState'], 'planned-only')
@@ -264,9 +292,9 @@ class SourceTests(Fixture):
 
     def test_glossary_rejects_duplicate_names_missing_spaces_and_unqualified_products(self):
         for old, new, diagnostic in [
-            ('**ArcNotes.Document** / **ArcNotes.Note**', '**Workspace**', 'duplicate canonical term'),
-            ('**ArcNotes.Document** / **ArcNotes.Note**', '**Document**', 'unqualified product'),
-            ('### 5.1 Notes\n| **ArcNotes.Document** / **ArcNotes.Note**', '| **Document**', 'unqualified product'),
+            ('**ArcScope.Report** / **ArcScope.Annotation**', '**Workspace**', 'duplicate canonical term'),
+            ('**ArcScope.Report** / **ArcScope.Annotation**', '**Document**', 'unqualified product'),
+            ('### 5.1 Scope\n| **ArcScope.Report** / **ArcScope.Annotation**', '| **Document**', 'unqualified product'),
             ('| domain, wire |', '| mystery |', 'invalid term spaces'),
             ('| domain, wire |', '|  |', 'invalid term spaces'),
         ]:
@@ -344,36 +372,45 @@ class CorpusTests(Fixture):
 
 
 class GraphTests(Fixture):
-    def test_independent_graph_and_every_drift_representation(self):
+    def test_delivery_edges_coverage_owners_and_generated_views(self):
         self.assertEqual(graph(self.root, self.docs)['errors'], [])
         cases = [
-            (SEQUENCE, '| 02 | `01` |', '| 02 | `00` |', 'forward'),
-            (INDEX, '| 01 | Second | `00` |', '| 01 | Second | — |', 'forward/phase'),
-            (INDEX, '| 00 | `01` |', '| 00 | `02` |', 'transpose'),
-            (WP, '> Upstream: `00`', '> Upstream: `02`', 'header/dependency'),
-            (WP, '**Upstream:** `00`', '**Upstream:** `02`', 'forward mismatch'),
-            (WP, '**Downstream:** `02`', '**Downstream:** `00`', 'downstream mismatch'),
-            (SEQUENCE, '00, 01, 02.', '02, 01, 00.', 'producer ordered later'),
-            (SEQUENCE, '00, 01, 02.', '00, 01, 01.', 'serial node set'),
-            (SEQUENCE, 'All 3 active', 'All 4 active', 'node count'),
-            (SEQUENCE, 'edges: 2.', 'edges: 3.', 'edge count'),
-            (WP, '## 8. Section', '## 7. Section', 'duplicate numbered section'),
-            (WP, '## 8. Section', '## Missing', 'mandatory sections'),
-            (WP, '| [WP-01.90](#rule-wp-01.90) | Evidence is required |', '', 'owned .90'),
-            (WP, '| [WP-01.90](#rule-wp-01.90) | Evidence is required |',
-             '| [WP-01.90](#rule-wp-01.90) | One |\n| [WP-01.90](#rule-wp-01.90) | Two |', 'owned .90'),
-            (SEQUENCE, 'WP42.11 precedes 42.10.', '', 'commerce substep'),
-            (INDEX, '| 20 | Future | — |', '| 20 | Future | `01` |', 'inactive phase edges'),
-            (SEQUENCE, '| 02 | `01` |', '| 02 | `20` |', 'inactive producer'),
-            ('docs/planning/work-packages/20-future.md', 'No active edges.', '> Upstream: `01`', 'inactive package edges'),
-            ('docs/planning/work-packages/20-future.md', 'No active edges.', '> Downstream: `01`', 'inactive package edges'),
+            ('unknown task', lambda d: d['tasks'][1]['start'][0].update(task='GOV.99')),
+            ('invalid type', lambda d: d['tasks'][1]['start'][0].update(type='unknown')),
+            ('lacks need/why', lambda d: d['tasks'][1]['start'][0].update(why='')),
+            ('not mapped', lambda d: d['tasks'][0].update(obligations=[{'ref':'P2-018','part':'fixture'}])),
+            ('duplicate identifier', lambda d: d['tasks'].append(deepcopy(d['tasks'][0]))),
+            ('duplicate identifier', lambda d: d['lanes'].append(deepcopy(d['lanes'][0]))),
+            ('unknown repository', lambda d: d['repositories'][0].update(id='ArcNotes')),
+            ('deadlock', lambda d: d['tasks'][0]['start'].append({'type':'artifact','task':'GOV.02','need':'cycle','why':'cycle'})),
         ]
-        for path, old, new, diagnostic in cases:
+        for diagnostic, mutate in cases:
             with self.subTest(diagnostic=diagnostic):
-                docs = dict(self.docs); self.assertIn(old, docs[path]); docs[path] = docs[path].replace(old, new)
-                self.assertIn(diagnostic, repr(graph(self.root, docs)['errors']))
-        docs = {**self.docs, 'docs/planning/work-packages/01-duplicate.md': self.docs[WP]}
-        self.assertIn('duplicate package identifier', repr(graph(self.root, docs)['errors']))
+                data=deepcopy(self.graph_data); mutate(data); self.write(GRAPH_REL,json.dumps(data))
+                self.assertIn(diagnostic,repr(graph(self.root,self.docs)['errors']))
+        self.write(GRAPH_REL,json.dumps(self.graph_data))
+        for name in design_views(Graph(self.root)):
+            docs=dict(self.docs); docs[name] = docs[name].replace(BEGIN, BEGIN+'\nDrift', 1) if BEGIN in docs[name] else docs[name]+'\nDrift\n'
+            self.assertIn('generated view drift',repr(graph(self.root,docs)['errors']))
+        for old,new,diagnostic in [
+            ('## 8. Section','## 7. Section','duplicate numbered section'),
+            ('## 8. Section','## Missing','mandatory sections'),
+            ('| [WP-01.90](#rule-wp-01.90) | Evidence is required |','','owned .90')]:
+            docs=dict(self.docs);docs[WP]=docs[WP].replace(old,new)
+            self.assertIn(diagnostic,repr(graph(self.root,docs)['errors']))
+        docs=dict(self.docs);docs[policy.COVERAGE]=docs[policy.COVERAGE].replace('`01`','`20`')
+        with self.assertRaisesRegex(ValueError,'invalid invariant owner'):
+            policy.invariants(self.root,docs,self.pin['commit'],set(graph(self.root,self.docs)['activePackages']))
+
+    def test_substitute_requires_real_producer_and_every_consumer(self):
+        data=deepcopy(self.graph_data)
+        data['substitutes']=[{'id':'SUB-fixture','class':'value','standsInFor':'Value','contract':'Fixture',
+            'proves':'Parsing','realProducer':['GOV.01'],'replacedBy':'GOV.00','realEvidence':'Actual result'}]
+        data['tasks'][2]['substitutes']=['SUB-fixture']
+        self.write(GRAPH_REL,json.dumps(data))
+        errors=repr(graph(self.root,self.docs)['errors'])
+        self.assertIn('does not depend on real producer',errors)
+        self.assertIn('does not depend on consumer',errors)
 
 
 if __name__ == '__main__':

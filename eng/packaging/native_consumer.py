@@ -140,11 +140,11 @@ internal static unsafe partial int {family}(uint* major, uint* minor);
                          "Consumer restored different candidate bytes: " + row["id"])
 
     # The installed RID target must reject an incompatible RID before compilation.
-    packages.run("dotnet", "msbuild", str(project), "-t:RequireArcMediaNativeRid", "-p:RuntimeIdentifier=win-arm64",
+    packages.run("dotnet", "msbuild", str(project), "-t:Require_arc_image_Rid", "-p:RuntimeIdentifier=win-arm64",
                  cwd=consumer, env=env, expected_error="requires RuntimeIdentifier=win-x64")
 
     # Fresh processes ensure the loader cannot reuse a previously loaded image after a negative mutation.
-    for name in ["ArcMediaNative.dll", "avcodec-63.dll"]:
+    for name in ["ArcImageNative.dll", "msvcp140.dll"]:
         original = (published / name).resolve()
         backup = (published / (name + ".withheld")).resolve()
         packages.require(original.is_relative_to(published.resolve()) and backup.is_relative_to(published.resolve()), "Unsafe fixture move.")
@@ -156,7 +156,7 @@ internal static unsafe partial int {family}(uint* major, uint* minor);
         finally:
             backup.rename(original)
         print("PASS: missing " + name + " cannot fall back to the working directory.", flush=True)
-    original = published / "ArcMediaNative.dll"
+    original = published / "ArcImageNative.dll"
     content = original.read_bytes()
     try:
         original.write_bytes(content + b"tamper")
@@ -212,7 +212,7 @@ def c_consumer(root, published, entries, version, env, expected_suffix):
         + ' /Fe:"' + str(published / "ConsumerC.exe") + '" /link ' + ' '.join(libraries) + '\nexit /b %errorlevel%\n', encoding="utf-8")
     packages.run("cmd", "/d", "/c", str(command), cwd=root, env=env)
     execute(published / "ConsumerC.exe", root, env)
-    print("PASS: independent C17 caller linked packaged headers/import libraries and executed all four ABIs.", flush=True)
+    print("PASS: independent C17 caller linked packaged headers/import libraries and executed the retained image ABI.", flush=True)
 
 
 if __name__ == "__main__":

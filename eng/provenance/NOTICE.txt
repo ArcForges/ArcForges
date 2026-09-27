@@ -16,31 +16,25 @@ Notice scope: source
 Apache License, Version 2.0. Copyright notices remain in the individual source records.
 Apache License, Version 2.0. Copyright notices remain in the individual source records.
 
-contracts-provenance-tools-r1
+contracts-provenance-tools-r2
 Source: https://github.com/ArcForges/Contracts @ 18a970c67c463f1971ca05773b80f31a1b1ba1a7
 Material licence: Apache-2.0
 Notice scope: source
 Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.
 DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.
+DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.
 Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.
 DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.
+DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.
 
-design-policy-export-r2
-Source: https://github.com/ArcForges/ArcForges-Design @ 5322d698a1b650a52a5a139d986dd85b00b48581
+design-policy-export-r3
+Source: https://github.com/ArcForges/ArcForges-Design @ 7aa84e69ad6808461b34181de261fab03bede076
 Material licence: AGPL-3.0-only
 Notice scope: source
 Copyright ArcForges contributors. AGPL-3.0-only.
 Copyright ArcForges contributors. AGPL-3.0-only.
 
-native-amd-amf-r3
-Source: https://github.com/GPUOpen-LibrariesAndSDKs/AMF @ eadd00804d5f7e5cd8c85d540073198312870776
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/amd-amf-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/amd-amf-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-bzip2-r3
+native-bzip2-r4
 Source: https://sourceware.org/git/bzip2.git @ 6a8690fc8d26c815e798c588f796eabe9d684cf0
 Material licence: bzip2-1.0.6
 Notice scope: packages
@@ -48,7 +42,7 @@ Original copyright and full applicable terms are retained in licenses/bzip2-x64-
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/bzip2-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-expat-r3
+native-expat-r4
 Source: https://github.com/libexpat/libexpat @ c61098da494eea1cbd091118118dcee417faacea
 Material licence: MIT
 Notice scope: packages
@@ -56,33 +50,7 @@ Original copyright and full applicable terms are retained in licenses/expat-x64-
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/expat-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-ffmpeg-bin2c-r3
-Source: https://github.com/ffmpeg/ffmpeg @ bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/ffmpeg-bin2c-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/ffmpeg-bin2c-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-ffmpeg-r3
-Source: https://github.com/ffmpeg/ffmpeg @ bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa
-Material licence: LGPL-2.1-or-later
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/ffmpeg-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/ffmpeg-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-ffnvcodec-r3
-Source: https://github.com/FFmpeg/nv-codec-headers @ e844e5b26f46bb77479f063029595293aa8f812d
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/ffnvcodec-x64-windows.txt.
-Additional full notices: licenses/provenance/ffnvcodec-dynlink_cuda.txt, licenses/provenance/ffnvcodec-dynlink_cuviddec.txt, licenses/provenance/ffnvcodec-dynlink_loader.txt, licenses/provenance/ffnvcodec-dynlink_nvcuvid.txt, licenses/provenance/ffnvcodec-nvEncodeAPI.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/ffnvcodec-x64-windows.txt.
-Additional full notices: licenses/provenance/ffnvcodec-dynlink_cuda.txt, licenses/provenance/ffnvcodec-dynlink_cuviddec.txt, licenses/provenance/ffnvcodec-dynlink_loader.txt, licenses/provenance/ffnvcodec-dynlink_nvcuvid.txt, licenses/provenance/ffnvcodec-nvEncodeAPI.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-fmt-r3
+native-fmt-r4
 Source: https://github.com/fmtlib/fmt @ 1be298e1bd68957e4cd352e1f676f00e07dcfb57
 Material licence: MIT
 Notice scope: packages
@@ -90,7 +58,7 @@ Original copyright and full applicable terms are retained in licenses/fmt-x64-wi
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/fmt-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-imath-r3
+native-imath-r4
 Source: https://github.com/AcademySoftwareFoundation/Imath @ 1e480d11cb98b032a2dece9b9a8730512effc7f6
 Material licence: BSD-3-Clause
 Notice scope: packages
@@ -98,7 +66,7 @@ Original copyright and full applicable terms are retained in licenses/imath-x64-
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/imath-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-libdeflate-r3
+native-libdeflate-r4
 Source: https://github.com/ebiggers/libdeflate @ c8c56a20f8f621e6a966b716b31f1dedab6a41e3
 Material licence: MIT
 Notice scope: packages
@@ -106,7 +74,7 @@ Original copyright and full applicable terms are retained in licenses/libdeflate
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/libdeflate-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-libjpeg-turbo-r3
+native-libjpeg-turbo-r4
 Source: https://github.com/libjpeg-turbo/libjpeg-turbo @ c85e6b905bf237038faa936dab160ebfc5da0344
 Material licence: BSD-3-Clause AND IJG AND Zlib
 Notice scope: packages
@@ -116,7 +84,7 @@ Standard vcpkg triplet definitions retain Microsoft Corporation copyright and th
 Original copyright and full applicable terms are retained in licenses/libjpeg-turbo-x64-windows-static-md.txt.
 Additional full notices: licenses/provenance/libjpeg-turbo-ijg.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-liblzma-r3
+native-liblzma-r4
 Source: https://github.com/tukaani-project/xz @ 4b73f2ec19a99ef465282fbce633e8deb33691b3
 Material licence: 0BSD
 Notice scope: packages
@@ -126,7 +94,7 @@ Standard vcpkg triplet definitions retain Microsoft Corporation copyright and th
 Original copyright and full applicable terms are retained in licenses/liblzma-x64-windows-static-md.txt.
 Additional full notices: licenses/provenance/liblzma-0bsd.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-libpng-r3
+native-libpng-r4
 Source: https://github.com/pnggroup/libpng @ 3061454d980de7d53608f594194cfac722721d2a
 Material licence: libpng-2.0
 Notice scope: packages
@@ -134,31 +102,7 @@ Original copyright and full applicable terms are retained in licenses/libpng-x64
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/libpng-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-libusb-r3
-Source: https://github.com/libusb/libusb @ 87a55632db62c9bdc58cd31d3ccfa673f1bb017f
-Material licence: LGPL-2.1-or-later
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/libusb-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/libusb-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-libvpl-r3
-Source: https://github.com/intel/libvpl @ d77f9195cf495b937631607333288fd917ae8939
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/libvpl-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/libvpl-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-miniaudio-r3
-Source: https://github.com/mackron/miniaudio @ 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d
-Material licence: MIT-0
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/miniaudio-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/miniaudio-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-minizip-ng-r3
+native-minizip-ng-r4
 Source: https://github.com/zlib-ng/minizip-ng @ cf4b58e17ebdcff8c6fbce1a9c3af5bf0485423c
 Material licence: Zlib
 Notice scope: packages
@@ -166,7 +110,7 @@ Original copyright and full applicable terms are retained in licenses/minizip-ng
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/minizip-ng-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-opencolorio-r3
+native-opencolorio-r4
 Source: https://github.com/AcademySoftwareFoundation/OpenColorIO @ c52966a6677723d5bd2dbef0ccec3fed9cbc3790
 Material licence: BSD-3-Clause AND BSD-2-Clause AND LicenseRef-ICC-Software-0.2 AND LicenseRef-SunSoft-1994
 Notice scope: packages
@@ -176,7 +120,7 @@ Standard vcpkg triplet definitions retain Microsoft Corporation copyright and th
 Original copyright and full applicable terms are retained in licenses/opencolorio-x64-windows-static-md.txt.
 Additional full notices: licenses/provenance/opencolorio-icc-reader.txt, licenses/provenance/opencolorio-icc-profile-header.txt, licenses/provenance/opencolorio-xxhash.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-openexr-r3
+native-openexr-r4
 Source: https://github.com/AcademySoftwareFoundation/openexr @ 777d231a179de1711d2a942810d9559216ab3f4c
 Material licence: BSD-3-Clause
 Notice scope: packages
@@ -184,7 +128,7 @@ Original copyright and full applicable terms are retained in licenses/openexr-x6
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/openexr-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-openimageio-r3
+native-openimageio-r4
 Source: https://github.com/AcademySoftwareFoundation/OpenImageIO @ cfff4af80854f9fa4035929d64308cd253700bc1
 Material licence: Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense
 Notice scope: packages
@@ -194,7 +138,7 @@ Standard vcpkg triplet definitions retain Microsoft Corporation copyright and th
 Original copyright and full applicable terms are retained in licenses/openimageio-x64-windows-static-md.txt.
 Additional full notices: licenses/provenance/openimageio-third-party.txt, licenses/provenance/openimageio-function-view-ncsa.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-openjph-r3
+native-openjph-r4
 Source: https://github.com/aous72/OpenJPH @ c68064d0e4cad8e96bab9a068f6cc4e7799744fc
 Material licence: BSD-2-Clause
 Notice scope: packages
@@ -202,27 +146,7 @@ Original copyright and full applicable terms are retained in licenses/openjph-x6
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/openjph-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-opentimelineio-r3
-Source: https://github.com/AcademySoftwareFoundation/OpenTimelineIO @ 44236713c1db295a6ffc66189ae98dbdfd0cb9c4
-Material licence: Apache-2.0
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/opentimelineio-x64-windows-static-md.txt.
-Additional full notices: licenses/provenance/opentimelineio-notice.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/opentimelineio-x64-windows-static-md.txt.
-Additional full notices: licenses/provenance/opentimelineio-notice.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-pkgconf-r3
-Source: https://github.com/pkgconf/pkgconf @ 048d0a4f8dffb8e14fc9e9a595d2e9a503c4813b
-Material licence: LicenseRef-pkgconf-Permissive
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/pkgconf-x64-windows.txt.
-Additional full notices: licenses/provenance/pkgconf-authors.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/pkgconf-x64-windows.txt.
-Additional full notices: licenses/provenance/pkgconf-authors.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-pystring-r3
+native-pystring-r4
 Source: https://github.com/imageworks/pystring @ 1922c8f2b48e3beb6831c27b4811b58995e986cf
 Material licence: BSD-3-Clause
 Notice scope: packages
@@ -230,15 +154,7 @@ Original copyright and full applicable terms are retained in licenses/pystring-x
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/pystring-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-rapidjson-r3
-Source: https://github.com/Tencent/rapidjson @ 24b5e7a8b27f42fa16b96fc70aade9106cf7102f
-Material licence: MIT AND BSD-3-Clause
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/rapidjson-x64-windows-static-md.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/rapidjson-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-robin-map-r3
+native-robin-map-r4
 Source: https://github.com/Tessil/robin-map @ bd14e6830a1474fed9d2d03f5c3b0683d818d540
 Material licence: MIT
 Notice scope: packages
@@ -246,7 +162,7 @@ Original copyright and full applicable terms are retained in licenses/robin-map-
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/robin-map-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-tiff-r3
+native-tiff-r4
 Source: https://gitlab.com/libtiff/libtiff @ d01a94be176f5f6a87f7ee1c0b32e65416aa2b4d
 Material licence: libtiff AND LicenseRef-Berkeley-LZW-Rescinded
 Notice scope: packages
@@ -256,7 +172,7 @@ Standard vcpkg triplet definitions retain Microsoft Corporation copyright and th
 Original copyright and full applicable terms are retained in licenses/tiff-x64-windows-static-md.txt.
 Additional full notices: licenses/provenance/berkeley-bsd-amendment.pdf. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-vcpkg-cmake-config-r3
+native-vcpkg-cmake-config-r4
 Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
 Material licence: MIT
 Notice scope: packages
@@ -264,15 +180,7 @@ Original copyright and full applicable terms are retained in licenses/vcpkg-cmak
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/vcpkg-cmake-config-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-vcpkg-cmake-get-vars-r3
-Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/vcpkg-cmake-get-vars-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/vcpkg-cmake-get-vars-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-vcpkg-cmake-r3
+native-vcpkg-cmake-r4
 Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
 Material licence: MIT
 Notice scope: packages
@@ -280,43 +188,7 @@ Original copyright and full applicable terms are retained in licenses/vcpkg-cmak
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/vcpkg-cmake-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-vcpkg-msbuild-r3
-Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/vcpkg-msbuild-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/vcpkg-msbuild-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-vcpkg-pkgconfig-get-modules-r3
-Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
-Material licence: MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/vcpkg-pkgconfig-get-modules-x64-windows.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/vcpkg-pkgconfig-get-modules-x64-windows.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-vcpkg-tool-meson-r3
-Source: https://github.com/mesonbuild/meson @ 75ef08140346d9a058546493036a31431774eb7a
-Material licence: Apache-2.0
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/vcpkg-tool-meson-x64-windows.txt.
-Additional full notices: licenses/provenance/vcpkg-tool-meson-meson-apache.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/vcpkg-tool-meson-x64-windows.txt.
-Additional full notices: licenses/provenance/vcpkg-tool-meson-meson-apache.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-vulkan-headers-r3
-Source: https://github.com/KhronosGroup/Vulkan-Headers @ e3b1eec08173d6b825cd3ac88c885a63b621504a
-Material licence: Apache-2.0 AND MIT
-Notice scope: packages
-Original copyright and full applicable terms are retained in licenses/vulkan-headers-x64-windows.txt.
-Additional full notices: licenses/provenance/vulkan-headers-apache.txt, licenses/provenance/vulkan-headers-mit.txt.
-Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-Original copyright and full applicable terms are retained in licenses/vulkan-headers-x64-windows.txt.
-Additional full notices: licenses/provenance/vulkan-headers-apache.txt, licenses/provenance/vulkan-headers-mit.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
-
-native-yaml-cpp-r3
+native-yaml-cpp-r4
 Source: https://github.com/jbeder/yaml-cpp @ 56e3bb550c91fd7005566f19c079cb7a503223cf
 Material licence: MIT
 Notice scope: packages
@@ -326,7 +198,7 @@ Standard vcpkg triplet definitions retain Microsoft Corporation copyright and th
 Original copyright and full applicable terms are retained in licenses/yaml-cpp-x64-windows-static-md.txt.
 Additional full notices: licenses/provenance/yaml-cpp-dragonbox.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-zlib-r3
+native-zlib-r4
 Source: https://github.com/madler/zlib @ da607da739fa6047df13e66a2af6b8bec7c2a498
 Material licence: Zlib
 Notice scope: packages
@@ -334,7 +206,7 @@ Original copyright and full applicable terms are retained in licenses/zlib-x64-w
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/zlib-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
-native-zstd-r3
+native-zstd-r4
 Source: https://github.com/facebook/zstd @ f8745da6ff1ad1e7bab384bd1f9d742439278e99
 Material licence: BSD-3-Clause
 Notice scope: packages
@@ -353,13 +225,11 @@ This product includes software developed at Pixar (http://www.pixar.com/).
 Copyright Contributors to the OpenTimelineIO project. All rights reserved.
 This product includes software developed at Pixar (http://www.pixar.com/).
 
-otio-python-optional-patch-r1
-Source: https://github.com/AcademySoftwareFoundation/OpenTimelineIO @ 44236713c1db295a6ffc66189ae98dbdfd0cb9c4
-Material licence: Apache-2.0
+plan-delivery-graph-r1
+Source: https://github.com/ArcForges/Plan @ c6b39898014135d1a12052522a9afe460c10da8a
+Material licence: AGPL-3.0-only
 Notice scope: source
-Copyright Contributors to the OpenTimelineIO project. All rights reserved.
-This product includes software developed at Pixar (http://www.pixar.com/).
-ArcForges change: omit the pybind11 requirement when OTIO_PYTHON_INSTALL is disabled.
-Copyright Contributors to the OpenTimelineIO project. All rights reserved.
-This product includes software developed at Pixar (http://www.pixar.com/).
-ArcForges change: omit the pybind11 requirement when OTIO_PYTHON_INSTALL is disabled.
+Copyright ArcForges contributors. AGPL-3.0-only; full text in LICENSE.
+DesktopPlatform adaptation: self-contained Design read-only graph validator and generated-view comparison.
+Copyright ArcForges contributors. AGPL-3.0-only; full text in LICENSE.
+DesktopPlatform adaptation: self-contained Design read-only graph validator and generated-view comparison.

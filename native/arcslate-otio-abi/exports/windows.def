@@ -1,6 +1,0 @@
-; SPDX-License-Identifier: AGPL-3.0-only
-LIBRARY "ArcSlateOtioNative"
-EXPORTS
-    arc_otio_get_abi_version
-    arc_otio_get_build_info
-    arc_otio_get_last_error

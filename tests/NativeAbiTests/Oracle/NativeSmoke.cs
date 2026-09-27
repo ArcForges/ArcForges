@@ -17,20 +17,10 @@ internal static unsafe class NativeSmoke
     private const int BufferTooSmall = 1;
     private const int InvalidArgument = -1;
 
-    public static NativeProbeResult VerifyMedia() => Verify(
-        "ArcMediaNative", ArcMediaNative.GetAbiVersion, ArcMediaNative.GetBuildInfo, ArcMediaNative.GetLastError);
-
-    public static NativeProbeResult VerifyOtio() => Verify(
-        "ArcSlateOtioNative", ArcSlateNative.GetOtioAbiVersion, ArcSlateNative.GetOtioBuildInfo, ArcSlateNative.GetOtioLastError);
-
-    public static NativeProbeResult VerifyColor() => Verify(
-        "ArcSlateColorNative", ArcSlateNative.GetColorAbiVersion, ArcSlateNative.GetColorBuildInfo, ArcSlateNative.GetColorLastError);
-
     public static NativeProbeResult VerifyImage() => Verify(
-        "ArcSlateImageNative", ArcSlateNative.GetImageAbiVersion, ArcSlateNative.GetImageBuildInfo, ArcSlateNative.GetImageLastError);
+        "ArcImageNative", ArcImageNative.GetAbiVersion, ArcImageNative.GetBuildInfo, ArcImageNative.GetLastError);
 
-    public static IReadOnlyList<NativeProbeResult> VerifyAll() =>
-        [VerifyMedia(), VerifyOtio(), VerifyColor(), VerifyImage()];
+    public static IReadOnlyList<NativeProbeResult> VerifyAll() => [VerifyImage()];
 
     private static unsafe NativeProbeResult Verify(
         string libraryName,

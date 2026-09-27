@@ -17,3 +17,7 @@ Reviewed implementation changes to an existing DesktopPlatform project use `proj
 WP02.04 records the reviewed native CMake changes for build-identity generation and explicit target
 dependencies, under Design commit `257f77ce8d476a4efd8746fc0b7e4e6358c32a67`. Original snapshots and
 all unrelated project blobs remain checked.
+
+## Reduced-family adoption (GOV.18)
+
+`current.json`, `native.json`, `directories.json` and the original source identities are historical accepted snapshot evidence, filtered to retained repository owners for audit. They do not authorize restoring deleted families. `eng/policy/reconciliation/active-projects.json` is the reviewed current DesktopPlatform path/blob allowlist; each producer appends or updates only its own project inputs in coordination with licence/runtime inventories. CI still checks historical receipt/tree identities, while current DesktopPlatform checks compare every actual project against the active inventory and reject retired native roots. Published historical candidate identities are never rewritten to describe unpublished source.

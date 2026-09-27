@@ -1,6 +1,0 @@
-; SPDX-License-Identifier: AGPL-3.0-only
-LIBRARY "ArcSlateImageNative"
-EXPORTS
-    arc_image_get_abi_version
-    arc_image_get_build_info
-    arc_image_get_last_error

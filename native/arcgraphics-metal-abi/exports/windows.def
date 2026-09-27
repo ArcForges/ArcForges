@@ -1,6 +1,0 @@
-; SPDX-License-Identifier: AGPL-3.0-only
-LIBRARY "ArcGraphicsMetalNative"
-EXPORTS
-    arc_metal_get_abi_version
-    arc_metal_get_build_info
-    arc_metal_get_last_error

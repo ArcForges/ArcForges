@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "id": "contracts-provenance-tools-r2",
+  "kind": "source",
+  "sourceRepository": "https://github.com/ArcForges/Contracts",
+  "sourceCommit": "18a970c67c463f1971ca05773b80f31a1b1ba1a7",
+  "sourcePaths": [
+    "eng/check_provenance.py",
+    "tests/tooling/test_provenance.py"
+  ],
+  "licence": {
+    "spdx": "Apache-2.0",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "eng/check_provenance.py",
+        "sha256": "c9e888d9845bd479c36439922c26038f29807214740ad7c467dfb3bb414a3024",
+        "finding": "The individual Python file declares SPDX-License-Identifier: Apache-2.0."
+      },
+      {
+        "path": "tests/tooling/test_provenance.py",
+        "sha256": "a9b7c9deb356133deed58adc0c7b9470fb89d7582d2d3a165cc33fb0c6705363",
+        "finding": "The individual Python file declares SPDX-License-Identifier: Apache-2.0."
+      }
+    ],
+    "scope": "Copy the independent Apache provenance checker and its failure tests into the AGPL owner. Preserve the Apache headers and full licence. No AGPL source flows into the public boundary.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.",
+    "DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.",
+    "DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set."
+  ],
+  "targets": [
+    {
+      "path": "eng/check_provenance.py",
+      "sha256": "6305caeb09a5f09fbe4e16fdf2e40b5d6318185b09564bd32b6dc8b34db41568",
+      "normalization": "lf"
+    },
+    {
+      "path": "tests/tooling/test_provenance.py",
+      "sha256": "14e14c8f325ab365fd3af6b55144ceb9dd415b9b8ef03ad9558dae5963f9493e",
+      "normalization": "lf"
+    }
+  ],
+  "artifactTargets": [],
+  "disposition": "Improve",
+  "verification": {
+    "kind": "transformation",
+    "command": "python eng/check_provenance.py --owner DesktopPlatform",
+    "expected": "Copy the independent Apache provenance checker and its failure tests into the AGPL owner. Preserve the Apache headers and full licence. No AGPL source flows into the public boundary. Exact reviewed target digests and immutable history must match.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.\nDesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.\nDesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.",
+    "files": [
+      "eng/provenance/NOTICE.txt",
+      "third-party/contracts/LICENSE.txt"
+    ],
+    "distribution": "source",
+    "reason": "Source provenance summary supplements the retained original full legal text."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": null,
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "Codex, acting under the repository maintainer's implementation and review authorization",
+    "reviewedOn": "2026-09-27",
+    "decision": "approved",
+    "rationale": "Copy the independent Apache provenance checker and its failure tests into the AGPL owner. Preserve the Apache headers and full licence. No AGPL source flows into the public boundary. New successor for P2-019/GOV.17 explicit native target retirement only; all original Apache source identity/licence evidence retained. Removed ArcNotes/ArcSlate owner entries follow current retained repository set.",
+    "baselineCommit": "e5ce94221c13d0014781a760c0865b942350be4d",
+    "reconciliation": false
+  },
+  "supersedes": "contracts-provenance-tools-r1"
+}

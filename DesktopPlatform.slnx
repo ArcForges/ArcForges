@@ -26,13 +26,7 @@
   <Project Path="tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj" />
   <Folder Name="/src/Native/">
     <Project Path="src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Media/ArcForges.Native.Media.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Colour/ArcForges.Native.Colour.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Otio/ArcForges.Native.Otio.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Media.Runtime.win-x64/ArcForges.Native.Media.Runtime.win-x64.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Colour.Runtime.win-x64/ArcForges.Native.Colour.Runtime.win-x64.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj" />
-    <Project Path="src/Native/ArcForges.Native.Otio.Runtime.win-x64/ArcForges.Native.Otio.Runtime.win-x64.csproj" />
   </Folder>
 </Solution>

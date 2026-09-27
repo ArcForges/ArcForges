@@ -1,17 +1,17 @@
 # NuGet package production
 
-`packages.json` admits ten packages in one exact-version release set:
+`packages.json` admits four packages in one exact-version release set:
 
 | Packages | Delivered content |
 |---|---|
 | `ArcForges.Build.Policy` | Portable build defaults and central-version/lock enforcement; no runtime dependencies |
 | `ArcForges.Native.Abstractions` | Shared status, ABI version and error values; bounded error handling and native loader |
-| `ArcForges.Native.Media`, `.Colour`, `.Image`, `.Otio` | Source-generated C# bindings for every existing entry point |
-| Each capability's `.Runtime.win-x64` | Actual owned DLL, full non-system DLL closure, CRT, C headers, import library and provenance |
+| `ArcForges.Native.Image` | Source-generated C# bindings for every existing entry point |
+| Image `.Runtime.win-x64` | Actual owned DLL, full non-system DLL closure, CRT, C headers, import library and provenance |
 
-The four existing ABIs provide version, dependency build-information and thread-local error queries.
-Media processing, image processing, timeline editing and GPU operations are not implemented by these
-bindings. Shared placeholders, the internal ABI probe project and macOS Metal are excluded from this
+The retained image ABI provides version, dependency build-information and thread-local error queries.
+Image decoding and sandbox containment are not implemented by these
+bindings. Shared placeholders and the internal ABI probe project are excluded from this
 Windows release. See [scope and validation evidence](../../docs/native-package-release.md).
 
 ## Local and PR candidates
@@ -96,7 +96,7 @@ available. See [NuGet publication status](https://learn.microsoft.com/en-us/nuge
 Versions are immutable. `1.0.0-ci.1` cannot be renamed/promoted to `1.0.0`: the latter is a new candidate
 and must run through all gates. Local builds and PR candidates never upload to the public feed.
 Duplicate versions fail; there is deliberately no `--skip-duplicate`. NuGet cannot atomically publish
-ten packages. If upload partially succeeds, inspect the registry and retained manifest and re-run all
+four packages. If upload partially succeeds, inspect the registry and retained manifest and re-run all
 jobs to allocate a new complete version; do not promote a partial release set or retry it blindly.
 Retrying a diagnosed failed publication (re-run failed jobs) uses the retained candidate and its version;
 re-running all jobs deliberately builds and publishes a new candidate. A re-run always executes the
@@ -115,8 +115,8 @@ The example version below is illustrative, not a claim of public availability:
   <PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="ArcForges.Build.Policy" Version="1.0.0-ci.10.1" />
-    <PackageVersion Include="ArcForges.Native.Media" Version="1.0.0-ci.10.1" />
-    <PackageVersion Include="ArcForges.Native.Media.Runtime.win-x64" Version="1.0.0-ci.10.1" />
+    <PackageVersion Include="ArcForges.Native.Image" Version="1.0.0-ci.10.1" />
+    <PackageVersion Include="ArcForges.Native.Image.Runtime.win-x64" Version="1.0.0-ci.10.1" />
   </ItemGroup>
 </Project>
 ```
@@ -132,21 +132,21 @@ The example version below is illustrative, not a claim of public availability:
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ArcForges.Build.Policy" PrivateAssets="all" />
-    <PackageReference Include="ArcForges.Native.Media" />
-    <PackageReference Include="ArcForges.Native.Media.Runtime.win-x64" />
+    <PackageReference Include="ArcForges.Native.Image" />
+    <PackageReference Include="ArcForges.Native.Image.Runtime.win-x64" />
   </ItemGroup>
 </Project>
 ```
 
 ```csharp
-using ArcForges.Native.Media;
-Console.WriteLine(MediaAbi.GetAbiVersion());
-Console.WriteLine(MediaAbi.GetBuildInfo());
-Console.WriteLine(MediaAbi.GetLastError());
+using ArcForges.Native.Image;
+Console.WriteLine(ImageAbi.GetAbiVersion());
+Console.WriteLine(ImageAbi.GetBuildInfo());
+Console.WriteLine(ImageAbi.GetLastError());
 ```
 
 The managed package pulls the exact same `Native.Abstractions` version; the RID package also requires
-its exact managed version. Add equivalent pairs for Colour, Image or Otio as needed. Commit the lock
+its exact managed version. Retired Media, Colour and Otio versions remain historical and receive no new publication. Commit the lock
 created by the first restore; CI restores with `--locked-mode`. Consumers do not build CMake/vcpkg.
 
 The native loader validates the per-library app-local manifest and DLL hashes before using absolute
@@ -154,8 +154,7 @@ paths, with only DLL-directory dependencies and Windows system libraries allowed
 fall back to PATH or the working directory. Keep all runtime files together when publishing. To replace
 an upstream DLL with a compatible modified build, update its hashes in each affected app-local manifest;
 there is no secret or vendor signature required by this check. The product installer owns application
-directory write permissions, signing, upgrades and rollback. Source archives and recipes ship with the
-Media runtime; every runtime includes its upstream notices and SPDX records, including static inputs.
+directory write permissions, signing, upgrades and rollback. The Image runtime includes its upstream notices, recipes and SPDX records, including static inputs.
 
 Each owner commits `global.json` and package locks and restores locked in CI. Build policy is a direct,
 private build dependency and never leaks as a transitive runtime dependency. Contracts publishes its own

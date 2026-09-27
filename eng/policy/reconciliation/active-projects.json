@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "authority": "GOV.18",
+  "projects": [
+    {
+      "path": "CMakeLists.txt",
+      "blob": "77177ca01ea3406e2caa6048ffe094d54f5734bf"
+    },
+    {
+      "path": "native/CMakeLists.txt",
+      "blob": "f223097639a9bf7398a843f3c478e121ea40d05b"
+    },
+    {
+      "path": "native/arcimage-abi/CMakeLists.txt",
+      "blob": "58f6e17fc12468f2966f11c662be94a47c79ec63"
+    },
+    {
+      "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
+      "blob": "0bb08be2c7631e3771239e36a71a9ea31dc19f39"
+    },
+    {
+      "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
+      "blob": "26d6279f18250960eafcfd24876f215c7f151bee"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
+      "blob": "02ff1201122fde30678a74607a9173e59ac0b8db"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
+      "blob": "3772961605c198c4e204dec02af39b607dd7a615"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj",
+      "blob": "5880b50b0f64f5a64b450350b1a13795278b3e6b"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Desktop.Preview/ArcForges.Desktop.Preview.csproj",
+      "blob": "19f944d4ff43ef37cc7559d5f4f16ae6581163d8"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Desktop.RichContent/ArcForges.Desktop.RichContent.csproj",
+      "blob": "44ca1edfc5e7063cd769ae4d51853e0e7ed35527"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj",
+      "blob": "87793aa3addd8366b664f4494520c9a97c7ca514"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj",
+      "blob": "aab03ef21b99098dec9b91be4bfb61c26b1d6bac"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+      "blob": "d788d3fc83da121b960f1e78132b838dfc278368"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",
+      "blob": "4296a8d469d84de3d133c0dd56385baf800dbf77"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
+      "blob": "2240e37c65a0756ab39187fd6cc6d463443e30fc"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
+      "blob": "6b4a9d54a67da08b17f2ae1d5842ac05d712d15d"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
+      "blob": "87fa93b3448a701333fc2a74219b8e320ba0d65d"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
+      "blob": "63f22e07804e1b9af3a7955fed864187a14366c4"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
+      "blob": "32742a65b4e25d04b40e0dfb519ef3201359c6ba"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
+      "blob": "8ce75f3a4ee0f369121196de6095fb8b87be2d50"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
+      "blob": "9132f77575e4d1940f4648f7f208d86cf6087bca"
+    },
+    {
+      "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+      "blob": "f1c0f3c9c1eed1a1e286ce1449f38bd16c2a3d6b"
+    },
+    {
+      "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+      "blob": "87b5bfceadd816497a18225b52a1149c53355dbe"
+    }
+  ]
+}

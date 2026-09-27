@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "plan-delivery-graph-r1",
+  "kind": "source",
+  "sourceRepository": "https://github.com/ArcForges/Plan",
+  "sourceCommit": "c6b39898014135d1a12052522a9afe460c10da8a",
+  "sourcePaths": [
+    "tools/delivery.py",
+    "LICENSE"
+  ],
+  "licence": {
+    "spdx": "AGPL-3.0-only",
+    "category": "agpl-compatible",
+    "evidence": [
+      {
+        "path": "tools/delivery.py",
+        "sha256": "8e9b8683bf3489721cb6302dc262e4ecd73365a9f6a8666e81b301181ac86a36",
+        "finding": "First-party ArcForges authored delivery implementation; no third-party notice or alternate per-file licence. Reviewed together with the AGPL repository licence."
+      },
+      {
+        "path": "LICENSE",
+        "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+        "finding": "Plan is licensed under GNU Affero General Public License version3, matching the receiving AGPL boundary."
+      }
+    ],
+    "scope": "Adapt only pure graph validation, schedule analysis and Design Markdown render functions from the same-owner Plan tool. No readiness, claims, networking, Git mutations, build-slot code or adjacent-source imports are copied. Wrapper validates closed identities and required package evidence; zero-work schedule ratio is guarded. AGPL source remains in AGPL DesktopPlatform.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Copyright ArcForges contributors. AGPL-3.0-only; full text in LICENSE.",
+    "DesktopPlatform adaptation: self-contained Design read-only graph validator and generated-view comparison."
+  ],
+  "targets": [
+    {
+      "path": "eng/design_graph.py",
+      "sha256": "1d087e8da384ccd4cacda868df4d3fb46847e3a32c9b08d7c268c74a45b8678e",
+      "normalization": "lf"
+    }
+  ],
+  "artifactTargets": [],
+  "disposition": "Improve",
+  "verification": {
+    "kind": "transformation",
+    "command": "python -m unittest discover -s eng -p test_design_policy.py -v",
+    "expected": "Adapt only pure graph validation, schedule analysis and Design Markdown render functions from the same-owner Plan tool. No readiness, claims, networking, Git mutations, build-slot code or adjacent-source imports are copied. Wrapper validates closed identities and required package evidence; zero-work schedule ratio is guarded. AGPL source remains in AGPL DesktopPlatform. Independent mutated graph/export/corpus fixtures must fail and current pinned views match byte-for-byte.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Copyright ArcForges contributors. AGPL-3.0-only; full text in LICENSE.\nDesktopPlatform adaptation: self-contained Design read-only graph validator and generated-view comparison.",
+    "files": [
+      "eng/provenance/NOTICE.txt",
+      "LICENSE"
+    ],
+    "distribution": "source",
+    "reason": "Retain same-owner AGPL source attribution and complete licence."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": null,
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "w-20260927-dgov; exact-head independent PR review required before merge",
+    "reviewedOn": "2026-09-27",
+    "decision": "approved",
+    "rationale": "Adapt only pure graph validation, schedule analysis and Design Markdown render functions from the same-owner Plan tool. No readiness, claims, networking, Git mutations, build-slot code or adjacent-source imports are copied. Wrapper validates closed identities and required package evidence; zero-work schedule ratio is guarded. AGPL source remains in AGPL DesktopPlatform. Ancestor memoization is isolated per graph instance to avoid stale identities across repeated validation.",
+    "baselineCommit": "e5ce94221c13d0014781a760c0865b942350be4d",
+    "reconciliation": false
+  },
+  "supersedes": null
+}

@@ -2,11 +2,12 @@
   "schemaVersion": 1,
   "license": "AGPL-3.0-only",
   "repository": "ArcForges/ArcForges-Design",
-  "commit": "5322d698a1b650a52a5a139d986dd85b00b48581",
+  "commit": "7aa84e69ad6808461b34181de261fab03bede076",
   "sourceHashes": {
-    "docs/requirements/01-normative-glossary-and-invariants.md": "fa60f160fe6c28685cd904f590f8d74ed1ead03295e4b9e42023f2a8f2b09a88",
-    "docs/assurance/invariant-coverage.md": "aa5880fc655e1e3da8f748f2c627d9c57ce1405c9b5fcb1ef7d3c2a6396e417a",
-    "docs/assurance/citation-classifications.json": "af1bfb3b74629d70ec96c92d7b79dab474ac9ce2eed7764d96658e47a9b72903"
+    "docs/requirements/01-normative-glossary-and-invariants.md": "9041df86987324c25446dc3a5cfbfbabd6b6df1ea20381135a8caf84f98e44d4",
+    "docs/assurance/invariant-coverage.md": "4ef00061e928ab1555f9557ef5c52a39a07a1ae31d672055fd3453c12d6f2cca",
+    "docs/assurance/citation-classifications.json": "404bd1e8a545bcc45cd1f21296b274a0dcc9562bd2351ac5074f7bd2f160d9c9",
+    "docs/planning/delivery/delivery-graph.json": "ed3aa38d3582e7a2d49f3d57fc6ea10b6c08f68b0645db6946251762b1b90a73"
   },
-  "corpusSha256": "238860a6e3d549d6f057d49d15fff2180cbe9b7a81fe70833434ba0835f00b7b"
+  "corpusSha256": "9c1e7c5d43791bbea9d71edeadd98586fdc4fa69ee70d8fecb56de8c96b8b53c"
 }

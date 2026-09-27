@@ -8,7 +8,7 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <NativePayloadRoot>$(MSBuildThisFileDirectory)../../../artifacts/native-packages/ArcForges.Native.Image.Runtime.win-x64</NativePayloadRoot>
-    <Description>Windows x64 ArcSlateImageNative existing ABI, native dependency closure, headers and provenance.</Description>
+    <Description>Windows x64 ArcImageNative existing ABI, native dependency closure, headers and provenance.</Description>
   </PropertyGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />

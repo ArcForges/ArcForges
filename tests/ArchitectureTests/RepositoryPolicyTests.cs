@@ -53,10 +53,7 @@ public sealed class RepositoryPolicyTests
     {
         var owners = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["ArcMediaNative"] = "ArcForges.Native.Media",
-            ["ArcSlateColorNative"] = "ArcForges.Native.Colour",
-            ["ArcSlateImageNative"] = "ArcForges.Native.Image",
-            ["ArcSlateOtioNative"] = "ArcForges.Native.Otio",
+            ["ArcImageNative"] = "ArcForges.Native.Image",
         };
         var exports = new HashSet<string>(StringComparer.Ordinal);
         foreach (string file in Files("*.cs").Where(file => Path.GetRelativePath(Root, file)
@@ -79,7 +76,13 @@ public sealed class RepositoryPolicyTests
             Xunit.Assert.Equal(declarations, matched);
         }
 
-        Xunit.Assert.Equal(12, exports.Count);
+        string[] expectedExports =
+        [
+            "ArcImageNative:arc_image_get_abi_version",
+            "ArcImageNative:arc_image_get_build_info",
+            "ArcImageNative:arc_image_get_last_error",
+        ];
+        Xunit.Assert.Equal(expectedExports, exports.OrderBy(value => value, StringComparer.Ordinal));
         foreach (string file in Files("*.csproj").Where(file => Path.GetRelativePath(Root, file)
             .Replace('\\', '/').StartsWith("src/", StringComparison.Ordinal)))
         {

@@ -21,8 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY = 'eng/policy/licence-boundary.json'
 OWNERS = {name: ('Apache-2.0', 'Apache') if name in {'Contracts', 'Mobile'}
           else ('AGPL-3.0-only', 'AGPL') for name in
-          ('DesktopPlatform', 'Contracts', 'ArcNotes', 'ArcScope', 'ArcSlate', 'Cloud', 'AI', 'Web', 'Mobile')}
+          ('DesktopPlatform', 'Contracts', 'ArcScope', 'Cloud', 'AI', 'Web', 'Mobile')}
 MSBUILD = {'.csproj', '.fsproj', '.vbproj', '.vcxproj', '.esproj'}
+CONTRACT_NPM_ACCESS = {
+    'src/internal/ts/ai-internal/package.json': ('@arcforges/ai-internal', 'internal'),
+    'src/internal/ts/operator-client/package.json': ('@arcforges/operator-client', 'internal'),
+    'src/public/ts/api-client/package.json': ('@arcforges/api-client', 'public'),
+    'src/public/ts/contract-fixtures/package.json': ('@arcforges/contract-fixtures', 'public'),
+    'src/public/ts/proto/package.json': ('@arcforges/proto', 'public'),
+}
 
 
 def require(value, message):
@@ -82,7 +89,7 @@ def first_party(name):
     if lower.startswith('arcforges.'):
         if lower.startswith(('arcforges.contracts.', 'arcforges.sdk.')) or lower == 'arcforges.cli':
             return 'Apache'
-        if lower.startswith(('arcforges.arcnotes', 'arcforges.arcscope', 'arcforges.arcslate')):
+        if lower.startswith(('arcforges.arcscope',)):
             return 'AGPL'
         platform = ('foundation', 'application.', 'localrpc', 'capabilities', 'observability',
                     'persistence.', 'security', 'update', 'execution', 'designsystem', 'desktop.',
@@ -92,7 +99,7 @@ def first_party(name):
                 f'unknown first-party package owner: {name}')
         return 'AGPL'
     if lower.startswith('@arcforges/'):
-        if lower in {'@arcforges/proto', '@arcforges/api-client', '@arcforges/contract-fixtures', '@arcforges/ai-internal'}:
+        if lower in {name for name, _ in CONTRACT_NPM_ACCESS.values()}:
             return 'Apache'
         require(lower in {'@arcforges/ai', '@arcforges/cloud-workspace', '@arcforges/web-workspace',
                           '@arcforges/web-site', '@arcforges/web-ui'}, f'unknown first-party package owner: {name}')
@@ -129,7 +136,14 @@ def metadata(root, path, project_kind):
         result = [xml_values(text, key) for key in ('PackageLicenseExpression', 'LicenceBoundary')]
     elif project_kind == 'npm':
         doc = json.loads(text, object_pairs_hook=unique)
-        fields(doc.get('arcforges'), 'licenceBoundary', path)
+        declaration = doc.get('arcforges')
+        if isinstance(declaration, dict) and 'contractAccess' in declaration:
+            fields(declaration, 'licenceBoundary contractAccess', path)
+            require(path in CONTRACT_NPM_ACCESS and (doc.get('name'), declaration['contractAccess']) == CONTRACT_NPM_ACCESS[path]
+                    and doc.get('license') == 'Apache-2.0' and declaration['licenceBoundary'] == 'Apache',
+                    'unregistered contract access declaration: ' + path)
+        else:
+            fields(declaration, 'licenceBoundary', path)
         result = [[doc.get('license')], [doc['arcforges']['licenceBoundary']]]
     elif project_kind == 'gradle':
         result = [re.findall(r'extra\["' + key + r'"\]\s*=\s*"([^"\n]+)"', text)
