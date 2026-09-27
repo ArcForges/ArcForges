@@ -76,9 +76,10 @@ internal sealed class ProjectGraph
 
         foreach (string argument in new[]
         {
-            "msbuild", projectPath, "-nologo", "-target:GenerateGlobalUsings,ResolveReferences", "-p:BuildProjectReferences=false",
+            "msbuild", projectPath, "-nologo", "-target:GenerateGlobalUsings,ResolveReferences,BeforeCompile", "-p:BuildProjectReferences=false",
             "-p:Configuration=" + configuration,
-            "-getProperty:TargetFramework,OutputType,PackageLicenseExpression,LicenceBoundary,IsAotCompatible,PublishAot,ManagePackageVersionsCentrally,RestorePackagesWithLockFile,NoWarn,SuppressTrimAnalysisWarnings,EnableTrimAnalyzer,EnableAotAnalyzer,MSBuildProjectFullPath,ProjectAssetsFile,DefineConstants,AssemblyName",
+            "-p:EmitCompilerGeneratedFiles=true",
+            "-getProperty:TargetFramework,OutputType,PackageLicenseExpression,LicenceBoundary,IsAotCompatible,PublishAot,ManagePackageVersionsCentrally,RestorePackagesWithLockFile,NoWarn,SuppressTrimAnalysisWarnings,EnableTrimAnalyzer,EnableAotAnalyzer,MSBuildProjectFullPath,ProjectAssetsFile,DefineConstants,AssemblyName,CompilerGeneratedFilesOutputPath",
             "-getItem:Compile,ProjectReference,ReferencePath,PackageReference,PackageVersion",
         })
         {
@@ -139,10 +140,12 @@ internal sealed class ProjectGraph
 
             packages[library.Name[..separator]] = library.Name[(separator + 1)..];
         }
+        string generated = Path.GetFullPath(properties["CompilerGeneratedFilesOutputPath"], Path.GetDirectoryName(projectPath)!);
+        var generatedSources = Directory.Exists(generated) ? Directory.GetFiles(generated, "*.cs", SearchOption.AllDirectories) : [];
         return new ProjectFacts(classification, properties["TargetFramework"], properties["OutputType"],
             properties["PackageLicenseExpression"], properties["LicenceBoundary"],
             ReadItems(items, "ProjectReference").Select(item => Relative(root, Text(item, "FullPath"))).ToArray(),
-            ReadItems(items, "Compile").Select(item => Text(item, "FullPath")).ToArray(),
+            ReadItems(items, "Compile").Select(item => Text(item, "FullPath")).Concat(generatedSources).Distinct(StringComparer.Ordinal).ToArray(),
             ReadItems(items, "ReferencePath").Select(item => Text(item, "FullPath")).ToArray(), properties, packages);
     }
 
@@ -159,12 +162,27 @@ internal sealed class ProjectGraph
         var options = new CSharpParseOptions(LanguageVersion.CSharp14,
             preprocessorSymbols: project.Properties.GetValueOrDefault("DefineConstants", "")
                 .Split(';', StringSplitOptions.RemoveEmptyEntries));
-        return CSharpCompilation.Create(project.Properties["AssemblyName"],
+        var output = project.OutputType switch
+        {
+            "Library" => OutputKind.DynamicallyLinkedLibrary,
+            "Exe" => OutputKind.ConsoleApplication,
+            "WinExe" => OutputKind.WindowsApplication,
+            _ => throw new InvalidOperationException("Unsupported managed output kind: " + project.OutputType),
+        };
+        var compilation = CSharpCompilation.Create(project.Properties["AssemblyName"],
             project.Sources.Distinct(StringComparer.Ordinal).Select(path =>
                 CSharpSyntaxTree.ParseText(File.ReadAllText(path), options, path)),
             project.AssemblyReferences.Distinct(StringComparer.Ordinal).Select(path => MetadataReference.CreateFromFile(path)),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true,
+            new CSharpCompilationOptions(output, allowUnsafe: true,
                 nullableContextOptions: NullableContextOptions.Enable));
+        var errors = compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).ToArray();
+        if (errors.Length != 0)
+        {
+            throw new InvalidOperationException("Invalid owning compilation: " + project.Classification.Path + Environment.NewLine
+                + string.Join(Environment.NewLine, errors.Select(error => error.ToString())));
+        }
+
+        return compilation;
     }
 
     public static string Normalize(string path) => path.Replace('\\', '/');

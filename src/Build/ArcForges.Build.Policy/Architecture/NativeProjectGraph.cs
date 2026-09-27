@@ -37,7 +37,7 @@ internal static class NativeProjectGraph
                 _ => throw new InvalidOperationException("Unclassified native target kind: " + kind),
             };
             string path = paths[target.GetProperty("target").GetString()!];
-            return new ProjectFacts(new ProjectClassification(path, role, owner), "native", kind,
+            return new ProjectFacts(new ProjectClassification(path, role, owner, Production: !target.GetProperty("testOnly").GetBoolean()), "native", kind,
                 target.GetProperty("spdxLicense").GetString()!, target.GetProperty("licenceBoundary").GetString()!,
                 target.GetProperty("references").EnumerateArray().Select(reference => reference.GetString()!)
                     .Where(paths.ContainsKey).Select(reference => paths[reference]).Distinct(StringComparer.Ordinal).ToArray(),

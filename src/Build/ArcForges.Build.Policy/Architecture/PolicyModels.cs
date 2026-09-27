@@ -79,7 +79,8 @@ internal sealed record RepositoryPolicyConfiguration(
     IReadOnlyList<WireTypeBinding> WireTypes,
     IReadOnlyList<ExternalPolicyEvidence> ExternalEvidence,
     string? WebRoot = null,
-    bool MobileDistributable = false);
+    bool MobileDistributable = false,
+    IReadOnlyDictionary<string, ProjectRole>? DependencyRoles = null);
 
 /// <summary>Structured inputs for non-managed consumers and canonical producer results.</summary>
 internal sealed record RepositoryFacts(

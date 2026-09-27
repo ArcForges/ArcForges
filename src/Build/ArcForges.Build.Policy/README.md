@@ -30,7 +30,8 @@ There is no automatic architecture target in normal consumer builds.
 
 The host supplies complete reviewed project classifications, evaluated MSBuild source/reference inputs,
 resolved package licences, exact toolchain input hashes, individual API-to-contract-test mappings,
-and owned, expiring exceptions. `ProjectGraph.Evaluate` uses the completed locked owning build;
+and owned, expiring exceptions. Domain and Application package dependencies also require reviewed layer classifications;
+unclassified dependencies fail AT-01, including transitive NuGet edges. `ProjectGraph.Evaluate` uses the completed locked owning build;
 `ReadCompilation` reads compiler metadata without loading production assemblies. `PolicyEngine.Check`
 checks AT-01–AT-14, RP-01–RP-10 and seven semantic banned-symbol categories. Unknown project references,
 cycles, unclassified dependencies, missing compilations and unresolved invocations fail closed.

@@ -28,7 +28,7 @@ internal static class PolicyEngine
         var findings = new List<PolicyFinding>();
         var methods = new Dictionary<string, IMethodSymbol>(StringComparer.Ordinal);
         var types = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
-        var typeProjects = new Dictionary<string, ProjectFacts>(StringComparer.Ordinal);
+        var typeProjects = new Dictionary<INamedTypeSymbol, ProjectFacts>(SymbolEqualityComparer.Default);
         foreach (var project in graph.Projects)
         {
             if (!compilations.TryGetValue(project.Classification.Path, out var compilation))
@@ -49,11 +49,11 @@ internal static class PolicyEngine
                     if (model.GetDeclaredSymbol(declaration) is INamedTypeSymbol type)
                     {
                         string name = type.ToDisplayString();
-                        types.TryAdd(name, type);
-                        typeProjects.TryAdd(name, project);
+                        types.TryAdd(project.Classification.Path + "\0" + name, type);
+                        typeProjects.TryAdd(type, project);
                         foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
                         {
-                            methods.TryAdd(MethodIdentity(method), method);
+                            methods.TryAdd(project.Classification.Path + "\0" + MethodIdentity(method), method);
                         }
                     }
                 }
@@ -72,13 +72,19 @@ internal static class PolicyEngine
             var closure = graph.Closure(path).ToArray();
             if (classification.Role == ProjectRole.Domain)
             {
-                Forbid("AT-01", closure.Any(dependency => dependency.Classification.Role is not (ProjectRole.Domain or ProjectRole.Abstractions)),
+                Forbid("AT-01", closure.Any(dependency => dependency.Classification.Role is not (ProjectRole.Domain or ProjectRole.Abstractions or ProjectRole.Foundation))
+                    || project.Packages.Keys.Any(package => configuration.DependencyRoles is null
+                        || !configuration.DependencyRoles.TryGetValue(package, out var role)
+                        || role is not (ProjectRole.Domain or ProjectRole.Abstractions or ProjectRole.Foundation)),
                     "Domain dependencies cross the domain/abstraction boundary.");
             }
 
             if (classification.Role == ProjectRole.Application)
             {
-                Forbid("AT-01", closure.Any(dependency => dependency.Classification.Role is not (ProjectRole.Domain or ProjectRole.Abstractions or ProjectRole.Foundation)),
+                Forbid("AT-01", closure.Any(dependency => dependency.Classification.Role is not (ProjectRole.Domain or ProjectRole.Abstractions or ProjectRole.Foundation))
+                    || project.Packages.Keys.Any(package => configuration.DependencyRoles is null
+                        || !configuration.DependencyRoles.TryGetValue(package, out var role)
+                        || role is not (ProjectRole.Domain or ProjectRole.Abstractions or ProjectRole.Foundation)),
                     "Application depends on infrastructure, transport or UI rather than domain and ports.");
             }
 
@@ -103,7 +109,8 @@ internal static class PolicyEngine
             Forbid("AT-07", classification.Module.Length > 0 && closure.Any(dependency =>
                 dependency.Classification.Role == ProjectRole.Persistence
                 && dependency.Classification.Module != classification.Module), "A module reaches another module's persistence.");
-            Forbid("AT-09", classification.Production && classification.Role == ProjectRole.NativeWorker,
+            Forbid("AT-09", classification.Production && (classification.Role == ProjectRole.NativeWorker
+                || closure.Any(dependency => !dependency.Classification.Production)),
                 "A long-lived native executable entered the release graph.");
             Forbid("AT-10", classification.Production && project.Packages.Keys.Any(package =>
                 package is "Refit" or "Refit.HttpClientFactory" or "RestEase" or "RestEase.HttpClientFactory"),
@@ -178,7 +185,7 @@ internal static class PolicyEngine
         foreach (var pair in types)
         {
             var type = pair.Value;
-            var project = typeProjects[pair.Key];
+            var project = typeProjects[type];
             if (!project.Classification.Production || project.Classification.Role == ProjectRole.BuildTool || !PublicType(type))
             {
                 continue;
@@ -210,14 +217,15 @@ internal static class PolicyEngine
 
         foreach (var project in graph.Projects.Where(project => project.Classification.Role == ProjectRole.LocalRpcAdapter))
         {
-            foreach (var type in types.Values.Where(type => typeProjects[type.ToDisplayString()] == project
+            foreach (var type in types.Values.Where(type => typeProjects[type] == project
                 && type.TypeKind == TypeKind.Class && !type.IsAbstract && type.GetMembers().OfType<IMethodSymbol>()
                     .Any(method => method.DeclaredAccessibility == Accessibility.Public && method.MethodKind == MethodKind.Ordinary && !method.IsImplicitlyDeclared)))
             {
                 var binding = configuration.LocalServices.SingleOrDefault(binding => binding.ServiceSymbol == type.ToDisplayString());
-                if (binding is null || !type.AllInterfaces.Any(contract => contract.ToDisplayString() == binding.ContractSymbol)
+                var contractType = binding is null ? null : Contracts(type).FirstOrDefault(contract => contract.ToDisplayString() == binding.ContractSymbol);
+                if (binding is null || contractType is null
                     || !type.GetMembers().OfType<IFieldSymbol>().Any(field => field.Type.ToDisplayString() == binding.PortSymbol)
-                    || !types.TryGetValue(binding.ContractSymbol, out var contractType) || !Generated(contractType))
+                    || !Generated(contractType))
                 {
                     Add("AT-11", project.Classification.Path, "Local service lacks its canonical generated interface and explicit application-port mapping: " + type);
                 }
@@ -226,7 +234,7 @@ internal static class PolicyEngine
 
         foreach (var project in graph.Projects.Where(project => project.Classification.Role == ProjectRole.Contracts))
         {
-            foreach (var type in types.Values.Where(type => typeProjects[type.ToDisplayString()] == project
+            foreach (var type in types.Values.Where(type => typeProjects[type] == project
                 && type.DeclaredAccessibility == Accessibility.Public && type.TypeKind is TypeKind.Class or TypeKind.Struct or TypeKind.Enum))
             {
                 var binding = configuration.WireTypes.SingleOrDefault(binding => binding.TypeSymbol == type.ToDisplayString());
@@ -240,16 +248,17 @@ internal static class PolicyEngine
         foreach (var pair in methods.Where(pair => pair.Value.DeclaredAccessibility == Accessibility.Public
             && pair.Value.MethodKind == MethodKind.Ordinary && !pair.Value.IsImplicitlyDeclared && PublicType(pair.Value.ContainingType)))
         {
-            var project = typeProjects[pair.Value.ContainingType.ToDisplayString()];
+            var project = typeProjects[pair.Value.ContainingType];
             if (!project.Classification.Production || project.Classification.Role is ProjectRole.BuildTool or ProjectRole.Test)
             {
                 continue;
             }
 
-            var bindings = repository.ContractTests.Where(binding => binding.ApiSymbol == pair.Key).ToArray();
-            if (bindings.Length == 0 || bindings.Any(binding => !methods.TryGetValue(binding.TestMethod, out var test)
-                || typeProjects[test.ContainingType.ToDisplayString()].Classification.Path != binding.TestProject
-                || !test.GetAttributes().Any(attribute => attribute.AttributeClass?.ContainingNamespace.ToDisplayString() == "Xunit")))
+            var bindings = repository.ContractTests.Where(binding => binding.ApiSymbol == MethodIdentity(pair.Value)).ToArray();
+            if (bindings.Length == 0 || bindings.Any(binding => !methods.TryGetValue(binding.TestProject + "\0" + binding.TestMethod, out var test)
+                || typeProjects[test.ContainingType].Classification.Path != binding.TestProject
+                || typeProjects[test.ContainingType].Classification.Role != ProjectRole.Test
+                || !test.GetAttributes().Any(attribute => TestAttribute(attribute.AttributeClass))))
             {
                 Add("RP-10", project.Classification.Path, "Public API lacks correspondence to an actual contract-test method: " + pair.Key);
             }
@@ -297,6 +306,19 @@ internal static class PolicyEngine
 
     public static string MethodIdentity(IMethodSymbol method) => method.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
 
+    private static bool TestAttribute(INamedTypeSymbol? type)
+    {
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() is "Xunit.FactAttribute" or "Xunit.TheoryAttribute")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool PublicType(INamedTypeSymbol type) => type.DeclaredAccessibility == Accessibility.Public
         && (type.ContainingType is null || PublicType(type.ContainingType));
 
@@ -307,7 +329,21 @@ internal static class PolicyEngine
     private static bool Generated(INamedTypeSymbol type) => type.GetAttributes().Any(attribute =>
         attribute.AttributeClass?.ToDisplayString() == "System.CodeDom.Compiler.GeneratedCodeAttribute"
         && attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is string generator
-        && generator is "protoc" or "Google.Protobuf" or "ArcForges.SchemaGenerator");
+        && generator is "protoc" or "Google.Protobuf" or "grpc_csharp_plugin" or "ArcForges.SchemaGenerator")
+        || (type.ContainingType is not null && Generated(type.ContainingType));
+
+    private static IEnumerable<INamedTypeSymbol> Contracts(INamedTypeSymbol type)
+    {
+        foreach (var contract in type.AllInterfaces)
+        {
+            yield return contract;
+        }
+
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            yield return current;
+        }
+    }
 
     private static bool ValidLicense(string license, string boundary) =>
         (boundary == "Apache" && license == "Apache-2.0") || (boundary == "AGPL" && license == "AGPL-3.0-only");

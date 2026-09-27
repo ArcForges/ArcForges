@@ -153,19 +153,35 @@ internal static class BannedSymbolScanner
         (type.StartsWith("System.Threading.Tasks.", StringComparison.Ordinal) && method is "Wait" or "WaitAll" or "WaitAny")
         || (type.StartsWith("System.Runtime.CompilerServices.TaskAwaiter", StringComparison.Ordinal) && method == "GetResult")
         || (type.StartsWith("System.Runtime.CompilerServices.ValueTaskAwaiter", StringComparison.Ordinal) && method == "GetResult")
+        || (type.StartsWith("System.Runtime.CompilerServices.ConfiguredTaskAwaitable", StringComparison.Ordinal) && method == "GetResult")
+        || (type.StartsWith("System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable", StringComparison.Ordinal) && method == "GetResult")
         || (type == "System.Threading.Thread" && method == "Sleep");
 
     private static bool IsAsyncPath(SyntaxNode node, SemanticModel model)
     {
-        var method = node.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
-        if (method is not null)
+        foreach (var scope in node.Ancestors())
         {
-            return method.Modifiers.Any(SyntaxKind.AsyncKeyword)
-                || model.GetDeclaredSymbol(method)?.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+            if (scope is AnonymousFunctionExpressionSyntax function)
+            {
+                return !function.AsyncKeyword.IsKind(SyntaxKind.None)
+                    || (model.GetSymbolInfo(function).Symbol is IMethodSymbol lambda
+                        && lambda.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks");
+            }
+
+            if (scope is LocalFunctionStatementSyntax local)
+            {
+                return local.Modifiers.Any(SyntaxKind.AsyncKeyword)
+                    || model.GetDeclaredSymbol(local)?.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+            }
+
+            if (scope is MethodDeclarationSyntax method)
+            {
+                return method.Modifiers.Any(SyntaxKind.AsyncKeyword)
+                    || model.GetDeclaredSymbol(method)?.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+            }
         }
 
-        return node.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any(function =>
-            !function.AsyncKeyword.IsKind(SyntaxKind.None));
+        return false;
     }
 
     private static bool IsLogging(string type, string space, string method) =>

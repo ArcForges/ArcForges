@@ -86,7 +86,7 @@ jobs:
           PACKAGE_VERSION: ${{ steps.version.outputs.value }}
         shell: pwsh
         run: |
-          dotnet build DesktopPlatform.slnx -c Release --no-restore "-p:PackageVersion=$env:PACKAGE_VERSION" "-p:Version=$env:PACKAGE_VERSION"
+          dotnet build DesktopPlatform.slnx -c Release --no-restore -p:EmitCompilerGeneratedFiles=true "-p:PackageVersion=$env:PACKAGE_VERSION" "-p:Version=$env:PACKAGE_VERSION"
           if ($LASTEXITCODE) { throw 'Platform build failed.' }
           dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build
           if ($LASTEXITCODE) { throw 'Platform ownership tests failed.' }

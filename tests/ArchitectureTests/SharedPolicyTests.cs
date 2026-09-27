@@ -97,6 +97,9 @@ public sealed class SharedPolicyTests
     [Xunit.InlineData("BAN-PROVIDER", "using static OpenAI.Client; namespace OpenAI { public static class Client { public static int Call() => 1; } } class C { int M() => Call(); }")]
     [Xunit.InlineData("BAN-CODEGEN", "class C { System.Reflection.Emit.DynamicMethod M() => new(\"x\", typeof(void), System.Type.EmptyTypes); }")]
     [Xunit.InlineData("BAN-LOGGING", "class C { void M(string secret) { var value = secret; System.Console.WriteLine(value); } }")]
+    [Xunit.InlineData("BAN-BLOCKING", "class C { void Start() { System.Threading.Tasks.Task.Run(async () => { System.Threading.Tasks.Task.Delay(1).Wait(); await System.Threading.Tasks.Task.Yield(); }); } }")]
+    [Xunit.InlineData("BAN-BLOCKING", "class C { async System.Threading.Tasks.Task M() { await System.Threading.Tasks.Task.Yield(); System.Threading.Tasks.Task.Delay(1).ConfigureAwait(false).GetAwaiter().GetResult(); } }")]
+    [Xunit.InlineData("BAN-BLOCKING", "class C { void Start() { async System.Threading.Tasks.Task Local() { await System.Threading.Tasks.Task.Yield(); System.Threading.Tasks.Task.Delay(1).Wait(); } _ = Local(); } }")]
     public void AlternateSpellingsAndLocalAliasesCannotBypassBannedSymbols(string rule, string source)
     {
         var compilation = FixtureCompiler.Compile("Alternative", new Dictionary<string, string> { ["fixture.cs"] = source });
@@ -125,14 +128,94 @@ public sealed class SharedPolicyTests
                 {"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dirty":false,"result":"passed",
                 "evidenceClass":"evaluated-cmake-target-declarations","targets":[{"target":"worker",
                 "sourceDirectory":"native/worker","targetType":"EXECUTABLE","spdxLicense":"AGPL-3.0-only",
-                "licenceBoundary":"AGPL","references":[]}]}
+                "licenceBoundary":"AGPL","testOnly":false,"references":[]}]}
                 """;
             File.WriteAllText(file, receipt);
             var projects = NativeProjectGraph.Read(file, new string('a', 40), "DesktopPlatform");
             Xunit.Assert.Equal(ProjectRole.NativeWorker, Xunit.Assert.Single(projects).Classification.Role);
+            Xunit.Assert.True(projects[0].Classification.Production);
+            File.WriteAllText(file, receipt.Replace("\"testOnly\":false", "\"testOnly\":true", StringComparison.Ordinal));
+            Xunit.Assert.False(NativeProjectGraph.Read(file, new string('a', 40), "DesktopPlatform")[0].Classification.Production);
+            File.WriteAllText(file, receipt);
             Xunit.Assert.Throws<InvalidOperationException>(() => NativeProjectGraph.Read(file, new string('b', 40), "DesktopPlatform"));
             File.WriteAllText(file, receipt.Replace("EXECUTABLE", "UNKNOWN", StringComparison.Ordinal));
             Xunit.Assert.Throws<InvalidOperationException>(() => NativeProjectGraph.Read(file, new string('a', 40), "DesktopPlatform"));
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Xunit.Theory]
+    [Xunit.InlineData("Microsoft.Data.Sqlite", "Persistence")]
+    [Xunit.InlineData("Microsoft.EntityFrameworkCore", "Infrastructure")]
+    [Xunit.InlineData("Avalonia", "UserInterface")]
+    [Xunit.InlineData("Grpc.Net.Client", "PublicApiAdapter")]
+    public void LayersRejectResolvedPackageEdgesWithoutProjectReferences(string package, string dependencyRole)
+    {
+        foreach (var layer in new[] { ProjectRole.Domain, ProjectRole.Application })
+        {
+        using var fixture = Case.Create("AT-01", violation: false);
+        fixture.SetDomainLayer(layer);
+        fixture.AddDomainPackage(package, Enum.Parse<ProjectRole>(dependencyRole));
+        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-01");
+        fixture.AddDomainPackage("Pure.Foundation.Fixture", ProjectRole.Foundation);
+        Xunit.Assert.DoesNotContain(fixture.Check(), finding => finding.Rule == "AT-01");
+        fixture.DependencyRoles.Clear();
+        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-01");
+        }
+    }
+
+    [Xunit.Fact]
+    public void SameNamedTestTypeCannotHideProductionApi()
+    {
+        using var fixture = Case.Create("RP-10", violation: false);
+        fixture.AddCollidingApi();
+        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-06" && finding.Path == "collision/collision.csproj");
+    }
+
+    [Xunit.Fact]
+    public void ProductionCannotReachTestOnlyNativeTarget()
+    {
+        using var fixture = Case.Create("AT-09", violation: false);
+        var native = fixture.Projects.Single(project => project.Classification.Role == ProjectRole.NativeWorker);
+        fixture.Projects[0] = fixture.Projects[0] with
+        {
+            Classification = fixture.Projects[0].Classification with { Production = true },
+            ProjectReferences = [native.Classification.Path],
+        };
+        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-09");
+    }
+
+    [Xunit.Fact]
+    public void TraitOnlyMethodsAndNonTestProjectsCannotSatisfyPublicApiContracts()
+    {
+        using var fixture = Case.Create("RP-10", violation: false);
+        fixture.ReplaceTestAttribute("Xunit.Trait(\"category\", \"contract\")");
+        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "RP-10");
+        fixture.ReplaceTestAttribute("Xunit.Fact");
+        Xunit.Assert.Empty(fixture.Check());
+        fixture.Projects[0] = fixture.Projects[0] with
+        {
+            Classification = fixture.Projects[0].Classification with { Role = ProjectRole.BuildTool },
+        };
+        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "RP-10");
+    }
+
+    [Xunit.Fact]
+    public void UnresolvedPublicTypesCannotPassSemanticProjectEvaluation()
+    {
+        string file = Path.GetTempFileName();
+        try
+        {
+            var project = new ProjectFacts(new("subject.csproj", ProjectRole.Foundation, "DesktopPlatform"),
+                "net10.0", "Library", "AGPL-3.0-only", "AGPL", [], [file], [typeof(object).Assembly.Location],
+                new Dictionary<string, string> { ["AssemblyName"] = "Subject" }, new Dictionary<string, string>());
+            File.WriteAllText(file, "public class Api { public string Value => string.Empty; }");
+            _ = ProjectGraph.ReadCompilation(project);
+            File.WriteAllText(file, "public class Api { public MissingType Value => null; }");
+            Xunit.Assert.Throws<InvalidOperationException>(() => ProjectGraph.ReadCompilation(project));
         }
         finally
         {
@@ -146,6 +229,7 @@ public sealed class SharedPolicyTests
         private readonly string _root = Path.Combine(Path.GetTempPath(), "arcforges-policy-" + Guid.NewGuid().ToString("N"));
         private readonly Dictionary<string, CSharpCompilation> _compilations = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _licenses = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, ProjectRole> DependencyRoles { get; } = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _toolchains = new(StringComparer.Ordinal);
         private readonly List<ContractTestBinding> _contractTests = [];
         private readonly List<LocalServiceBinding> _services = [];
@@ -203,11 +287,12 @@ public sealed class SharedPolicyTests
                     string port = rule == "AT-11" && violation ? "" : "private readonly IPort _port = new Port();";
                     fixture.Add("subject", ProjectRole.LocalRpcAdapter,
                         $$"""
-                        [System.CodeDom.Compiler.GeneratedCode("protoc", "1")] public interface IContract { int Call({{argument}} value); }
+                        [System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", "1")] public static class GeneratedRpc
+                        { public abstract class ServiceBase { public abstract int Call({{argument}} value); } }
                         internal interface IPort { int Call(); } internal sealed class Port : IPort { int IPort.Call() => 1; }
-                        public sealed class Service : IContract { {{port}} public int Call({{argument}} value) => 1; }
+                        public sealed class Service : GeneratedRpc.ServiceBase { {{port}} public override int Call({{argument}} value) => 1; }
                         """);
-                    fixture._services.Add(new("Service", "IContract", "IPort"));
+                    fixture._services.Add(new("Service", "GeneratedRpc.ServiceBase", "IPort"));
                     break;
                 case "AT-09":
                     fixture.Add("subject", ProjectRole.NativeWorker, production: violation);
@@ -275,7 +360,32 @@ public sealed class SharedPolicyTests
         public IReadOnlyList<PolicyFinding> Check() => PolicyEngine.Check(
             new RepositoryFacts(_root, "DesktopPlatform", Projects, Exceptions, _contractTests),
             new RepositoryPolicyConfiguration(SourceCommit, _toolchains, _licenses, new HashSet<string>(StringComparer.Ordinal) { "MIT", "Apache-2.0" },
-                _services, _wireTypes, Evidence, MobileDistributable: _mobile), _compilations, new DateOnly(2026, 9, 27));
+                _services, _wireTypes, Evidence, MobileDistributable: _mobile, DependencyRoles: DependencyRoles), _compilations, new DateOnly(2026, 9, 27));
+
+        public void AddCollidingApi() => Add("collision", ProjectRole.Foundation,
+            "namespace FixtureTests; public class Contracts { public System.IntPtr Handle() => default; }");
+
+        public void SetDomainLayer(ProjectRole role)
+        {
+            int index = Projects.FindIndex(project => project.Classification.Role == ProjectRole.Domain);
+            Projects[index] = Projects[index] with { Classification = Projects[index].Classification with { Role = role } };
+        }
+
+        public void AddDomainPackage(string package, ProjectRole role)
+        {
+            int index = Projects.FindIndex(project => project.Classification.Role is ProjectRole.Domain or ProjectRole.Application);
+            Projects[index] = Projects[index] with { Packages = new Dictionary<string, string> { [package] = "1.0.0" } };
+            _licenses[package] = "MIT";
+            DependencyRoles[package] = role;
+        }
+
+        public void ReplaceTestAttribute(string attribute)
+        {
+            _compilations["test/test.csproj"] = FixtureCompiler.Compile("test", new Dictionary<string, string>
+            {
+                ["test.cs"] = "namespace FixtureTests; public class Contracts { [" + attribute + "] public void Verify() {} }",
+            }, [typeof(Xunit.FactAttribute).Assembly.Location]);
+        }
 
         private void Add(string name, ProjectRole role, string source = "internal sealed class Empty {}", string[]? references = null,
             string owner = "DesktopPlatform", string module = "", bool production = true, string license = "AGPL-3.0-only", string boundary = "AGPL",
