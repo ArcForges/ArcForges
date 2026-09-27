@@ -5,15 +5,14 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="../ArcForges.Security.csproj" />
   </ItemGroup>
-  <PropertyGroup>
-    <LicenceBoundary>AGPL</LicenceBoundary>
-    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
-  </PropertyGroup>
-  <Import Project="../../src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props" />
 </Project>
+

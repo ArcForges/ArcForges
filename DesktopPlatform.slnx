@@ -17,6 +17,7 @@
     <Project Path="src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj" />
   </Folder>
   <Folder Name="/src/DesktopHelpers/">
     <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj" />

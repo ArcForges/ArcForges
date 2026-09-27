@@ -12,7 +12,14 @@
         "LICENSE",
         "NOTICE.md",
         "build-identity.json",
-        "build/ArcForges.Build.Metadata.targets"
+        "build/ArcForges.Build.Metadata.targets",
+        "tools/architecture/ArchitecturePolicy.props",
+        "tools/architecture/BannedSymbolScanner.cs",
+        "tools/architecture/FixtureCompiler.cs",
+        "tools/architecture/PolicyEngine.cs",
+        "tools/architecture/PolicyModels.cs",
+        "tools/architecture/ProjectGraph.cs",
+        "tools/architecture/NativeProjectGraph.cs"
       ]
     },
     {

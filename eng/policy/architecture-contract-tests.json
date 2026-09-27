@@ -1,0 +1,632 @@
+[
+  {
+    "apiSymbol": "ArcForges.Application.Abstractions.IApplicationLifecycle.RequestStopAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+    "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ApplicationStopContractPreservesCancellationAndTypedOutcome()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.Outcome<T>.TryGetValue(out T)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.CancellationSurvivesMappingAndNeverBecomesFailure()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.Outcome<T>.TryGetFailure(out ArcForges.Foundation.Errors.TypedFailure?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.CancellationSurvivesMappingAndNeverBecomesFailure()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.Outcome<T>.Map<TResult>(System.Func<T, TResult>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.CancellationSurvivesMappingAndNeverBecomesFailure()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.Outcome.Success<T>(T)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.CancellationSurvivesMappingAndNeverBecomesFailure()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.Outcome.Failure<T>(ArcForges.Foundation.Errors.TypedFailure)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.UnknownFutureErrorsStayGenericWithoutAutomaticRetryAndPreserveCorrelationAndEffect()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.Outcome.Cancelled<T>(ArcForges.Contracts.Foundation.V1.EffectCertainty)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.CancellationSurvivesMappingAndNeverBecomesFailure()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.ReasonCodes.TryGet(string, out ArcForges.Foundation.Errors.ReasonCode?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.KnownEffectAndReasonLookupRefuseUnknownValues()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.ReasonCodes.Get(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.RegistryProjectionIsCompleteAndHasStableRequiredMetadata()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.TypedFailure.Create(string, ArcForges.Contracts.Foundation.V1.Id?, ArcForges.Contracts.Foundation.V1.RetryAdvice?, ArcForges.Contracts.Foundation.V1.EffectCertainty?, ArcForges.Contracts.Foundation.V1.ErrorDetails?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.RegistryProjectionIsCompleteAndHasStableRequiredMetadata()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.TypedFailure.FromWire(ArcForges.Contracts.Foundation.V1.ArcError)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.UnknownFutureErrorsStayGenericWithoutAutomaticRetryAndPreserveCorrelationAndEffect()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Errors.TypedFailure.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.RegistryProjectionIsCompleteAndHasStableRequiredMetadata()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.AttemptId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.AttemptIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.AttemptId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.AttemptIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.AttemptId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.AttemptIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.CanonicalCommandHash.Compute(string, ArcForges.Contracts.Foundation.Values.RealmId, ArcForges.Contracts.Foundation.Values.WorkspaceId, ArcForges.Contracts.Foundation.Values.UserId, string, string, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ExecutionTests.CanonicalHashMatchesIndependentUtf8ProfileVector()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.ChatTurnId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.ChatTurnIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.ChatTurnId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.ChatTurnIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.ChatTurnId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.ChatTurnIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.ExecutionOwner.ForTask(ArcForges.Foundation.Execution.TaskId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ExecutionTests.RetryPreservesCommandAndAllocatesOnlyAnAuthorizedAttempt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.ExecutionOwner.ForChatTurn(ArcForges.Foundation.Execution.ChatTurnId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ExecutionTests.OwnerAlternativesAndCancellationRemainDistinct()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.ExecutionIdentity.Retry(ArcForges.Contracts.Foundation.V1.EffectCertainty, ArcForges.Contracts.Foundation.V1.RetryMode, bool)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ExecutionTests.RetryPreservesCommandAndAllocatesOnlyAnAuthorizedAttempt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.InvocationId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.InvocationIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.InvocationId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.InvocationIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.InvocationId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.InvocationIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.RunId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.RunIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.RunId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.RunIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.RunId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.RunIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.SessionId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.SessionIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.SessionId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.SessionIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.SessionId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.SessionIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.StepId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.StepIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.StepId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.StepIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.StepId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.StepIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.TaskId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.TaskIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.TaskId.FromWire(ArcForges.Contracts.Foundation.V1.Id)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.TaskIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Execution.TaskId.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.TaskIdCodecKeepsIdentityAndRefusesInvalidWire()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewRealm()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewUser()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewWorkspace()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewDevice()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewInstallation()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewInstance()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewCommand()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewCorrelation()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewResource()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewBlob()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewArtifact()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewContentOrigin()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewContentUnit()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewConflict()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IdentityGeneration.NewDelegation()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.FactoriesProduceNondefaultIndependentIdentifiers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.EnumProjection<T>.RequireKnown()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.IdentityTests.UnknownResponseEnumsPreserveBitsButNeverAuthorizeMutation()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.WireValues.ReadInstant(ArcForges.Contracts.Foundation.V1.Instant)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.IdentityTests.ExplicitEpochAndAbsenceRemainDifferent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.WireValues.ToWire(ArcForges.Foundation.Instant)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.IdentityTests.ExplicitEpochAndAbsenceRemainDifferent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.WireValues.IsKnownEffect(ArcForges.Contracts.Foundation.V1.EffectCertainty)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.KnownEffectAndReasonLookupRefuseUnknownValues()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Revision.FromWire(System.Guid, ArcForges.Contracts.Foundation.V1.Revision)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.ConcurrentWritersDetectStaleExpectedRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Revision.ToWire()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.ConcurrentWritersDetectStaleExpectedRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Revision.Next()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.ConcurrentWritersDetectStaleExpectedRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Revision.MatchesExpected(ArcForges.Foundation.Revision)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.ConcurrentWritersDetectStaleExpectedRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Revision.CompareTo(ArcForges.Foundation.Revision)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.ConcurrentWritersDetectStaleExpectedRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.SequenceNumber.Next()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.SequenceGapsAreScopedAndDistinctFromDuplicateAndOldDelivery()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.SequenceNumber.RelativeTo(ArcForges.Foundation.SequenceNumber)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.RevisionTests.SequenceGapsAreScopedAndDistinctFromDuplicateAndOldDelivery()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IClock.GetCurrentInstant()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DurationsSurviveBackwardWallClockAdjustment()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IClock.GetTimestamp()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DurationsSurviveBackwardWallClockAdjustment()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.IClock.GetElapsedTime(ArcForges.Foundation.MonotonicTimestamp, ArcForges.Foundation.MonotonicTimestamp)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DurationsSurviveBackwardWallClockAdjustment()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Clock.GetCurrentInstant()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DurationsSurviveBackwardWallClockAdjustment()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Clock.GetTimestamp()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DurationsSurviveBackwardWallClockAdjustment()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Clock.GetElapsedTime(ArcForges.Foundation.MonotonicTimestamp, ArcForges.Foundation.MonotonicTimestamp)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DurationsSurviveBackwardWallClockAdjustment()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Instant.FromDateTimeOffset(System.DateTimeOffset)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.InstantPreservesNanosecondsAndRefusesLossyConversion()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Instant.ToDateTimeOffset()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.InstantPreservesNanosecondsAndRefusesLossyConversion()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Instant.CompareTo(ArcForges.Foundation.Instant)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.KnownEffectAndReasonLookupRefuseUnknownValues()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Instant.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.LocaleAndPresentationDoNotChangeCanonicalValue()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.ZonedInstant.Resolve(System.DateTime, System.TimeZoneInfo, System.TimeSpan?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.DaylightSavingGapRefusesAndOverlapRequiresSelection()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.ZonedInstant.Present(System.TimeZoneInfo)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ClockTests.LocaleAndPresentationDoNotChangeCanonicalValue()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.AppVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.AppVersion.TryParse(string?, out ArcForges.Foundation.Versions.AppVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.AppVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.AppVersion.CompareTo(ArcForges.Foundation.Versions.AppVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.AppVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.CapabilityVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.CapabilityVersion.TryParse(string?, out ArcForges.Foundation.Versions.CapabilityVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.CapabilityVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.CapabilityVersion.CompareTo(ArcForges.Foundation.Versions.CapabilityVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.CapabilityVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ContractSet.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ContractSet.TryParse(string?, out ArcForges.Foundation.Versions.ContractSet)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.ContractSetTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ContractSet.CompareTo(ArcForges.Foundation.Versions.ContractSet)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ContractSet.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ExtensionProtocolVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ExtensionProtocolVersion.TryParse(string?, out ArcForges.Foundation.Versions.ExtensionProtocolVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.ExtensionProtocolVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ExtensionProtocolVersion.CompareTo(ArcForges.Foundation.Versions.ExtensionProtocolVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.ExtensionProtocolVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.IVersionAxis<TSelf>.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeAbiVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeAbiVersion.TryParse(string?, out ArcForges.Foundation.Versions.NativeAbiVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.NativeAbiVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeAbiVersion.CompareTo(ArcForges.Foundation.Versions.NativeAbiVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeAbiVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeFormatVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeFormatVersion.TryParse(string?, out ArcForges.Foundation.Versions.NativeFormatVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.NativeFormatVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeFormatVersion.CompareTo(ArcForges.Foundation.Versions.NativeFormatVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.NativeFormatVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PackageVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PackageVersion.TryParse(string?, out ArcForges.Foundation.Versions.PackageVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.PackageVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PackageVersion.CompareTo(ArcForges.Foundation.Versions.PackageVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PackageVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PolicySchemaVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PolicySchemaVersion.TryParse(string?, out ArcForges.Foundation.Versions.PolicySchemaVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.PolicySchemaVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PolicySchemaVersion.CompareTo(ArcForges.Foundation.Versions.PolicySchemaVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.PolicySchemaVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.StorageSchemaVersion.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.StorageSchemaVersion.TryParse(string?, out ArcForges.Foundation.Versions.StorageSchemaVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.ContractCoverageTests.StorageSchemaVersionTryParseRefusesMalformedAndRoundTripsValidInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.StorageSchemaVersion.CompareTo(ArcForges.Foundation.Versions.StorageSchemaVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.StorageSchemaVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.VersionRange<T>.Contains(T)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Foundation.Versions.VersionRange<T>.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
+    "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageAbi.GetAbiVersion()",
+    "testProject": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+    "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ImagePublicContractHasOnlyTypedManagedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageAbi.GetBuildInfo()",
+    "testProject": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+    "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ImagePublicContractHasOnlyTypedManagedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageAbi.GetLastError()",
+    "testProject": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+    "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ImagePublicContractHasOnlyTypedManagedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.ActorOperation<T>.Forward<TNext>(TNext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.ActorChainSnapshot.Encode(ArcForges.Security.ActorChain)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.ActorChainSnapshot.Decode(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.AppIdentity.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InstallationIdentity.ToApplicationScope()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.GeneratedApplicationScopeIsAnOwnedCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.Bind<TRequest, TResult>(System.Func<TOwner, TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.Foundation.Errors.Outcome<TResult>>>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.TwoProductsOnOneDeviceOwnSeparateSessionHistoryAndCapabilityState()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.DispatchAsync<TRequest, TResult>(ArcForges.Capabilities.ApplicationHandler<TOwner, TRequest, TResult>, ArcForges.Capabilities.InstanceIdentity?, TRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.MissingDeviceInstallationInstanceAndEpochTargetsNeverReachHandler()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.Stop()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StopFencesNewAdmissionButDoesNotEraseIdentityOrRollBackAdmittedEffects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition.Start<TOwner>(ArcForges.Capabilities.InstallationIdentity, ulong, System.Func<ArcForges.Capabilities.InstanceIdentity, TOwner>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.ConcurrentInstancesAndRestartNeverRetargetCapturedCalls()"
+  }
+]

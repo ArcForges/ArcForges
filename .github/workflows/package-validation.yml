@@ -9,6 +9,12 @@ on:
       native_artifact_name:
         type: string
         required: true
+      naming_evidence_artifact:
+        type: string
+        required: true
+      secret_evidence_artifact:
+        type: string
+        required: true
     outputs:
       version:
         value: ${{ jobs.pack.outputs.version }}
@@ -53,14 +59,34 @@ jobs:
         with:
           name: ${{ inputs.native_artifact_name }}
           path: artifacts/native-packages
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ inputs.naming_evidence_artifact }}
+          path: artifacts/evidence/imported/naming
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ inputs.secret_evidence_artifact }}
+          path: artifacts/evidence/imported/secret
+      - name: Require successful external gates from this exact source and CI attempt
+        run: python eng/architecture_evidence.py combine --naming artifacts/evidence/imported/naming/naming-architecture.json --secret artifacts/evidence/imported/secret/secret-architecture.json --output artifacts/evidence/architecture-gates.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: architecture-gates-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/evidence/architecture-gates.json
+          if-no-files-found: error
+          retention-days: 30
       - run: dotnet restore DesktopPlatform.slnx --locked-mode
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: native-licence-policy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/evidence/native-architecture
       - run: dotnet format DesktopPlatform.slnx --verify-no-changes --no-restore
       - name: Build and test platform ownership
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.value }}
         shell: pwsh
         run: |
-          dotnet build DesktopPlatform.slnx -c Release --no-restore "-p:PackageVersion=$env:PACKAGE_VERSION" "-p:Version=$env:PACKAGE_VERSION"
+          dotnet build DesktopPlatform.slnx -c Release --no-restore -p:EmitCompilerGeneratedFiles=true "-p:PackageVersion=$env:PACKAGE_VERSION" "-p:Version=$env:PACKAGE_VERSION"
           if ($LASTEXITCODE) { throw 'Platform build failed.' }
           dotnet test --project tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj -c Release --no-build
           if ($LASTEXITCODE) { throw 'Platform ownership tests failed.' }
@@ -68,6 +94,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Foundation primitive tests failed.' }
           dotnet test --project src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj -c Release --no-build
           if ($LASTEXITCODE) { throw 'Application composition tests failed.' }
+          dotnet test --project src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj -c Release --no-build
+          if ($LASTEXITCODE) { throw 'Security actor chain tests failed.' }
           python src/BuildingBlocks/ArcForges.Foundation/Errors/generate_registry.py --check
           if ($LASTEXITCODE) { throw 'Foundation reason registry drifted.' }
       - name: Pack explicit release allowlist and verify immutable manifest
