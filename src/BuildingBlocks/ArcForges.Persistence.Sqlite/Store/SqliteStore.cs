@@ -50,7 +50,7 @@ public sealed class SqliteStore : IStore
         Migrations = new(database);
     }
     public MigrationRunner Migrations { get; }
-    public event Action<CommitReceipt>? Committed;
+    public event EventHandler<StoreCommittedEventArgs>? Committed;
     public StoredContent? Read(string aggregateKind, Guid aggregateId) => database.Read(context => ReadContent(context, aggregateKind, aggregateId));
     public IReadOnlyList<JournalEntry> ReadJournal(JournalSequence? after, int limit) => database.Read(context => journal.Read(context, after, limit));
 
@@ -153,9 +153,9 @@ public sealed class SqliteStore : IStore
             return new CommitReceipt(command.CommandId, command.Content.Version, sequence, EffectCertainty.Happened, false);
         });
         fault?.Invoke(CommitStage.Committed);
-        if (!receipt.Replayed && Committed is { } observers)
-            foreach (Action<CommitReceipt> observer in observers.GetInvocationList())
-                try { observer(receipt); } catch (Exception) { /* Durable receipt is authoritative; observer failure cannot undo it. */ }
+        // A failed notification leaves the durable receipt intact. The caller reconciles by retrying
+        // the same command; the replay path never repeats the effect or its notification.
+        if (!receipt.Replayed) Committed?.Invoke(this, new(receipt));
         return receipt;
     }
 

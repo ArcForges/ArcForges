@@ -28,9 +28,10 @@ internal sealed class SqliteCommitContext(Guid storeId, SqliteConnection connect
     {
         if (action is raw.SQLITE_TRANSACTION or raw.SQLITE_SAVEPOINT or raw.SQLITE_ATTACH or raw.SQLITE_DETACH or raw.SQLITE_PRAGMA)
             return raw.SQLITE_DENY;
-        if (action is raw.SQLITE_CREATE_TEMP_TRIGGER or raw.SQLITE_DROP_TEMP_TRIGGER or raw.SQLITE_CREATE_TEMP_INDEX or raw.SQLITE_DROP_TEMP_INDEX)
+        if (action is raw.SQLITE_CREATE_TEMP_TRIGGER or raw.SQLITE_DROP_TEMP_TRIGGER or raw.SQLITE_CREATE_TEMP_INDEX or raw.SQLITE_DROP_TEMP_INDEX
+            or raw.SQLITE_CREATE_TEMP_TABLE or raw.SQLITE_DROP_TEMP_TABLE or raw.SQLITE_CREATE_TEMP_VIEW or raw.SQLITE_DROP_TEMP_VIEW)
             return raw.SQLITE_DENY;
-        if (action is raw.SQLITE_INSERT or raw.SQLITE_UPDATE or raw.SQLITE_DELETE or raw.SQLITE_DROP_TABLE or raw.SQLITE_ALTER_TABLE or raw.SQLITE_CREATE_TRIGGER or raw.SQLITE_DROP_TRIGGER or raw.SQLITE_CREATE_INDEX or raw.SQLITE_DROP_INDEX)
+        if (action is raw.SQLITE_INSERT or raw.SQLITE_UPDATE or raw.SQLITE_DELETE or raw.SQLITE_CREATE_TABLE or raw.SQLITE_DROP_TABLE or raw.SQLITE_CREATE_VIEW or raw.SQLITE_DROP_VIEW or raw.SQLITE_ALTER_TABLE or raw.SQLITE_CREATE_TRIGGER or raw.SQLITE_DROP_TRIGGER or raw.SQLITE_CREATE_INDEX or raw.SQLITE_DROP_INDEX)
         {
             var table = action is raw.SQLITE_ALTER_TABLE or raw.SQLITE_CREATE_TRIGGER or raw.SQLITE_DROP_TRIGGER or raw.SQLITE_CREATE_INDEX or raw.SQLITE_DROP_INDEX ? second : first;
             if (Protected(table)) return raw.SQLITE_DENY;

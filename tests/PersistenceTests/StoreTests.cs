@@ -70,20 +70,20 @@ public sealed class StoreTests
     {
         using var file = new DatabaseFile();
         using var staged = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
-        using var store = new SqliteStore(file.Path, file.Id, new Allow(), point => { if (point == CommitStage.Applied) { staged.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(15))); } });
+        using var store = new SqliteStore(file.Path, file.Id, new Allow(), point => { if (point == CommitStage.Applied) { staged.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken)); } });
         var first = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
-        var task = Task.Run(() => store.Write(first));
-        Assert.True(staged.Wait(TimeSpan.FromSeconds(15)));
+        var task = Task.Run(() => store.Write(first), TestContext.Current.CancellationToken);
+        Assert.True(staged.Wait(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken));
         try { Assert.Null(store.Read("report", first.AggregateId)); }
         finally { release.Set(); }
-        await task;
+        await task.ConfigureAwait(true);
         using var competitor = new SqliteStore(file.Path, file.Id, new Allow());
         var attempts = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
         {
             try { competitor.Write(Command(first.Content.Version, StoreVersion.Native(new(2)), aggregate: first.AggregateId)); return true; }
             catch (InvalidOperationException) { return false; }
-        }));
-        Assert.Single((await Task.WhenAll(attempts)).Where(value => value));
+        }, TestContext.Current.CancellationToken));
+        Assert.Single(await Task.WhenAll(attempts).ConfigureAwait(true), value => value);
         Assert.Equal(2, competitor.ReadJournal(null, 10).Count);
     }
 
@@ -109,9 +109,10 @@ public sealed class StoreTests
         using var file = new DatabaseFile(); using var store = new SqliteStore(file.Path, file.Id, new Allow());
         var command = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
         var notified = false;
-        store.Committed += receipt => { Assert.Equal(receipt.Version, store.Read("report", command.AggregateId)!.Version); notified = true; throw new IOException("observer"); };
+        store.Committed += (_, args) => { Assert.Equal(args.Receipt.Version, store.Read("report", command.AggregateId)!.Version); notified = true; throw new IOException("observer"); };
+        Assert.Throws<IOException>(() => store.Write(command));
         var result = store.Write(command);
-        Assert.True(notified); Assert.Equal(EffectCertainty.Happened, result.Effect); Assert.True(store.Write(command).Replayed);
+        Assert.True(notified); Assert.Equal(EffectCertainty.Happened, result.Effect); Assert.True(result.Replayed);
     }
 
     [Fact]
@@ -121,7 +122,7 @@ public sealed class StoreTests
         Assert.False(assembly.GetType("ArcForges.Persistence.Sqlite.StoreDatabase")!.IsPublic);
         Assert.False(assembly.GetType("ArcForges.Persistence.Sqlite.SqliteCommitContext")!.IsPublic);
         Assert.False(assembly.GetType("ArcForges.Persistence.Sqlite.CommitUnit")!.IsPublic);
-        Assert.Single(typeof(SqliteStore).GetMethods().Where(method => method.Name == "Write"));
+        Assert.Single(typeof(SqliteStore).GetMethods(), method => method.Name == "Write");
         foreach (var type in assembly.GetExportedTypes())
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
@@ -164,15 +165,19 @@ public sealed class StoreTests
         {
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path, Pooling = false }.ToString()); connection.Open();
             using var command = connection.CreateCommand();
-            command.CommandText = table switch
+            switch (table)
             {
-                "store_content" => "SELECT COUNT(*) FROM store_content", "store_history" => "SELECT COUNT(*) FROM store_history",
-                "store_origins" => "SELECT COUNT(*) FROM store_origins", "journal" => "SELECT COUNT(*) FROM journal",
-                "sync_outbox" => "SELECT COUNT(*) FROM sync_outbox", "command_log" => "SELECT COUNT(*) FROM command_log",
-                _ => throw new ArgumentException("Unknown table.", nameof(table))
-            };
+                case "store_content": command.CommandText = "SELECT COUNT(*) FROM store_content"; break;
+                case "store_history": command.CommandText = "SELECT COUNT(*) FROM store_history"; break;
+                case "store_origins": command.CommandText = "SELECT COUNT(*) FROM store_origins"; break;
+                case "journal": command.CommandText = "SELECT COUNT(*) FROM journal"; break;
+                case "sync_outbox": command.CommandText = "SELECT COUNT(*) FROM sync_outbox"; break;
+                case "command_log": command.CommandText = "SELECT COUNT(*) FROM command_log"; break;
+                default: throw new ArgumentException("Unknown table.", nameof(table));
+            }
             return (long)command.ExecuteScalar()!;
         }
         public void Dispose() { foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" }) File.Delete(Path + suffix); }
     }
 }
+

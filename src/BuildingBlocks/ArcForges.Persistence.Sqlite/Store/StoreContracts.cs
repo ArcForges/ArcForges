@@ -100,6 +100,11 @@ public sealed class WriteCommand
 public sealed record CommitReceipt(CommandId CommandId, StoreVersion Version, JournalSequence Sequence,
     EffectCertainty Effect, bool Replayed);
 
+public sealed class StoreCommittedEventArgs(CommitReceipt receipt) : EventArgs
+{
+    public CommitReceipt Receipt { get; } = receipt;
+}
+
 /// <summary>Authorization is supplied by the owning repository and rechecked before receipt disclosure.</summary>
 public interface IStoreAuthorization
 {
