@@ -278,6 +278,12 @@ def verify(root, policy_root, *, refresh=False, preview=False):
     require(preview or (inputs == pin['sourceHashes'] and digest == pin['corpusSha256']), 'pinned Design source hashes differ')
     report = corpus.audit(root, docs)
     require(not report['errors'] and not report['missingAnchors'], 'corpus integrity failure: ' + repr((report['errors'] + report['missingAnchors'])[:5]))
+    input_integrity = corpus.archived_input_dependencies(docs)
+    naming_integrity = corpus.superseded_names(docs)
+    decisions = corpus.decision_coverage(docs, report['citations'])
+    for name, evidence in [('archived inputs', input_integrity), ('superseded names', naming_integrity),
+                           ('decision coverage', decisions)]:
+        require(not evidence['findings'], name + ' integrity failure: ' + repr(evidence['findings'][:5]))
     classifications = classify(docs, report, json.loads(register_text, object_pairs_hook=unique_keys))
     dependency = graph(root, docs)
     require(not dependency['errors'], 'delivery graph failure: ' + repr(dependency['errors'][:5]))
@@ -301,6 +307,16 @@ def verify(root, policy_root, *, refresh=False, preview=False):
             'outputs': {name: hashlib.sha256(data).hexdigest() for name, data in outputs.items()},
             'forbiddenAliasesSha256': canonical_hash(vocabulary['forbiddenAliases']),
             'corpus': report, 'classifications': classifications, 'graph': dependency,
+            'specificationIntegrity': {
+                'result': 'passed', 'findings': [],
+                'checks': {
+                    'internalLinks': {'result': 'passed', 'count': report['links']},
+                    'citedIdentifiers': {'result': 'passed', 'count': len(report['citations'])},
+                    'supersededNames': {'result': 'passed', **naming_integrity},
+                    'decisionCoverage': {'result': 'passed', **decisions},
+                    'dependencyGraph': {'result': 'passed', 'source': GRAPH_REL},
+                    'currentInputAuthority': {'result': 'passed', **input_integrity},
+                }},
             'limitations': 'Policy and planned-verification data only; no implemented invariant or product readiness claim.'}
 
 
