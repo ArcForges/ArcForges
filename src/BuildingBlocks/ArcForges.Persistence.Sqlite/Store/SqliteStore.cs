@@ -179,6 +179,13 @@ public sealed class SqliteStore : IStore
         foreach (var parent in value.ParentOriginIds)
         {
             var parentId = ContentOriginId.FromWire(parent).Value.ToString("D");
+            using (var inherited = context.CreateCommand("SELECT record FROM store_origins WHERE id=$id"))
+            {
+                inherited.Parameters.AddWithValue("$id", parentId);
+                if (inherited.ExecuteScalar() is byte[] record &&
+                    ContentOrigin.Parser.ParseFrom(record).Kinds.Except(value.Kinds, StringComparer.Ordinal).Any())
+                    throw new InvalidOperationException("The declared kind union omits a retained contributing origin.");
+            }
             using var edge = context.CreateCommand("INSERT INTO store_origin_edges(child,parent) VALUES($child,$parent)");
             edge.Parameters.AddWithValue("$child", id); edge.Parameters.AddWithValue("$parent", parentId); edge.ExecuteNonQuery();
             ChangeOriginReference(context, parentId, 1);

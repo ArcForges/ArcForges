@@ -181,6 +181,20 @@ public sealed class StoreTests
         }
     }
 
+    [Fact]
+    public void RetainedContributingOriginCannotLoseItsKinds()
+    {
+        using var file = new DatabaseFile(); using var store = new SqliteStore(file.Path, file.Id, new Allow());
+        var first = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        var origin = first.Content.Origin; origin.Kinds.Clear(); origin.Kinds.Add("aiGenerated"); origin.ProducerKind = "model";
+        store.Write(new(first.CommandId, first.AggregateKind, first.AggregateId, first.Expected,
+            new(first.Content.Version, first.Content.Payload.Span, origin), first.Operation, first.Actor, first.CorrelationId, first.CommittedAt));
+        var child = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)), parent: origin);
+        Assert.Throws<InvalidOperationException>(() => store.Write(child));
+        Assert.Null(store.Read(child.AggregateKind, child.AggregateId));
+        Assert.Equal(1, file.Count("journal")); Assert.Equal(1, file.Count("store_origins"));
+    }
+
     private static WriteCommand Command(StoreVersion expected, StoreVersion next, CommandId? command = null, Guid? aggregate = null, string body = "payload", ContentOrigin? parent = null)
     {
         var payload = Encoding.UTF8.GetBytes(body);
