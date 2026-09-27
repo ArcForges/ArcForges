@@ -585,6 +585,21 @@
     "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ImagePublicContractHasOnlyTypedManagedResults()"
   },
   {
+    "apiSymbol": "ArcForges.Security.ActorOperation<T>.Forward<TNext>(TNext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.ActorChainSnapshot.Encode(ArcForges.Security.ActorChain)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.ActorChainSnapshot.Decode(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
     "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.Create(string)",
     "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
     "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.InvalidMapsAndGapsCannotEnterTheStore()"

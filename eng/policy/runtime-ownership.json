@@ -89,6 +89,10 @@
           "role": "aot-library"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
           "role": "aot-host"
         },

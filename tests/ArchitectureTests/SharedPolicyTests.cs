@@ -107,6 +107,17 @@ public sealed class SharedPolicyTests
             new ProjectClassification("fixture.csproj", ProjectRole.Foundation, "DesktopPlatform", Aot: true)), finding => finding.Rule == rule);
     }
 
+    [Xunit.Theory]
+    [Xunit.InlineData("class C { byte[] M() => System.Array.Empty<byte>(); }")]
+    [Xunit.InlineData("class C { object M() { byte[] Local() => System.Array.Empty<byte>(); return Local(); } }")]
+    [Xunit.InlineData("class C { object M() { System.Func<byte[]> value = () => System.Array.Empty<byte>(); return value(); } }")]
+    public void SynchronousArrayReturnTypesDoNotRequireAContainingNamespace(string source)
+    {
+        var compilation = FixtureCompiler.Compile("ArrayReturn", new Dictionary<string, string> { ["fixture.cs"] = source });
+        Xunit.Assert.Empty(BannedSymbolScanner.Scan(compilation,
+            new ProjectClassification("fixture.csproj", ProjectRole.Foundation, "DesktopPlatform", Aot: true)));
+    }
+
     [Xunit.Fact]
     public void CommentsAndStringTextAreNotSemanticInvocations()
     {

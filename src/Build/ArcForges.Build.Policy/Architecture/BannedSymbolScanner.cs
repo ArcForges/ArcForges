@@ -165,19 +165,19 @@ internal static class BannedSymbolScanner
             {
                 return !function.AsyncKeyword.IsKind(SyntaxKind.None)
                     || (model.GetSymbolInfo(function).Symbol is IMethodSymbol lambda
-                        && lambda.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks");
+                        && lambda.ReturnType.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks");
             }
 
             if (scope is LocalFunctionStatementSyntax local)
             {
                 return local.Modifiers.Any(SyntaxKind.AsyncKeyword)
-                    || model.GetDeclaredSymbol(local)?.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+                    || model.GetDeclaredSymbol(local)?.ReturnType.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks";
             }
 
             if (scope is MethodDeclarationSyntax method)
             {
                 return method.Modifiers.Any(SyntaxKind.AsyncKeyword)
-                    || model.GetDeclaredSymbol(method)?.ReturnType.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+                    || model.GetDeclaredSymbol(method)?.ReturnType.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks";
             }
         }
 
