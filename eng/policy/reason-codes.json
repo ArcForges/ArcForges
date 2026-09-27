@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "source": "src/BuildingBlocks/ArcForges.Foundation/Errors/ReasonCodes.cs",
+  "authority": "docs/architecture/contracts/00-operation-catalogue.md#32-the-closed-condition-set",
+  "designCommit": "722e85641c8afb765dafcab5bc0e84d5a22d5a3c",
+  "codes": [
+    {
+      "code": "auth.unauthenticated",
+      "category": "Authentication",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.auth.unauthenticated"
+    },
+    {
+      "code": "auth.session_expired",
+      "category": "Authentication",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.auth.session_expired"
+    },
+    {
+      "code": "auth.step_up_required",
+      "category": "Authentication",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.auth.step_up_required"
+    },
+    {
+      "code": "auth.local_presence_required",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.auth.local_presence_required"
+    },
+    {
+      "code": "perm.capability_denied",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.perm.capability_denied"
+    },
+    {
+      "code": "perm.resource_denied",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.perm.resource_denied"
+    },
+    {
+      "code": "perm.egress_denied",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.perm.egress_denied"
+    },
+    {
+      "code": "perm.approval_required",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.perm.approval_required"
+    },
+    {
+      "code": "perm.approval_expired",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.perm.approval_expired"
+    },
+    {
+      "code": "perm.lease_expired",
+      "category": "Authorization",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.perm.lease_expired"
+    },
+    {
+      "code": "entitlement.no_service_term",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.no_service_term"
+    },
+    {
+      "code": "entitlement.not_entitled",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.not_entitled"
+    },
+    {
+      "code": "entitlement.quota_exceeded",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.quota_exceeded"
+    },
+    {
+      "code": "entitlement.capacity_exhausted",
+      "category": "Entitlement",
+      "retry": "AfterTime",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.capacity_exhausted"
+    },
+    {
+      "code": "entitlement.extra_credits_required",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.extra_credits_required"
+    },
+    {
+      "code": "entitlement.credits_exhausted",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.credits_exhausted"
+    },
+    {
+      "code": "validation.invalid_request",
+      "category": "Validation",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.validation.invalid_request"
+    },
+    {
+      "code": "validation.ast_bounds_exceeded",
+      "category": "Validation",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.validation.ast_bounds_exceeded"
+    },
+    {
+      "code": "identity.last_credential",
+      "category": "State",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.identity.last_credential"
+    },
+    {
+      "code": "validation.unsupported_version",
+      "category": "Validation",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.validation.unsupported_version"
+    },
+    {
+      "code": "conflict.revision_mismatch",
+      "category": "Conflict",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.conflict.revision_mismatch"
+    },
+    {
+      "code": "conflict.local_changes_pending",
+      "category": "Conflict",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.conflict.local_changes_pending"
+    },
+    {
+      "code": "conflict.duplicate_identifier",
+      "category": "Conflict",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.conflict.duplicate_identifier"
+    },
+    {
+      "code": "command.reused_identifier",
+      "category": "Conflict",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.command.reused_identifier"
+    },
+    {
+      "code": "state.not_found",
+      "category": "State",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.state.not_found"
+    },
+    {
+      "code": "state.invalid_transition",
+      "category": "State",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.state.invalid_transition"
+    },
+    {
+      "code": "state.gone",
+      "category": "State",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.state.gone"
+    },
+    {
+      "code": "resource.unavailable",
+      "category": "Resource",
+      "retry": "SameCommand",
+      "effect": "DidNotHappen",
+      "messageKey": "error.resource.unavailable"
+    },
+    {
+      "code": "resource.integrity_failed",
+      "category": "Resource",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.resource.integrity_failed"
+    },
+    {
+      "code": "capacity.rate_limited",
+      "category": "Resource",
+      "retry": "AfterTime",
+      "effect": "DidNotHappen",
+      "messageKey": "error.capacity.rate_limited"
+    },
+    {
+      "code": "capacity.busy",
+      "category": "Resource",
+      "retry": "AfterTime",
+      "effect": "DidNotHappen",
+      "messageKey": "error.capacity.busy"
+    },
+    {
+      "code": "dependency.unavailable",
+      "category": "Execution",
+      "retry": "Reconcile",
+      "effect": "Unknown",
+      "messageKey": "error.dependency.unavailable"
+    },
+    {
+      "code": "dependency.timeout",
+      "category": "Execution",
+      "retry": "Reconcile",
+      "effect": "Unknown",
+      "messageKey": "error.dependency.timeout"
+    },
+    {
+      "code": "provider.declined",
+      "category": "Execution",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.provider.declined"
+    },
+    {
+      "code": "internal.unexpected",
+      "category": "Internal",
+      "retry": "Reconcile",
+      "effect": "Unknown",
+      "messageKey": "error.internal.unexpected"
+    },
+    {
+      "code": "validation.invalid_offset",
+      "category": "Validation",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.validation.invalid_offset"
+    },
+    {
+      "code": "sync.cursor_expired",
+      "category": "State",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.sync.cursor_expired"
+    },
+    {
+      "code": "sync.bootstrap_expired",
+      "category": "State",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.sync.bootstrap_expired"
+    },
+    {
+      "code": "resource.upload_expired",
+      "category": "Resource",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.resource.upload_expired"
+    },
+    {
+      "code": "entitlement.request_too_large",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.entitlement.request_too_large"
+    },
+    {
+      "code": "commerce.supplier_budget_exhausted",
+      "category": "Entitlement",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.commerce.supplier_budget_exhausted"
+    },
+    {
+      "code": "security.isolation_unavailable",
+      "category": "Execution",
+      "retry": "Never",
+      "effect": "DidNotHappen",
+      "messageKey": "error.security.isolation_unavailable"
+    },
+    {
+      "code": "resource.parser_failed",
+      "category": "Resource",
+      "retry": "Reconcile",
+      "effect": "Unknown",
+      "messageKey": "error.resource.parser_failed"
+    },
+    {
+      "code": "state.stale_fence",
+      "category": "State",
+      "retry": "Reconcile",
+      "effect": "DidNotHappen",
+      "messageKey": "error.state.stale_fence"
+    }
+  ]
+}
