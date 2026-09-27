@@ -27,7 +27,7 @@
     "StorageSchemaVersion": {
       "kind": "migrations",
       "absence": "not-produced",
-      "reason": "No owned migration set is implemented.",
+      "reason": "The runner accepts owner-authored numbered migration plans; this mechanism owns no product schema set. Its synthetic historical fixture is offline mechanism evidence only.",
       "producer": "WP07 and product storage owners"
     },
     "NativeAbiVersion": {

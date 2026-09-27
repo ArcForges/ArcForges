@@ -115,6 +115,10 @@
         {
           "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
           "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+          "role": "test-or-build-tool"
         }
       ]
     },

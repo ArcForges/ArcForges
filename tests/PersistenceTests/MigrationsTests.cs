@@ -17,6 +17,22 @@ public sealed class MigrationsTests : IDisposable
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     [Xunit.Fact]
+    public void PublicStoreExposesDurableMigrationsWithoutBusinessJournalEffects()
+    {
+        var path = Path.Combine(_directory, "public-store.db");
+        using (var store = new SqliteStore(path, _storeId, new RefuseBusinessWrites()))
+        {
+            Xunit.Assert.Null(store.Migrations.CurrentVersion);
+            Xunit.Assert.Equal(new StorageSchemaVersion(3), store.Migrations.MigrateTo(FixturePlan(), new(3)));
+            Xunit.Assert.Empty(store.ReadJournal(null, 10));
+        }
+        using var reopened = new SqliteStore(path, _storeId, new RefuseBusinessWrites());
+        Xunit.Assert.Equal(new StorageSchemaVersion(3), reopened.Migrations.CurrentVersion);
+        Xunit.Assert.Equal(new StorageSchemaVersion(3), reopened.Migrations.MigrateTo(FixturePlan(), new(3)));
+        Xunit.Assert.Empty(reopened.ReadJournal(null, 10));
+    }
+
+    [Xunit.Fact]
     public void MigrationDefinitionsCannotChangeAfterAdmission()
     {
         string[] statements = ["CREATE TABLE example(value TEXT NOT NULL)"];
@@ -115,7 +131,7 @@ public sealed class MigrationsTests : IDisposable
         var runner = new MigrationRunner(database);
         var plan = FixturePlan();
         runner.MigrateTo(plan, new(3));
-        Xunit.Assert.Contains("downgrade", Xunit.Assert.Throws<InvalidOperationException>(() => runner.MigrateTo(plan, new(1))).Message);
+        Xunit.Assert.Contains("downgrade", Xunit.Assert.Throws<InvalidOperationException>(() => runner.MigrateTo(plan, new(1))).Message, StringComparison.Ordinal);
         var changed = new MigrationStep(new(1), "notes-initial", ["DROP TABLE migration_fixture_notes"]);
         Xunit.Assert.Throws<InvalidOperationException>(() => runner.MigrateTo(new([changed, .. plan.Steps.Skip(1)]), new(3)));
         Xunit.Assert.Equal(new StorageSchemaVersion(3), runner.CurrentVersion);
@@ -146,6 +162,8 @@ public sealed class MigrationsTests : IDisposable
     [Xunit.InlineData("SAVEPOINT escape")]
     [Xunit.InlineData("DELETE FROM sys_meta")]
     [Xunit.InlineData("DROP TABLE __arcforges_migration_history")]
+    [Xunit.InlineData("CREATE TEMP TRIGGER protected_metadata AFTER UPDATE ON sys_meta BEGIN SELECT 1; END")]
+    [Xunit.InlineData("CREATE TEMP TABLE sys_meta(key TEXT, value TEXT)")]
     public void OwnerSqlCannotEscapeTransactionOrRewriteMechanismHistory(string forbidden)
     {
         using var database = new StoreDatabase(Path.Combine(_directory, "control.db"), _storeId);
@@ -153,6 +171,11 @@ public sealed class MigrationsTests : IDisposable
         Xunit.Assert.Throws<SqliteException>(() => new MigrationRunner(database).MigrateTo(new([step]), new(1)));
         Xunit.Assert.Null(new MigrationRunner(database).CurrentVersion);
         Xunit.Assert.Equal(0L, Scalar(database, "SELECT COUNT(*) FROM sqlite_master WHERE name='control_fixture'"));
+    }
+
+    private sealed class RefuseBusinessWrites : IStoreAuthorization
+    {
+        public bool CanWrite(WriteCommand command) => false;
     }
 
     private static long Scalar(StoreDatabase database, string sql) => database.Read(context =>

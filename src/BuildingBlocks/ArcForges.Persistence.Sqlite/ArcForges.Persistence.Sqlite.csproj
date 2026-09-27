@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Persistence.Sqlite</AssemblyName>
     <RootNamespace>ArcForges.Persistence.Sqlite</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Persistence.Sqlite</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Transactional owner stores, durable journals and numbered schema migrations.</Description>
   </PropertyGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>
@@ -13,5 +17,8 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <InternalsVisibleTo Include="ArcForges.Tests.PersistenceTests" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

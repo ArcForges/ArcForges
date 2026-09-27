@@ -11,6 +11,9 @@ Product applications and services build independently from published packages.
   identities, revision/sequence, clocks, errors, version axes and storage-free application ports.
   Their verified package entries join the normal candidate publication; durable owner receipts
   and cross-language closure acceptance remain tracked delivery tasks.
+- `ArcForges.Persistence.Sqlite`: owner-bound transactional writes, durable command receipts,
+  append-only journal and per-step schema migrations. Its offline real-file fixtures are scoped
+  mechanism evidence; product snapshot recovery and final persistence integration remain separate tasks.
 - Other shared C# mechanisms and ContentSandbox remain scaffolds excluded from NuGet publication.
 - `ArcForges.Build.Policy`: portable C# build defaults and enforced central package-version rules.
 - Native.Abstractions, Native.Image and the Windows x64 Image runtime package deliver the existing version, build-information and error APIs, dependency closure, C headers, import library and source records.

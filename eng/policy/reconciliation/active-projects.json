@@ -72,7 +72,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
-      "blob": "6b4a9d54a67da08b17f2ae1d5842ac05d712d15d"
+      "blob": "439261198ed7e999ef2871fe1c68f7c0e61a680b"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
@@ -105,6 +105,10 @@
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
       "blob": "87b5bfceadd816497a18225b52a1149c53355dbe"
+    },
+    {
+      "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+      "blob": "37d1b57f89ef5156d2780ce48697de5f7c6bb12c"
     }
   ]
 }
