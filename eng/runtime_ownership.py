@@ -380,6 +380,7 @@ def main():
     parser.add_argument('--repository', action='append', help='Owner=absolute-root; supply all seven for fresh family audit')
     parser.add_argument('--design-root', type=Path)
     parser.add_argument('--evaluate-managed', action='store_true', help='evaluate only this DesktopPlatform checkout')
+    parser.add_argument('--naming-assets', type=Path, help='Retain already verified scanner assets for architecture refusal fixtures')
     parser.add_argument('--report', type=Path, default=ROOT / 'artifacts/evidence/runtime-ownership.json')
     args = parser.parse_args()
     result = {'substep': 'WP00.05', 'checkedAt': datetime.now(timezone.utc).isoformat(),
@@ -410,7 +411,10 @@ def main():
             for row in value['owners']:
                 result['repositories'].append(audit(roots[row['repository']], row))
             naming_pin = document(ROOT, 'eng/policy/naming-package.json')
-            scanner = naming_package(naming_pin, temporary / 'naming-package')
+            scanner = naming_package(naming_pin, args.naming_assets or temporary / 'naming-package')
+            asset_root = scanner.parents[3]
+            result['namingAssets'] = {p: hashlib.sha256((asset_root / p).read_bytes()).hexdigest()
+                                      for p in ('tools/naming/eng/check_naming.py', 'tools/naming/eng/policy/product-names.json')}
             result['namingPackage'] = naming_pin
             result['naming'] = naming(roots, scanner)
             require(all(not row['findings'] for row in result['naming']), 'naming policy failed')

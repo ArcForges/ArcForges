@@ -1,0 +1,21 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!-- Import explicitly from an offline test/build-tool project; this file is not in build/ or buildTransitive/. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)*.cs" Link="ArchitecturePolicy/%(Filename)%(Extension)" />
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>$(MSBuildToolsPath)/Roslyn/bincore/Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>$(MSBuildToolsPath)/Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="VerifyArchitecturePolicyConsumer" BeforeTargets="CoreCompile">
+    <Error Condition="'$(IsTestProject)' != 'true' and '$(ArcForgesArchitecturePolicyBuildTool)' != 'true'"
+           Text="The architecture policy engine is only for explicitly opted-in offline tests or build tools." />
+    <Error Condition="!Exists('$(MSBuildToolsPath)/Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll')"
+           Text="The pinned .NET SDK compiler is required for offline architecture policy fixtures." />
+  </Target>
+</Project>

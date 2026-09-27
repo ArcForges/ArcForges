@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "license": "AGPL-3.0-only",
+  "namingPin": "eng/policy/naming-package.json",
+  "namingRules": ["RP-01", "RP-08"],
+  "secretRule": "RP-09"
+}

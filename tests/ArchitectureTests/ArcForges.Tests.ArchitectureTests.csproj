@@ -15,4 +15,5 @@
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
+  <Import Project="../../src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props" />
 </Project>

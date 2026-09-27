@@ -44,6 +44,7 @@ install(TARGETS arcslate_image_abi
 if(ARCFORGES_BUILD_TESTS)
     add_executable(arcslate_image_abi_tests "tests/arcslate_image_abi_tests.cpp")
     arcforges_declare_target_licence(arcslate_image_abi_tests)
+    set_target_properties(arcslate_image_abi_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)
     target_compile_features(arcslate_image_abi_tests PRIVATE cxx_std_20)
     target_link_libraries(arcslate_image_abi_tests PRIVATE arcslate_image_abi)
     add_test(NAME arcslate_image_abi.hello COMMAND arcslate_image_abi_tests)
