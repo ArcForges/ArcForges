@@ -240,6 +240,10 @@
           "role": "typescript-build"
         },
         {
+          "path": "tests/StructureTests/PreviousClient/PreviousClient.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "tests/StructureTests/StructureTests.csproj",
           "role": "test-or-build-tool"
         },
