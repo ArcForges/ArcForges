@@ -203,7 +203,7 @@
       "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "71fa828dcd120ef6e77cbecfb030fd27b4a0edc1a645b2cffd79ea40224ca593",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "b4f0ff214884e99a7ee38ccdef1baee5338a75080447240915627b062a38747e",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "8feaa552bdf82d4fd957197f00da9481230cdbc123252bbc937e73cef36e6659",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
       "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
       "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
