@@ -160,7 +160,7 @@
     "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
     "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
     "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
-    "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "e55cbaad6a9d6318de1c996b9486e77176710e8cb3007a70efa9f92018ffa0dc",
+    "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "24cddc2e86c2ab80f98fe9c4cb0cb141d9d7790c4f510f841fc1164da307ec42",
     "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "30f9bc6819011d4dafe5797b83c24c6663514e7c481a9d2dd6eef3b7ee974c3e",
     "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Metadata.targets": "c0d516a0c0b956689ddfc78ff061d6f3add7a9fe22b4b05baa31bbfed1aca985",
     "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
@@ -455,12 +455,12 @@
     "owner": "w-20260927-dgov",
     "reviewer": "Independent exact-head GOV.04 reviewer recorded in DesktopPlatform PR67",
     "reviewedOn": "2026-09-27",
-    "baselineCommit": "ace60538849047184954baed09fb05ec7676d367",
-    "maintenanceAssessment": "Retain Foundation successor receipt and all admitted NuGet/native/framework closures. Add opt-in build-only architecture C# source assets compiled by consumer test hosts against the selected SDK Roslyn binaries; no new NuGet dependency, runtime assembly or implicit target. Canonical naming reuses the existing exact admitted Validation pin and a single existing Gitleaks gate. SDK compiler changes must remain tied to global.json and gate fixtures.",
+    "baselineCommit": "4187ed3cb954a541b78b61d8056571edbc2c4ab5",
+    "maintenanceAssessment": "Retain Foundation successor receipt and all admitted NuGet/native/framework closures. Add opt-in build-only architecture C# source assets compiled by consumer test hosts against the selected SDK Roslyn binaries; no new NuGet dependency, runtime assembly or implicit target. Canonical naming reuses the existing exact admitted Validation pin and a single existing Gitleaks gate. SDK compiler changes must remain tied to global.json and gate fixtures. Correct explicit props packing after actual CI identified default None recursive-directory metadata nesting the opt-in props; explicit Remove/Include emits the exact existing tools/architecture/ArchitecturePolicy.props contract.",
     "upgradeChecks": {
       "compilation": "Existing SDK10.0.401 compatibility invocation builds solution without warnings; official pinned10.0.400 retained CI remains authority. Semantic positive/negative fixtures and actual evaluated project graph are exercised.",
       "aot-trim": "Source engine compiles only into explicit test/build-tool host; no production Roslyn closure. Existing AOT flags and error diagnostics retained.",
-      "compatibility": "Same Build.Policy identity, PrivateAssets posture and opt-in tools/architecture import; old build defaults unchanged. Exact source-linked engine serves producer and consumers.",
+      "compatibility": "Same Build.Policy identity, PrivateAssets posture and opt-in tools/architecture import; old build defaults unchanged. Exact source-linked engine serves producer and consumers. Local nupkg pack confirms all seven tools/architecture assets at exact paths. No closure, framework, ABI, native behavior or package identity changes.",
       "licence-provenance": "AGPL first-party engine source; SDK compiler used only as test tooling. Existing Apache Foundation/BSD protobuf/native legal receipts and package hashes retained.",
       "security-sbom": "No dependency additions; retained NuGet audit/dependency review and single pinned Gitleaks job. Same-source/run/attempt success receipts reject missing, stale or false evidence.",
       "runtime-performance-migration": "Offline Roslyn compilation/semantic rules and deterministic primitive contract tests only. No installed consumer, native runtime/device/live tests or performance claim; no state migration.",
@@ -625,7 +625,7 @@
       "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
       "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
       "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
-      "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "e55cbaad6a9d6318de1c996b9486e77176710e8cb3007a70efa9f92018ffa0dc",
+      "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "24cddc2e86c2ab80f98fe9c4cb0cb141d9d7790c4f510f841fc1164da307ec42",
       "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "30f9bc6819011d4dafe5797b83c24c6663514e7c481a9d2dd6eef3b7ee974c3e",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Metadata.targets": "c0d516a0c0b956689ddfc78ff061d6f3add7a9fe22b4b05baa31bbfed1aca985",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
@@ -669,12 +669,12 @@
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
       "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/fnd-01-06-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/gov04-r1.json",
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/gov04-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/gov04-r2.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

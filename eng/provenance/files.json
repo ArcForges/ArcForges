@@ -74,6 +74,7 @@
     "eng/policy/dependency-policy.json",
     "eng/policy/dependency-reviews/fnd-01-06-r1.json",
     "eng/policy/dependency-reviews/gov04-r1.json",
+    "eng/policy/dependency-reviews/gov04-r2.json",
     "eng/policy/dependency-reviews/gov17-gov18-r2.json",
     "eng/policy/dependency-reviews/wp02-05-r1.json",
     "eng/policy/exceptions.json",
