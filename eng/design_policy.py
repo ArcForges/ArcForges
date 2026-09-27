@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 import design_corpus as corpus
-from design_graph import graph
+from design_graph import graph, GRAPH_REL
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'eng/policy'
@@ -95,7 +95,7 @@ def validate_pin(pin):
     require(pin['schemaVersion'] == 1 and type(pin['schemaVersion']) is int, 'unsupported pin schema')
     require(pin['license'] == 'AGPL-3.0-only' and pin['repository'] == REPOSITORY, 'incorrect pin ownership')
     require(isinstance(pin['commit'], str) and re.fullmatch('[0-9a-f]{40}', pin['commit']), 'invalid Design commit')
-    require(isinstance(pin['sourceHashes'], dict) and set(pin['sourceHashes']) == {GLOSSARY, COVERAGE, CLASSIFICATIONS},
+    require(isinstance(pin['sourceHashes'], dict) and set(pin['sourceHashes']) == {GLOSSARY, COVERAGE, CLASSIFICATIONS, GRAPH_REL},
             'incomplete policy sources')
     for value in [pin['corpusSha256'], *pin['sourceHashes'].values()]:
         require(isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value), 'invalid Design source hash')
@@ -272,7 +272,7 @@ def verify(root, policy_root, *, refresh=False, preview=False):
             'immutable export requires the exact clean pinned Design commit')
     docs = corpus.load(root)
     register_text = corpus.read_document(root, CLASSIFICATIONS)
-    inputs = {GLOSSARY: text_hash(docs[GLOSSARY]), COVERAGE: text_hash(docs[COVERAGE]), CLASSIFICATIONS: text_hash(register_text)}
+    inputs = {GLOSSARY: text_hash(docs[GLOSSARY]), COVERAGE: text_hash(docs[COVERAGE]), CLASSIFICATIONS: text_hash(register_text), GRAPH_REL: text_hash(corpus.read_document(root, GRAPH_REL))}
     inventory = [{'path': p, 'sha256': text_hash(text)} for p, text in docs.items()]
     digest = canonical_hash(inventory)
     require(preview or (inputs == pin['sourceHashes'] and digest == pin['corpusSha256']), 'pinned Design source hashes differ')
@@ -280,9 +280,9 @@ def verify(root, policy_root, *, refresh=False, preview=False):
     require(not report['errors'] and not report['missingAnchors'], 'corpus integrity failure: ' + repr((report['errors'] + report['missingAnchors'])[:5]))
     classifications = classify(docs, report, json.loads(register_text, object_pairs_hook=unique_keys))
     dependency = graph(root, docs)
-    require(not dependency['errors'], 'work-package graph failure: ' + repr(dependency['errors'][:5]))
+    require(not dependency['errors'], 'delivery graph failure: ' + repr(dependency['errors'][:5]))
     vocabulary = glossary(docs, before['commit'])
-    mapping = invariants(root, docs, before['commit'], set(dependency['order']))
+    mapping = invariants(root, docs, before['commit'], set(dependency['activePackages']))
     outputs = {'glossary-terms.json': encode(vocabulary), 'invariants.json': encode(mapping)}
     require(state(root) == before, 'Design changed during verification')
     if refresh:
