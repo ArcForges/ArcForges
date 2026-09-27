@@ -158,7 +158,23 @@ public sealed class JournalTests
         using var connection = fixture.Open();
         using (var mutate = connection.CreateCommand())
         {
-            mutate.CommandText = corruption;
+            switch (corruption)
+            {
+                case "UPDATE journal SET operation='modified' WHERE sequence=2":
+                    mutate.CommandText = "UPDATE journal SET operation='modified' WHERE sequence=2";
+                    break;
+                case "DELETE FROM journal WHERE sequence=1":
+                    mutate.CommandText = "DELETE FROM journal WHERE sequence=1";
+                    break;
+                case "DELETE FROM journal WHERE sequence=2":
+                    mutate.CommandText = "DELETE FROM journal WHERE sequence=2";
+                    break;
+                case "UPDATE journal SET local_seq=1 WHERE sequence=2":
+                    mutate.CommandText = "UPDATE journal SET local_seq=1 WHERE sequence=2";
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(corruption));
+            }
             mutate.ExecuteNonQuery();
         }
         using var transaction = connection.BeginTransaction(deferred: true);
