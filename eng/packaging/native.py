@@ -314,7 +314,7 @@ def stage(directory, vcpkg, installed_root):
         target.parent.mkdir(parents=True)
         target.write_text(f'''<Project>
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-  <Target Name="Require{entry['library']}Rid" BeforeTargets="PrepareForBuild">
+  <Target Name="Require_{entry['prefix']}_Rid" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(RuntimeIdentifier)' != 'win-x64'" Text="{entry['id']} requires RuntimeIdentifier=win-x64 and its matching managed package version." />
   </Target>
 </Project>

@@ -140,7 +140,7 @@ internal static unsafe partial int {family}(uint* major, uint* minor);
                          "Consumer restored different candidate bytes: " + row["id"])
 
     # The installed RID target must reject an incompatible RID before compilation.
-    packages.run("dotnet", "msbuild", str(project), "-t:RequireArcImageNativeRid", "-p:RuntimeIdentifier=win-arm64",
+    packages.run("dotnet", "msbuild", str(project), "-t:Require_arc_image_Rid", "-p:RuntimeIdentifier=win-arm64",
                  cwd=consumer, env=env, expected_error="requires RuntimeIdentifier=win-x64")
 
     # Fresh processes ensure the loader cannot reuse a previously loaded image after a negative mutation.
