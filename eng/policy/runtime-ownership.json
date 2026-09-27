@@ -141,7 +141,7 @@
     {
       "repository": "Contracts",
       "runtime": "proto-generated-clients",
-      "sourceCommit": "05bf7986478440719e3fae944cb4ecdfa5e3cbfc",
+      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
       "projects": [
         {
           "path": "build.gradle.kts",
