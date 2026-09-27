@@ -68,7 +68,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
-      "blob": "c41659889976ff208b34c1050bfbcf0fa3feb7b8"
+      "blob": "443ff65f42ca5e16d4114389c47eb4f30b4108e9"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",

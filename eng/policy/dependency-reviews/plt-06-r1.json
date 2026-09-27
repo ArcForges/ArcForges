@@ -3,7 +3,7 @@
     "owner": "w-20260927-foundation",
     "reviewer": "w-20260927-dother (admission assessment; independent exact-head review required)",
     "reviewedOn": "2026-09-27",
-    "baselineCommit": "8a63c0cc786e875b743a3f0e01ad75f1344df14c",
+    "baselineCommit": "332502f84c7ace4cbe2cddaba83e62b45e27dbf6",
     "maintenanceAssessment": "PLT06 adds the adoption-owned nonpackable Resources append-store project and offline tests. Only existing Foundation and test-toolchain references; no package version, external dependency closure, framework or native input changes. Existing CI retained; child-process interruption diagnostics explicitly local opt-in and skipped hosted.",
     "upgradeChecks": {
       "compilation": "Existing SDK10.0.401 build passed zero warnings/errors; pinned10.0.400 CI required.",
@@ -200,7 +200,7 @@
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
-      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "1e20a6c1ef9b6015d175213d95da00aba72728e15afc46f64c690af7889dfd3c",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "a8e42e81823436c5912898d691757d5c67321cbda6d19a2ba417a35fe750bed9",
