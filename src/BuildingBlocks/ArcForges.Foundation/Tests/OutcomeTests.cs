@@ -61,8 +61,10 @@ public sealed class OutcomeTests
     {
         var wire = new ArcError
         {
-            Code = "future.condition", Category = (ErrorCategory)123,
-            Effect = EffectCertainty.Happened, MessageKey = "unsafe.producer.label",
+            Code = "future.condition",
+            Category = (ErrorCategory)123,
+            Effect = EffectCertainty.Happened,
+            MessageKey = "unsafe.producer.label",
             Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
             CorrelationId = new Id { Value = ByteString.CopyFrom(Convert.FromHexString("00112233445566778899AABBCCDDEEFF")) },
         };
@@ -89,7 +91,8 @@ public sealed class OutcomeTests
     {
         var failure = TypedFailure.FromWire(new ArcError
         {
-            Code = "resource.unavailable", Effect = (EffectCertainty)effect,
+            Code = "resource.unavailable",
+            Effect = (EffectCertainty)effect,
             Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
         });
         Xunit.Assert.Equal(EffectCertainty.Unknown, failure.Effect);
