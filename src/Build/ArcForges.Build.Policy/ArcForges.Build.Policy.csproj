@@ -11,6 +11,9 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="Architecture/**/*.cs" />
+    <None Include="Architecture/*.cs" Pack="true" PackagePath="tools/architecture/" />
+    <None Update="Architecture/*.props" Pack="true" PackagePath="tools/architecture/" />
     <None Include="build/*" Pack="true" PackagePath="build/" />
     <None Include="README.md" Pack="true" PackagePath="/" />
     <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
