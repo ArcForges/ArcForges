@@ -26,19 +26,19 @@ public sealed class VersionAxisCompileNegativeTests
         Directory.CreateDirectory(temporary);
         try
         {
-            var references = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))!.Split(Path.PathSeparator).Append(typeof(AppVersion).Assembly.Location).Distinct(StringComparer.Ordinal).ToArray();
+            var references = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))!.Split(Path.PathSeparator).Append(Path.Combine(AppContext.BaseDirectory, "ArcForges.Foundation.dll")).Distinct(StringComparer.Ordinal).ToArray();
             var response = new StringBuilder("/nologo\n/target:library\n/nostdlib+\n");
             foreach (var reference in references) response.Append("/reference:\"").Append(reference).AppendLine("\"");
             response.Append("/out:\"").Append(Path.Combine(temporary, "vectors.dll")).AppendLine("\"");
             var sourcePath = Path.Combine(temporary, "vectors.cs");
             response.Append('"').Append(sourcePath).AppendLine("\"");
             var responsePath = Path.Combine(temporary, "compiler.rsp");
-            await File.WriteAllTextAsync(responsePath, response.ToString());
+            await File.WriteAllTextAsync(responsePath, response.ToString(), TestContext.Current.CancellationToken);
             var positive = new StringBuilder("using ArcForges.Foundation.Versions;\npublic static class Vectors { public static void Check() {\n");
             for (var index = 0; index < axes.Length; index++)
                 positive.Append(axes[index]).Append(" p").Append(index).Append(" = default(").Append(axes[index]).AppendLine(");");
             positive.AppendLine("} }");
-            await File.WriteAllTextAsync(sourcePath, positive.ToString());
+            await File.WriteAllTextAsync(sourcePath, positive.ToString(), TestContext.Current.CancellationToken);
             var control = await RunAsync("dotnet", [compiler, "@" + responsePath]);
             Assert.True(control.ExitCode == 0, control.Output);
 
@@ -49,7 +49,7 @@ public sealed class VersionAxisCompileNegativeTests
                     if (target != source)
                         negative.Append(target).Append(" p").Append(pair++).Append(" = default(").Append(source).AppendLine(");");
             negative.AppendLine("} }");
-            await File.WriteAllTextAsync(sourcePath, negative.ToString());
+            await File.WriteAllTextAsync(sourcePath, negative.ToString(), TestContext.Current.CancellationToken);
             var result = await RunAsync("dotnet", [compiler, "@" + responsePath]);
             Assert.NotEqual(0, result.ExitCode);
             var errors = result.Output.Split('\n').Where(line => line.Contains("error ", StringComparison.Ordinal)).ToArray();
@@ -76,13 +76,14 @@ public sealed class VersionAxisCompileNegativeTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
             throw;
         }
-        return (process.ExitCode, await output + await error);
+        return (process.ExitCode, await output.ConfigureAwait(false) + await error.ConfigureAwait(false));
     }
 }
+

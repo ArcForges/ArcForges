@@ -48,6 +48,7 @@ public sealed class VersionRange<T> where T : struct, IVersionAxis<T>
     }
 
     /// <summary>Parses *, an exact value, [lower,upper) intervals, or semantic-axis 1.* / 1.2.* prefixes.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "The parser must retain the closed axis at the call site and result; it cannot return an untyped range.")]
     public static VersionRange<T> Parse(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -87,3 +88,4 @@ public sealed class VersionRange<T> where T : struct, IVersionAxis<T>
         return new(exact, true, exact, true);
     }
 }
+
