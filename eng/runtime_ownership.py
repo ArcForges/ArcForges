@@ -307,7 +307,14 @@ def checkout(parent, owner, commit):
     target = parent / owner
     subprocess.run(['git', 'init', '-q', str(target)], check=True)
     subprocess.run(['git', '-C', str(target), 'remote', 'add', 'origin', 'https://github.com/ArcForges/' + owner + '.git'], check=True)
-    subprocess.run(['git', '-C', str(target), '-c', 'core.autocrlf=false', 'fetch', '--quiet', '--depth=1', 'origin', commit], check=True)
+    for attempt in range(3):
+        try:
+            subprocess.run(['git', '-C', str(target), '-c', 'core.autocrlf=false', 'fetch', '--quiet', '--depth=1', 'origin', commit], check=True)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
     subprocess.run(['git', '-C', str(target), '-c', 'core.autocrlf=false', 'checkout', '--quiet', '--detach', 'FETCH_HEAD'], check=True)
     require(inventory.git(target, 'rev-parse', 'HEAD') == commit, 'fetched snapshot identity mismatch')
     return target
