@@ -5,14 +5,14 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "1911a17a7c291ff4c7f7c58aaa8397d446002055cc65ee7e168592c0f486858d",
+    "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
     "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "bb625b459744292a6d7c565cabc4fdf0873fdd0430cd048529912acd0dca7ed2",
+    "eng/packaging/packages.json": "d19e3b09d9fa835a5458abebe244ecdeeb05e9a8ff13ec6852013b8b25d2c3c6",
     "eng/policy/naming-package.json": "46e193b74566c402a5c52f1c3240c4e1250e4ce16bc7c5531a816438fc96c3c8",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -190,8 +190,8 @@
     "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
     "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "a8e42e81823436c5912898d691757d5c67321cbda6d19a2ba417a35fe750bed9",
-    "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+    "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
+    "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "519a1224b3069eaf9f3d57a172259c386f8dccceec7f067d4099f5ece718de5f",
     "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
     "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
     "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "647aa9607d45928de253b7f96c4f185b7b6524db26eafdc936b800777537fe7d",
@@ -208,7 +208,9 @@
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
-    "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095"
+    "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
+    "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
+    "tests/PersistenceTests/packages.lock.json": "d6f3ae15139d57bb69f878c15f3e66977726c828a9a9fab9b5d13eaa2c48708b"
   },
   "nugetClosure": {
     "arcforges.contracts.foundation/1.0.0-ci.113.1": {
@@ -259,6 +261,20 @@
       "nuspecSha256": "e7473877d0450d94c304469a0e89932731f4ba498edd3583211a0cda6ca68c57",
       "source": "https://api.nuget.org/v3-flatcontainer/microsoft.codecoverage/18.10.1/microsoft.codecoverage.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.data.sqlite.core/10.0.12": {
+      "contentHash": "2aL9eL5HQr0V4b8V909SD+jQAx6qnTTl7sT/v3D8dIvmr2UGdpZIQxqm1pj2Js3e4EYTvpw0oMH7DjapJJuPPw==",
+      "licence": "MIT",
+      "nuspecSha256": "56030907327ba858664e4c2cbc6547ad56d766d900bc323c14408fcd42fc46a0",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.data.sqlite.core/10.0.12/microsoft.data.sqlite.core.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "microsoft.data.sqlite/10.0.12": {
+      "contentHash": "xUq9xUc653ue7ac2rMfCaf8UQN+U3zS8poWYlugycpvJllplMM0Mk7v/+MM0CTlu9zGvbGML4BPH8YWhrUOfGw==",
+      "licence": "MIT",
+      "nuspecSha256": "8e1c47c77197daaac1584979b7bb42a9a8f6deaff9f6d18029b3a689a2107c6c",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.data.sqlite/10.0.12/microsoft.data.sqlite.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
     },
     "microsoft.dotnet.ilcompiler/10.0.11": {
       "contentHash": "yloFUsIQOzspIsn2cDHrbgikKaWHAZspzj0EWxnWJJpFC89IBW64OXgCECsrrnzGWQvy1iLX9r5/R4zBf7Am3g==",
@@ -365,6 +381,34 @@
       "source": "https://api.nuget.org/v3-flatcontainer/runtime.win-x64.microsoft.dotnet.ilcompiler/10.0.11/runtime.win-x64.microsoft.dotnet.ilcompiler.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
     },
+    "sqlitepclraw.bundle_e_sqlite3/2.1.12": {
+      "contentHash": "mAgscpQMLw5/nfA1Q5oJVAT29yROUo1ifZGbbTpx/lwZpSxMUGoYbKfmvdm8oXER+RzxqBmmQzeBEVKfeHv2nw==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2faa9f418c3b8831efdf92df6aca8322ffa9f7a556e915b46e5daa8e1f8e3233",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.bundle_e_sqlite3/2.1.12/sqlitepclraw.bundle_e_sqlite3.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "sqlitepclraw.core/2.1.12": {
+      "contentHash": "ETpNw9DY3ckWLgRRAeCHj+GKOuPi61aeczkXhgHexUvqoZBAYg8RYESE2J7O1M7+o6QbdSEZwrw9bfqztUVWXg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "8ab9189071aef856b12a9a3d68ac055a01ec6f8fc51b85ac1029e7c5ba12eecc",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.core/2.1.12/sqlitepclraw.core.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "sqlitepclraw.lib.e_sqlite3/2.1.12": {
+      "contentHash": "fWi8Dbknuhgg72fWinIdjXVaqO1hHL4YBBwVLnr7e1c9TAZwJ0QE38j9syW1hwx6HaqEVTwI+O07WPdZn8Rp0w==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "0e82e5cda14ccb8c546596d39393a6a9ba94146ffeeac86069df29ce9d57a731",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.lib.e_sqlite3/2.1.12/sqlitepclraw.lib.e_sqlite3.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "sqlitepclraw.provider.e_sqlite3/2.1.12": {
+      "contentHash": "W3oH4XIfCzFrgUSDKHhN6N+dgzA5YHOR2VxX8GB6Qy7CyrJJgxPEG8NirgYWlPQC5P2jz2knSsexWu4tDUL33g==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "7e5b604b8ad8121fa75f01eec61f56989b717fadfd530188a57d35759d93f573",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.provider.e_sqlite3/2.1.12/sqlitepclraw.provider.e_sqlite3.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
     "system.security.accesscontrol/6.0.1": {
       "contentHash": "IQ4NXP/B3Ayzvw0rDQzVTYsCKyy0Jp9KI6aYcK7UnGVlR9+Awz++TIPCQtPYfLJfOpm8ajowMR09V7quD3sEHw==",
       "licence": "MIT",
@@ -458,32 +502,32 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-20260927-mobile-lane",
-    "reviewer": "Independent exact-head reviewer recorded in DesktopPlatform PR73",
+    "owner": "w-20260927-foundation",
+    "reviewer": "Independent exact-head reviewer recorded in DesktopPlatform PR71",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "e769b626c559fab3ea1d0a7eb7c0e60ea159bce6",
-    "maintenanceAssessment": "PLT.17 adds ArcForges.Capabilities and its offline test project over the existing admitted Foundation and Contracts closure. No external dependency, framework, native, or version change; immutable hashes and licence/source evidence retained. Explicit generic delegates avoid reflection and dynamic dispatch.",
+    "baselineCommit": "cdd16cf5ed8b505779facf8bb55f18d95ba7cdcd",
+    "maintenanceAssessment": "PLT.01 admits Microsoft.Data.Sqlite and Core 10.0.12 (MIT, dotnet/dotnet source 95017c711e6afc1085133d440e42b4bd78155701), plus SQLitePCLRaw bundle, core, native e_sqlite3 and provider 2.1.12 (Apache-2.0 package metadata, ericsink/SQLitePCL.raw). Exact cached nuspec versions/licences and full generated lock closure inspected. Provider/native patches require owner review and new immutable receipt; no framework or native ABI upgrade. Native SQLite remains an upstream NuGet dependency, not a new first-party native family. Final integration preserves merged GOV.04, PLT.36 and PLT.17 inputs and their immutable receipts; solution locks regenerated with the existing SDK adapter without version changes.",
     "upgradeChecks": {
-      "compilation": "Capabilities Release and test compilation pass with existing SDK10.0.401 direct adapter, zero warnings/errors; pinned10.0.400 remains CI authority.",
-      "aot-trim": "Inherited IsAotCompatible and trim/AOT error diagnostics retained; typed explicit generic registration, no reflection activation or serialization.",
-      "compatibility": "Eight offline tests pass: closed product values, owned generated-scope copies, target refusal, independent owners, restart, stop and cancellation.",
-      "licence-provenance": "Cached exact Foundation Apache-2.0 and Google.Protobuf BSD-3-Clause nuspec licences/source commits inspected; all existing legal/source/native provenance unchanged.",
-      "security-sbom": "Retain NuGet audit and PR dependency review. Exact locks include producer/protobuf; no claim of offline current vulnerability absence.",
-      "runtime-performance-migration": "No durable state or schema migration; owner-supplied installation persistence and epoch authority. Eight deterministic offline tests pass; no device, installed consumer or product runtime claim.",
-      "framework-runtime-posture": "No framework major upgrade; .NET10.0.400 remains selected. No Android Kotlin/JVM/ART/R8 dependency change; no native ABI change."
+      "compilation": "After final cdd16cf base integration and generated lock refresh, existing SDK10.0.401 direct adapter compiled Release PersistenceTests with warnings-as-errors; actual real-file suite passed47/47, zero failed/skipped in6.0s. Pinned SDK10.0.400 CI remains authoritative before merge. No toolchain installation.",
+      "aot-trim": "Inherited IsAotCompatible and trim/AOT diagnostics remain errors. Microsoft.Data.Sqlite calls the static SQLitePCLRaw provider; actual compile and retained CI evidence must pass before merge; no Native AOT executable execution claim.",
+      "compatibility": "47 actual temporary SQLite file tests pass: write fault stages, command receipt retry, canonical origin omission/parent-kind invariants, bounded history/origin collection, journal replay/corruption/local edit identities,16 migration cases including historical semantic fixtures/public-store reopen and protected-schema refusal. Existing Contracts and merged platform closure preserved.",
+      "licence-provenance": "Read cached exact six added nuspec files: Microsoft MIT, SQLitePCLRaw Apache-2.0. Digests and lock content hashes recorded below; upstream native SQLite supplied transitively by SQLitePCLRaw.lib.e_sqlite3. Existing source and native receipts preserved.",
+      "security-sbom": "NuGet audit and existing dependency-review retained; no assertion of current vulnerability absence from offline metadata. Actual lock closure records native provider; authorization/SQL authorizer guards are independently reviewed in PR71.",
+      "runtime-performance-migration": "Final affected Windows x64 real-file offline suite passed47/47 zero failed/skipped via workstation build slot. No device, installed-consumer, benchmark or process-kill result claimed. PLT.02 snapshot producer acceptance remains PLT.03 completion prerequisite.",
+      "framework-runtime-posture": "No framework major upgrade; net10.0 and pinned SDK10.0.400 unchanged. No Kotlin/JVM/ART/R8 dependency change; no platform expansion or native family provisioning."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "1911a17a7c291ff4c7f7c58aaa8397d446002055cc65ee7e168592c0f486858d",
+      "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
       "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "bb625b459744292a6d7c565cabc4fdf0873fdd0430cd048529912acd0dca7ed2",
+      "eng/packaging/packages.json": "d19e3b09d9fa835a5458abebe244ecdeeb05e9a8ff13ec6852013b8b25d2c3c6",
       "eng/policy/naming-package.json": "46e193b74566c402a5c52f1c3240c4e1250e4ce16bc7c5531a816438fc96c3c8",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -661,8 +705,8 @@
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "a8e42e81823436c5912898d691757d5c67321cbda6d19a2ba417a35fe750bed9",
-      "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
+      "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "519a1224b3069eaf9f3d57a172259c386f8dccceec7f067d4099f5ece718de5f",
       "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
       "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
       "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "647aa9607d45928de253b7f96c4f185b7b6524db26eafdc936b800777537fe7d",
@@ -679,14 +723,16 @@
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
-      "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095"
+      "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
+      "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
+      "tests/PersistenceTests/packages.lock.json": "d6f3ae15139d57bb69f878c15f3e66977726c828a9a9fab9b5d13eaa2c48708b"
     },
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-36-r1.json"
+    "previousReceipt": "eng/policy/dependency-reviews/plt-01-02-04-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-17-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-01-02-04-r2.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
