@@ -88,7 +88,7 @@ DECISION_HOMES = {
     'P2-003': '../architecture/10-web-architecture.md#5-browser-session-architecture--p2-003-resolved',
     'P2-004': '../planning/implementation-sequence.md#11-the-d-019-ordering-followed',
     'P2-006': '../requirements/00-product-scope-and-portfolio.md',
-    'P2-007': 'phase-2-design-closure-review.md',
+    'P2-007': 'phase-2-design-closure-review.md#2-twelve-repaired-groups',
     'P2-008': '../architecture/25-web-toolchain-and-sdk.md',
 }
 
