@@ -12,7 +12,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "6eec2714b9fa1c8fa65d2579df79bc9f1b67410af21ddf94538c5c357fb7dcb8",
+    "eng/packaging/packages.json": "bb625b459744292a6d7c565cabc4fdf0873fdd0430cd048529912acd0dca7ed2",
     "eng/policy/naming-package.json": "46e193b74566c402a5c52f1c3240c4e1250e4ce16bc7c5531a816438fc96c3c8",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -168,6 +168,10 @@
     "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
     "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+    "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "c2674139542b9145e4317a982bc3c34900b767b26f8f919cb370087ea189000d",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
+    "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
     "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
     "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -454,19 +458,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-20260927-cloud-lane",
-    "reviewer": "Independent exact-head reviewer recorded in DesktopPlatform PR72",
-    "reviewedOn": "2026-09-27",
-    "baselineCommit": "8cb04f44116b5e77f7c3c54d58d89ac5b4ab78bc",
-    "maintenanceAssessment": "PLT.36 adds an internal Security-to-Foundation project reference and a nested offline test project using already admitted exact central versions. The restored closure introduces no package/version, framework, native, Android or publication change. Retain existing Foundation/protobuf/xunit licence, maintenance and provenance assessment; no external download or current vulnerability absence claim. Rebased on GOV.04 architecture gate without changing its Build.Policy assets or package closure; append only actual Security API/test mappings.",
+    "owner": "w-20260927-mobile-lane",
+    "reviewer": "Independent exact-head reviewer recorded in DesktopPlatform PR73",
+    "reviewedOn": "2026-09-28",
+    "baselineCommit": "e769b626c559fab3ea1d0a7eb7c0e60ea159bce6",
+    "maintenanceAssessment": "PLT.17 adds ArcForges.Capabilities and its offline test project over the existing admitted Foundation and Contracts closure. No external dependency, framework, native, or version change; immutable hashes and licence/source evidence retained. Explicit generic delegates avoid reflection and dynamic dispatch.",
     "upgradeChecks": {
-      "compilation": "23 targeted offline Security tests pass Release with existing SDK10.0.401 and locked restore. CI retains committed SDK10.0.400 Windows/Linux compilation. No provisioning.",
-      "aot-trim": "Retain AOT/trim warnings as errors; manual JsonDocument/Utf8JsonWriter codec uses no dynamic reflection. Invocation-only existing SDK compatibility targets retain ILLink10.0.11. No native-AOT execution claim.",
-      "compatibility": "Immutable full-chain carrier preserves canonical Foundation IDs and owner/actor/executor distinctions. Missing identities, malformed snapshots, duplicate fields/actors and unknown kinds are rejected. No public Contracts wire change.",
-      "licence-provenance": "No new third-party closure: preserve all existing exact licence/source evidence; Security and offline tests remain AGPL-3.0-only and nonpackable.",
-      "security-sbom": "Retain NuGet audit, dependency-review and complete restored locks. Decoder returns explicitly untrusted evidence and confers no authentication/authorization. No suppression.",
-      "runtime-performance-migration": "23 deterministic offline propagation/completeness tests include an in-memory queue and serialized boundary. No real process, persisted queue, live service, product-enforcement integration or benchmark claimed.",
-      "framework-runtime-posture": "No framework major upgrade; committed .NET10.0.400 selection unchanged. No Android Kotlin/JVM/ART/R8 or native ABI changes."
+      "compilation": "Capabilities Release and test compilation pass with existing SDK10.0.401 direct adapter, zero warnings/errors; pinned10.0.400 remains CI authority.",
+      "aot-trim": "Inherited IsAotCompatible and trim/AOT error diagnostics retained; typed explicit generic registration, no reflection activation or serialization.",
+      "compatibility": "Eight offline tests pass: closed product values, owned generated-scope copies, target refusal, independent owners, restart, stop and cancellation.",
+      "licence-provenance": "Cached exact Foundation Apache-2.0 and Google.Protobuf BSD-3-Clause nuspec licences/source commits inspected; all existing legal/source/native provenance unchanged.",
+      "security-sbom": "Retain NuGet audit and PR dependency review. Exact locks include producer/protobuf; no claim of offline current vulnerability absence.",
+      "runtime-performance-migration": "No durable state or schema migration; owner-supplied installation persistence and epoch authority. Eight deterministic offline tests pass; no device, installed consumer or product runtime claim.",
+      "framework-runtime-posture": "No framework major upgrade; .NET10.0.400 remains selected. No Android Kotlin/JVM/ART/R8 dependency change; no native ABI change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -479,7 +483,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "6eec2714b9fa1c8fa65d2579df79bc9f1b67410af21ddf94538c5c357fb7dcb8",
+      "eng/packaging/packages.json": "bb625b459744292a6d7c565cabc4fdf0873fdd0430cd048529912acd0dca7ed2",
       "eng/policy/naming-package.json": "46e193b74566c402a5c52f1c3240c4e1250e4ce16bc7c5531a816438fc96c3c8",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -635,6 +639,10 @@
       "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
       "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+      "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "c2674139542b9145e4317a982bc3c34900b767b26f8f919cb370087ea189000d",
+      "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
+      "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
+      "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -676,9 +684,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov04-r2.json"
+    "previousReceipt": "eng/policy/dependency-reviews/plt-36-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-36-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-17-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

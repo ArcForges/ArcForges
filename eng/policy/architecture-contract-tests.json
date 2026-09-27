@@ -598,5 +598,35 @@
     "apiSymbol": "ArcForges.Security.ActorChainSnapshot.Decode(System.ReadOnlySpan<byte>)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.AppIdentity.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InstallationIdentity.ToApplicationScope()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.GeneratedApplicationScopeIsAnOwnedCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.Bind<TRequest, TResult>(System.Func<TOwner, TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.Foundation.Errors.Outcome<TResult>>>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.TwoProductsOnOneDeviceOwnSeparateSessionHistoryAndCapabilityState()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.DispatchAsync<TRequest, TResult>(ArcForges.Capabilities.ApplicationHandler<TOwner, TRequest, TResult>, ArcForges.Capabilities.InstanceIdentity?, TRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.MissingDeviceInstallationInstanceAndEpochTargetsNeverReachHandler()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.Stop()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StopFencesNewAdmissionButDoesNotEraseIdentityOrRollBackAdmittedEffects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition.Start<TOwner>(ArcForges.Capabilities.InstallationIdentity, ulong, System.Func<ArcForges.Capabilities.InstanceIdentity, TOwner>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.ConcurrentInstancesAndRestartNeverRetargetCapturedCalls()"
   }
 ]

@@ -1,11 +1,35 @@
 [
   {
+    "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
+    "role": "BuildTool",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
     "role": "Abstractions",
     "owner": "DesktopPlatform",
     "module": "",
     "production": true,
     "aot": true
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
   },
   {
     "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
@@ -96,6 +120,14 @@
     "aot": true
   },
   {
+    "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
     "role": "Foundation",
     "owner": "DesktopPlatform",
@@ -104,39 +136,7 @@
     "aot": true
   },
   {
-    "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
-    "role": "Test",
-    "owner": "DesktopPlatform",
-    "module": "",
-    "production": false,
-    "aot": false
-  },
-  {
-    "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
-    "role": "BuildTool",
-    "owner": "DesktopPlatform",
-    "module": "",
-    "production": false,
-    "aot": false
-  },
-  {
-    "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
-    "role": "Test",
-    "owner": "DesktopPlatform",
-    "module": "",
-    "production": false,
-    "aot": false
-  },
-  {
     "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
-    "role": "NativeAdapter",
-    "owner": "DesktopPlatform",
-    "module": "",
-    "production": true,
-    "aot": true
-  },
-  {
-    "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
     "role": "NativeAdapter",
     "owner": "DesktopPlatform",
     "module": "",
@@ -152,7 +152,23 @@
     "aot": false
   },
   {
-    "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
+    "role": "NativeAdapter",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
+    "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
     "role": "Test",
     "owner": "DesktopPlatform",
     "module": "",
