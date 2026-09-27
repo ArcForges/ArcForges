@@ -31,7 +31,7 @@
       "package": "ArcForges.Native.Image.Runtime.win-x64",
       "kind": "native-component-expat",
       "profile": "eng/provenance/artifact-profiles/native-win-x64-r4.json",
-      "sha256": "6512b8f896af19fd4a72e93aa77d27c5f3e69a4a4997a1b932ae409b5aa89038"
+      "sha256": "1cf40d8075ae94ca095607fb60cb5ea2cb9ed42f9008c92a6e643660c1756589"
     }
   ],
   "disposition": "Copy",

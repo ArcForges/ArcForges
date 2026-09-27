@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Stage and audit the real Windows ABI binary and upstream dependency closure."""
 import argparse
-import ctypes
 import hashlib
 import json
 import os

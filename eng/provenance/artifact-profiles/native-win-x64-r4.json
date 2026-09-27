@@ -15,7 +15,7 @@
     "sourceCommit": "3bc1917d5cb2d76261c0e27ceba774b9067da8c6",
     "version": "1.0.0-ci.12.1",
     "reviewedOn": "2026-09-19",
-    "recipeFiles": 97.0,
+    "recipeFiles": 97,
     "sourceIdentityProof": "Git archive PAX commits and release checksums; bzip2 17 source files matched pinned Git; AMF 57 header Git blobs matched release archive. GOV.17 revision 4 retains the exact reviewed Image input/source/legal/tool identities from revision 3 and removes retired package targets; no fresh upstream byte audit is claimed."
   },
   "components": {
