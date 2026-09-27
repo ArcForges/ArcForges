@@ -1,18 +1,18 @@
 {
   "review": {
-    "owner": "w-20260927-foundation",
-    "reviewer": "w-20260927-dother (admission assessment; independent exact-head review required)",
+    "owner": "w-20260927-dgov",
+    "reviewer": "Independent exact-head GOV.04 reviewer recorded in DesktopPlatform PR67",
     "reviewedOn": "2026-09-27",
-    "baselineCommit": "8a63c0cc786e875b743a3f0e01ad75f1344df14c",
-    "maintenanceAssessment": "PLT06 adds the adoption-owned nonpackable Resources append-store project and offline tests. Only existing Foundation and test-toolchain references; no package version, external dependency closure, framework or native input changes. Existing CI retained; child-process interruption diagnostics explicitly local opt-in and skipped hosted.",
+    "baselineCommit": "4187ed3cb954a541b78b61d8056571edbc2c4ab5",
+    "maintenanceAssessment": "Retain Foundation successor receipt and all admitted NuGet/native/framework closures. Add opt-in build-only architecture C# source assets compiled by consumer test hosts against the selected SDK Roslyn binaries; no new NuGet dependency, runtime assembly or implicit target. Canonical naming reuses the existing exact admitted Validation pin and a single existing Gitleaks gate. SDK compiler changes must remain tied to global.json and gate fixtures. Correct explicit props packing after actual CI identified default None recursive-directory metadata nesting the opt-in props; explicit Remove/Include emits the exact existing tools/architecture/ArchitecturePolicy.props contract.",
     "upgradeChecks": {
-      "compilation": "Existing SDK10.0.401 build passed zero warnings/errors; pinned10.0.400 CI required.",
-      "aot-trim": "Production IsAotCompatible=true; bounded binary codecs and no reflection runtime; no suppressed diagnostics.",
-      "compatibility": "Version1local frame codec with checksums, explicit seal, typed gap/segment metadata and durable loss receipts; malformed/future versions refused.",
-      "licence-provenance": "First-party AGPL3-only implementation; existing Foundation dependency retains Apache contract licence and notices. No source copied from reference products.",
-      "security-sbom": "No external dependency changes; all prior admission/licence/security gates retained.",
-      "runtime-performance-migration": "4MiB chunks and ranges,1024slices and1million-frame index bounds.13local tests pass including actual writer kill at boundary/midpayload; no existing storage migration.",
-      "framework-runtime-posture": "No runtime/framework upgrades. Local SDK401 adapter only preserves pinned10.0.11packs; no installation or committed pin changes."
+      "compilation": "Existing SDK10.0.401 compatibility invocation builds solution without warnings; official pinned10.0.400 retained CI remains authority. Semantic positive/negative fixtures and actual evaluated project graph are exercised.",
+      "aot-trim": "Source engine compiles only into explicit test/build-tool host; no production Roslyn closure. Existing AOT flags and error diagnostics retained.",
+      "compatibility": "Same Build.Policy identity, PrivateAssets posture and opt-in tools/architecture import; old build defaults unchanged. Exact source-linked engine serves producer and consumers. Local nupkg pack confirms all seven tools/architecture assets at exact paths. No closure, framework, ABI, native behavior or package identity changes.",
+      "licence-provenance": "AGPL first-party engine source; SDK compiler used only as test tooling. Existing Apache Foundation/BSD protobuf/native legal receipts and package hashes retained.",
+      "security-sbom": "No dependency additions; retained NuGet audit/dependency review and single pinned Gitleaks job. Same-source/run/attempt success receipts reject missing, stale or false evidence.",
+      "runtime-performance-migration": "Offline Roslyn compilation/semantic rules and deterministic primitive contract tests only. No installed consumer, native runtime/device/live tests or performance claim; no state migration.",
+      "framework-runtime-posture": "No framework upgrade or toolchain provisioning; official .NET10.0.400 unchanged. No Android Kotlin/JVM/ART/R8 dependency or native ABI change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -199,10 +199,6 @@
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "a59886bfa3aa7d9e71814692b7b895a4f744aeca4a94ba01a328d764d9436b1b",
-      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "2f364e18c4aef82c8d2ad19a22fa08efc026966e2c72fcbc3dbe87fe33f15761",
-      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
-      "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "a8e42e81823436c5912898d691757d5c67321cbda6d19a2ba417a35fe750bed9",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "71fa828dcd120ef6e77cbecfb030fd27b4a0edc1a645b2cffd79ea40224ca593",
@@ -221,10 +217,10 @@
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
       "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095"
     },
+    "previousReceipt": "eng/policy/dependency-reviews/gov04-r1.json",
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
-    },
-    "previousReceipt": "eng/policy/dependency-reviews/gov04-r2.json"
+    }
   },
   "nugetClosure": {
     "arcforges.contracts.foundation/1.0.0-ci.113.1": {
