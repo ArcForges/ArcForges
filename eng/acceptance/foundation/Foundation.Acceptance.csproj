@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>

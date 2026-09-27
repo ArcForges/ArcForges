@@ -103,10 +103,10 @@
     "Program.cs": "854cc8da898bf2320bcb7ef01d34ee9cec66517326dd7a0684a7297243394f99",
     "roundtrip.ts": "7dbd27bb90d29a74e739972e1459dee8180793c60da3a57a8809e9a5c2ba2270",
     "run.py": "f225600a075e576617a20bae5b4dbe029441fcbf573d6f63908f861251784b2b",
-    "Foundation.Acceptance.csproj": "952e541a2c6dc495ab1582bf4a7cab6e2eb4cbf0672311cbb9cd9e7d09cfe5b9",
+    "Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
     "Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
     "packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
-    "package.json": "4b3641edff1555a90a0ba403b14c430c9e5e1927ca6be08ecec64d28b0e05bc3",
+    "package.json": "731d943ab249a0011979c575b075728bf0a20f0dfd1cdc6a9e01e29f85d732f6",
     "package-lock.json": "d82c260206ef464f809ceb0cd70150aa18fe3616c0402d3d695fb3d41197cb2d"
   }
 }

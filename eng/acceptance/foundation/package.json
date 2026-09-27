@@ -5,6 +5,7 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "description": "Local opt-in acceptance of immutable published Foundation and Contracts candidates",
+  "arcforges": { "licenceBoundary": "AGPL" },
   "dependencies": {
     "@arcforges/contract-fixtures": "1.0.0-ci.113.1",
     "@arcforges/proto": "1.0.0-ci.113.1",
