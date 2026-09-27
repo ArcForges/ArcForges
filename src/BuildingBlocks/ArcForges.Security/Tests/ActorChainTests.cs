@@ -183,4 +183,5 @@ public sealed class ActorChainTests
         node["actors"]![1]!["actor"] = Guid.NewGuid();
         node["actors"]![0]!["software"] = new string('x', 257);
         Assert.Throws<ArgumentException>(() => ActorChainSnapshot.Decode(Encoding.UTF8.GetBytes(node.ToJsonString())));
-    }}
+    }
+}
