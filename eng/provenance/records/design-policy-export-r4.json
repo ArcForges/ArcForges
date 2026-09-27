@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "id": "design-policy-export-r4",
+  "kind": "generated",
+  "sourceRepository": "https://github.com/ArcForges/ArcForges-Design",
+  "sourceCommit": "ec1a1e7400683a6f971693cf84c8480183b4b6c5",
+  "sourcePaths": [
+    "docs/requirements/01-normative-glossary-and-invariants.md",
+    "docs/assurance/invariant-coverage.md",
+    "docs/assurance/citation-classifications.json",
+    "docs/planning/delivery/delivery-graph.json"
+  ],
+  "licence": {
+    "spdx": "AGPL-3.0-only",
+    "category": "agpl-compatible",
+    "evidence": [
+      {
+        "path": "docs/requirements/01-normative-glossary-and-invariants.md",
+        "sha256": "9041df86987324c25446dc3a5cfbfbabd6b6df1ea20381135a8caf84f98e44d4",
+        "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+      },
+      {
+        "path": "docs/assurance/invariant-coverage.md",
+        "sha256": "4ef00061e928ab1555f9557ef5c52a39a07a1ae31d672055fd3453c12d6f2cca",
+        "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+      },
+      {
+        "path": "docs/assurance/citation-classifications.json",
+        "sha256": "404bd1e8a545bcc45cd1f21296b274a0dcc9562bd2351ac5074f7bd2f160d9c9",
+        "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+      },
+      {
+        "path": "docs/planning/delivery/delivery-graph.json",
+        "sha256": "a76b77393f37c674a59d7d2d30ef8f1222f46fa00342b381cb2db2844bd0c3f5",
+        "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+      }
+    ],
+    "scope": "Owned AGPL current delivery graph, corpus, glossary and invariant exports; retired aliases remain negative declarations.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Copyright ArcForges contributors. AGPL-3.0-only."
+  ],
+  "targets": [
+    {
+      "path": "eng/policy/design-source.json",
+      "sha256": "88b867adab19a97a7a2dfac9157f0b4091d886e5c1cf04b3c94b169111c92391",
+      "normalization": "lf"
+    },
+    {
+      "path": "eng/policy/glossary-terms.json",
+      "sha256": "feaf30634afeee4688aa615eb2f202c65d6f83f0ef753327781f8a6642a5474f",
+      "normalization": "lf"
+    },
+    {
+      "path": "eng/policy/invariants.json",
+      "sha256": "ab262ca5cad9a717d9d5b0c77eca6c9249ed825d422dd47c8976ecda34454f05",
+      "normalization": "lf"
+    }
+  ],
+  "artifactTargets": [],
+  "disposition": "Copy",
+  "verification": {
+    "kind": "regeneration",
+    "command": "python eng/design_policy.py",
+    "expected": "Exact pinned Design exports, generated graph views, current corpus citations and immutable source and target identities match; independent mutation tests reject drift.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Copyright ArcForges contributors. AGPL-3.0-only.",
+    "files": [
+      "eng/provenance/NOTICE.txt"
+    ],
+    "distribution": "source",
+    "reason": "Source provenance summary supplements the retained original full legal text."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": {
+    "generators": [
+      {
+        "repository": "https://github.com/ArcForges/DesktopPlatform",
+        "commit": "712524c5d953117ba75d20487b60ddb93169c513",
+        "paths": [
+          "eng/design_policy.py",
+          "eng/design_corpus.py",
+          "eng/design_graph.py"
+        ],
+        "spdx": "AGPL-3.0-only",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+            "finding": "Owned generator sources retain their individual AGPL-3.0-only declarations."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "repository": "https://github.com/ArcForges/ArcForges-Design",
+        "commit": "ec1a1e7400683a6f971693cf84c8480183b4b6c5",
+        "paths": [
+          "docs/requirements/01-normative-glossary-and-invariants.md",
+          "docs/assurance/invariant-coverage.md",
+          "docs/assurance/citation-classifications.json",
+          "docs/planning/delivery/delivery-graph.json"
+        ],
+        "spdx": "AGPL-3.0-only",
+        "evidence": [
+          {
+            "path": "docs/requirements/01-normative-glossary-and-invariants.md",
+            "sha256": "9041df86987324c25446dc3a5cfbfbabd6b6df1ea20381135a8caf84f98e44d4",
+            "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+          },
+          {
+            "path": "docs/assurance/invariant-coverage.md",
+            "sha256": "4ef00061e928ab1555f9557ef5c52a39a07a1ae31d672055fd3453c12d6f2cca",
+            "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+          },
+          {
+            "path": "docs/assurance/citation-classifications.json",
+            "sha256": "404bd1e8a545bcc45cd1f21296b274a0dcc9562bd2351ac5074f7bd2f160d9c9",
+            "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+          },
+          {
+            "path": "docs/planning/delivery/delivery-graph.json",
+            "sha256": "a76b77393f37c674a59d7d2d30ef8f1222f46fa00342b381cb2db2844bd0c3f5",
+            "finding": "Reviewed owned Design input to the current delivery graph and seven-repository policy export."
+          }
+        ]
+      }
+    ],
+    "command": "python eng/design_policy.py",
+    "outputSpdx": "AGPL-3.0-only"
+  },
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "w-20260927-arcscope; independent exact-head PR review required before merge",
+    "reviewedOn": "2026-09-27",
+    "decision": "approved",
+    "rationale": "GOV.14 verifies the six specification integrity checks against the reviewed effective 22/7 decisions and twelve closure groups, exact historical name classifications, and current input authority. Retain all earlier immutable receipts.",
+    "baselineCommit": "111a935e98a6666ec1dd965b095bcb8b95d9b80a",
+    "reconciliation": true
+  },
+  "supersedes": "design-policy-export-r3"
+}

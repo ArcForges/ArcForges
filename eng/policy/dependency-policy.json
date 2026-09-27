@@ -30,6 +30,7 @@
     "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
     "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
     "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
+    "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
     "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
     "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
     "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
@@ -537,19 +538,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-20260927-dother",
-    "reviewer": "w-20260927-dother (admission assessment; independent exact-head review required)",
+    "owner": "w-20260927-foundation",
+    "reviewer": "arcscope_lane; independent final exact-head review required before merge",
     "reviewedOn": "2026-09-27",
-    "baselineCommit": "761d7c9801b5ced005fd2a5266a1f38fca827044",
-    "maintenanceAssessment": "PLT06 adds the adoption-owned nonpackable Resources append-store project and offline tests. Only existing Foundation and test-toolchain references; no package version, external dependency closure, framework or native input changes. Existing CI retained; child-process interruption diagnostics explicitly local opt-in and skipped hosted.",
+    "baselineCommit": "d1fb6d0af306ec3553729dc7e46e16de1d414b28",
+    "maintenanceAssessment": "GOV.14 adds one immutable Design export receipt and reuses existing pinned naming metadata. All NuGet/Python/native dependencies, frameworks and toolchains unchanged; preserve earlier foundation and governance receipts.",
     "upgradeChecks": {
-      "compilation": "Existing SDK10.0.401 build passed zero warnings/errors; pinned10.0.400 CI required.",
-      "aot-trim": "Production IsAotCompatible=true; bounded binary codecs and no reflection runtime; no suppressed diagnostics.",
-      "compatibility": "Version1local frame codec with checksums, explicit seal, typed gap/segment metadata and durable loss receipts; malformed/future versions refused.",
-      "licence-provenance": "First-party AGPL3-only implementation; existing Foundation dependency retains Apache contract licence and notices. No source copied from reference products.",
-      "security-sbom": "No external dependency changes; all prior admission/licence/security gates retained.",
-      "runtime-performance-migration": "4MiB chunks and ranges,1024slices and1million-frame index bounds.13local tests pass including actual writer kill at boundary/midpayload; no existing storage migration.",
-      "framework-runtime-posture": "No runtime/framework upgrades. Local SDK401 adapter only preserves pinned10.0.11packs; no installation or committed pin changes."
+      "compilation": "Foundation47 offline tests and Application.Abstractions Release build pass existingSDK10.0.401. Exact pinned10.0.400 Windows/Linux compilation remains retained CI; no SDK installation.",
+      "aot-trim": "Keep IsAotCompatible and trim/AOT diagnostics errors; generated Contracts parser and known codecs used, no dynamic serializer authority. ExistingSDK10.0.401 local checks retained original10.0.11 ILLink via invocation-only target override.",
+      "compatibility": "Published source/version and locked hash retained; source adapters use exact Contracts values and preserve unknown read values; independent UUID/hash vectors and compiler-negative IDs/axes pass.",
+      "licence-provenance": "Cached exact Foundation Apache-2.0 and Google.Protobuf BSD-3-Clause nuspec licences/source commits inspected; all existing legal/source/native provenance unchanged.",
+      "security-sbom": "Retain NuGet audit and PR dependency review. Exact locks include producer/protobuf; no claim of offline current vulnerability absence.",
+      "runtime-performance-migration": "Only storage-free managed primitives and injectable lifecycle ports added;47 deterministic offline tests. No installed-consumer/device/live-service/runtime benchmark performed; durable owner receipt proof remains PLT01.",
+      "framework-runtime-posture": "No framework major upgrade; .NET10.0.400 remains selected. No Android Kotlin/JVM/ART/R8 dependency change; no native ABI change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -580,6 +581,7 @@
       "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
       "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
       "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
+      "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
       "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
       "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
       "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
@@ -774,9 +776,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/fnd-07-r1.json"
+    "previousReceipt": "eng/policy/dependency-reviews/plt-06-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-06-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/gov14-r3.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
