@@ -25,22 +25,13 @@ public sealed class ApplicationComposition<TOwner> where TOwner : class
     private readonly TOwner _owner;
     private bool _stopped;
 
-    private ApplicationComposition(InstanceIdentity identity, Func<InstanceIdentity, TOwner> createOwner)
+    internal ApplicationComposition(InstanceIdentity identity, Func<InstanceIdentity, TOwner> createOwner)
     {
         Identity = identity;
         _owner = createOwner(identity) ?? throw new ArgumentException("The owning composition must be present.", nameof(createOwner));
     }
 
     public InstanceIdentity Identity { get; }
-
-    /// <summary>Starts a new process identity. The host retains installation state and supplies its new authoritative epoch.</summary>
-    public static ApplicationComposition<TOwner> Start(InstallationIdentity installation, ulong epoch,
-        Func<InstanceIdentity, TOwner> createOwner)
-    {
-        ArgumentNullException.ThrowIfNull(createOwner);
-        var identity = new InstanceIdentity(installation, IdentityGeneration.NewInstance(), epoch);
-        return new ApplicationComposition<TOwner>(identity, createOwner);
-    }
 
     public ApplicationHandler<TOwner, TRequest, TResult> Bind<TRequest, TResult>(
         Func<TOwner, TRequest, CancellationToken, ValueTask<Outcome<TResult>>> operation)
@@ -87,4 +78,18 @@ public sealed class ApplicationComposition<TOwner> where TOwner : class
             _stopped = true;
         }
     }
+}
+
+/// <summary>Creates an explicit application composition with a fresh process identity.</summary>
+public static class ApplicationComposition
+{
+    /// <summary>Starts a new process identity. The host retains installation state and supplies its new authoritative epoch.</summary>
+    public static ApplicationComposition<TOwner> Start<TOwner>(InstallationIdentity installation, ulong epoch,
+        Func<InstanceIdentity, TOwner> createOwner) where TOwner : class
+    {
+        ArgumentNullException.ThrowIfNull(createOwner);
+        var identity = new InstanceIdentity(installation, IdentityGeneration.NewInstance(), epoch);
+        return new ApplicationComposition<TOwner>(identity, createOwner);
+    }
+
 }

@@ -60,7 +60,10 @@ public sealed record InstanceIdentity
             throw new ArgumentException("Instance identity must be initialized.", nameof(instanceId));
         }
 
-        ArgumentNullException.ThrowIfNull(epoch);
+        if (!epoch.HasValue)
+        {
+            throw new ArgumentNullException(nameof(epoch));
+        }
         Installation = installation;
         InstanceId = instanceId;
         Epoch = epoch.Value;

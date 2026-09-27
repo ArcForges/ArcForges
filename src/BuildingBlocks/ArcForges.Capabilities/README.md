@@ -2,7 +2,7 @@
 
 PLT.17 implements the in-process identity boundary from WP09.00. `AppIdentity` has the closed product values `arcscope` and `companion`; Companion remains one identity across Android and Web. `InstallationIdentity` combines product, device and the published strong installation ID. `InstanceIdentity` adds the published strong instance ID and an explicitly supplied delivery epoch (the full uint64 range, including zero).
 
-Each `ApplicationComposition<TOwner>.Start` creates a fresh instance and calls the owning application's explicit typed factory. The host supplies independently scoped sessions, history and capability state inside that owner. Typed handler registrations belong to one composition and cannot be dispatched through another. Missing targets fail validation, foreign product/device/installation or handler bindings fail authorization, and old instance/epoch or stopped compositions fail as gone before entering the handler. All refusals use existing Foundation error metadata with no effects and no automatic retry.
+Each `ApplicationComposition.Start<TOwner>` creates a fresh instance and calls the owning application's explicit typed factory. The host supplies independently scoped sessions, history and capability state inside that owner. Typed handler registrations belong to one composition and cannot be dispatched through another. Missing targets fail validation, foreign product/device/installation or handler bindings fail authorization, and old instance/epoch or stopped compositions fail as gone before entering the handler. All refusals use existing Foundation error metadata with no effects and no automatic retry.
 
 | Lifecycle | Installation | Instance and epoch | Result |
 |---|---|---|---|

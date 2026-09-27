@@ -3,6 +3,8 @@
     <Platform Name="Any CPU" />
   </Configurations>
   <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj" />
