@@ -156,14 +156,14 @@ public sealed class SharedPolicyTests
     {
         foreach (var layer in new[] { ProjectRole.Domain, ProjectRole.Application })
         {
-        using var fixture = Case.Create("AT-01", violation: false);
-        fixture.SetDomainLayer(layer);
-        fixture.AddDomainPackage(package, Enum.Parse<ProjectRole>(dependencyRole));
-        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-01");
-        fixture.AddDomainPackage("Pure.Foundation.Fixture", ProjectRole.Foundation);
-        Xunit.Assert.DoesNotContain(fixture.Check(), finding => finding.Rule == "AT-01");
-        fixture.DependencyRoles.Clear();
-        Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-01");
+            using var fixture = Case.Create("AT-01", violation: false);
+            fixture.SetDomainLayer(layer);
+            fixture.AddDomainPackage(package, Enum.Parse<ProjectRole>(dependencyRole));
+            Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-01");
+            fixture.AddDomainPackage("Pure.Foundation.Fixture", ProjectRole.Foundation);
+            Xunit.Assert.DoesNotContain(fixture.Check(), finding => finding.Rule == "AT-01");
+            fixture.DependencyRoles.Clear();
+            Xunit.Assert.Contains(fixture.Check(), finding => finding.Rule == "AT-01");
         }
     }
 
