@@ -122,6 +122,24 @@ public sealed class MigrationsTests : IDisposable
         Xunit.Assert.Equal(2L, Scalar(database, "SELECT COUNT(*) FROM migration_fixture_notes"));
     }
 
+    [Xunit.Fact]
+    public void ConflictingMetadataPreservesEvidenceAndRefusesResume()
+    {
+        using var database = new StoreDatabase(Path.Combine(_directory, "corrupt.db"), _storeId);
+        var runner = new MigrationRunner(database);
+        var plan = FixturePlan();
+        runner.MigrateTo(plan, new(1));
+        database.RunSchemaExclusive(session => session.WithTransaction(context =>
+        {
+            using var corrupt = context.CreateCommand("UPDATE sys_meta SET value='02' WHERE key='storageSchemaVersion'");
+            return corrupt.ExecuteNonQuery();
+        }));
+        Xunit.Assert.Throws<InvalidOperationException>(() => runner.MigrateTo(plan, new(3)));
+        Xunit.Assert.Throws<InvalidOperationException>(() => runner.CurrentVersion);
+        Xunit.Assert.Equal(1L, Scalar(database, "SELECT COUNT(*) FROM __arcforges_migration_history"));
+        Xunit.Assert.Equal(2L, Scalar(database, "SELECT COUNT(*) FROM migration_fixture_notes"));
+    }
+
     [Xunit.Theory]
     [Xunit.InlineData("COMMIT")]
     [Xunit.InlineData("ROLLBACK")]
