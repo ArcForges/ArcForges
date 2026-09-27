@@ -27,6 +27,15 @@ internal static class BannedSymbolScanner
                     var symbol = model.GetSymbolInfo(invocation).Symbol as IMethodSymbol;
                     if (symbol is null)
                     {
+                        if (project.Aot && model.GetTypeInfo(invocation).Type?.TypeKind == TypeKind.Dynamic)
+                        {
+                            Add("BAN-REFLECTION", invocation, "Dynamic invocation requires runtime binding on an AOT path.");
+                        }
+                        else if (invocation.Expression is not IdentifierNameSyntax { Identifier.ValueText: "nameof" })
+                        {
+                            throw new InvalidOperationException("Unresolved invocation cannot be audited: " + invocation.GetLocation());
+                        }
+
                         continue;
                     }
 
@@ -60,7 +69,7 @@ internal static class BannedSymbolScanner
                     }
                 }
 
-                if (node is ObjectCreationExpressionSyntax creation && model.GetTypeInfo(creation).Type is { } created)
+                if (node is BaseObjectCreationExpressionSyntax creation && model.GetTypeInfo(creation).Type is { } created)
                 {
                     string space = created.ContainingNamespace.ToDisplayString();
                     if (space.StartsWith("System.Reflection.Emit", StringComparison.Ordinal))
@@ -134,9 +143,11 @@ internal static class BannedSymbolScanner
     private static bool IsReflection(string type, string method) =>
         (type == "System.Type" && (method == "GetType" || method.StartsWith("GetMethod", StringComparison.Ordinal)
             || method.StartsWith("GetPropert", StringComparison.Ordinal) || method.StartsWith("GetField", StringComparison.Ordinal)
-            || method.StartsWith("GetConstructor", StringComparison.Ordinal)))
+            || method.StartsWith("GetConstructor", StringComparison.Ordinal) || method.StartsWith("GetMember", StringComparison.Ordinal)
+            || method is "InvokeMember" or "MakeGenericType"))
         || (type == "System.Activator" && method.StartsWith("CreateInstance", StringComparison.Ordinal))
-        || (type == "System.Reflection.Assembly" && method.StartsWith("Load", StringComparison.Ordinal));
+        || (type == "System.Reflection.Assembly" && (method.StartsWith("Load", StringComparison.Ordinal) || method is "GetType" or "GetTypes"))
+        || (type.StartsWith("System.Reflection.", StringComparison.Ordinal) && method is "Invoke" or "GetValue" or "SetValue" or "MakeGenericMethod");
 
     private static bool IsBlocking(string type, string method) =>
         (type.StartsWith("System.Threading.Tasks.", StringComparison.Ordinal) && method is "Wait" or "WaitAll" or "WaitAny")
@@ -162,12 +173,21 @@ internal static class BannedSymbolScanner
         || ((type is "System.Console" or "System.Diagnostics.Debug" or "System.Diagnostics.Trace")
             && method.StartsWith("Write", StringComparison.Ordinal));
 
-    private static bool Sensitive(ExpressionSyntax expression, SemanticModel model) =>
+    private static bool Sensitive(ExpressionSyntax expression, SemanticModel model) => Sensitive(expression, model, new HashSet<ISymbol>(SymbolEqualityComparer.Default));
+
+    private static bool Sensitive(ExpressionSyntax expression, SemanticModel model, HashSet<ISymbol> visited) =>
         expression.DescendantNodesAndSelf().OfType<ExpressionSyntax>().Any(node =>
         {
             var symbol = model.GetSymbolInfo(node).Symbol;
             var type = model.GetTypeInfo(node).Type;
-            return SensitiveName(symbol?.Name ?? "") || SensitiveName(type?.Name ?? "");
+            if (SensitiveName(symbol?.Name ?? "") || SensitiveName(type?.Name ?? ""))
+            {
+                return true;
+            }
+
+            return symbol is ILocalSymbol local && visited.Add(local)
+                && local.DeclaringSyntaxReferences.Select(reference => reference.GetSyntax()).OfType<VariableDeclaratorSyntax>()
+                    .Any(variable => variable.Initializer is { } initializer && Sensitive(initializer.Value, model, visited));
         });
 
     private static bool SensitiveName(string name) => SensitiveParts

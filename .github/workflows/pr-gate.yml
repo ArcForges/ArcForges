@@ -43,6 +43,8 @@ jobs:
     with:
       version: ${{ needs.allocate-version.outputs.version }}
       native_artifact_name: ${{ needs.native.outputs.artifact_name }}
+      naming_evidence_artifact: architecture-naming-${{ github.run_id }}-${{ github.run_attempt }}
+      secret_evidence_artifact: architecture-secret-${{ github.run_id }}-${{ github.run_attempt }}
   native:
     uses: ./.github/workflows/native-abi.yml
   secret-scan:
@@ -59,11 +61,25 @@ jobs:
           vulnerability-check: true
           show-openssf-scorecard: true
       - name: Scan the repository for secrets
+        id: secret_scan
         run: |
           docker run --rm \
             --volume "${GITHUB_WORKSPACE}:/repo" \
             "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" \
             detect --source=/repo --no-banner --redact --config=/repo/.gitleaks.toml
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Bind successful existing secret gate to architecture source
+        env:
+          SECRET_SCAN_OUTCOME: ${{ steps.secret_scan.outcome }}
+        run: python eng/architecture_evidence.py secret --output artifacts/evidence/secret-architecture.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: architecture-secret-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/evidence/secret-architecture.json
+          if-no-files-found: error
+          retention-days: 30
 
   repository-hooks:
     runs-on: ubuntu-latest
@@ -173,7 +189,17 @@ jobs:
       - name: Reject runtime, assignment and retired-scaffold drift
         run: python -m unittest discover -s eng -p test_runtime_ownership.py -v
       - name: Verify current owner and immutable family snapshots
-        run: python eng/runtime_ownership.py --evaluate-managed
+        run: python eng/runtime_ownership.py --evaluate-managed --naming-assets artifacts/naming-assets
+      - name: Reject substituted architecture gate evidence
+        run: python -m unittest discover -s eng -p test_architecture_evidence.py -v
+      - name: Reuse canonical naming result and exercise every forbidden-term fixture
+        run: python eng/architecture_evidence.py naming --runtime-report artifacts/evidence/runtime-ownership.json --assets artifacts/naming-assets --output artifacts/evidence/naming-architecture.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: architecture-naming-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/evidence/naming-architecture.json
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:

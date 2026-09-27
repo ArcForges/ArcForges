@@ -43,7 +43,7 @@ public sealed class SharedPolicyTests
     public void ExceptionsAreExactOwnedExpiringAndCannotCoverAnotherPath()
     {
         using var fixture = Case.Create("RP-02", violation: true);
-        var exception = new PolicyException("RP-02", fixture.Projects[0].Classification.Path, "DesktopPlatform", "Bounded migration", new DateOnly(2030, 1, 1));
+        var exception = new PolicyException("RP-02", fixture.Projects[^1].Classification.Path, "DesktopPlatform", "Bounded migration", new DateOnly(2030, 1, 1));
         fixture.Exceptions.Add(exception);
         Xunit.Assert.Empty(fixture.Check());
         fixture.Exceptions[0] = exception with { Path = "other.csproj" };
@@ -79,13 +79,65 @@ public sealed class SharedPolicyTests
 
     [Xunit.Theory]
     [Xunit.MemberData(nameof(BannedCases))]
-    public void BannedCategoriesUseCompiledSymbols(string rule, string good, string bad, ProjectRole role)
+    public void BannedCategoriesUseCompiledSymbols(string rule, string good, string bad, object roleValue)
     {
+        ArgumentNullException.ThrowIfNull(roleValue);
+        var role = (ProjectRole)roleValue;
         var project = new ProjectClassification("fixture.csproj", role, "DesktopPlatform", Aot: true);
         var positive = FixtureCompiler.Compile("Allowed", new Dictionary<string, string> { ["allowed.cs"] = good });
         var negative = FixtureCompiler.Compile("Forbidden", new Dictionary<string, string> { ["forbidden.cs"] = bad });
         Xunit.Assert.Empty(BannedSymbolScanner.Scan(positive, project));
         Xunit.Assert.Contains(BannedSymbolScanner.Scan(negative, project), finding => finding.Rule == rule);
+    }
+
+    [Xunit.Theory]
+    [Xunit.InlineData("BAN-REFLECTION", "using static System.Activator; class C { object? M() => CreateInstance(typeof(string)); }")]
+    [Xunit.InlineData("BAN-REFLECTION", "class C { object M(dynamic value) => value.Run(); }")]
+    [Xunit.InlineData("BAN-REFLECTION", "class C { object? M(System.Reflection.MethodInfo method) => method.Invoke(null, null); }")]
+    [Xunit.InlineData("BAN-PROVIDER", "using static OpenAI.Client; namespace OpenAI { public static class Client { public static int Call() => 1; } } class C { int M() => Call(); }")]
+    [Xunit.InlineData("BAN-CODEGEN", "class C { System.Reflection.Emit.DynamicMethod M() => new(\"x\", typeof(void), System.Type.EmptyTypes); }")]
+    [Xunit.InlineData("BAN-LOGGING", "class C { void M(string secret) { var value = secret; System.Console.WriteLine(value); } }")]
+    public void AlternateSpellingsAndLocalAliasesCannotBypassBannedSymbols(string rule, string source)
+    {
+        var compilation = FixtureCompiler.Compile("Alternative", new Dictionary<string, string> { ["fixture.cs"] = source });
+        Xunit.Assert.Contains(BannedSymbolScanner.Scan(compilation,
+            new ProjectClassification("fixture.csproj", ProjectRole.Foundation, "DesktopPlatform", Aot: true)), finding => finding.Rule == rule);
+    }
+
+    [Xunit.Fact]
+    public void CommentsAndStringTextAreNotSemanticInvocations()
+    {
+        var compilation = FixtureCompiler.Compile("Text", new Dictionary<string, string>
+        {
+            ["allowed.cs"] = "class C { string M() => \"System.Activator.CreateInstance OpenAI.Client.Call secret\"; /* System.Reflection.Emit */ }",
+        });
+        Xunit.Assert.Empty(BannedSymbolScanner.Scan(compilation,
+            new ProjectClassification("fixture.csproj", ProjectRole.Foundation, "DesktopPlatform", Aot: true)));
+    }
+
+    [Xunit.Fact]
+    public void NativeGraphUsesEvaluatedTargetTypeAndRejectsStaleEvidence()
+    {
+        string file = Path.GetTempFileName();
+        try
+        {
+            string receipt = """
+                {"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dirty":false,"result":"passed",
+                "evidenceClass":"evaluated-cmake-target-declarations","targets":[{"target":"worker",
+                "sourceDirectory":"native/worker","targetType":"EXECUTABLE","spdxLicense":"AGPL-3.0-only",
+                "licenceBoundary":"AGPL","references":[]}]}
+                """;
+            File.WriteAllText(file, receipt);
+            var projects = NativeProjectGraph.Read(file, new string('a', 40), "DesktopPlatform");
+            Xunit.Assert.Equal(ProjectRole.NativeWorker, Xunit.Assert.Single(projects).Classification.Role);
+            Xunit.Assert.Throws<InvalidOperationException>(() => NativeProjectGraph.Read(file, new string('b', 40), "DesktopPlatform"));
+            File.WriteAllText(file, receipt.Replace("EXECUTABLE", "UNKNOWN", StringComparison.Ordinal));
+            Xunit.Assert.Throws<InvalidOperationException>(() => NativeProjectGraph.Read(file, new string('a', 40), "DesktopPlatform"));
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     private sealed class Case : IDisposable
@@ -152,11 +204,10 @@ public sealed class SharedPolicyTests
                     fixture.Add("subject", ProjectRole.LocalRpcAdapter,
                         $$"""
                         [System.CodeDom.Compiler.GeneratedCode("protoc", "1")] public interface IContract { int Call({{argument}} value); }
-                        internal interface IPort { int Call(); } internal sealed class Port : IPort { public int Call() => 1; }
+                        internal interface IPort { int Call(); } internal sealed class Port : IPort { int IPort.Call() => 1; }
                         public sealed class Service : IContract { {{port}} public int Call({{argument}} value) => 1; }
                         """);
                     fixture._services.Add(new("Service", "IContract", "IPort"));
-                    fixture._services.Add(new("Port", "IContract", "IPort"));
                     break;
                 case "AT-09":
                     fixture.Add("subject", ProjectRole.NativeWorker, production: violation);
@@ -244,8 +295,10 @@ public sealed class SharedPolicyTests
             var facts = new ProjectFacts(new ProjectClassification(path, role, owner, module, production), "net10.0", "Library", license, boundary,
                 references ?? [], [name + ".cs"], [], new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    ["ManagePackageVersionsCentrally"] = "true", ["RestorePackagesWithLockFile"] = "true",
-                    ["EnableTrimAnalyzer"] = "true", ["EnableAotAnalyzer"] = "true",
+                    ["ManagePackageVersionsCentrally"] = "true",
+                    ["RestorePackagesWithLockFile"] = "true",
+                    ["EnableTrimAnalyzer"] = "true",
+                    ["EnableAotAnalyzer"] = "true",
                 }, packages);
             Projects.Add(facts);
             var compilation = FixtureCompiler.Compile(name, new Dictionary<string, string> { [name + ".cs"] = source }, [typeof(Xunit.FactAttribute).Assembly.Location]);

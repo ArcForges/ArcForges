@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
@@ -84,7 +85,8 @@ internal static class PolicyEngine
             if (classification.Role is ProjectRole.LocalRpcAdapter or ProjectRole.PublicApiAdapter)
             {
                 Forbid(classification.Role == ProjectRole.LocalRpcAdapter ? "AT-02" : "AT-03",
-                    closure.Any(dependency => dependency.Classification.Role is ProjectRole.UserInterface or ProjectRole.DesignSystem or ProjectRole.Shell),
+                    closure.Any(dependency => dependency.Classification.Role is ProjectRole.UserInterface or ProjectRole.DesignSystem or ProjectRole.Shell)
+                        || project.Packages.Keys.Any(IsPlatformPackage),
                     "An RPC/API adapter references a UI project.");
             }
 
@@ -152,10 +154,10 @@ internal static class PolicyEngine
                     "Managed lock file is missing, disabled or inconsistent with the resolved dependency closure.");
             }
 
-            Forbid("RP-07", project.Properties.GetValueOrDefault("SuppressTrimAnalysisWarnings") == "true"
+            Forbid("RP-07", classification.Production && (project.Properties.GetValueOrDefault("SuppressTrimAnalysisWarnings") == "true"
                 || project.Properties.GetValueOrDefault("EnableTrimAnalyzer") == "false"
                 || project.Properties.GetValueOrDefault("EnableAotAnalyzer") == "false"
-                || SuppressesAot(project.Properties.GetValueOrDefault("NoWarn", "")),
+                || SuppressesAot(project.Properties.GetValueOrDefault("NoWarn", ""))),
                 "Blanket trimming/AOT diagnostics are suppressed.");
             if (classification.Aot)
             {
@@ -177,7 +179,7 @@ internal static class PolicyEngine
         {
             var type = pair.Value;
             var project = typeProjects[pair.Key];
-            if (!project.Classification.Production || project.Classification.Role == ProjectRole.BuildTool)
+            if (!project.Classification.Production || project.Classification.Role == ProjectRole.BuildTool || !PublicType(type))
             {
                 continue;
             }
@@ -236,7 +238,7 @@ internal static class PolicyEngine
         }
 
         foreach (var pair in methods.Where(pair => pair.Value.DeclaredAccessibility == Accessibility.Public
-            && pair.Value.MethodKind == MethodKind.Ordinary && !pair.Value.IsImplicitlyDeclared))
+            && pair.Value.MethodKind == MethodKind.Ordinary && !pair.Value.IsImplicitlyDeclared && PublicType(pair.Value.ContainingType)))
         {
             var project = typeProjects[pair.Value.ContainingType.ToDisplayString()];
             if (!project.Classification.Production || project.Classification.Role is ProjectRole.BuildTool or ProjectRole.Test)
@@ -295,6 +297,9 @@ internal static class PolicyEngine
 
     public static string MethodIdentity(IMethodSymbol method) => method.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
 
+    private static bool PublicType(INamedTypeSymbol type) => type.DeclaredAccessibility == Accessibility.Public
+        && (type.ContainingType is null || PublicType(type.ContainingType));
+
     private static bool ContainsNativeType(ITypeSymbol type) => BannedSymbolScanner.IsNativePointer(type)
         || (type is IArrayTypeSymbol array && ContainsNativeType(array.ElementType))
         || (type is INamedTypeSymbol named && named.TypeArguments.Any(ContainsNativeType));
@@ -318,7 +323,8 @@ internal static class PolicyEngine
     {
         string full = ProjectGraph.ContainedPath(root, path);
         return hash.Length == 64 && File.Exists(full)
-            && Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(full))) == hash;
+            && Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadAllText(full)
+                .Replace("\r\n", "\n", StringComparison.Ordinal)))) == hash;
     }
 
     private static bool LockMatches(string path, IReadOnlyDictionary<string, string> packages)

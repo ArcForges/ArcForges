@@ -20,7 +20,7 @@
     },
     {
       "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
-      "blob": "26d6279f18250960eafcfd24876f215c7f151bee"
+      "blob": "77820eb3c331859b701a4b34a53360399b785b25"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
@@ -88,7 +88,7 @@
     },
     {
       "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
-      "blob": "f1c0f3c9c1eed1a1e286ce1449f38bd16c2a3d6b"
+      "blob": "25bfccb216e0a236ff33f076d1e5370b5f4964a2"
     },
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",

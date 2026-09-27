@@ -2,6 +2,8 @@
 
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace ArcForges.Build.Policy.Architecture;
 
@@ -74,9 +76,9 @@ internal sealed class ProjectGraph
 
         foreach (string argument in new[]
         {
-            "msbuild", projectPath, "-nologo", "-target:ResolveReferences", "-p:BuildProjectReferences=false",
+            "msbuild", projectPath, "-nologo", "-target:GenerateGlobalUsings,ResolveReferences", "-p:BuildProjectReferences=false",
             "-p:Configuration=" + configuration,
-            "-getProperty:TargetFramework,OutputType,PackageLicenseExpression,LicenceBoundary,IsAotCompatible,PublishAot,ManagePackageVersionsCentrally,RestorePackagesWithLockFile,NoWarn,SuppressTrimAnalysisWarnings,EnableTrimAnalyzer,EnableAotAnalyzer,MSBuildProjectFullPath,ProjectAssetsFile",
+            "-getProperty:TargetFramework,OutputType,PackageLicenseExpression,LicenceBoundary,IsAotCompatible,PublishAot,ManagePackageVersionsCentrally,RestorePackagesWithLockFile,NoWarn,SuppressTrimAnalysisWarnings,EnableTrimAnalyzer,EnableAotAnalyzer,MSBuildProjectFullPath,ProjectAssetsFile,DefineConstants,AssemblyName",
             "-getItem:Compile,ProjectReference,ReferencePath,PackageReference,PackageVersion",
         })
         {
@@ -142,6 +144,27 @@ internal sealed class ProjectGraph
             ReadItems(items, "ProjectReference").Select(item => Relative(root, Text(item, "FullPath"))).ToArray(),
             ReadItems(items, "Compile").Select(item => Text(item, "FullPath")).ToArray(),
             ReadItems(items, "ReferencePath").Select(item => Text(item, "FullPath")).ToArray(), properties, packages);
+    }
+
+    /// <summary>Reconstructs the semantic input of the completed owning build without loading its assemblies.</summary>
+    public static CSharpCompilation ReadCompilation(ProjectFacts project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (project.Sources.Count == 0 || project.AssemblyReferences.Count == 0
+            || project.Sources.Concat(project.AssemblyReferences).Any(path => !File.Exists(path)))
+        {
+            throw new InvalidOperationException("Completed source/reference inputs are required: " + project.Classification.Path);
+        }
+
+        var options = new CSharpParseOptions(LanguageVersion.CSharp14,
+            preprocessorSymbols: project.Properties.GetValueOrDefault("DefineConstants", "")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries));
+        return CSharpCompilation.Create(project.Properties["AssemblyName"],
+            project.Sources.Distinct(StringComparer.Ordinal).Select(path =>
+                CSharpSyntaxTree.ParseText(File.ReadAllText(path), options, path)),
+            project.AssemblyReferences.Distinct(StringComparer.Ordinal).Select(path => MetadataReference.CreateFromFile(path)),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true,
+                nullableContextOptions: NullableContextOptions.Enable));
     }
 
     public static string Normalize(string path) => path.Replace('\\', '/');
