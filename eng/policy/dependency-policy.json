@@ -678,7 +678,7 @@
     },
     "previousReceipt": "eng/policy/dependency-reviews/gov04-r2.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-36-r2.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-36-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
