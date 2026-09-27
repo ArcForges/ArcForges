@@ -82,6 +82,21 @@ class RuntimeOwnershipTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'canonical naming asset'):
                 policy.naming_package(pin, self.root)
 
+    def test_immutable_snapshot_fetch_retries_without_changing_connection_settings(self):
+        fetches = []
+        def run(arguments, **kwargs):
+            if 'fetch' in arguments:
+                fetches.append(arguments)
+                if len(fetches) == 1:
+                    raise subprocess.CalledProcessError(128, arguments)
+            return subprocess.CompletedProcess(arguments, 0)
+        with patch.object(policy.subprocess, 'run', side_effect=run), patch.object(policy.time, 'sleep') as pause, \
+             patch.object(policy.inventory, 'git', return_value='a' * 40):
+            self.assertEqual(policy.checkout(self.root, 'Contracts', 'a' * 40), self.root / 'Contracts')
+        self.assertEqual(fetches[0], fetches[1])
+        self.assertEqual(len(fetches), 2)
+        pause.assert_called_once_with(1)
+
     def test_unsafe_policy_paths_and_ambiguous_json(self):
         for path in ('../outside', '/absolute', 'C:/absolute', 'src\\app', 'a/../b', './src'):
             with self.subTest(path=path), self.assertRaises(ValueError): policy.path(path)
