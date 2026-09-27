@@ -23,6 +23,7 @@ public sealed class IdentityCompileNegativeTests
                     command = instance;
                     bool equal = workspace == command;
                     bool revisionEqualsSequence = default(ArcForges.Foundation.Revision) == default(ArcForges.Foundation.SequenceNumber);
+                    ArcForges.Foundation.Execution.AttemptId attempt = default(ArcForges.Foundation.Execution.InvocationId);
                   }
                 }
                 """);
@@ -55,7 +56,7 @@ public sealed class IdentityCompileNegativeTests
             var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
             process.WaitForExit();
             Assert.NotEqual(0, process.ExitCode);
-            Assert.Equal(2, output.Split("error CS0029", StringSplitOptions.None).Length - 1);
+            Assert.Equal(3, output.Split("error CS0029", StringSplitOptions.None).Length - 1);
             Assert.Equal(2, output.Split("error CS0019", StringSplitOptions.None).Length - 1);
         }
         finally

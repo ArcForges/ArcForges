@@ -9,4 +9,7 @@
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
+  </ItemGroup>
 </Project>
