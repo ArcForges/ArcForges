@@ -59,7 +59,8 @@ public sealed class StoredContent
         if (value.PayloadSha256 != Convert.ToHexStringLower(SHA256.HashData(payload)))
             throw new ArgumentException("The origin does not identify the exact payload bytes.");
         if (value.ProducerKind is not ("model" or "human" or "deterministic" or "import") ||
-            !value.HasOmittedParentCount || value.OmittedParentCount > int.MaxValue || value.ParentOriginIds.Count > 32)
+            !value.HasOmittedParentCount || value.OmittedParentCount > int.MaxValue || value.ParentOriginIds.Count > 32 ||
+            (value.OmittedParentCount > 0 && value.ParentOriginIds.Count != 32))
             throw new ArgumentException("Invalid origin producer or bounded lineage.");
         var parents = value.ParentOriginIds.Select(id => ContentOriginId.FromWire(id).Value.ToString("N")).ToArray();
         if (!parents.SequenceEqual(parents.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)))

@@ -105,6 +105,9 @@ public sealed class StoreTests
         var future = new WriteCommand(valid.CommandId, valid.AggregateKind, valid.AggregateId, valid.Expected,
             new(valid.Content.Version, valid.Content.Payload.Span, invalidOrigin), valid.Operation, valid.Actor, valid.CorrelationId, valid.CommittedAt);
         Assert.Throws<InvalidOperationException>(() => store.Write(future));
+        var unbounded = valid.Content.Origin; unbounded.OmittedParentCount = 1;
+        Assert.Throws<ArgumentException>(() => store.Write(new(valid.CommandId, valid.AggregateKind, valid.AggregateId, valid.Expected,
+            new(valid.Content.Version, valid.Content.Payload.Span, unbounded), valid.Operation, valid.Actor, valid.CorrelationId, valid.CommittedAt)));
         Assert.Equal(0, file.Count("store_content")); Assert.Equal(0, file.Count("journal"));
     }
 
