@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
 using System.Text;
-using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Persistence.Sqlite.Migrations;
 using Microsoft.Data.Sqlite;
 
@@ -27,7 +27,10 @@ public sealed class SqliteStore : IStore
             using var command = context.CreateCommand("""
                 CREATE TABLE IF NOT EXISTS store_identity(id TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS store_content(kind TEXT NOT NULL,id TEXT NOT NULL,version TEXT NOT NULL,payload BLOB NOT NULL,origin BLOB NOT NULL,PRIMARY KEY(kind,id));
-                CREATE TABLE IF NOT EXISTS store_origins(id TEXT PRIMARY KEY,record BLOB NOT NULL);
+                CREATE TABLE IF NOT EXISTS store_origins(id TEXT PRIMARY KEY,record BLOB NOT NULL,refs INTEGER NOT NULL CHECK(refs>=0));
+                CREATE INDEX IF NOT EXISTS store_origins_refs ON store_origins(refs,id);
+                CREATE TABLE IF NOT EXISTS store_origin_pending_refs(id TEXT PRIMARY KEY,refs INTEGER NOT NULL CHECK(refs>0));
+                CREATE TABLE IF NOT EXISTS store_origin_edges(child TEXT NOT NULL,parent TEXT NOT NULL,PRIMARY KEY(child,parent));
                 CREATE TABLE IF NOT EXISTS store_origin_identity(id TEXT PRIMARY KEY,checksum BLOB NOT NULL);
                 CREATE TABLE IF NOT EXISTS store_local_heads(kind TEXT NOT NULL,id TEXT NOT NULL,head INTEGER NOT NULL,PRIMARY KEY(kind,id));
                 CREATE TABLE IF NOT EXISTS store_history(kind TEXT NOT NULL,id TEXT NOT NULL,sequence INTEGER NOT NULL,version TEXT NOT NULL,payload BLOB NOT NULL,origin BLOB NOT NULL,PRIMARY KEY(kind,id,sequence));
@@ -105,11 +108,9 @@ public sealed class SqliteStore : IStore
             {
                 BindContent(apply, command, command.Expected); apply.ExecuteNonQuery();
             }
-            using (var origin = context.CreateCommand("INSERT OR IGNORE INTO store_origins(id,record) VALUES($id,$record)"))
-            {
-                origin.Parameters.AddWithValue("$id", ContentOriginId.FromWire(command.Content.Origin.OriginId).Value.ToString("D"));
-                origin.Parameters.AddWithValue("$record", command.Content.OriginBytes); origin.ExecuteNonQuery();
-            }
+            RegisterOrigin(context, command.Content);
+            ChangeOriginReference(context, ContentOriginId.FromWire(command.Content.Origin.OriginId).Value.ToString("D"), 2);
+            if (current is not null) ChangeOriginReference(context, ContentOriginId.FromWire(current.Origin.OriginId).Value.ToString("D"), -1);
             using (var identity = context.CreateCommand("INSERT OR IGNORE INTO store_origin_identity(id,checksum) VALUES($id,$checksum)"))
             {
                 identity.Parameters.AddWithValue("$id", ContentOriginId.FromWire(command.Content.Origin.OriginId).Value.ToString("D"));
@@ -166,32 +167,74 @@ public sealed class SqliteStore : IStore
         using var row = command.ExecuteReader();
         return row.Read() ? new(StoreVersion.ParseCanonicalText(row.GetString(0)), (byte[])row.GetValue(1), ContentOrigin.Parser.ParseFrom((byte[])row.GetValue(2))) : null;
     }
-    // History pins the newest 64 payload versions per aggregate. Collection visits at most 64 unpinned
-    // origin records per commit; current bodies, retained history and their transitive lineage stay pinned.
+    private static void RegisterOrigin(SqliteCommitContext context, StoredContent content)
+    {
+        var value = content.Origin;
+        var id = ContentOriginId.FromWire(value.OriginId).Value.ToString("D");
+        using var insert = context.CreateCommand("INSERT OR IGNORE INTO store_origins(id,record,refs) VALUES($id,$record,COALESCE((SELECT refs FROM store_origin_pending_refs WHERE id=$id),0))");
+        insert.Parameters.AddWithValue("$id", id); insert.Parameters.AddWithValue("$record", content.OriginBytes);
+        if (insert.ExecuteNonQuery() == 0) return;
+        using (var pending = context.CreateCommand("DELETE FROM store_origin_pending_refs WHERE id=$id"))
+        { pending.Parameters.AddWithValue("$id", id); pending.ExecuteNonQuery(); }
+        foreach (var parent in value.ParentOriginIds)
+        {
+            var parentId = ContentOriginId.FromWire(parent).Value.ToString("D");
+            using var edge = context.CreateCommand("INSERT INTO store_origin_edges(child,parent) VALUES($child,$parent)");
+            edge.Parameters.AddWithValue("$child", id); edge.Parameters.AddWithValue("$parent", parentId); edge.ExecuteNonQuery();
+            ChangeOriginReference(context, parentId, 1);
+        }
+    }
+    private static void ChangeOriginReference(SqliteCommitContext context, string id, int delta)
+    {
+        using var update = context.CreateCommand("UPDATE store_origins SET refs=refs+$delta WHERE id=$id");
+        update.Parameters.AddWithValue("$id", id); update.Parameters.AddWithValue("$delta", delta);
+        if (update.ExecuteNonQuery() == 1) return;
+        using var read = context.CreateCommand("SELECT refs FROM store_origin_pending_refs WHERE id=$id");
+        read.Parameters.AddWithValue("$id", id);
+        var next = checked((read.ExecuteScalar() is long refs ? refs : 0) + delta);
+        if (next < 0) throw new InvalidDataException("Origin reference accounting underflow.");
+        if (next == 0)
+        {
+            using var remove = context.CreateCommand("DELETE FROM store_origin_pending_refs WHERE id=$id");
+            remove.Parameters.AddWithValue("$id", id); remove.ExecuteNonQuery();
+        }
+        else
+        {
+            using var pending = context.CreateCommand("INSERT INTO store_origin_pending_refs(id,refs) VALUES($id,$refs) ON CONFLICT(id) DO UPDATE SET refs=excluded.refs");
+            pending.Parameters.AddWithValue("$id", id); pending.Parameters.AddWithValue("$refs", next); pending.ExecuteNonQuery();
+        }
+    }
+    // Fixed budgets: 64 history roots and 64 zero-reference origins; each origin has at most 32 edges.
+    // Indexed reference counts avoid scanning unrelated roots or traversing retained lineage.
     private static void CollectUnpinnedHistory(SqliteCommitContext context, WriteCommand command)
     {
-        using (var trim = context.CreateCommand("DELETE FROM store_history WHERE kind=$kind AND id=$id AND sequence NOT IN (SELECT sequence FROM store_history WHERE kind=$kind AND id=$id ORDER BY sequence DESC LIMIT 64)"))
+        var expired = new List<(long Sequence, string Origin)>();
+        using (var query = context.CreateCommand("SELECT sequence,origin FROM store_history WHERE kind=$kind AND id=$id ORDER BY sequence DESC LIMIT 64 OFFSET 64"))
         {
-            trim.Parameters.AddWithValue("$kind", command.AggregateKind); trim.Parameters.AddWithValue("$id", command.AggregateId.ToString("D")); trim.ExecuteNonQuery();
+            query.Parameters.AddWithValue("$kind", command.AggregateKind); query.Parameters.AddWithValue("$id", command.AggregateId.ToString("D"));
+            using var rows = query.ExecuteReader();
+            while (rows.Read()) expired.Add((rows.GetInt64(0), ContentOriginId.FromWire(ContentOrigin.Parser.ParseFrom((byte[])rows.GetValue(1)).OriginId).Value.ToString("D")));
         }
-        var pinned = new HashSet<string>(StringComparer.Ordinal);
-        var parents = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        using (var origins = context.CreateCommand("SELECT id,record FROM store_origins"))
-        using (var rows = origins.ExecuteReader())
-            while (rows.Read())
-            {
-                var value = ContentOrigin.Parser.ParseFrom((byte[])rows.GetValue(1));
-                parents.Add(rows.GetString(0), value.ParentOriginIds.Select(id => ContentOriginId.FromWire(id).Value.ToString("D")).ToArray());
-            }
-        using (var roots = context.CreateCommand("SELECT origin FROM store_content UNION ALL SELECT origin FROM store_history"))
-        using (var rows = roots.ExecuteReader())
-            while (rows.Read()) pinned.Add(ContentOriginId.FromWire(ContentOrigin.Parser.ParseFrom((byte[])rows.GetValue(0)).OriginId).Value.ToString("D"));
-        var pending = new Queue<string>(pinned);
-        while (pending.TryDequeue(out var next))
-            if (parents.TryGetValue(next, out var lineage))
-                foreach (var parent in lineage) if (pinned.Add(parent)) pending.Enqueue(parent);
-        foreach (var id in parents.Keys.Where(id => !pinned.Contains(id)).Take(64))
+        foreach (var item in expired)
         {
+            using var remove = context.CreateCommand("DELETE FROM store_history WHERE kind=$kind AND id=$id AND sequence=$sequence");
+            remove.Parameters.AddWithValue("$kind", command.AggregateKind); remove.Parameters.AddWithValue("$id", command.AggregateId.ToString("D"));
+            remove.Parameters.AddWithValue("$sequence", item.Sequence); remove.ExecuteNonQuery();
+            ChangeOriginReference(context, item.Origin, -1);
+        }
+        for (var count = 0; count < 64; count++)
+        {
+            using var candidate = context.CreateCommand("SELECT id FROM store_origins WHERE refs=0 ORDER BY id LIMIT 1");
+            if (candidate.ExecuteScalar() is not string id) break;
+            var parents = new List<string>();
+            using (var edges = context.CreateCommand("SELECT parent FROM store_origin_edges WHERE child=$id LIMIT 32"))
+            {
+                edges.Parameters.AddWithValue("$id", id); using var rows = edges.ExecuteReader();
+                while (rows.Read()) parents.Add(rows.GetString(0));
+            }
+            foreach (var parent in parents) ChangeOriginReference(context, parent, -1);
+            using var removeEdges = context.CreateCommand("DELETE FROM store_origin_edges WHERE child=$id");
+            removeEdges.Parameters.AddWithValue("$id", id); removeEdges.ExecuteNonQuery();
             using var remove = context.CreateCommand("DELETE FROM store_origins WHERE id=$id");
             remove.Parameters.AddWithValue("$id", id); remove.ExecuteNonQuery();
         }

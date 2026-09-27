@@ -2,8 +2,8 @@
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
-using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Persistence.Sqlite;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -13,7 +13,12 @@ namespace ArcForges.Tests.PersistenceTests;
 public sealed class StoreTests
 {
     [Theory]
-    [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)] [InlineData(4)] [InlineData(5)]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
     public void EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int stage)
     {
         using var file = new DatabaseFile();
@@ -147,12 +152,46 @@ public sealed class StoreTests
             "report.edit", first.Actor, Guid.NewGuid(), first.CommittedAt)));
     }
 
-    private static WriteCommand Command(StoreVersion expected, StoreVersion next, CommandId? command = null, Guid? aggregate = null, string body = "payload")
+    [Fact]
+    public void CollectionBudgetRetainsLongLiveLineageAndMakesBoundedProgress()
+    {
+        using var file = new DatabaseFile(); using var store = new SqliteStore(file.Path, file.Id, new Allow());
+        var previous = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1))); store.Write(previous);
+        for (ulong revision = 2; revision <= 130; revision++)
+        {
+            var next = Command(previous.Content.Version, StoreVersion.Native(new(revision)), aggregate: previous.AggregateId, parent: previous.Content.Origin);
+            store.Write(next); previous = next;
+        }
+        Assert.Equal(130, file.Count("store_origins")); // Only 64 history roots, but every ancestor remains live.
+        for (ulong revision = 131; revision <= 193; revision++)
+        {
+            var next = Command(previous.Content.Version, StoreVersion.Native(new(revision)), aggregate: previous.AggregateId);
+            store.Write(next); previous = next;
+        }
+        Assert.Equal(193, file.Count("store_origins"));
+        foreach (var expectedCount in new long[] { 130, 67, 64 })
+        {
+            var next = Command(previous.Content.Version, StoreVersion.Native(new(previous.Content.Version.NativeRevision!.Value.Value + 1)), aggregate: previous.AggregateId);
+            store.Write(next); previous = next;
+            Assert.Equal(expectedCount, file.Count("store_origins"));
+            Assert.Equal(next.Content.Origin, store.Read("report", next.AggregateId)!.Origin);
+        }
+    }
+
+    private static WriteCommand Command(StoreVersion expected, StoreVersion next, CommandId? command = null, Guid? aggregate = null, string body = "payload", ContentOrigin? parent = null)
     {
         var payload = Encoding.UTF8.GetBytes(body);
-        var origin = new ContentOrigin { Profile = "arcforges.content-origin.v1", OriginId = new ContentOriginId(Guid.NewGuid()).ToWire(),
-            ContentUnitId = new ContentUnitId(Guid.NewGuid()).ToWire(), PayloadSha256 = Convert.ToHexStringLower(SHA256.HashData(payload)), ProducerKind = "human", OmittedParentCount = 0 };
+        var origin = new ContentOrigin
+        {
+            Profile = "arcforges.content-origin.v1",
+            OriginId = new ContentOriginId(Guid.NewGuid()).ToWire(),
+            ContentUnitId = new ContentUnitId(Guid.NewGuid()).ToWire(),
+            PayloadSha256 = Convert.ToHexStringLower(SHA256.HashData(payload)),
+            ProducerKind = "human",
+            OmittedParentCount = 0
+        };
         origin.Kinds.Add("nonAi");
+        if (parent is not null) origin.ParentOriginIds.Add(parent.OriginId.Clone());
         return new(command ?? new(Guid.NewGuid()), "report", aggregate ?? Guid.NewGuid(), expected, new(next, payload, origin),
             "report.edit", new(Guid.Parse("00000000-0000-4000-8000-000000000001")), Guid.NewGuid(), new(0, 0));
     }
