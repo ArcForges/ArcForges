@@ -64,7 +64,7 @@ public sealed class OutcomeTests
             Code = "future.condition", Category = (ErrorCategory)123,
             Effect = EffectCertainty.Happened, MessageKey = "unsafe.producer.label",
             Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
-            CorrelationId = new Id { Value = ByteString.CopyFrom(new byte[16]) },
+            CorrelationId = new Id { Value = ByteString.CopyFrom(Convert.FromHexString("00112233445566778899AABBCCDDEEFF")) },
         };
         var result = Outcome.Failure<int>(TypedFailure.FromWire(wire));
         wire.Effect = EffectCertainty.DidNotHappen;
@@ -120,6 +120,9 @@ public sealed class OutcomeTests
         retry.RetryAt.Nanos = 1_000_000_000;
         Xunit.Assert.Equal(0U, failure.RetryAdvice.RetryAt.Nanos);
         Xunit.Assert.Equal(RetryMode.AfterTime, failure.Retry);
+        Xunit.Assert.Throws<ArgumentException>(() => TypedFailure.Create("capacity.busy", retry: retry));
+        retry.RetryAt.Nanos = 0;
+        retry.RetryAt.UnixSeconds = long.MaxValue;
         Xunit.Assert.Throws<ArgumentException>(() => TypedFailure.Create("capacity.busy", retry: retry));
         Xunit.Assert.Throws<ArgumentException>(() => TypedFailure.Create("dependency.timeout", retry: new RetryAdvice { Mode = RetryMode.SameCommand }));
         var reconcile = TypedFailure.Create("dependency.timeout", retry: new RetryAdvice { Mode = RetryMode.Reconcile, ReconciliationOperation = "task.get" });

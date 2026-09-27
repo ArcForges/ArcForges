@@ -153,7 +153,7 @@ public sealed class TypedFailure
 
         if (advice.Mode == RetryMode.AfterTime)
         {
-            if (advice.RetryAt is not { HasUnixSeconds: true, HasNanos: true } at || at.Nanos >= 1_000_000_000 || advice.HasReconciliationOperation)
+            if (advice.RetryAt is not { HasUnixSeconds: true, HasNanos: true } at || at.Nanos >= 1_000_000_000 || at.UnixSeconds is < -62_135_596_800 or > 253_402_300_799 || advice.HasReconciliationOperation)
             {
                 throw new ArgumentException("Timed retry requires a canonical server recovery instant only.", nameof(advice));
             }
