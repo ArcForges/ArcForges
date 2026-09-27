@@ -44,7 +44,7 @@ internal static class PolicyEngine
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var model = compilation.GetSemanticModel(tree);
-                foreach (var declaration in tree.GetRoot().DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+                foreach (var declaration in tree.GetRoot().DescendantNodes().Where(node => node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax))
                 {
                     if (model.GetDeclaredSymbol(declaration) is INamedTypeSymbol type)
                     {
@@ -191,7 +191,8 @@ internal static class PolicyEngine
                 continue;
             }
 
-            foreach (var member in type.GetMembers().Where(member => member.DeclaredAccessibility == Accessibility.Public))
+            foreach (var member in type.GetMembers().Where(member => member.DeclaredAccessibility == Accessibility.Public
+                && (type.TypeKind != TypeKind.Delegate || SymbolEqualityComparer.Default.Equals(member, type.DelegateInvokeMethod))))
             {
                 var exposed = member switch
                 {
@@ -322,9 +323,20 @@ internal static class PolicyEngine
     private static bool PublicType(INamedTypeSymbol type) => type.DeclaredAccessibility == Accessibility.Public
         && (type.ContainingType is null || PublicType(type.ContainingType));
 
-    private static bool ContainsNativeType(ITypeSymbol type) => BannedSymbolScanner.IsNativePointer(type)
-        || (type is IArrayTypeSymbol array && ContainsNativeType(array.ElementType))
-        || (type is INamedTypeSymbol named && named.TypeArguments.Any(ContainsNativeType));
+    private static bool ContainsNativeType(ITypeSymbol type) =>
+        ContainsNativeType(type, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
+
+    private static bool ContainsNativeType(ITypeSymbol type, HashSet<ITypeSymbol> visited)
+    {
+        if (!visited.Add(type)) return false;
+        if (BannedSymbolScanner.IsNativePointer(type)) return true;
+        if (type is IArrayTypeSymbol array) return ContainsNativeType(array.ElementType, visited);
+        if (type is not INamedTypeSymbol named) return false;
+        if (named.TypeArguments.Any(argument => ContainsNativeType(argument, visited))) return true;
+        return named.DelegateInvokeMethod is { } invoke
+            && (ContainsNativeType(invoke.ReturnType, visited)
+                || invoke.Parameters.Any(parameter => ContainsNativeType(parameter.Type, visited)));
+    }
 
     private static bool Generated(INamedTypeSymbol type) => type.GetAttributes().Any(attribute =>
         attribute.AttributeClass?.ToDisplayString() == "System.CodeDom.Compiler.GeneratedCodeAttribute"

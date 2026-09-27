@@ -167,6 +167,18 @@ public sealed class SharedPolicyTests
         }
     }
 
+    [Xunit.Theory]
+    [Xunit.InlineData("public delegate System.IntPtr Callback();", true)]
+    [Xunit.InlineData("public delegate void Callback(System.Runtime.InteropServices.SafeHandle value);", true)]
+    [Xunit.InlineData("public delegate string Callback(int value);", false)]
+    [Xunit.InlineData("public delegate Callback Callback();", false)]
+    public void NativeCallbackSignaturesCannotCrossPublicBoundary(string declaration, bool rejected)
+    {
+        using var fixture = Case.Create("AT-06", violation: false);
+        fixture.AddCallback(declaration);
+        Xunit.Assert.Equal(rejected, fixture.Check().Any(finding => finding.Rule == "AT-06"));
+    }
+
     [Xunit.Fact]
     public void SameNamedTestTypeCannotHideProductionApi()
     {
@@ -361,6 +373,9 @@ public sealed class SharedPolicyTests
             new RepositoryFacts(_root, "DesktopPlatform", Projects, Exceptions, _contractTests),
             new RepositoryPolicyConfiguration(SourceCommit, _toolchains, _licenses, new HashSet<string>(StringComparer.Ordinal) { "MIT", "Apache-2.0" },
                 _services, _wireTypes, Evidence, MobileDistributable: _mobile, DependencyRoles: DependencyRoles), _compilations, new DateOnly(2026, 9, 27));
+
+        public void AddCallback(string declaration) => Add("callback", ProjectRole.Foundation,
+            declaration + " public class Api { public Callback? Value { get; } }");
 
         public void AddCollidingApi() => Add("collision", ProjectRole.Foundation,
             "namespace FixtureTests; public class Contracts { public System.IntPtr Handle() => default; }");

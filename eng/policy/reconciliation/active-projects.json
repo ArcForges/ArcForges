@@ -12,7 +12,7 @@
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
-      "blob": "58f6e17fc12468f2966f11c662be94a47c79ec63"
+      "blob": "2af2a384ad1d1dc509a4c86921983ca6ed067931"
     },
     {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
