@@ -1,0 +1,33 @@
+{
+  "spdx": "AGPL-3.0-only",
+  "evidenceClass": "Offline mechanism-owned SQLite history; not product schema or installed-consumer acceptance",
+  "steps": [
+    {
+      "version": 1,
+      "id": "notes-initial",
+      "statements": [
+        "CREATE TABLE migration_fixture_notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)",
+        "INSERT INTO migration_fixture_notes (id, body) VALUES (7, 'a preserved legacy note'), (42, 'Unicode: 世界 🌍')"
+      ]
+    },
+    {
+      "version": 2,
+      "id": "notes-origin",
+      "statements": [
+        "ALTER TABLE migration_fixture_notes ADD COLUMN origin TEXT NOT NULL DEFAULT 'unknown'"
+      ]
+    },
+    {
+      "version": 3,
+      "id": "notes-index",
+      "statements": [
+        "CREATE INDEX migration_fixture_notes_origin ON migration_fixture_notes(origin)"
+      ]
+    }
+  ],
+  "historicalVersions": [1, 2, 3],
+  "semanticGolden": [
+    {"id": 7, "body": "a preserved legacy note", "origin": "unknown"},
+    {"id": 42, "body": "Unicode: 世界 🌍", "origin": "unknown"}
+  ]
+}
