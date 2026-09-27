@@ -18,8 +18,9 @@ It never builds adjacent source. Contracts and Mobile do not import AGPL tooling
 Pass all seven `--repository Owner=absolute-root` arguments for a fresh family audit;
 `--design-root` may use a local Design Git checkout containing the bound commit.
 Reports retain actual source commit/dirty state, file/project counts, policy digest
-and findings under ignored `artifacts/evidence/`. A current family audit is required
-after merges; immutable snapshots alone cannot establish that current main conforms.
+and findings under ignored `artifacts/evidence/`. Snapshot results describe their
+recorded revisions; a selected fresh family audit describes the supplied revisions.
+Post-merge publication observation follows P2-017 without routine repeated audits.
 
 The project-role inventory covers every existing build manifest, including tooling,
 tests, native IDE adapters and runtime-package containers. Source files additionally
@@ -71,3 +72,12 @@ does not close those gates or require recreating already absent legacy source.
 ## Reduced-family adoption (GOV.18)
 
 The active runtime policy enumerates the seven retained owners only. The DesktopPlatform project inventory tracks the retained image ABI and current owned managed projects. Removed repository entries are not fetched or audited as current owners. Historical source identities and retired-scaffold evidence remain historical; product functionality is not inferred.
+
+Naming uses the canonical scanner and data shipped in the exact published
+`ArcForges.Contracts.Validation` package selected by `eng/policy/naming-package.json`.
+The consumer checks its NuGet SHA512 identity once at acquisition and extracts only
+the two named tooling assets into its temporary directory. It does not execute the
+scanner from the Contracts source snapshot. The naming package is build-time tooling,
+not a dependency shipped by DesktopPlatform capability packages. Nested `src/**/Tests/`
+projects must declare unconditional `IsTestProject=true` to receive the test/tool role;
+ordinary source libraries retain the Native AOT requirements.
