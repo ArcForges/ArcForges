@@ -2,11 +2,15 @@
 """Offline adversarial admission and publisher checks; no artifacts or registries."""
 import copy
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
-from dependency_policy import ROOT, POLICY, audit, check_admission, check_history, check_python, closure, exact, framework_upgrade, python_closure
+from dependency_policy import ROOT, POLICY, audit, check_admission, check_history, check_python, closure, exact, framework_upgrade, hashes, python_closure
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'packaging'))
 from release_channels import authorized, bound_candidate, publication, selected, verified_tag
 
@@ -16,8 +20,44 @@ class AdmissionTests(unittest.TestCase):
         self.policy = json.loads((ROOT / POLICY).read_text())
         self.actual = closure(ROOT)
 
-    def test_actual_policy_and_stable_closure(self):
-        self.assertEqual(audit(stable=True)['result'], 'passed')
+    def test_actual_candidate_passes_development_and_refuses_stable(self):
+        self.assertEqual(audit()['result'], 'passed')
+        with self.assertRaisesRegex(ValueError, 'Stable closure contains prerelease'):
+            audit(stable=True)
+
+    def test_reviewed_stable_fixture_passes_full_audit(self):
+        # An isolated repository exercises the real audit, including receipt/input integrity.
+        # It copies one admitted stable dependency, without restoring or downloading it.
+        coordinate = next(key for key in sorted(self.actual) if '-' not in key.rsplit('/', 1)[1])
+        package, version = coordinate.rsplit('/', 1)
+        with tempfile.TemporaryDirectory(prefix='arcforges-stable-admission-') as directory:
+            root = Path(directory)
+            def git(*args):
+                subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True)
+            git('init', '-b', 'main')
+            for name in ['global.json', 'NuGet.config', 'eng/requirements-ci.txt']:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / name).read_bytes())
+            (root / 'packages.lock.json').write_text(json.dumps({'version': 1, 'dependencies': {
+                'net10.0': {package: {'type': 'Direct', 'requested': f'[{version}, {version}]',
+                                    'resolved': version, 'contentHash': self.actual[coordinate]}}}}))
+            policy = copy.deepcopy(self.policy)
+            policy['nugetClosure'] = {coordinate: policy['nugetClosure'][coordinate]}
+            policy['reviewReceipt'] = 'eng/policy/dependency-reviews/stable-fixture.json'
+            policy['review']['previousReceipt'] = None
+            policy['inputHashes'] = hashes(root)
+            policy['review']['inputHashes'] = policy['inputHashes']
+            receipt = root / policy['reviewReceipt']
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            receipt.write_text(json.dumps({key: policy[key] for key in ['review', 'nugetClosure', 'pythonClosure']}))
+            (root / POLICY).write_text(json.dumps(policy))
+            git('add', '.')
+            git('-c', 'user.name=Admission fixture', '-c', 'user.email=fixture@example.invalid',
+                'commit', '-m', 'Create isolated stable admission fixture')
+            # A fixture repository cannot resolve the outer CI event's unrelated base SHA.
+            with patch.dict(os.environ, {'GITHUB_EVENT_NAME': '', 'GITHUB_EVENT_PATH': '', 'GITHUB_REF': ''}):
+                self.assertEqual(audit(root=root, stable=True)['result'], 'passed')
 
     def test_forbidden_licence(self):
         next(iter(self.policy['nugetClosure'].values()))['licence'] = 'GPL-3.0-only'
