@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.DesignSystem</AssemblyName>
     <RootNamespace>ArcForges.DesignSystem</RootNamespace>
-    <IsPackable>true</IsPackable>
+    <IsPackable>false</IsPackable>
     <PackageId>ArcForges.DesignSystem</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Semantic visual tokens for ArcForges desktop experiences.</Description>

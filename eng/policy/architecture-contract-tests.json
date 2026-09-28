@@ -758,5 +758,30 @@
     "apiSymbol": "ArcForges.Persistence.Resources.CaptureSnapshot.Dispose()",
     "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
     "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.RecoveryPersistsLossAndNeverMutatesOriginal()"
+  },
+  {
+    "apiSymbol": "ArcForges.DesignSystem.ColorContrast.Ratio(ArcForges.DesignSystem.RgbaColor, ArcForges.DesignSystem.RgbaColor)",
+    "testProject": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+    "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.EveryThemeProvidesSemanticColorsAndMeetsContrastTargets()"
+  },
+  {
+    "apiSymbol": "ArcForges.DesignSystem.DesignTokens.Get(ArcForges.DesignSystem.ThemeMode, ArcForges.DesignSystem.DensityMode)",
+    "testProject": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+    "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.DensityModesHaveDistinctStableLayoutSnapshots()"
+  },
+  {
+    "apiSymbol": "ArcForges.DesignSystem.MotionTokens.CurveFor(ArcForges.DesignSystem.MotionDuration)",
+    "testProject": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+    "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.SemanticScalesIncludeTabularNumbersAndRestrainedMotion()"
+  },
+  {
+    "apiSymbol": "ArcForges.DesignSystem.MotionTokens.Resolve(ArcForges.DesignSystem.MotionDuration, ArcForges.DesignSystem.MotionPreference)",
+    "testProject": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+    "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.SemanticScalesIncludeTabularNumbersAndRestrainedMotion()"
+  },
+  {
+    "apiSymbol": "ArcForges.DesignSystem.TypographyTokens.For(ArcForges.DesignSystem.TypographyRole)",
+    "testProject": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+    "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.SemanticScalesIncludeTabularNumbersAndRestrainedMotion()"
   }
 ]
