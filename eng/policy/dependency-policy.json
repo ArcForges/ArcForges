@@ -19,7 +19,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "0293462b584f97f79f4646ea00e6d2700ad72b3b8140ed5e63dc0840fcc017b6",
+    "eng/packaging/packages.json": "b7939f12bc72014db6c54e2fda91dba951fdcf3b0ca31d567e7d199d87a2b688",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -207,11 +207,11 @@
     "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
     "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "3d6a0b8c73585ec0c6474b5eb13b05f1236830cf4b7375ca8e42cad55f9ce4aa",
     "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "9392f220cd4732d5b7d0eb4a5812ac21ad8eb4711db6baef43f4cae116c519b7",
-    "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "6970e010c5ebf13723b0384730a3ff37cca8ef0e4794fc9b61c96f0f8ce0df4f",
+    "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "c811b4409a75567b7140dd928db29cd130b4d3161f0384b5702ec50e8a7950e1",
     "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
     "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
     "src/BuildingBlocks/ArcForges.Persistence.Derived/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
+    "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "cef718cfec9d7cf24b15bc0800f1e2553dc2f1f8967b7199e4319759b7c8ff9d",
     "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
     "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
     "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
@@ -641,19 +641,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-p05",
-    "reviewer": "af-20260928-p05 (PLT.47 dependency-input lineage only; independent source review requested separately)",
+    "owner": "af-20260928-p02",
+    "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "19635a2dd205184fd89b7e7992ab24228cf23021",
-    "maintenanceAssessment": "PLT.47 completes the existing non-packable Observability library and adds its nested offline test project. The library references Foundation only for typed IDs; telemetry application/service dimensions use the closed local vocabulary and add no Capabilities dependency. No package coordinate or version is added. This immutable successor follows the currently active nat-06-r1 receipt and preserves the existing dependency closure and evidence.",
+    "baselineCommit": "94b3f12e802c225ac16fea4b72ceb2717214a32b",
+    "maintenanceAssessment": "PLT.08 makes only the already-existing Persistence.Resources and Persistence.Derived projects packable, adds their explicit package identities/readmes/descriptions and unchanged AGPL-3.0-only metadata, and appends those two existing projects to the package inventory. Resources retains its existing Foundation project reference and exact already-admitted Contracts.Foundation pin; Derived remains dependency-free. No PackageReference, dependency coordinate/version, lock, dependency closure, framework, public source API, solution membership or package-policy algorithm changes. This successor follows the active PLT.47 receipt and preserves its Observability source/test project inputs, the entire existing NuGet/Python closure and prior receipt chain.",
     "upgradeChecks": {
-      "compilation": "Exact-base validation is pending on this rebased candidate: pinned SDK 10.0.400 locked restore, format verification, full Release solution build, focused observability tests, and hosted CI are required; no new-base pass is claimed.",
-      "aot-trim": "No AOT or trim behavior/configuration change is intended. Existing AOT/trim analyzers and hosted platform checks remain required; no new-base execution is claimed.",
-      "compatibility": "No Contracts wire or published package identity change. The library reuses typed Foundation IDs; optional dimensions remain omitted when absent.",
-      "licence-provenance": "PLT.47 adds first-party source and offline tests under the existing AGPL-3.0-only boundary. No third-party coordinate, licence, or nuspec evidence changes; exact-base provenance validation remains required.",
-      "security-sbom": "No external component, version, checksum, or package admission is added. Locked restore and existing dependency/security gates remain required; no advisory-absence claim is made.",
-      "runtime-performance-migration": "Offline tests cover signal dimensions, async ambient scoping, metric cardinality, build identity, and secret/path refusal. No live exporter, service, migration, benchmark, or product performance claim is made.",
-      "framework-runtime-posture": "No SDK pin, target framework, native ABI, Android/Kotlin, or runtime change. global.json remains pinned to SDK 10.0.400."
+      "compilation": "On exact base DesktopPlatform main 94b3f12e802c225ac16fea4b72ceb2717214a32b, pinned .NET SDK 10.0.400 locked solution restore and format verification passed; the full Release solution build completed with 0 warnings/errors. Focused suites passed: Foundation 65/65, Persistence.Resources 19 passed with 2 explicit local process-kill diagnostics skipped (21 total), Persistence.Derived 15/15, and PersistenceTests 81/81. Hosted candidate verification is recorded separately.",
+      "aot-trim": "The change is limited to packaging metadata, readmes and package inventory for two existing libraries; no executable source, AOT/trimming setting or runtime behavior changed.",
+      "compatibility": "No framework, project reference, package dependency coordinate/version/lock, public source API or dependency closure changed; Resources retains its existing Foundation reference.",
+      "licence-provenance": "On exact base 94b3f12e802c225ac16fea4b72ceb2717214a32b, source provenance passed for 564 files/10 reused/140 records; generated NOTICE SHA256 is unchanged at 9fa2317d54eb0256911ab0feeec394e30429d4040616f4a1a00bfa19ad8a0cac. Licence boundary passed for 41 projects; PLT.08 remains in the existing AGPL-3.0-only boundary.",
+      "security-sbom": "The exact-base dependency admission audit passed with 51 NuGet dependencies, 10 Python tool dependencies and 240 hashed inputs; dependency-policy tests passed 16/16. PLT.08 adds no dependency coordinate, version, lock or closure entry.",
+      "runtime-performance-migration": "No runtime behavior, schema, migration, benchmark or performance claim is added; this is packaging metadata for existing projects.",
+      "framework-runtime-posture": "The target remains net10.0 with pinned SDK 10.0.400; no framework, runtime, native ABI, Android/Kotlin/ART/R8 or toolchain update."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -673,7 +673,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "0293462b584f97f79f4646ea00e6d2700ad72b3b8140ed5e63dc0840fcc017b6",
+      "eng/packaging/packages.json": "b7939f12bc72014db6c54e2fda91dba951fdcf3b0ca31d567e7d199d87a2b688",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -861,11 +861,11 @@
       "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
       "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "3d6a0b8c73585ec0c6474b5eb13b05f1236830cf4b7375ca8e42cad55f9ce4aa",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "9392f220cd4732d5b7d0eb4a5812ac21ad8eb4711db6baef43f4cae116c519b7",
-      "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "6970e010c5ebf13723b0384730a3ff37cca8ef0e4794fc9b61c96f0f8ce0df4f",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "c811b4409a75567b7140dd928db29cd130b4d3161f0384b5702ec50e8a7950e1",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "cef718cfec9d7cf24b15bc0800f1e2553dc2f1f8967b7199e4319759b7c8ff9d",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
@@ -900,9 +900,18 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-06-r1.json"
+    "previousReceipt": "eng/policy/dependency-reviews/plt-47-r1.json",
+    "namingToolCandidate": {
+      "package": "ArcForges.Contracts.Validation",
+      "version": "1.0.0-ci.205.1",
+      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
+      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
+      "licence": "Apache-2.0",
+      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
+      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
+    }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-47-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-08-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

@@ -3,7 +3,10 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsAotCompatible>true</IsAotCompatible>
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Persistence.Resources</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Domain-free durable capture and content-addressed resource persistence mechanisms.</Description>
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
@@ -11,5 +14,8 @@
     <Compile Remove="Tests/**/*.cs" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <InternalsVisibleTo Include="ArcForges.Persistence.Resources.Tests" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

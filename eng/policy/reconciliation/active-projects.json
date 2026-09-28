@@ -96,7 +96,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj",
-      "blob": "59f154e4ef202ec7d6253a31e7e02755c9060ac6"
+      "blob": "3fc890889da7f010e25e40e63cea47d030abde62"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
@@ -160,7 +160,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj",
-      "blob": "d65037e7936a886d19ca77cec0b3b0a8f15f7072"
+      "blob": "1781d2ba58a5b02d2f82e942ab1ad1b8b316a059"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",

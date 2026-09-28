@@ -2,7 +2,8 @@
 
 A domain-free, single-writer append store for raw capture bytes. It owns no
 relational tables, product schema, decoder, acquisition scheduler or device.
-This project is nonpackable; PLT.08 owns package/integration acceptance.
+This package provides shared persistence mechanisms without centralizing product
+data ownership: each product owns its canonical files, schemas and domain records.
 
 `AppendStore.Create` creates new evidence exclusively. `AppendChunk`,
 `MapSegment` and `RecordGap` append and flush to stable storage before returning.
