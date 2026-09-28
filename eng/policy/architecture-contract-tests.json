@@ -1253,5 +1253,10 @@
     "apiSymbol": "ArcForges.Security.RiskModel.Assess(ArcForges.Contracts.Foundation.V1.CapabilityDescriptor, ArcForges.Security.RiskContext)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.RiskModelTests.SensitiveExternalTransferAndUnverifiedExtensionRequireR4()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Errors.ErrorPresenter.Present(ArcForges.Foundation.Errors.TypedFailure)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ErrorPresentationTests.PresentationUsesOnlyRegisteredTextAndNeverEchoesExceptionDetailsOrPaths()"
   }
 ]
