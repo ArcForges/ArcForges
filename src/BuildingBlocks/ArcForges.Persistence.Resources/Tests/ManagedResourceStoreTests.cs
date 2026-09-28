@@ -151,6 +151,22 @@ public sealed class ManagedResourceStoreTests
         Assert.Equal(liveContent, recovered.Read(live));
     }
 
+    [Fact]
+    public void DisposeFencesOperationsAndReleasesRootOwnership()
+    {
+        using var fixture = new StoreDirectory();
+        var store = ManagedResourceStore.Open(fixture.Root);
+        byte[] content = [31, 41, 59];
+        BlobId id = store.Store(content);
+
+        store.Dispose();
+        store.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => store.Read(id));
+        using var reopened = ManagedResourceStore.Open(fixture.Root);
+        Assert.Equal(content, reopened.Read(id));
+    }
+
     private sealed class StoreDirectory : IDisposable
     {
         public StoreDirectory()

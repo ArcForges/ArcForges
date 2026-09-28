@@ -783,5 +783,45 @@
     "apiSymbol": "ArcForges.DesignSystem.TypographyTokens.For(ArcForges.DesignSystem.TypographyRole)",
     "testProject": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
     "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.SemanticScalesIncludeTabularNumbersAndRestrainedMotion()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.AddReference(string, ArcForges.Contracts.Foundation.Values.BlobId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ReferenceCountComesFromReferrerRowsAndGcPreservesSharedLiveObjects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.CollectGarbage()",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ReferenceCountComesFromReferrerRowsAndGcPreservesSharedLiveObjects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.DisposeFencesOperationsAndReleasesRootOwnership()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.Open(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ContentIsAddressedByHashButResolvedOnlyThroughBlobId()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.Read(ArcForges.Contracts.Foundation.Values.BlobId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.EveryReadChecksLengthAndContentDigest()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.ReferenceCount(ArcForges.Contracts.Foundation.Values.BlobId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ReferenceCountComesFromReferrerRowsAndGcPreservesSharedLiveObjects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.RemoveReference(string, ArcForges.Contracts.Foundation.Values.BlobId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ReferenceCountComesFromReferrerRowsAndGcPreservesSharedLiveObjects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.Store(System.ReadOnlySpan<byte>, string?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ContentIsAddressedByHashButResolvedOnlyThroughBlobId()"
   }
 ]
