@@ -8,6 +8,14 @@
     "aot": false
   },
   {
+    "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
+    "role": "BuildTool",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
     "role": "BuildTool",
     "owner": "DesktopPlatform",

@@ -12,6 +12,7 @@ namespace ArcForges.Tests.ArchitectureTests;
 public sealed class EvaluatedPolicyTests
 {
     private const string LocalAcceptanceProject = "eng/acceptance/foundation/Foundation.Acceptance.csproj";
+    private const string Prf09ProbeProject = "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -99,9 +100,17 @@ public sealed class EvaluatedPolicyTests
     {
         Xunit.Assert.Equal(classifications.Length, classifications.Select(project => project.Path).Distinct(StringComparer.Ordinal).Count());
         Xunit.Assert.Equal(ownedProjects.Order(StringComparer.Ordinal), classifications.Select(project => project.Path).Order(StringComparer.Ordinal));
-        var local = Xunit.Assert.Single(classifications, project => project.Path == LocalAcceptanceProject);
-        Xunit.Assert.Equal(new ProjectClassification(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false), local);
-        var defaults = classifications.Where(project => project.Path != LocalAcceptanceProject).ToArray();
+        ProjectClassification[] exactBuildToolExclusions =
+        [
+            new(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false),
+            new(Prf09ProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false),
+        ];
+        foreach (var expected in exactBuildToolExclusions)
+        {
+            Xunit.Assert.Equal(expected, Xunit.Assert.Single(classifications, project => project.Path == expected.Path));
+        }
+        var excludedPaths = exactBuildToolExclusions.Select(project => project.Path).ToHashSet(StringComparer.Ordinal);
+        var defaults = classifications.Where(project => !excludedPaths.Contains(project.Path)).ToArray();
         Xunit.Assert.Equal(solutionProjects.Order(StringComparer.Ordinal), defaults.Select(project => project.Path).Order(StringComparer.Ordinal));
         return defaults;
     }
@@ -138,8 +147,9 @@ public sealed class EvaluatedPolicyTests
     public void LocalAcceptanceSelectionRetainsDefaultBuildTools()
     {
         var local = new ProjectClassification(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
+        var probe = new ProjectClassification(Prf09ProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
         var tool = new ProjectClassification("src/Build/tool.csproj", ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
-        Xunit.Assert.Equal([tool], DefaultProjects([local, tool], [tool.Path], [local.Path, tool.Path]));
+        Xunit.Assert.Equal([tool], DefaultProjects([local, probe, tool], [tool.Path], [local.Path, probe.Path, tool.Path]));
     }
 
     [Xunit.Theory]
@@ -157,25 +167,65 @@ public sealed class EvaluatedPolicyTests
     public void LocalAcceptanceInventoryRejectsScopeDrift(string mutation)
     {
         var local = new ProjectClassification(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
+        var probe = new ProjectClassification(Prf09ProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
         ProjectClassification[] classifications = mutation switch
         {
-            "missing" => [],
-            "duplicate" => [local, local],
-            "unknown" => [local, local with { Path = "eng/other.csproj" }],
-            "owner" => [local with { Owner = "Other" }],
-            "role" => [local with { Role = ProjectRole.Infrastructure }],
-            "module" => [local with { Module = "Other" }],
-            "production" => [local with { Production = true }],
-            "aot" => [local with { Aot = true }],
-            _ => [local],
+            "missing" => [probe],
+            "duplicate" => [local, local, probe],
+            "unknown" => [local, local with { Path = "eng/other.csproj" }, probe],
+            "owner" => [local with { Owner = "Other" }, probe],
+            "role" => [local with { Role = ProjectRole.Infrastructure }, probe],
+            "module" => [local with { Module = "Other" }, probe],
+            "production" => [local with { Production = true }, probe],
+            "aot" => [local with { Aot = true }, probe],
+            _ => [local, probe],
         };
         string[] owned = mutation switch
         {
-            "missing-owner" => [],
-            "duplicate-owner" => [LocalAcceptanceProject, LocalAcceptanceProject],
+            "missing-owner" => [Prf09ProbeProject],
+            "duplicate-owner" => [LocalAcceptanceProject, LocalAcceptanceProject, Prf09ProbeProject],
             _ => classifications.Select(project => project.Path).ToArray(),
         };
-        Xunit.Assert.ThrowsAny<Exception>(() => DefaultProjects(classifications, mutation == "solution" ? [LocalAcceptanceProject] : [], owned));
+        Xunit.Assert.ThrowsAny<Exception>(() => DefaultProjects(classifications,
+            mutation == "solution" ? [LocalAcceptanceProject] : [], owned));
+    }
+
+    [Xunit.Theory]
+    [Xunit.InlineData("missing")]
+    [Xunit.InlineData("duplicate")]
+    [Xunit.InlineData("unknown")]
+    [Xunit.InlineData("owner")]
+    [Xunit.InlineData("role")]
+    [Xunit.InlineData("module")]
+    [Xunit.InlineData("production")]
+    [Xunit.InlineData("aot")]
+    [Xunit.InlineData("solution")]
+    [Xunit.InlineData("missing-owner")]
+    [Xunit.InlineData("duplicate-owner")]
+    public void Prf09ProbeInventoryRejectsScopeDrift(string mutation)
+    {
+        var local = new ProjectClassification(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
+        var probe = new ProjectClassification(Prf09ProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
+        ProjectClassification[] classifications = mutation switch
+        {
+            "missing" => [local],
+            "duplicate" => [local, probe, probe],
+            "unknown" => [local, probe with { Path = "eng/verification/probe-evidence/Other.csproj" }],
+            "owner" => [local, probe with { Owner = "Other" }],
+            "role" => [local, probe with { Role = ProjectRole.Infrastructure }],
+            "module" => [local, probe with { Module = "Other" }],
+            "production" => [local, probe with { Production = true }],
+            "aot" => [local, probe with { Aot = true }],
+            _ => [local, probe],
+        };
+        string[] owned = mutation switch
+        {
+            "missing-owner" => [LocalAcceptanceProject],
+            "duplicate-owner" => [LocalAcceptanceProject, Prf09ProbeProject, Prf09ProbeProject],
+            _ => classifications.Select(project => project.Path).ToArray(),
+        };
+        Xunit.Assert.ThrowsAny<Exception>(() => DefaultProjects(classifications,
+            mutation == "solution" ? [Prf09ProbeProject] : [], owned));
     }
 
     [Xunit.Theory]
