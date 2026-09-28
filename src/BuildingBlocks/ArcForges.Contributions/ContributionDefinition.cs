@@ -52,6 +52,7 @@ public enum ContributionRegistrationFailure
     PersistenceConflict,
     ChildExpired,
     ChildRevoked,
+    ChildGrantDenied,
 }
 
 public enum ContributionPersistenceResult

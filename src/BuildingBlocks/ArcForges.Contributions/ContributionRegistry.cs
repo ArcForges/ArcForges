@@ -82,8 +82,10 @@ public sealed class ContributionRegistry<TOwner> where TOwner : class
     }
 
     /// <summary>
-    /// Registers exact catalog metadata only while the owner-composed admission port reports its
-    /// current child as admitted. This does not create an in-process callback or invoke permission.
+    /// Registers exact catalog metadata only while the owner-composed admission port reports that
+    /// the current child boundary and its grant decision both admit this exact descriptor. This does
+    /// not create an in-process callback or invoke permission; later dispatch still passes through
+    /// the captured application composition's per-call target checks.
     /// </summary>
     public void RegisterChild(ContributionDefinition definition)
     {
@@ -169,6 +171,9 @@ public sealed class ContributionRegistry<TOwner> where TOwner : class
             case ChildContributionAdmissionState.Revoked:
                 throw Failure(ContributionRegistrationFailure.ChildRevoked,
                     "The child admission snapshot has been revoked.");
+            case ChildContributionAdmissionState.GrantDenied:
+                throw Failure(ContributionRegistrationFailure.ChildGrantDenied,
+                    "The owner host denied the grant required to register this child contribution.");
             case ChildContributionAdmissionState.Admitted:
                 break;
             default:

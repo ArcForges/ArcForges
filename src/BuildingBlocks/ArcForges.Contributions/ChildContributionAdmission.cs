@@ -29,18 +29,20 @@ public sealed record ChildConnectionIdentity
     public ulong Epoch { get; }
 }
 
-/// <summary>The current local admission state reported by the owning host seam.</summary>
+/// <summary>The current owner-host boundary and grant decision reported for one exact child descriptor.</summary>
 public enum ChildContributionAdmissionState
 {
     Unavailable = 0,
     Admitted = 1,
     Expired = 2,
     Revoked = 3,
+    GrantDenied = 4,
 }
 
 /// <summary>
 /// Immutable owner-host snapshot binding its current child connection to one exact catalog descriptor.
-/// It reports the host's prior admission decision; it does not mint, interpret, or transport authority.
+/// Admitted means the owning host checked both the current child boundary and its grant decision for
+/// this exact child and descriptor. This snapshot is not a grant or invocation authority.
 /// </summary>
 public sealed record ChildContributionAdmissionSnapshot
 {
@@ -73,9 +75,12 @@ public sealed record ChildContributionAdmissionSnapshot
 }
 
 /// <summary>
-/// Owner-composed lookup of the current admitted child for one exact owner catalog descriptor.
-/// Implementations report unavailable admission as null or an Unavailable snapshot. This local seam
-/// is not an extension host, process attestation, grant authority, or transport contract.
+/// Owner-composed lookup of the current child decision for one exact owner catalog descriptor.
+/// Implementations must return Admitted only after the owning host has verified both the current
+/// child boundary and the corresponding grant decision for that exact child and descriptor; otherwise
+/// they report GrantDenied, Expired, Revoked, or Unavailable. The registry validates the returned
+/// binding and records metadata, but never interprets, mints, transports, or grants invocation rights.
+/// This local seam is not an extension host, process attestation, grant authority, or transport contract.
 /// </summary>
 public interface IChildContributionAdmissionPort
 {

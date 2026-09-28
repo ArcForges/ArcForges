@@ -245,6 +245,9 @@ public sealed class ContributionRegistryTests
         AssertChildRefused(ContributionRegistrationFailure.ChildRevoked, descriptor, catalog,
             new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
                 ChildContributionAdmissionState.Revoked)));
+        AssertChildRefused(ContributionRegistrationFailure.ChildGrantDenied, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
+                ChildContributionAdmissionState.GrantDenied)));
         AssertChildRefused(ContributionRegistrationFailure.WrongOwner, descriptor, catalog,
             new FixedAdmissionPort(Admitted(AppIdentity.Companion, restartedChild, descriptor)));
         AssertChildRefused(ContributionRegistrationFailure.WrongOwner,
