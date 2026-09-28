@@ -15,6 +15,7 @@ import dependency_policy  # noqa: E402
 
 ACTIVE_RECEIPT = "eng/policy/dependency-reviews/plt-26-r2.json"
 RECEIPT = "eng/policy/dependency-reviews/prf-04-r1.json"
+BASELINE_COMMIT = "0ba78d58cb31c1226d8e0b70f2879ecc42d00699"
 SOURCE_COMMIT = "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e"
 NUGET_FEED = "https://api.nuget.org/v3/index.json"
 
@@ -73,7 +74,12 @@ PACKAGE_EVIDENCE = {
 def main() -> None:
     policy_path = ROOT / "eng/policy/dependency-policy.json"
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    if policy["reviewReceipt"] != ACTIVE_RECEIPT:
+    active_review = policy["reviewReceipt"] == ACTIVE_RECEIPT
+    already_generated = (
+        policy["reviewReceipt"] == RECEIPT
+        and policy["review"].get("previousReceipt") == ACTIVE_RECEIPT
+    )
+    if not (active_review or already_generated):
         raise SystemExit(f"Unexpected dependency review predecessor: {policy['reviewReceipt']}")
 
     locked = dependency_policy.closure(ROOT)
@@ -87,7 +93,7 @@ def main() -> None:
     policy["nugetClosure"] = dict(sorted(policy["nugetClosure"].items()))
 
     input_hashes = dependency_policy.hashes(ROOT)
-    previous = policy["reviewReceipt"]
+    previous = ACTIVE_RECEIPT
     global_json = json.loads((ROOT / "global.json").read_text(encoding="utf-8"))
     policy["inputHashes"] = input_hashes
     policy["reviewReceipt"] = RECEIPT
@@ -96,7 +102,7 @@ def main() -> None:
             "owner": "af-20260928-p02",
             "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
             "reviewedOn": "2026-09-28",
-            "baselineCommit": "497263e3f2cea3056a502e8f956b099f13a173f7",
+            "baselineCommit": BASELINE_COMMIT,
             "maintenanceAssessment": (
                 "PRF.04 appends to plt-26-r2, whose immutable predecessor chain retains gov-14-naming-r4. It admits "
                 "only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted "

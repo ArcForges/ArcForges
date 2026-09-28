@@ -3,7 +3,7 @@
     "owner": "af-20260928-p02",
     "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "497263e3f2cea3056a502e8f956b099f13a173f7",
+    "baselineCommit": "0ba78d58cb31c1226d8e0b70f2879ecc42d00699",
     "maintenanceAssessment": "PRF.04 appends to plt-26-r2, whose immutable predecessor chain retains gov-14-naming-r4. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
     "upgradeChecks": {
       "compilation": "Pinned SDK 10.0.400 locked restore and Release build pass; Windows/Linux Native AOT publication is enforced continuously by package-validation CI.",
