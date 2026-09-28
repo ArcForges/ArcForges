@@ -100,6 +100,8 @@ public sealed class InstructionProvenance
 /// </summary>
 public sealed class InstructionInput
 {
+    public const int MaximumContentUtf8Bytes = 1_048_576;
+
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private InstructionInput(string content, InstructionProvenance provenance)
@@ -125,8 +127,15 @@ public sealed class InstructionInput
             throw new ArgumentException("Instruction source reference is invalid or too long.", nameof(sourceReference));
         }
 
-        var sourceReferenceBytes = StrictUtf8.GetBytes(sourceReference);
         ArgumentNullException.ThrowIfNull(content);
+        _ = StrictUtf8.GetByteCount(sourceReference);
+        var contentByteCount = StrictUtf8.GetByteCount(content);
+        if (contentByteCount > MaximumContentUtf8Bytes)
+        {
+            throw new ArgumentException("Instruction content exceeds the capture limit.", nameof(content));
+        }
+
+        var sourceReferenceBytes = StrictUtf8.GetBytes(sourceReference);
         var contentBytes = StrictUtf8.GetBytes(content);
         var digest = ComputeInputSha256(origin, sourceReferenceBytes, contentBytes);
         return new InstructionInput(content, new InstructionProvenance(origin, sourceReference, digest));

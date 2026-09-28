@@ -89,6 +89,7 @@ public sealed class ActorChainTests
         Assert.Throws<ArgumentException>(() => new DelegatedActor(ActorKind.Agent, Guid.Empty, chain.CallerInstance, "software"));
         Assert.Throws<ArgumentException>(() => new DelegatedActor(ActorKind.Agent, Guid.NewGuid(), default, "software"));
         Assert.Throws<ArgumentException>(() => new DelegatedActor(ActorKind.Agent, Guid.NewGuid(), chain.CallerInstance, "\n"));
+        Assert.Throws<ArgumentException>(() => new DelegatedActor(ActorKind.Agent, Guid.NewGuid(), chain.CallerInstance, new string('x', 257)));
         Assert.Throws<ArgumentException>(() => new ActorChain(chain.Owner, chain.Device, chain.Installation, chain.Session, chain.CallerInstance, [chain.Actors[0], chain.Actors[0]]));
         Assert.Throws<ArgumentException>(() => new ActorChain(chain.Owner, chain.Device, chain.Installation, chain.Session, chain.CallerInstance, Enumerable.Range(0, 33).Select(_ => Actor(ActorKind.Agent))));
     }
@@ -258,8 +259,31 @@ public sealed class ActorChainTests
         Assert.Throws<ArgumentException>(() => InstructionInput.Capture(InstructionOrigin.DeepLink, " ", "text"));
         Assert.Throws<ArgumentException>(() => InstructionInput.Capture(InstructionOrigin.DeepLink, "bad\nsource", "text"));
         Assert.Throws<ArgumentException>(() => InstructionInput.Capture(InstructionOrigin.DeepLink, new string('x', 513), "text"));
+        Assert.Throws<ArgumentException>(() => InstructionInput.Capture(InstructionOrigin.ModelOutput, "provider/1",
+            new string('\u0080', (InstructionInput.MaximumContentUtf8Bytes / 2) + 1)));
         Assert.Throws<EncoderFallbackException>(() => InstructionInput.Capture(InstructionOrigin.ModelOutput, "bad\ud800source", "text"));
         Assert.Throws<EncoderFallbackException>(() => InstructionInput.Capture(InstructionOrigin.ModelOutput, "provider/1", "bad\ud800text"));
+    }
+
+    [Fact]
+    public void SnapshotWritersBoundRawAndEscapedPayloadsBeforeGrowingPastTheirBudget()
+    {
+        var chain = Create();
+        var worstEscapedActors = Enumerable.Range(0, ActorChain.MaximumDelegatedActors)
+            .Select(_ => new DelegatedActor(ActorKind.Agent, Guid.NewGuid(), chain.CallerInstance, new string('<', 256)));
+        var actorSnapshot = ActorChainSnapshot.Encode(new ActorChain(chain.Owner, chain.Device, chain.Installation,
+            chain.Session, chain.CallerInstance, worstEscapedActors));
+        Assert.InRange(actorSnapshot.Length, 1, ActorChainSnapshot.MaximumBytes);
+        Assert.Equal(ActorChain.MaximumDelegatedActors,
+            ActorChainSnapshot.Decode(actorSnapshot).Chain.Actors.Count);
+        Assert.Throws<ArgumentException>(() => ActorChainSnapshot.Decode(new byte[ActorChainSnapshot.MaximumBytes + 1]));
+
+        var escapedInput = InstructionInput.Capture(InstructionOrigin.ImportedDocument, "document/escaped",
+            new string('\u0001', (InstructionSnapshot.MaximumBytes / 6) + 1));
+        Assert.Throws<ArgumentException>(() => InstructionSnapshot.Encode(escapedInput));
+        Assert.Throws<ArgumentException>(() => InstructionInput.Capture(InstructionOrigin.ImportedDocument, "document/raw",
+            new string('x', InstructionInput.MaximumContentUtf8Bytes + 1)));
+        Assert.Throws<ArgumentException>(() => InstructionSnapshot.Decode(new byte[InstructionSnapshot.MaximumBytes + 1]));
     }
 
     [Fact]

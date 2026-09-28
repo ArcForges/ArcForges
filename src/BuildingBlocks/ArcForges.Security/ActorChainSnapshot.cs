@@ -6,6 +6,63 @@ using ArcForges.Foundation.Execution;
 
 namespace ArcForges.Security;
 
+/// <summary>A growable JSON target that never retains more than its caller's byte budget.</summary>
+internal sealed class CappedSnapshotBufferWriter(int maximumBytes, string message, string parameterName) : IBufferWriter<byte>
+{
+    private byte[] _buffer = new byte[Math.Min(maximumBytes, 256)];
+    private int _written;
+    private int _available;
+
+    public ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
+
+    public void Advance(int count)
+    {
+        if (count < 0 || count > _available)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        _written += count;
+        _available = 0;
+    }
+
+    public Memory<byte> GetMemory(int sizeHint = 0)
+    {
+        EnsureCapacity(sizeHint);
+        _available = _buffer.Length - _written;
+        return _buffer.AsMemory(_written, _available);
+    }
+
+    public Span<byte> GetSpan(int sizeHint = 0)
+    {
+        EnsureCapacity(sizeHint);
+        _available = _buffer.Length - _written;
+        return _buffer.AsSpan(_written, _available);
+    }
+
+    public byte[] ToArray() => WrittenSpan.ToArray();
+
+    private void EnsureCapacity(int sizeHint)
+    {
+        if (sizeHint < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sizeHint));
+        }
+
+        var required = (long)_written + Math.Max(sizeHint, 1);
+        if (required > maximumBytes)
+        {
+            throw new ArgumentException(message, parameterName);
+        }
+
+        if (required > _buffer.Length)
+        {
+            var newCapacity = (int)Math.Min(maximumBytes, Math.Max(required, (long)_buffer.Length * 2));
+            Array.Resize(ref _buffer, newCapacity);
+        }
+    }
+}
+
 /// <summary>
 /// Internal boundary evidence, not a public Contracts wire schema or credential. A receiving
 /// authenticated transport must bind this evidence to its caller and expected owner before use.
@@ -25,7 +82,7 @@ public static class ActorChainSnapshot
     public static byte[] Encode(ActorChain chain)
     {
         ArgumentNullException.ThrowIfNull(chain);
-        var buffer = new ArrayBufferWriter<byte>();
+        var buffer = new CappedSnapshotBufferWriter(MaximumBytes, "Actor snapshot exceeds the boundary limit.", nameof(chain));
         using (var writer = new Utf8JsonWriter(buffer))
         {
             writer.WriteStartObject();
@@ -53,12 +110,7 @@ public static class ActorChainSnapshot
             writer.WriteEndObject();
         }
 
-        if (buffer.WrittenCount > MaximumBytes)
-        {
-            throw new ArgumentException("Actor snapshot exceeds the boundary limit.", nameof(chain));
-        }
-
-        return buffer.WrittenSpan.ToArray();
+        return buffer.ToArray();
     }
 
     public static UntrustedActorChainEvidence Decode(ReadOnlySpan<byte> snapshot)
@@ -132,7 +184,7 @@ public static class InstructionSnapshot
     public static byte[] Encode(InstructionInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var buffer = new ArrayBufferWriter<byte>();
+        var buffer = new CappedSnapshotBufferWriter(MaximumBytes, "Instruction snapshot exceeds the boundary limit.", nameof(input));
         using (var writer = new Utf8JsonWriter(buffer))
         {
             writer.WriteStartObject();
@@ -144,12 +196,7 @@ public static class InstructionSnapshot
             writer.WriteEndObject();
         }
 
-        if (buffer.WrittenCount > MaximumBytes)
-        {
-            throw new ArgumentException("Instruction snapshot exceeds the boundary limit.", nameof(input));
-        }
-
-        return buffer.WrittenSpan.ToArray();
+        return buffer.ToArray();
     }
 
     public static InstructionInput Decode(ReadOnlySpan<byte> snapshot)
