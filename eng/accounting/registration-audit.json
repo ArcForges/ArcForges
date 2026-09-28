@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogSha256": "ab262ca5cad9a717d9d5b0c77eca6c9249ed825d422dd47c8976ecda34454f05",
-  "reviewedAtSourceCommit": "b0ac601379213862ab34b5d678f67363d62e605a",
+  "reviewedAtSourceCommit": "784f238c4c01590e8de6fe5e1472ed79b70ac222",
   "semanticOwner": "ArcForges/DesktopPlatform",
   "obligationOwner": "GOV.04",
   "candidatePackageId": "05",
@@ -69,6 +69,12 @@
           "caseId": "ArcForges.Security.Tests.ActorChainTests.HumanOwnerAndExecutorAreDistinctAndSequenceIsDefensivelyCopied",
           "testSource": "src/BuildingBlocks/ArcForges.Security/Tests/ActorChainTests.cs",
           "whyInsufficient": "This checks a caller/delegated-executor inequality but does not cover all three planned distinctions (Actor/Executor, Executor/Caller Instance, Caller Instance/Identity) or name this invariant in the refusal."
+        },
+        {
+          "sourceId": "capabilities-tests",
+          "caseId": "ArcForges.Capabilities.Tests.ContextSnapshotTests.ProviderRefusesCrossProductInstanceOrEpochBeforeInvokingOwner",
+          "testSource": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ContextSnapshotTests.cs",
+          "whyInsufficient": "This refuses a foreign product identity, instance ID or epoch before invoking the owner, but it does not test the Actor/Executor distinction, all three planned identity boundaries, or an invariant-specific refusal naming I-024."
         }
       ]
     },
@@ -104,6 +110,12 @@
           "caseId": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform",
           "testSource": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ApplicationCompositionTests.cs",
           "whyInsufficient": "This rejects platform suffixes on Companion identity, but does not distinguish Companion from Professional-app Mobile/Web ports in both directions or name this invariant in a refusal."
+        },
+        {
+          "sourceId": "capabilities-tests",
+          "caseId": "ArcForges.Capabilities.Tests.ContextSnapshotTests.ProviderRefusesCrossProductInstanceOrEpochBeforeInvokingOwner",
+          "testSource": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ContextSnapshotTests.cs",
+          "whyInsufficient": "This rejects a Companion identity at the Professional-app-owned provider boundary, but does not test both directions of the Companion-versus-Professional Mobile/Web port distinction or name an invariant-specific refusal for I-027."
         }
       ]
     },

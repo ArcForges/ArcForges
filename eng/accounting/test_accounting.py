@@ -112,7 +112,7 @@ class AccountingTests(unittest.TestCase):
             [],
             output_dir / "owner-results.json",
             output_dir / "report.json",
-            "b0ac601379213862ab34b5d678f67363d62e605a",
+            "784f238c4c01590e8de6fe5e1472ed79b70ac222",
             "12345",
             1,
             verify_checkout=False,
@@ -138,12 +138,12 @@ class AccountingTests(unittest.TestCase):
         trx_dir = self._trx_dir()
         (trx_dir / "security-tests.trx").unlink()
         with self.assertRaisesRegex(accounting.AccountingError, "exactly six unique TRX"):
-            accounting._normalize_desktop(trx_dir, {}, set(self.ids), self.audit, "b0ac601379213862ab34b5d678f67363d62e605a", "12345", 1)
+            accounting._normalize_desktop(trx_dir, {}, set(self.ids), self.audit, "784f238c4c01590e8de6fe5e1472ed79b70ac222", "12345", 1)
 
         trx_dir = self._trx_dir()
         (trx_dir / "unexpected.trx").write_text("<TestRun id='extra'/>", encoding="utf-8")
         with self.assertRaisesRegex(accounting.AccountingError, "exactly six unique TRX"):
-            accounting._normalize_desktop(trx_dir, {}, set(self.ids), self.audit, "b0ac601379213862ab34b5d678f67363d62e605a", "12345", 1)
+            accounting._normalize_desktop(trx_dir, {}, set(self.ids), self.audit, "784f238c4c01590e8de6fe5e1472ed79b70ac222", "12345", 1)
 
     def test_registered_case_must_have_exactly_one_executed_result(self) -> None:
         case_id = "ArcForges.Tests.ArchitectureTests.SharedPolicyTests.BannedCategoriesUseCompiledSymbols"
@@ -154,7 +154,7 @@ class AccountingTests(unittest.TestCase):
             registration,
             set(self.ids),
             self.audit,
-            "b0ac601379213862ab34b5d678f67363d62e605a",
+            "784f238c4c01590e8de6fe5e1472ed79b70ac222",
             "12345",
             1,
         )
@@ -166,7 +166,7 @@ class AccountingTests(unittest.TestCase):
             registration,
             set(self.ids),
             self.audit,
-            "b0ac601379213862ab34b5d678f67363d62e605a",
+            "784f238c4c01590e8de6fe5e1472ed79b70ac222",
             "12345",
             1,
         )
@@ -179,7 +179,7 @@ class AccountingTests(unittest.TestCase):
                 registration,
                 set(self.ids),
                 self.audit,
-                "b0ac601379213862ab34b5d678f67363d62e605a",
+                "784f238c4c01590e8de6fe5e1472ed79b70ac222",
                 "12345",
                 1,
             )
@@ -228,7 +228,7 @@ class AccountingTests(unittest.TestCase):
                 self._registration_for(case_id),
                 set(self.ids),
                 audit_without_case,
-                "b0ac601379213862ab34b5d678f67363d62e605a",
+                "784f238c4c01590e8de6fe5e1472ed79b70ac222",
                 "12345",
                 1,
             )
@@ -238,7 +238,7 @@ class AccountingTests(unittest.TestCase):
         receipt = {
             "schemaVersion": 1,
             "repository": accounting.DESKTOP_REPOSITORY,
-            "sourceCommit": "b0ac601379213862ab34b5d678f67363d62e605a",
+            "sourceCommit": "784f238c4c01590e8de6fe5e1472ed79b70ac222",
             "ciRun": "12345",
             "attempt": 1,
             "sources": [
@@ -261,7 +261,7 @@ class AccountingTests(unittest.TestCase):
                     "sourceId": "architecture-tests",
                     "outcome": "passed",
                     "repository": accounting.DESKTOP_REPOSITORY,
-                    "sourceCommit": "b0ac601379213862ab34b5d678f67363d62e605a",
+                    "sourceCommit": "784f238c4c01590e8de6fe5e1472ed79b70ac222",
                     "ciRun": "12345",
                     "attempt": 1,
                 }
