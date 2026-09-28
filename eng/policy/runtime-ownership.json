@@ -175,6 +175,14 @@
         {
           "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
           "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+          "role": "test-or-build-tool"
         }
       ]
     },

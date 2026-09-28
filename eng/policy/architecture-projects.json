@@ -200,6 +200,22 @@
     "aot": false
   },
   {
+    "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
     "role": "NativeAdapter",
     "owner": "DesktopPlatform",

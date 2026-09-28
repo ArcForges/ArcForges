@@ -1769,6 +1769,22 @@
   },
   {
     "owner": "DesktopPlatform",
+    "path": "src/DesignSystem/ArcForges.Desktop.Shell",
+    "disposition": "Keep",
+    "present": false,
+    "producer": "WP10",
+    "reason": "Planned framework-neutral desktop shell directory absent from the frozen extraction snapshot; PLT.27 binds the adopted window, panel and device-local layout implementation under ADP-07."
+  },
+  {
+    "owner": "DesktopPlatform",
+    "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests",
+    "disposition": "Keep",
+    "present": false,
+    "producer": "WP10",
+    "reason": "Planned desktop shell test directory absent from the frozen extraction snapshot; PLT.27 binds the scoped restore and persistence matrix under ADP-07."
+  },
+  {
+    "owner": "DesktopPlatform",
     "path": "src/DesktopHelpers",
     "disposition": "Keep",
     "present": true,

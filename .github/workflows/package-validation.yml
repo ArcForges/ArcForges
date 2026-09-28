@@ -139,7 +139,8 @@ jobs:
           )
           $lateAccountingSuites = @(
             @{ Name = 'security-tests'; Project = 'src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj'; Label = 'Security actor chain tests' },
-            @{ Name = 'persistence-tests'; Project = 'tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj'; Label = 'Persistence transaction, journal and migration tests' }
+            @{ Name = 'persistence-tests'; Project = 'tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj'; Label = 'Persistence transaction, journal and migration tests' },
+            @{ Name = 'desktop-shell-tests'; Project = 'src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj'; Label = 'Framework-neutral shell and layout restore tests' }
           )
           foreach ($suite in $accountingSuites) {
             dotnet test --project $suite.Project -c Release --no-build --results-directory $testResults --report-xunit-trx --report-xunit-trx-filename "$($suite.Name).trx"

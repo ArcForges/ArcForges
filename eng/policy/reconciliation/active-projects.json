@@ -165,6 +165,14 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
       "blob": "6bf8cd569e85f0f0a41467ca04776c4c5078f423"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+      "blob": "775c14159016b59671b9a94431f0bb49bf8a1740"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+      "blob": "34a9e16b17a864d67f1a8bf1e9c6244164d99af1"
     }
   ]
 }
