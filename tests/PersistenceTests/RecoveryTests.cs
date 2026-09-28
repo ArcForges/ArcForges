@@ -791,7 +791,7 @@ public sealed class RecoveryTests
             ?? throw new InvalidOperationException("The restore crash-child store identity is missing."));
         var marker = Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_RESTORE_MARKER")
             ?? throw new InvalidOperationException("The restore crash-child marker path is missing.");
-        _ = new SqliteStore(database, storeId, new Allow(), null,
+        using var store = new SqliteStore(database, storeId, new Allow(), null,
             new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false,
             snapshotFault: stage =>
             {
