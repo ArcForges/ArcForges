@@ -98,6 +98,10 @@ public static class StoragePressureEvictionPolicy
     {
         ArgumentNullException.ThrowIfNull(plan);
 
+        using var mutationLocks = await DerivedStore.AcquireMutationLocksAsync(
+            plan.Entries.Select(static entry => entry.Store),
+            cancellationToken).ConfigureAwait(false);
+
         foreach (var entry in plan.Entries)
         {
             if (entry.Store.Descriptor != entry.Descriptor)
@@ -106,9 +110,11 @@ public static class StoragePressureEvictionPolicy
             }
         }
 
+        using var mutationScope = DerivedStore.EnterMutationScope(
+            plan.Entries.Select(static entry => entry.Store));
         foreach (var entry in plan.Entries)
         {
-            await entry.Store.DeleteAllAsync(cancellationToken).ConfigureAwait(false);
+            await entry.Store.DeleteUnderMutationLockAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return new DerivedEvictionResult(plan.StoreIds, plan.EstimatedBytesReclaimed);

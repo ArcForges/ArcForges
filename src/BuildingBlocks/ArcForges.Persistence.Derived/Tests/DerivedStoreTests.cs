@@ -74,6 +74,25 @@ public sealed class DerivedStoreTests
     }
 
     [Fact]
+    public async Task FailureAfterReplacementStagingButBeforePublishKeepsThePreviousDerivedSnapshot()
+    {
+        var source = new MemoryCanonicalSource(
+        [
+            new CanonicalSourceRecord<string>(new CanonicalSourceIdentity("local-search-index", "source-new", "revision-2"), "replacement"),
+        ]);
+        var store = new MemoryDerivedStore(Descriptor("search", "local-search-index", DerivedRebuildCost.Cheap, 1, Utc(2026, 9, 28)), source)
+        {
+            FailBeforePublish = true,
+        };
+        store.Seed(new DerivedRecord<string>(new CanonicalSourceIdentity("local-search-index", "source-old", "revision-1"), "pipeline-v0", "previous"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await store.RebuildAsync(TestContext.Current.CancellationToken).ConfigureAwait(true)).ConfigureAwait(true);
+
+        Assert.Collection(store.Records, record => Assert.Equal("previous", record.Value));
+    }
+
+    [Fact]
     public async Task EvictionUsesRebuildCostThenLastUseAndNeverChangesCanonicalData()
     {
         var canonicalRecords = new[]
@@ -163,12 +182,42 @@ public sealed class DerivedStoreTests
         store.Seed(new DerivedRecord<string>(source.Records[0].Identity, "pipeline-v1", "cached"));
         var state = new StoragePressureState(StoragePressureLevel.Critical, 0, 50, 100, [store.Descriptor]);
         var plan = StoragePressureEvictionPolicy.CreatePlan(state, [store]);
-        store.UpdateUsageForTest(200, Utc(2026, 1, 1));
+        await store.UpdateUsageForTestAsync(200, Utc(2026, 1, 1)).ConfigureAwait(true);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await StoragePressureEvictionPolicy.ExecuteAsync(plan, TestContext.Current.CancellationToken).ConfigureAwait(true)).ConfigureAwait(true);
 
         Assert.Single(store.Records);
+    }
+
+    [Fact]
+    public async Task EvictionLocksEveryPlannedStoreBeforeValidationAndSerializesUsageUpdates()
+    {
+        var source = new MemoryCanonicalSource([]);
+        var first = Store("a-first", "thumbnail_cache", DerivedRebuildCost.Cheap, 100, Utc(2025, 1, 1), source);
+        var second = Store("b-second", "task_projection", DerivedRebuildCost.Cheap, 100, Utc(2025, 1, 1), source);
+        first.PauseDeletion = true;
+        first.Seed(new DerivedRecord<string>(new CanonicalSourceIdentity("thumbnail_cache", "source-1", "revision-1"), "pipeline-v1", "first"));
+        second.Seed(new DerivedRecord<string>(new CanonicalSourceIdentity("task_projection", "source-2", "revision-1"), "pipeline-v1", "second"));
+        var state = new StoragePressureState(StoragePressureLevel.Critical, 0, 150, 0, [first.Descriptor, second.Descriptor]);
+        var plan = StoragePressureEvictionPolicy.CreatePlan(state, [first, second]);
+
+        var eviction = StoragePressureEvictionPolicy.ExecuteAsync(plan, TestContext.Current.CancellationToken).AsTask();
+        await first.DeletionStarted.Task.WaitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+        var concurrentUsageUpdate = second.UpdateUsageForTestAsync(300, Utc(2026, 1, 1)).AsTask();
+        Assert.False(concurrentUsageUpdate.IsCompleted);
+        Assert.Equal(100, second.Descriptor.EstimatedBytes);
+
+        first.AllowDeletion.TrySetResult(true);
+        var result = await eviction.ConfigureAwait(true);
+        await concurrentUsageUpdate.ConfigureAwait(true);
+
+        Assert.Equal(new[] { "a-first", "b-second" }, result.EvictedStoreIds);
+        Assert.Empty(first.Records);
+        Assert.Empty(second.Records);
+        Assert.Equal(100, second.EstimatedBytesObservedAtDelete);
+        Assert.Equal(300, second.Descriptor.EstimatedBytes);
     }
 
     private static MemoryDerivedStore Store(
@@ -239,19 +288,36 @@ public sealed class DerivedStoreTests
     {
         private IReadOnlyList<DerivedRecord<string>> records = [];
 
+        public TaskCompletionSource<bool> DeletionStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> AllowDeletion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public IReadOnlyList<DerivedRecord<string>> Records => records;
 
         public bool FailProjection { get; init; }
 
+        public bool FailBeforePublish { get; init; }
+
+        public bool PauseDeletion { get; set; }
+
+        public long? EstimatedBytesObservedAtDelete { get; private set; }
+
         public void Seed(DerivedRecord<string> record) => records = [.. records, record];
 
-        public void UpdateUsageForTest(long estimatedBytes, DateTimeOffset lastUsedUtc) => UpdateUsage(estimatedBytes, lastUsedUtc);
+        public ValueTask UpdateUsageForTestAsync(long estimatedBytes, DateTimeOffset lastUsedUtc) =>
+            UpdateUsageAsync(estimatedBytes, lastUsedUtc);
 
-        protected override ValueTask DeleteDerivedContentsAsync(CancellationToken cancellationToken)
+        protected override async ValueTask DeleteDerivedContentsAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            EstimatedBytesObservedAtDelete = Descriptor.EstimatedBytes;
+            if (PauseDeletion)
+            {
+                DeletionStarted.TrySetResult(true);
+                await AllowDeletion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             records = [];
-            return ValueTask.CompletedTask;
         }
 
         protected override async ValueTask ReplaceDerivedSnapshotAsync(
@@ -262,6 +328,11 @@ public sealed class DerivedStoreTests
             await foreach (var record in replacement.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 staged.Add(record);
+            }
+
+            if (FailBeforePublish)
+            {
+                throw new InvalidOperationException("Injected failure after replacement staging and before publication.");
             }
 
             records = Array.AsReadOnly(staged.ToArray());

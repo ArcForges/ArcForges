@@ -148,6 +148,9 @@ public sealed record DerivedStoreDescriptor
 /// </summary>
 public abstract class DerivedStore
 {
+    private static readonly AsyncLocal<MutationContext?> ActiveMutationContext = new();
+
+    private readonly SemaphoreSlim mutationGate = new(1, 1);
     private DerivedStoreDescriptor descriptor;
 
     protected DerivedStore(DerivedStoreDescriptor descriptor)
@@ -158,12 +161,112 @@ public abstract class DerivedStore
 
     public DerivedStoreDescriptor Descriptor => Volatile.Read(ref descriptor);
 
-    public abstract ValueTask DeleteAllAsync(CancellationToken cancellationToken = default);
+    public async ValueTask DeleteAllAsync(CancellationToken cancellationToken = default)
+    {
+        await RunMutationAsync(
+            () => DeleteDerivedContentsAsync(cancellationToken),
+            cancellationToken).ConfigureAwait(false);
+    }
 
     public abstract ValueTask RebuildAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Deletes only this store's derived rows or files, never canonical owner data.</summary>
+    protected abstract ValueTask DeleteDerivedContentsAsync(CancellationToken cancellationToken);
+
     /// <summary>Publishes this store's current size estimate and last-use time after a successful operation.</summary>
-    protected void UpdateUsage(long estimatedBytes, DateTimeOffset lastUsedUtc)
+    protected async ValueTask UpdateUsageAsync(long estimatedBytes, DateTimeOffset lastUsedUtc)
+    {
+        var activeContext = ActiveMutationContext.Value;
+        if (activeContext is { IsActive: true } && activeContext.Stores.Contains(this))
+        {
+            UpdateUsageCore(estimatedBytes, lastUsedUtc);
+            return;
+        }
+
+        await mutationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            UpdateUsageCore(estimatedBytes, lastUsedUtc);
+        }
+        finally
+        {
+            mutationGate.Release();
+        }
+    }
+
+    /// <summary>Runs an operation that may change this store while excluding eviction and usage updates.</summary>
+    protected async ValueTask RunMutationAsync(Func<ValueTask> operation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        await mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var scope = EnterMutationScope([this]);
+            await operation().ConfigureAwait(false);
+        }
+        finally
+        {
+            mutationGate.Release();
+        }
+    }
+
+    internal static async ValueTask<MutationLease> AcquireMutationLocksAsync(
+        IEnumerable<DerivedStore> stores,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stores);
+        var orderedStores = stores
+            .Distinct()
+            .OrderBy(static store => store.Descriptor.StoreId, StringComparer.Ordinal)
+            .ToArray();
+        var acquiredStores = new List<DerivedStore>(orderedStores.Length);
+
+        try
+        {
+            foreach (var store in orderedStores)
+            {
+                await store.mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                acquiredStores.Add(store);
+            }
+
+            return new MutationLease(acquiredStores.ToArray());
+        }
+        catch
+        {
+            for (var index = acquiredStores.Count - 1; index >= 0; index--)
+            {
+                acquiredStores[index].mutationGate.Release();
+            }
+
+            throw;
+        }
+    }
+
+    internal static IDisposable EnterMutationScope(IEnumerable<DerivedStore> stores)
+    {
+        ArgumentNullException.ThrowIfNull(stores);
+        var previous = ActiveMutationContext.Value;
+        var active = previous is null
+            ? new HashSet<DerivedStore>()
+            : new HashSet<DerivedStore>(previous.Stores);
+        active.UnionWith(stores);
+        var context = new MutationContext(active);
+        ActiveMutationContext.Value = context;
+        return new MutationScope(previous, context);
+    }
+
+    internal async ValueTask DeleteUnderMutationLockAsync(CancellationToken cancellationToken)
+    {
+        var activeContext = ActiveMutationContext.Value;
+        if (activeContext is not { IsActive: true } || !activeContext.Stores.Contains(this))
+        {
+            throw new InvalidOperationException("Derived-store deletion requires its mutation lock.");
+        }
+
+        await DeleteDerivedContentsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void UpdateUsageCore(long estimatedBytes, DateTimeOffset lastUsedUtc)
     {
         var current = Descriptor;
         var updated = new DerivedStoreDescriptor(
@@ -174,6 +277,52 @@ public abstract class DerivedStore
             estimatedBytes,
             lastUsedUtc);
         Interlocked.Exchange(ref descriptor, updated);
+    }
+
+    internal sealed class MutationLease(DerivedStore[] stores) : IDisposable
+    {
+        private DerivedStore[]? heldStores = stores;
+
+        public void Dispose()
+        {
+            var releasing = Interlocked.Exchange(ref heldStores, null);
+            if (releasing is null)
+            {
+                return;
+            }
+
+            for (var index = releasing.Length - 1; index >= 0; index--)
+            {
+                releasing[index].mutationGate.Release();
+            }
+        }
+    }
+
+    private sealed class MutationContext(HashSet<DerivedStore> stores)
+    {
+        private int isActive = 1;
+
+        public HashSet<DerivedStore> Stores { get; } = stores;
+
+        public bool IsActive => Volatile.Read(ref isActive) != 0;
+
+        public void Close() => Volatile.Write(ref isActive, 0);
+    }
+
+    private sealed class MutationScope(MutationContext? previous, MutationContext context) : IDisposable
+    {
+        private int disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+            {
+                return;
+            }
+
+            context.Close();
+            ActiveMutationContext.Value = previous;
+        }
     }
 }
 
@@ -195,20 +344,15 @@ public abstract class DerivedStore<TCanonical, TDerived> : DerivedStore
         this.canonicalSource = canonicalSource;
     }
 
-    public sealed override ValueTask DeleteAllAsync(CancellationToken cancellationToken = default) =>
-        DeleteDerivedContentsAsync(cancellationToken);
-
-    public sealed override async ValueTask RebuildAsync(CancellationToken cancellationToken = default)
+    public sealed override ValueTask RebuildAsync(CancellationToken cancellationToken = default) =>
+        RunMutationAsync(async () =>
     {
         var snapshot = await canonicalSource.OpenSnapshotAsync(cancellationToken).ConfigureAwait(false);
         await using (snapshot.ConfigureAwait(false))
         {
             await ReplaceDerivedSnapshotAsync(ProjectSnapshotAsync(snapshot, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    /// <summary>Deletes only this store's derived rows or files, never canonical owner data.</summary>
-    protected abstract ValueTask DeleteDerivedContentsAsync(CancellationToken cancellationToken);
+    }, cancellationToken);
 
     /// <summary>
     /// Atomically replaces this store's derived contents after consuming the projected snapshot.
