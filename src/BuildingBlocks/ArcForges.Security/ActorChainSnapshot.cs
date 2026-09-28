@@ -44,10 +44,7 @@ internal sealed class CappedSnapshotBufferWriter(int maximumBytes, string messag
 
     private void EnsureCapacity(int sizeHint)
     {
-        if (sizeHint < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(sizeHint));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
 
         var required = (long)_written + Math.Max(sizeHint, 1);
         if (required > maximumBytes)
