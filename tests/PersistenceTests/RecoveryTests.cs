@@ -316,19 +316,7 @@ public sealed class RecoveryTests
 
         foreach (var head in new long[] { pageSize, pageSize + 1 })
         {
-            using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = file.Path,
-                Pooling = false
-            }.ToString()))
-            {
-                connection.Open();
-                using var lowerHead = connection.CreateCommand();
-                lowerHead.CommandText = "UPDATE journal_state SET last_sequence=$head WHERE store_id=$store";
-                lowerHead.Parameters.AddWithValue("$head", head);
-                lowerHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
-                Assert.Equal(1, lowerHead.ExecuteNonQuery());
-            }
+            SetDurableHead(file, head);
 
             var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
             Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
@@ -349,6 +337,60 @@ public sealed class RecoveryTests
             beyondHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
             Assert.Equal((long)totalEntries - head, (long)beyondHead.ExecuteScalar()!);
         }
+
+        SetDurableHead(file, pageSize);
+        using (var snapshotStore = new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: false, runSnapshotPolicy: false))
+        {
+            var exception = Assert.Throws<InvalidDataException>(() => snapshotStore.CreateSnapshot());
+            Assert.Contains("copied database contains journal rows beyond its durable high watermark", exception.Message, StringComparison.Ordinal);
+        }
+        Assert.Empty(Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"));
+    }
+
+    [Fact]
+    public void SnapshotVerificationRejectsJournalRowsBeyondItsDurableHighWatermark()
+    {
+        using var file = new SnapshotFixture();
+        string snapshotPath;
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false))
+        {
+            store.Write(Command(StoreVersion.NewRoot, StoreVersion.Native(new(1))));
+            var receipt = store.CreateSnapshot();
+            Assert.NotNull(receipt);
+            snapshotPath = receipt!.Path;
+        }
+
+        var snapshot = ReadSnapshotEnvelope(snapshotPath);
+        var snapshotDatabase = System.IO.Path.Combine(file.DirectoryPath, "snapshot-with-orphan.db");
+        File.WriteAllBytes(snapshotDatabase, snapshot.Payload);
+        using (var database = new StoreDatabase(snapshotDatabase, file.Id))
+        {
+            database.WithTransaction(context =>
+            {
+                var journal = new SqliteJournal(snapshotPolicy: new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600));
+                journal.Append(context, JournalEntry.Create(new(file.Id, snapshot.Through + 1), "recovery-test", Guid.NewGuid(),
+                    StoreVersion.NewRoot, StoreVersion.Native(new(1)), new(Guid.NewGuid()), "recovery.replace", 1,
+                    "orphaned snapshot row"u8, null, new UserId(Guid.Parse("00000000-0000-4000-8000-000000000001")),
+                    Guid.NewGuid(), null, ArcForges.Foundation.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow)));
+                using var lowerHead = context.CreateCommand("UPDATE journal_state SET last_sequence=$head WHERE store_id=$store");
+                lowerHead.Parameters.AddWithValue("$head", snapshot.Through);
+                lowerHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+                Assert.Equal(1, lowerHead.ExecuteNonQuery());
+                return 0;
+            });
+        }
+        File.WriteAllBytes(snapshotPath, EncodeSnapshotEnvelope(snapshot, File.ReadAllBytes(snapshotDatabase)));
+        _ = ReadSnapshotEnvelope(snapshotPath);
+
+        var corruptDatabase = "corrupt owner database"u8.ToArray();
+        File.WriteAllBytes(file.Path, corruptDatabase);
+        var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
+
+        Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+        Assert.Equal(file.Path, exception.Report.EvidencePath);
+        Assert.Equal(corruptDatabase, File.ReadAllBytes(file.Path));
     }
 
     [Fact]
@@ -562,6 +604,80 @@ public sealed class RecoveryTests
     private static SqliteStore CreateStore(SnapshotFixture file, JournalSnapshotPolicy policy) =>
         new(file.Path, file.Id, new Allow(), null, policy, performRecovery: true, runSnapshotPolicy: true);
 
+    private static void SetDurableHead(SnapshotFixture file, long head)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = file.Path,
+            Pooling = false
+        }.ToString());
+        connection.Open();
+        using var lowerHead = connection.CreateCommand();
+        lowerHead.CommandText = "UPDATE journal_state SET last_sequence=$head WHERE store_id=$store";
+        lowerHead.Parameters.AddWithValue("$head", head);
+        lowerHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+        Assert.Equal(1, lowerHead.ExecuteNonQuery());
+    }
+
+    private static SnapshotEnvelopeParts ReadSnapshotEnvelope(string path)
+    {
+        using var source = File.OpenRead(path);
+        var headerBytes = new byte[120];
+        source.ReadExactly(headerBytes);
+        source.Position = 0;
+        using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
+        Assert.Equal(Encoding.ASCII.GetBytes("AFSNAP01"), reader.ReadBytes(8));
+        Assert.Equal(1, reader.ReadInt32());
+        var storeId = new Guid(reader.ReadBytes(16));
+        var through = reader.ReadInt64();
+        var createdAt = reader.ReadInt64();
+        var schemaVersion = reader.ReadUInt32();
+        var payloadLength = reader.ReadInt64();
+        var journalChecksum = reader.ReadBytes(32);
+        var databaseChecksum = reader.ReadBytes(32);
+        Assert.Equal(120, source.Position);
+        Assert.InRange(payloadLength, 1, int.MaxValue);
+        var payload = reader.ReadBytes((int)payloadLength);
+        Assert.Equal(payloadLength, payload.Length);
+        Assert.Equal(SHA256.HashData(payload), databaseChecksum);
+        var envelopeChecksum = reader.ReadBytes(32);
+        Assert.Equal(32, envelopeChecksum.Length);
+        Assert.Equal(-1, source.ReadByte());
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        digest.AppendData(headerBytes);
+        digest.AppendData(payload);
+        Assert.Equal(digest.GetHashAndReset(), envelopeChecksum);
+        return new(storeId, through, createdAt, schemaVersion, journalChecksum, payload);
+    }
+
+    private static byte[] EncodeSnapshotEnvelope(SnapshotEnvelopeParts snapshot, byte[] payload)
+    {
+        var databaseChecksum = SHA256.HashData(payload);
+        using var headerStream = new MemoryStream();
+        using (var writer = new BinaryWriter(headerStream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(Encoding.ASCII.GetBytes("AFSNAP01"));
+            writer.Write(1);
+            writer.Write(snapshot.StoreId.ToByteArray());
+            writer.Write(snapshot.Through);
+            writer.Write(snapshot.CreatedAtMilliseconds);
+            writer.Write(snapshot.SchemaVersion);
+            writer.Write((long)payload.Length);
+            writer.Write(snapshot.JournalChecksum);
+            writer.Write(databaseChecksum);
+        }
+        var header = headerStream.ToArray();
+        Assert.Equal(120, header.Length);
+        using var envelopeDigest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        envelopeDigest.AppendData(header);
+        envelopeDigest.AppendData(payload);
+        using var envelope = new MemoryStream();
+        envelope.Write(header);
+        envelope.Write(payload);
+        envelope.Write(envelopeDigest.GetHashAndReset());
+        return envelope.ToArray();
+    }
+
     private static WriteCommand Command(StoreVersion expected, StoreVersion next, Guid? aggregateId = null,
         int payloadSize = 0)
     {
@@ -587,6 +703,9 @@ public sealed class RecoveryTests
     {
         public bool CanWrite(WriteCommand command) => true;
     }
+
+    private sealed record SnapshotEnvelopeParts(Guid StoreId, long Through, long CreatedAtMilliseconds,
+        uint SchemaVersion, byte[] JournalChecksum, byte[] Payload);
 
     private sealed class SnapshotFixture : IDisposable
     {

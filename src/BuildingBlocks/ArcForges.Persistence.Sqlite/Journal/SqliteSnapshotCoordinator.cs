@@ -445,6 +445,14 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         if (!row.Read() || row.GetInt64(0) != header.Through || row.GetInt64(1) > header.Through)
             throw new InvalidDataException("The snapshot sequence does not match its self-description.");
         row.Close();
+        using (var rowsBeyondHead = connection.CreateCommand())
+        {
+            rowsBeyondHead.CommandText = "SELECT 1 FROM journal WHERE store_id=$store AND sequence>$through LIMIT 1";
+            rowsBeyondHead.Parameters.AddWithValue("$store", storeId.ToString("D"));
+            rowsBeyondHead.Parameters.AddWithValue("$through", header.Through);
+            if (rowsBeyondHead.ExecuteScalar() is not null)
+                throw new InvalidDataException("The snapshot contains journal rows beyond its durable high watermark.");
+        }
         using var boundary = connection.CreateCommand();
         boundary.CommandText = "SELECT checksum FROM journal WHERE store_id=$store AND sequence=$through";
         boundary.Parameters.AddWithValue("$store", storeId.ToString("D"));
@@ -490,6 +498,8 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
             position = entries[^1].Sequence.Value;
             after = entries[^1].Sequence;
         }
+        if (SqliteJournal.HasRowsBeyondHead(context, head))
+            throw new InvalidDataException("The copied database contains journal rows beyond its durable high watermark.");
         using var checksum = context.CreateCommand("SELECT checksum FROM journal WHERE store_id=$store AND sequence=$through");
         checksum.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));
         checksum.Parameters.AddWithValue("$through", head);
