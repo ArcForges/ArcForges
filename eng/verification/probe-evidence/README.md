@@ -9,7 +9,7 @@ suppression or reflection-based binding is used.
 
 | Input | Exact identity |
 |---|---|
-| Source revision | `c5382cb771f799312adb9ae7712e3c82c6953cae` |
+| Source revision | `0af8d140896cea353706a49a56c9952f4b5bbd3d` |
 | SDK | .NET SDK `10.0.400` from the repository `global.json` |
 | Target | `net10.0`, `win-x64`, `PublishAot=true`, full trimming |
 | Candidate package | `Avalonia` `12.1.3`; NuGet package SHA-256 `DFFB6605B02E144866CB23765EB5AF7255379EBB7EDE75CF11066F3248D83734` |
@@ -31,7 +31,7 @@ C:\Users\J7Rdm\.dotnet\dotnet.exe publish eng/verification/probe-evidence/Prf09.
 The retained log shows the SDK invoking ILC and the native linker, followed by `Build succeeded`,
 `0 Warning(s)`, and `0 Error(s)`. The output executable was produced at
 `artifacts/bin/dotnet/windows/Prf09.TableViewProbe/Release/net10.0/win-x64/publish/Prf09.TableViewProbe.exe`;
-its SHA-256 was `68868D4F9EE37E9B7875DDAC1E19C6EA866420E07D076AC724B9198BCA8C56F5`.
+its SHA-256 was `B13B6401CA36A1E93F1A3C800B8CDE1062B0DB871934FAC7495DEE5349264D26`.
 
 This is publish-only evidence for the candidate control in a probe host. The binary was not run;
 no GUI/runtime behavior, production shell integration, or product adoption is claimed. A separate
