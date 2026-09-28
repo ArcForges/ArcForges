@@ -38,6 +38,121 @@ public sealed class RecoveryTests
     }
 
     [Fact]
+    public void RepeatedRealSnapshotsBoundJournalAndSnapshotGrowthThenRestoreAndReplayTheTail()
+    {
+        using var file = new SnapshotFixture();
+        var aggregateId = Guid.NewGuid();
+        var policy = new JournalSnapshotPolicy(4, 64 * 1024 * 1024, 3600);
+        using (var store = CreateStore(file, policy))
+        {
+            var expected = StoreVersion.NewRoot;
+            for (var sequence = 1; sequence <= 14; sequence++)
+            {
+                var next = StoreVersion.Native(new((ulong)sequence));
+                var receipt = store.Write(Command(expected, next, aggregateId));
+                Assert.Equal((long)sequence, receipt.Sequence.Value);
+                expected = next;
+
+                Assert.InRange(file.CountJournalRows(), 0, policy.MaximumEntries - 1);
+                Assert.InRange(file.CountSnapshots(), 0, 2);
+                Assert.Null(store.LastSnapshotFailure);
+                if (sequence is 4 or 8 or 12)
+                {
+                    Assert.NotNull(store.LastSnapshot);
+                    Assert.Equal((long)sequence, store.LastSnapshot!.ThroughSequence);
+                    Assert.Equal((long)sequence, file.ReadWatermarks().Floor);
+                    Assert.Equal(Math.Min(sequence / 4, 2), file.CountSnapshots());
+                }
+            }
+
+            Assert.Equal((14L, 12L), file.ReadWatermarks());
+            Assert.Equal(2L, file.CountJournalRows());
+            Assert.Equal(2, file.CountSnapshots());
+        }
+
+        // Simulate an interrupted tail by advancing the durable head past missing row 15.
+        // Recovery must restore the real snapshot through 12 and replay intact rows 13 and 14.
+        SetDurableHead(file, 15);
+
+        using var recovered = new SqliteStore(file.Path, file.Id, new Allow());
+        Assert.Equal(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork, recovered.Recovery.Outcome);
+        Assert.True(recovered.Recovery.RequiresSafeStart);
+        Assert.Equal(12L, recovered.Recovery.VerifiedThrough);
+        Assert.Equal(14L, recovered.Recovery.RecoveredThrough);
+        Assert.NotNull(recovered.Recovery.EvidencePath);
+        Assert.True(File.Exists(Path.Combine(recovered.Recovery.EvidencePath!, Path.GetFileName(file.Path))));
+        Assert.Equal(StoreVersion.Native(new(14)), recovered.Read("recovery-test", aggregateId)!.Version);
+        Assert.Equal((14L, 8L), file.ReadWatermarks());
+        Assert.Equal(6L, file.CountJournalRows());
+        var replayedTail = recovered.ReadJournal(new JournalSequence(file.Id, 12), 10);
+        Assert.Equal(new long[] { 13, 14 }, replayedTail.Select(entry => entry.Sequence.Value));
+        Assert.InRange(file.CountSnapshots(), 1, 2);
+    }
+
+    [Fact]
+    public void RealSnapshotTruncationPreservesAnActiveReadersJournalView()
+    {
+        using var file = new SnapshotFixture();
+        using var envelopePublished = new ManualResetEventSlim();
+        using var store = new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true,
+            runSnapshotPolicy: false, snapshotFault: stage =>
+            {
+                if (stage == SnapshotStage.EnvelopePublished) envelopePublished.Set();
+            });
+        var first = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        var second = Command(StoreVersion.Native(new(1)), StoreVersion.Native(new(2)), first.AggregateId);
+        store.Write(first);
+        store.Write(second);
+
+        using var readerConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = file.Path,
+            Pooling = false
+        }.ToString());
+        readerConnection.Open();
+        using var readTransaction = readerConnection.BeginTransaction(deferred: true);
+        var journal = new SqliteJournal();
+        var reader = new SqliteReadContext(file.Id, readerConnection, readTransaction);
+        var initialRead = journal.Read(reader, null, 1);
+        Assert.Equal(first.CommandId, Assert.Single(initialRead).CommandId);
+
+        JournalSnapshotReceipt? receipt = null;
+        Exception? snapshotFailure = null;
+        var snapshotThread = new Thread(() =>
+        {
+            try { receipt = store.CreateSnapshot(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or
+                InvalidDataException or InvalidOperationException)
+            { snapshotFailure = exception; }
+        })
+        { IsBackground = true };
+        snapshotThread.Start();
+        try
+        {
+            Assert.True(envelopePublished.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken),
+                "The real snapshot envelope was not published while the reader transaction was active.");
+            Assert.True(SpinWait.SpinUntil(() => File.Exists(file.Path + "-journal"), TimeSpan.FromSeconds(10)),
+                "The real truncation transaction did not reach SQLite while the reader transaction was active.");
+            var remainingRead = journal.Read(reader, initialRead[0].Sequence, 10);
+            Assert.Equal(second.CommandId, Assert.Single(remainingRead).CommandId);
+        }
+        finally
+        {
+            readTransaction.Dispose();
+            Assert.True(snapshotThread.Join(TimeSpan.FromSeconds(10)),
+                "The real snapshot/truncation did not finish after the reader transaction was released.");
+        }
+
+        Assert.Null(snapshotFailure);
+        Assert.NotNull(receipt);
+        Assert.Equal(2L, receipt!.ThroughSequence);
+        Assert.Equal((2L, 2L), file.ReadWatermarks());
+        Assert.Equal(0, file.CountJournalRows());
+        Assert.Empty(store.ReadJournal(new JournalSequence(file.Id, 2), 10));
+    }
+
+    [Fact]
     public void CorruptJournalTailReplaysVerifiedPrefixPreservesEvidenceAndEntersSafeStart()
     {
         using var file = new SnapshotFixture();
@@ -1140,6 +1255,19 @@ public sealed class RecoveryTests
             Assert.True(row.Read());
             return (row.GetInt64(0), row.GetInt64(1));
         }
+
+        internal long CountJournalRows()
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM journal WHERE store_id=$store";
+            command.Parameters.AddWithValue("$store", Id.ToString("D"));
+            return (long)command.ExecuteScalar()!;
+        }
+
+        internal int CountSnapshots() => System.IO.Directory.Exists(SnapshotDirectory)
+            ? System.IO.Directory.GetFiles(SnapshotDirectory, "*.afsnap").Length
+            : 0;
 
         internal void CorruptJournalTail()
         {
