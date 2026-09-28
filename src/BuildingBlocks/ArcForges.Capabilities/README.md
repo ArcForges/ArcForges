@@ -16,3 +16,9 @@ Each `ApplicationComposition.Start<TOwner>` creates a fresh instance and calls t
 This trusted in-process composition mechanism is not a security sandbox for arbitrary host code. The host must not deliberately share stores between owner factories. Authentication, current grants, durable epoch allocation, concrete product stores, named contribution validation, remote wire target adaptation and device registration remain their respective owners' work. Public protobuf remains owned by Contracts; `ToApplicationScope` returns a fresh generated Foundation value. No transport, process enumeration, static mutable product registry, shared desktop service or launch behavior is added.
 
 The nested offline tests demonstrate isolation with typed fixture owners. They do not claim Android/Web execution, product persistence, live device registration or installed-consumer evidence.
+
+## Typed context contributions and invocation snapshots
+
+`ContextProvider<TMessage>` is scoped to one captured `InstanceIdentity` and accepts generated protobuf message types supplied by its caller. Snapshot freezing records each message's exact descriptor and private serialized bytes; consumer reads deserialize a new copy, so neither later live-context changes nor mutations of a returned object can alter an in-flight snapshot. Provider ownership mismatches fail before provider code runs.
+
+The default budget is 50 messages and 65,536 serialized protobuf bytes. Explicit budgets may narrow those limits but cannot exceed the current 200-message/262,144-byte context ceilings. Exceeding either bound raises a typed refusal; no entries are truncated. This is a generic in-process seam, not a copied context wire DTO and not a claim of integration with `ArcForges.Contracts.PublicApi` records.
