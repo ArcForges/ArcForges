@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using System.Reflection;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation;
+using ArcForges.Foundation.Errors;
 using ArcForges.Foundation.Execution;
 using Xunit;
 
@@ -14,15 +15,15 @@ public sealed class SignalEmitterTests
     [Fact]
     public void OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()
     {
-        var context = new ObservabilityContext("arcscope", new InstanceId(Guid.NewGuid()), "local.0123456789abcdef", "test")
+        var context = new ObservabilityContext(SignalApplicationDimension.ArcScope, new InstanceId(Guid.NewGuid()), SignalEnvironment.Test)
         {
             ActorReference = "sha256:" + new string('a', 64),
             Workspace = new WorkspaceId(Guid.NewGuid()),
-            Transport = "local-rpc",
-            Service = "storage",
-            Interface = "IStore",
-            Method = "Commit",
-            Capability = "resource.write",
+            Transport = SignalTransport.LocalRpc,
+            Service = SignalService.Storage,
+            Interface = SignalInterface.ResourceStore,
+            Method = SignalMethod.Commit,
+            Capability = SignalCapability.ResourceWrite,
             RedactedResourceReference = "sha256:" + new string('b', 64),
             Command = new CommandId(Guid.NewGuid()),
             Task = TaskId.New(),
@@ -34,10 +35,10 @@ public sealed class SignalEmitterTests
             ResultRevision = 5,
             Duration = TimeSpan.FromMilliseconds(12.5),
             QueueTime = TimeSpan.FromMilliseconds(2),
-            ResultCode = "ok",
-            ReasonCode = "store.committed",
-            NativeAbiVersion = "1.2.0",
-            NativeAbiBuildId = "native-build-4",
+            ResultCode = SignalResultCode.Succeeded,
+            ReasonCode = ReasonCodes.Get("state.invalid_transition"),
+            NativeAbiVersion = new NativeAbiVersion(1, 2),
+            NativeAbiBuildId = Context().BuildId,
             ReconnectCount = 1,
             SequenceGapCount = 2,
         };
@@ -54,10 +55,10 @@ public sealed class SignalEmitterTests
 
         using (ObservabilityScope.Push(context))
         {
-            var signal = emitter.Emit("store.commit", SignalLevel.Information);
+            var signal = emitter.Emit(SignalEventName.StorageCommitted, SignalLevel.Information);
 
             Assert.Same(signal, sink.Signal);
-            Assert.Equal("store.commit", signal.Name);
+            Assert.Equal("storage.commit", signal.Name);
         }
 
         Assert.NotNull(stopped);
@@ -85,11 +86,11 @@ public sealed class SignalEmitterTests
     {
         var sink = new CapturingSink();
         using var emitter = new SignalEmitter(sink);
-        var context = new ObservabilityContext("companion", new InstanceId(Guid.NewGuid()), "build-17", "development");
+        var context = new ObservabilityContext(SignalApplicationDimension.Companion, new InstanceId(Guid.NewGuid()), SignalEnvironment.Development);
 
         using (ObservabilityScope.Push(context))
         {
-            emitter.Emit("startup.ready", SignalLevel.Debug);
+            emitter.Emit(SignalEventName.ApplicationStarted, SignalLevel.Debug);
         }
 
         Assert.Equal(4, sink.Signal!.Properties.Count);
@@ -105,10 +106,12 @@ public sealed class SignalEmitterTests
     [Fact]
     public void ContextRequiresRealBuildAndInstanceIdentityAndEmitterRequiresAmbientContext()
     {
-        Assert.Throws<ArgumentException>(() => new ObservabilityContext(" ", new InstanceId(Guid.NewGuid()), "build", "test"));
-        Assert.Throws<ArgumentException>(() => new ObservabilityContext("arcscope", default, "build", "test"));
-        Assert.Throws<ArgumentException>(() => new ObservabilityContext("arcscope", new InstanceId(Guid.NewGuid()), "", "test"));
-        Assert.Throws<InvalidOperationException>(() => new SignalEmitter(new CapturingSink()).Emit("event.test", SignalLevel.Error));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ObservabilityContext((SignalApplicationDimension)int.MaxValue,
+            new InstanceId(Guid.NewGuid()), SignalEnvironment.Test));
+        Assert.Throws<ArgumentException>(() => new ObservabilityContext(SignalApplicationDimension.ArcScope, default, SignalEnvironment.Test));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ObservabilityContext(SignalApplicationDimension.ArcScope,
+            new InstanceId(Guid.NewGuid()), (SignalEnvironment)999));
+        Assert.Throws<InvalidOperationException>(() => new SignalEmitter(new CapturingSink()).Emit(SignalEventName.OperationFailed, SignalLevel.Error));
     }
 
     [Fact]
@@ -118,7 +121,8 @@ public sealed class SignalEmitterTests
         var expected = assembly.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>()
             .Single(attribute => attribute.Key == "ArcForges.BuildId").Value;
 
-        var context = ObservabilityContext.FromApplicationAssembly("arcscope", new InstanceId(Guid.NewGuid()), "test", assembly);
+        var context = ObservabilityContext.FromApplicationAssembly(SignalApplicationDimension.ArcScope,
+            new InstanceId(Guid.NewGuid()), SignalEnvironment.Test, assembly);
 
         Assert.Equal(expected, context.BuildId);
     }
@@ -143,7 +147,7 @@ public sealed class SignalEmitterTests
     }
 
     [Fact]
-    public void MetricsUseOnlyLowCardinalityIdentityAndRecordPresentDuration()
+    public void MetricsUseNoPointLabelsAndCarryIdentityInScope()
     {
         var context = Context() with { Duration = TimeSpan.FromMilliseconds(8), ActorReference = "sha256:" + new string('c', 64), Task = TaskId.New() };
         var expectedInstance = context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
@@ -184,30 +188,46 @@ public sealed class SignalEmitterTests
         using var emitter = new SignalEmitter(new CapturingSink());
         using (ObservabilityScope.Push(context))
         {
-            emitter.Emit("execution.completed", SignalLevel.Information);
+            emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information);
         }
 
         Assert.Equal(1, count);
         Assert.Equal(8, duration);
-        Assert.True(countTags.SetEquals(["service.name"]));
+        Assert.Empty(countTags);
         Assert.DoesNotContain("instance.id", countTags);
         Assert.DoesNotContain("build.id", countTags);
         Assert.DoesNotContain("actor.ref", countTags);
         Assert.DoesNotContain("task.id", countTags);
-        Assert.True(countTags.SetEquals(durationTags));
+        Assert.Empty(durationTags);
+        Assert.DoesNotContain("service.name", countTags);
         Assert.Equal(context.ApplicationId, scopeTags["application.id"]);
         Assert.Equal(expectedInstance, scopeTags["instance.id"]);
         Assert.Equal(context.BuildId, scopeTags["build.id"]);
-        Assert.Equal(context.Environment, scopeTags["deployment.environment"]);
+        Assert.Equal(context.Environment.ToString(), scopeTags["deployment.environment"]);
+        Assert.Equal(4, scopeTags.Count);
 
-        var differentInstance = new ObservabilityContext(context.ApplicationId, new InstanceId(Guid.NewGuid()),
-            context.BuildId, context.Environment)
+        var differentInstance = new ObservabilityContext(context.Application, new InstanceId(Guid.NewGuid()),
+            context.Environment)
         {
             Service = context.Service
         };
         using (ObservabilityScope.Push(differentInstance))
         {
-            Assert.Throws<InvalidOperationException>(() => emitter.Emit("execution.completed", SignalLevel.Information));
+            Assert.Throws<InvalidOperationException>(() => emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information));
+        }
+
+        var differentApplication = new ObservabilityContext(SignalApplicationDimension.Companion,
+            context.InstanceId, context.Environment);
+        using (ObservabilityScope.Push(differentApplication))
+        {
+            Assert.Throws<InvalidOperationException>(() => emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information));
+        }
+
+        var differentEnvironment = new ObservabilityContext(context.Application, context.InstanceId,
+            SignalEnvironment.Production);
+        using (ObservabilityScope.Push(differentEnvironment))
+        {
+            Assert.Throws<InvalidOperationException>(() => emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information));
         }
     }
 
@@ -216,15 +236,28 @@ public sealed class SignalEmitterTests
     {
         using var scope = ObservabilityScope.Push(Context());
         using var emitter = new SignalEmitter(new CapturingSink());
-        Assert.Equal(2, typeof(SignalEmitter).GetMethod(nameof(SignalEmitter.Emit))!.GetParameters().Length);
-        Assert.Throws<ArgumentException>(() => emitter.Emit("Secret Used", SignalLevel.Information));
+        var emitMethod = Assert.Single(typeof(SignalEmitter).GetMethods(), method => method.Name == nameof(SignalEmitter.Emit));
+        Assert.Equal([typeof(SignalEventName), typeof(SignalLevel)],
+            emitMethod.GetParameters().Select(parameter => parameter.ParameterType));
+
+        const string pathCanary = "C:private.txt";
+        const string apiKeyCanary = "ghp_0123456789abcdefghijklmnopqrstuvwxyzABCDE";
+        const string jwtCanary = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
+        Assert.Equal(typeof(SignalApplicationDimension), typeof(ObservabilityContext)
+            .GetProperty(nameof(ObservabilityContext.Application))!.PropertyType);
+        Assert.Throws<ArgumentException>(() => Validate(Context() with { NativeAbiBuildId = pathCanary }));
+        Assert.Throws<ArgumentException>(() => Validate(Context() with { NativeAbiBuildId = apiKeyCanary }));
+        Assert.Throws<ArgumentException>(() => Validate(Context() with { NativeAbiBuildId = jwtCanary }));
+        Assert.Equal(typeof(SignalService), Nullable.GetUnderlyingType(
+            typeof(ObservabilityContext).GetProperty(nameof(ObservabilityContext.Service))!.PropertyType));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Validate(Context() with { Service = (SignalService)int.MaxValue }));
+        Assert.Throws<ArgumentException>(() => Validate(Context() with { NativeAbiBuildId = pathCanary }));
 
         const string marker = "[[SECRET-CANARY]] prompt=/home/user/private.txt access_token=never-log-this";
-        Assert.Throws<ArgumentException>(() => ObservabilityScope.Push(Context() with { Method = marker }));
         Assert.Throws<ArgumentException>(() => ObservabilityScope.Push(Context() with { ActorReference = marker }));
         Assert.Throws<ArgumentException>(() => ObservabilityScope.Push(Context() with { RedactedResourceReference = marker }));
 
-        var emitted = emitter.Emit("secret.used", SignalLevel.Information);
+        var emitted = emitter.Emit(SignalEventName.SecretUsed, SignalLevel.Information);
         Assert.DoesNotContain("SECRET-CANARY", string.Join("|", emitted.Properties.Values), StringComparison.Ordinal);
     }
 
@@ -235,13 +268,13 @@ public sealed class SignalEmitterTests
         Assert.Throws<ArgumentOutOfRangeException>(() => Validate(Context() with { Duration = TimeSpan.FromMilliseconds(-1) }));
         Assert.Throws<ArgumentOutOfRangeException>(() => Validate(Context() with { SequenceGapCount = -1 }));
         Assert.Throws<ArgumentException>(() => Validate(Context() with { Correlation = new CorrelationId(Guid.Empty) }));
-        Assert.Throws<ArgumentException>(() => new ObservabilityContext("/var/tmp/token=marker", new InstanceId(Guid.NewGuid()), "build-17", "test"));
-        Assert.Throws<ArgumentException>(() => new ObservabilityContext("arcscope", new InstanceId(Guid.NewGuid()), "build prompt has secret", "test"));
+        Assert.Throws<ArgumentException>(() => Validate(Context() with { NativeAbiBuildId = "build prompt has secret" }));
     }
 
-    private static ObservabilityContext Context() => new("arcscope", new InstanceId(Guid.NewGuid()), "build-17", "test")
+    private static ObservabilityContext Context() => new(SignalApplicationDimension.ArcScope,
+        new InstanceId(Guid.NewGuid()), SignalEnvironment.Test)
     {
-        Service = "test-service",
+        Service = SignalService.Storage,
     };
 
     private static void CopyTagNames(ReadOnlySpan<KeyValuePair<string, object?>> tags, HashSet<string> destination)

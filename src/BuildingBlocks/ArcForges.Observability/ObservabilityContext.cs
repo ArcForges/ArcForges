@@ -2,6 +2,7 @@
 using System.Reflection;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation;
+using ArcForges.Foundation.Errors;
 using ArcForges.Foundation.Execution;
 
 namespace ArcForges.Observability;
@@ -12,32 +13,42 @@ namespace ArcForges.Observability;
 /// </summary>
 public sealed record ObservabilityContext
 {
-    public ObservabilityContext(string applicationId, InstanceId instanceId, string buildId, string environment)
+    public ObservabilityContext(SignalApplicationDimension application, InstanceId instanceId, SignalEnvironment environment,
+        Assembly? applicationAssembly = null)
     {
-        ApplicationId = RequireToken(applicationId, nameof(applicationId));
+        if (!Enum.IsDefined(application)) throw new ArgumentOutOfRangeException(nameof(application));
+        if (!Enum.IsDefined(environment)) throw new ArgumentOutOfRangeException(nameof(environment));
         if (instanceId.Value == Guid.Empty)
         {
             throw new ArgumentException("A non-empty instance identity is required.", nameof(instanceId));
         }
 
+        Application = application;
         InstanceId = instanceId;
-        BuildId = RequireToken(buildId, nameof(buildId));
-        Environment = RequireToken(environment, nameof(environment));
+        BuildId = ReadBuildId(applicationAssembly ?? Assembly.GetEntryAssembly()
+            ?? throw new InvalidOperationException("The application assembly is not available for build identity lookup."));
+        Environment = environment;
     }
 
-    public string ApplicationId { get; }
+    public SignalApplicationDimension Application { get; }
+    public string ApplicationId => Application switch
+    {
+        SignalApplicationDimension.ArcScope => "arcscope",
+        SignalApplicationDimension.Companion => "companion",
+        _ => string.Empty,
+    };
     public InstanceId InstanceId { get; }
     public string BuildId { get; }
-    public string Environment { get; }
+    public SignalEnvironment Environment { get; }
 
     /// <summary>SHA-256 reference only; human-readable actor identity is not a signal dimension.</summary>
     public string? ActorReference { get; init; }
     public WorkspaceId? Workspace { get; init; }
-    public string? Transport { get; init; }
-    public string? Service { get; init; }
-    public string? Interface { get; init; }
-    public string? Method { get; init; }
-    public string? Capability { get; init; }
+    public SignalTransport? Transport { get; init; }
+    public SignalService? Service { get; init; }
+    public SignalInterface? Interface { get; init; }
+    public SignalMethod? Method { get; init; }
+    public SignalCapability? Capability { get; init; }
     /// <summary>Must be a SHA-256 reference; raw resource identifiers are never accepted by this API.</summary>
     public string? RedactedResourceReference { get; init; }
     public CommandId? Command { get; init; }
@@ -50,50 +61,42 @@ public sealed record ObservabilityContext
     public ulong? ResultRevision { get; init; }
     public TimeSpan? Duration { get; init; }
     public TimeSpan? QueueTime { get; init; }
-    public string? ResultCode { get; init; }
-    public string? ReasonCode { get; init; }
-    public string? NativeAbiVersion { get; init; }
+    public SignalResultCode? ResultCode { get; init; }
+    public ReasonCode? ReasonCode { get; init; }
+    public NativeAbiVersion? NativeAbiVersion { get; init; }
     public string? NativeAbiBuildId { get; init; }
     public int? ReconnectCount { get; init; }
     public int? SequenceGapCount { get; init; }
 
     /// <summary>Build identity comes from the app assembly's build-policy stamp, never a guessed default.</summary>
     public static ObservabilityContext FromApplicationAssembly(
-        string applicationId,
+        SignalApplicationDimension application,
         InstanceId instanceId,
-        string environment,
+        SignalEnvironment environment,
         Assembly? applicationAssembly = null)
     {
-        applicationAssembly ??= Assembly.GetEntryAssembly()
-            ?? throw new InvalidOperationException("The application assembly is not available for build identity lookup.");
-        var buildId = applicationAssembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-            .SingleOrDefault(attribute => attribute.Key == "ArcForges.BuildId")?.Value;
-        if (string.IsNullOrWhiteSpace(buildId))
-        {
-            throw new InvalidOperationException("The application assembly is missing its ArcForges.BuildId build-policy stamp.");
-        }
-
-        return new ObservabilityContext(applicationId, instanceId, buildId, environment);
+        return new ObservabilityContext(application, instanceId, environment, applicationAssembly);
     }
 
     internal Dictionary<string, object?> MaterializeDimensions()
     {
+        if (!Enum.IsDefined(Application)) throw new ArgumentOutOfRangeException(nameof(Application));
         var values = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["application.id"] = ApplicationId,
             ["instance.id"] = Format(InstanceId.Value),
             ["build.id"] = BuildId,
-            ["deployment.environment"] = Environment,
+            ["deployment.environment"] = Environment.ToString(),
         };
 
-        AddText(values, "actor.ref", ActorReference);
+        AddHashReference(values, "actor.ref", ActorReference);
         AddId(values, "workspace.id", Workspace?.Value);
-        AddText(values, "transport", Transport);
-        AddText(values, "service.name", Service);
-        AddText(values, "interface.name", Interface);
-        AddText(values, "method.name", Method);
-        AddText(values, "capability.name", Capability);
-        AddText(values, "resource.ref", RedactedResourceReference);
+        AddEnum(values, "transport", Transport);
+        AddEnum(values, "service.name", Service);
+        AddEnum(values, "interface.name", Interface);
+        AddEnum(values, "method.name", Method);
+        AddEnum(values, "capability.name", Capability);
+        AddHashReference(values, "resource.ref", RedactedResourceReference);
         AddId(values, "command.id", Command?.Value);
         AddId(values, "task.id", Task?.Value);
         AddId(values, "run.id", Run?.Value);
@@ -104,24 +107,67 @@ public sealed record ObservabilityContext
         AddNumber(values, "result.revision", ResultRevision);
         AddDuration(values, "duration.ms", Duration);
         AddDuration(values, "queue.time.ms", QueueTime);
-        AddText(values, "result.code", ResultCode);
-        AddText(values, "reason.code", ReasonCode);
-        AddText(values, "native.abi.version", NativeAbiVersion);
-        AddText(values, "native.abi.build", NativeAbiBuildId);
+        AddEnum(values, "result.code", ResultCode);
+        if (ReasonCode is not null) values.Add("reason.code", ReasonCode.Code);
+        if (NativeAbiVersion is { } nativeVersion) values.Add("native.abi.version", nativeVersion.ToString());
+        AddBuildId(values, "native.abi.build", NativeAbiBuildId);
         AddCount(values, "reconnect.count", ReconnectCount);
         AddCount(values, "sequence.gap.count", SequenceGapCount);
         return values;
     }
 
-    private static string RequireToken(string value, string parameterName)
+    private static string ValidateBuildId(string value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 128 || value.Any(character =>
-                !(character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-' or '+' or ':')))
+        ArgumentNullException.ThrowIfNull(value);
+        bool valid = value == "local.local" || IsLocalCommitBuild(value) || IsCiBuild(value);
+        if (!valid)
         {
-            throw new ArgumentException("A bounded identifier token is required; free-form text is not accepted.", parameterName);
+            throw new ArgumentException("Build identity must match a build-policy local or CI stamp.", nameof(value));
         }
 
         return value;
+    }
+
+    private static string ReadBuildId(Assembly assembly)
+    {
+        string? value = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(attribute => attribute.Key == "ArcForges.BuildId")?.Value;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException("The application assembly is missing its ArcForges.BuildId build-policy stamp.");
+        }
+
+        return ValidateBuildId(value);
+    }
+
+    private static bool IsLocalCommitBuild(string value)
+    {
+        const string prefix = "local.";
+        if (!value.StartsWith(prefix, StringComparison.Ordinal) || value.Length != prefix.Length + 40) return false;
+        foreach (char character in value.AsSpan(prefix.Length))
+        {
+            if (character is not (>= '0' and <= '9' or >= 'a' and <= 'f')) return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsCiBuild(string value)
+    {
+        int separator = value.IndexOf('.', StringComparison.Ordinal);
+        return separator > 0 && separator == value.LastIndexOf('.')
+            && IsPositiveDecimal(value.AsSpan(0, separator)) && IsPositiveDecimal(value.AsSpan(separator + 1));
+    }
+
+    private static bool IsPositiveDecimal(ReadOnlySpan<char> value)
+    {
+        if (value.IsEmpty || value.Length > 20 || value[0] == '0') return false;
+        foreach (char character in value)
+        {
+            if (character is not (>= '0' and <= '9')) return false;
+        }
+
+        return true;
     }
 
     private static string RequireHashReference(string value, string parameterName)
@@ -142,6 +188,11 @@ public sealed record ObservabilityContext
         return value;
     }
 
+    private static void AddHashReference(Dictionary<string, object?> values, string name, string? value)
+    {
+        if (value is not null) values.Add(name, RequireHashReference(value, name));
+    }
+
     private static string Format(Guid value)
     {
         if (value == Guid.Empty)
@@ -160,12 +211,17 @@ public sealed record ObservabilityContext
         }
     }
 
-    private static void AddText(Dictionary<string, object?> values, string name, string? value)
+    private static void AddBuildId(Dictionary<string, object?> values, string name, string? value)
     {
-        if (value is not null)
-        {
-            values.Add(name, name is "actor.ref" or "resource.ref" ? RequireHashReference(value, name) : RequireToken(value, name));
-        }
+        if (value is not null) values.Add(name, ValidateBuildId(value));
+    }
+
+    private static void AddEnum<TEnum>(Dictionary<string, object?> values, string name, TEnum? value)
+        where TEnum : struct, Enum
+    {
+        if (value is not { } known) return;
+        if (!Enum.IsDefined(known)) throw new ArgumentOutOfRangeException(name, "Only a registered, finite telemetry value is accepted.");
+        values.Add(name, known.ToString());
     }
 
     private static void AddNumber(Dictionary<string, object?> values, string name, ulong? value)
@@ -201,4 +257,26 @@ public sealed record ObservabilityContext
             values.Add(name, value.Value);
         }
     }
+}
+
+/// <summary>
+/// Closed telemetry dimension vocabulary. This does not own product identity; composition maps a trusted
+/// product identity to one of these reviewed values before installing the observability context.
+/// </summary>
+public enum SignalApplicationDimension { ArcScope, Companion }
+
+/// <summary>Closed, finite telemetry vocabulary. Unknown values cannot be supplied as arbitrary strings.</summary>
+public enum SignalEnvironment { Development, Test, Staging, Production }
+public enum SignalTransport { LocalRpc, Http, Queue, Realtime, Worker, Provider }
+public enum SignalService { Application, Storage, Security, Capabilities, Cloud, Device, Extensions, Sync }
+public enum SignalInterface { ApplicationLifecycle, ResourceStore, SecretBroker, ConnectorHost, HealthProbe }
+public enum SignalMethod { Read, Write, Create, Commit, Update, Delete, Execute, Start, Stop, Check, Emit }
+public enum SignalCapability { ResourceRead, ResourceWrite, SecretUse, ConnectorInvoke, Egress }
+public enum SignalResultCode { Succeeded, Failed, Refused, Cancelled, Unknown }
+public enum SignalEventName { ApplicationStarted, StorageCommitted, SecretUsed, OperationCompleted, OperationFailed, HealthChanged }
+
+/// <summary>Native ABI version as two numeric components, never a free-form string dimension.</summary>
+public readonly record struct NativeAbiVersion(uint Major, uint Minor)
+{
+    public override string ToString() => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Major}.{Minor}");
 }

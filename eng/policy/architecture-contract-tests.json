@@ -1000,7 +1000,7 @@
     "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.PinnedResolutionPreservesTheExactRevisionAndNeverFallsBackToFloating()"
   },
   {
-    "apiSymbol": "ArcForges.Observability.ObservabilityContext.FromApplicationAssembly(string, ArcForges.Contracts.Foundation.Values.InstanceId, string, System.Reflection.Assembly?)",
+    "apiSymbol": "ArcForges.Observability.ObservabilityContext.FromApplicationAssembly(ArcForges.Observability.SignalApplicationDimension, ArcForges.Contracts.Foundation.Values.InstanceId, ArcForges.Observability.SignalEnvironment, System.Reflection.Assembly?)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.ApplicationBuildIdentityComesFromThePolicyStampedAssembly()"
   },
@@ -1012,10 +1012,15 @@
   {
     "apiSymbol": "ArcForges.Observability.SignalEmitter.Dispose()",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
-    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.MetricsUseOnlyLowCardinalityIdentityAndRecordPresentDuration()"
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.MetricsUseNoPointLabelsAndCarryIdentityInScope()"
   },
   {
-    "apiSymbol": "ArcForges.Observability.SignalEmitter.Emit(string, ArcForges.Observability.SignalLevel)",
+    "apiSymbol": "ArcForges.Observability.SignalEmitter.Emit(ArcForges.Observability.SignalEventName, ArcForges.Observability.SignalLevel)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.NativeAbiVersion.ToString()",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
   },

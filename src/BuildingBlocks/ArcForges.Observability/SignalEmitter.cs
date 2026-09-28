@@ -6,7 +6,7 @@ namespace ArcForges.Observability;
 
 /// <summary>
 /// The single emission surface for metrics, traces, and structured events. High-cardinality identifiers
-/// are attached to traces/events and instrumentation-scope identity; metric point labels remain low-cardinality.
+/// are attached to traces/events and instrumentation-scope identity; metric point labels are empty.
 /// </summary>
 public sealed class SignalEmitter : IDisposable
 {
@@ -24,8 +24,8 @@ public sealed class SignalEmitter : IDisposable
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
     }
 
-    /// <summary>Emits one event and applies the same ambient dimensions to traces and structured logs.</summary>
-    public StructuredSignal Emit(string eventName, SignalLevel level)
+    /// <summary>Emits an event from the finite, reviewed telemetry vocabulary.</summary>
+    public StructuredSignal Emit(SignalEventName eventName, SignalLevel level)
     {
         ValidateEventName(eventName);
         if (!Enum.IsDefined(level))
@@ -33,14 +33,16 @@ public sealed class SignalEmitter : IDisposable
             throw new ArgumentOutOfRangeException(nameof(level));
         }
 
+        string stableEventName = EventName(eventName);
+
         var context = ObservabilityScope.Current
             ?? throw new InvalidOperationException("A complete observability context must be installed before emitting a signal.");
-        var metrics = GetMetrics(context);
         var properties = context.MaterializeDimensions();
+        var metrics = GetMetrics(context);
         var timestamp = DateTimeOffset.UtcNow;
-        var signal = new StructuredSignal(eventName, level, timestamp, properties);
+        var signal = new StructuredSignal(stableEventName, level, timestamp, properties);
 
-        using (var activity = Activities.StartActivity(eventName, ActivityKind.Internal))
+        using (var activity = Activities.StartActivity(stableEventName, ActivityKind.Internal))
         {
             if (activity is not null)
             {
@@ -55,11 +57,10 @@ public sealed class SignalEmitter : IDisposable
                 }
             }
 
-            var metricTags = GetMetricTags(context);
-            metrics.SignalCount.Add(1, metricTags);
+            metrics.SignalCount.Add(1);
             if (context.Duration is { } duration)
             {
-                metrics.SignalDuration.Record(duration.TotalMilliseconds, metricTags);
+                metrics.SignalDuration.Record(duration.TotalMilliseconds);
             }
 
             _sink.Write(signal);
@@ -99,17 +100,6 @@ public sealed class SignalEmitter : IDisposable
         }
     }
 
-    private static TagList GetMetricTags(ObservabilityContext context)
-    {
-        var tags = new TagList();
-        if (context.Service is { } service)
-        {
-            tags.Add("service.name", service);
-        }
-
-        return tags;
-    }
-
     private static Meter CreateMeter(SignalIdentity identity) => new(new MeterOptions(MeterName)
     {
         Tags = new KeyValuePair<string, object?>[]
@@ -117,7 +107,7 @@ public sealed class SignalEmitter : IDisposable
             new("application.id", identity.ApplicationId),
             new("instance.id", identity.InstanceId),
             new("build.id", identity.BuildId),
-            new("deployment.environment", identity.Environment),
+            new("deployment.environment", identity.Environment.ToString()),
         },
     });
 
@@ -147,20 +137,27 @@ public sealed class SignalEmitter : IDisposable
         public void Dispose() => Meter.Dispose();
     }
 
-    private readonly record struct SignalIdentity(string ApplicationId, string InstanceId, string BuildId, string Environment)
+    private readonly record struct SignalIdentity(string ApplicationId, string InstanceId, string BuildId, SignalEnvironment Environment)
     {
         public static SignalIdentity From(ObservabilityContext context) => new(context.ApplicationId,
             context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture), context.BuildId,
             context.Environment);
     }
 
-    private static void ValidateEventName(string eventName)
+    private static string EventName(SignalEventName eventName) => eventName switch
     {
-        if (string.IsNullOrWhiteSpace(eventName) || eventName.Length > 128 || eventName.Any(character =>
-                !(character is >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-')))
-        {
-            throw new ArgumentException("Event names must be bounded lowercase identifiers.", nameof(eventName));
-        }
+        SignalEventName.ApplicationStarted => "application.started",
+        SignalEventName.StorageCommitted => "storage.commit",
+        SignalEventName.SecretUsed => "secret.used",
+        SignalEventName.OperationCompleted => "operation.completed",
+        SignalEventName.OperationFailed => "operation.failed",
+        SignalEventName.HealthChanged => "health.changed",
+        _ => throw new ArgumentOutOfRangeException(nameof(eventName)),
+    };
+
+    private static void ValidateEventName(SignalEventName eventName)
+    {
+        if (!Enum.IsDefined(eventName)) throw new ArgumentOutOfRangeException(nameof(eventName));
     }
 
 }

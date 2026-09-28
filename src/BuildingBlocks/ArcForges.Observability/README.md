@@ -11,14 +11,17 @@ Each emission creates an OpenTelemetry-compatible `ActivitySource` span when a l
 increments a `Meter` counter, records duration when available, and writes one typed `StructuredSignal`
 through a host-provided sink. The same dimensions go to traces and structured events. Each emitter is
 bound on first use to one application/build/instance/environment identity; those required identities
-are attached to its Meter instrumentation scope, not to measurement point labels. Point labels contain
-only the optional bounded service name. Actor, workspace, command, run, attempt, resource, and
-correlation identifiers remain trace/log dimensions so they do not create high-cardinality metric series.
+are attached to its Meter instrumentation scope, not to measurement point labels. Measurement points have
+no labels. Actor, workspace, command, run, attempt, resource, and correlation identifiers remain trace/log
+dimensions so they do not create high-cardinality metric series.
 
-The emitter has no caller-supplied event-property bag: it accepts only the closed ambient dimension
-schema, so adding an event cannot smuggle arbitrary prompt, path, request, or secret text into logs or
-trace tags. String dimensions are bounded identifier tokens; actor and resource references must be
-lowercase SHA-256 references, never raw identifiers. Hosts own export configuration and data retention.
+The emitter has no caller-supplied event-property bag or free-form event-name overload: event names and
+operational dimensions use finite enums, and reason codes use the product's registered `ReasonCode` values.
+`SignalApplicationDimension` is only a telemetry vocabulary, not the product identity authority; application
+composition maps its already-trusted product identity to one of the closed values. Build identity is read from
+the actual assembly stamp and checked against the build-policy format. Actor and resource references must be
+fixed-size lowercase SHA-256 references, never raw identifiers; invalid or secret/path-shaped values are
+refused before emission. Hosts own export configuration and data retention.
 
 This project is not currently an admitted package. See the [repository README](../../../README.md)
 for ownership and publication policy.
