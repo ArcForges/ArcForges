@@ -187,6 +187,104 @@ public sealed class RecoveryTests
     }
 
     [Fact]
+    public void EmptyDatabaseRestoresVerifiedSnapshotAndPreservesDatabaseAndOrphanedSidecars()
+    {
+        using var file = new SnapshotFixture();
+        var command = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow()))
+        {
+            store.Write(command);
+            Assert.NotNull(store.CreateSnapshot());
+        }
+
+        var emptyDatabase = Array.Empty<byte>();
+        var orphanedWal = "orphaned WAL evidence"u8.ToArray();
+        File.WriteAllBytes(file.Path, emptyDatabase);
+        File.WriteAllBytes(file.Path + "-wal", orphanedWal);
+
+        using var reopened = new SqliteStore(file.Path, file.Id, new Allow());
+
+        Assert.Equal(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork, reopened.Recovery.Outcome);
+        Assert.True(reopened.Recovery.RequiresSafeStart);
+        Assert.NotNull(reopened.Recovery.EvidencePath);
+        Assert.Equal(emptyDatabase, File.ReadAllBytes(Path.Combine(reopened.Recovery.EvidencePath!, Path.GetFileName(file.Path))));
+        Assert.Equal(orphanedWal, File.ReadAllBytes(Path.Combine(reopened.Recovery.EvidencePath!, Path.GetFileName(file.Path) + "-wal")));
+        Assert.False(File.Exists(file.Path + "-wal"));
+        Assert.Equal(command.Content.Version, reopened.Read(command.AggregateKind, command.AggregateId)!.Version);
+    }
+
+    [Fact]
+    public void EmptyDatabaseWithOrphanedSidecarAndNoSnapshotIsNotSilentlyInitialized()
+    {
+        using var file = new SnapshotFixture();
+        using (new SqliteStore(file.Path, file.Id, new Allow())) { }
+        File.WriteAllBytes(file.Path, Array.Empty<byte>());
+        var orphanedWal = "possibly committed content"u8.ToArray();
+        File.WriteAllBytes(file.Path + "-wal", orphanedWal);
+
+        var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
+
+        Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+        Assert.NotNull(exception.Report.EvidencePath);
+        Assert.Empty(File.ReadAllBytes(file.Path));
+        Assert.Equal(Array.Empty<byte>(), File.ReadAllBytes(Path.Combine(exception.Report.EvidencePath!, Path.GetFileName(file.Path))));
+        Assert.Equal(orphanedWal, File.ReadAllBytes(Path.Combine(exception.Report.EvidencePath!, Path.GetFileName(file.Path) + "-wal")));
+        Assert.Equal(orphanedWal, File.ReadAllBytes(file.Path + "-wal"));
+    }
+
+    [Fact]
+    public void JournalRowsBeyondDurableHighWatermarkAreExcludedFromRecoveryReplay()
+    {
+        using var file = new SnapshotFixture();
+        var first = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        var second = Command(StoreVersion.Native(new(1)), StoreVersion.Native(new(2)), first.AggregateId);
+        var third = Command(StoreVersion.Native(new(2)), StoreVersion.Native(new(3)), first.AggregateId);
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow()))
+        {
+            store.Write(first);
+            Assert.NotNull(store.CreateSnapshot());
+            store.Write(second);
+            store.Write(third);
+        }
+
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = file.Path,
+            Pooling = false
+        }.ToString()))
+        {
+            connection.Open();
+            using var lowerHead = connection.CreateCommand();
+            lowerHead.CommandText = "UPDATE journal_state SET last_sequence=2 WHERE store_id=$store";
+            lowerHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+            Assert.Equal(1, lowerHead.ExecuteNonQuery());
+        }
+
+        using var recovered = new SqliteStore(file.Path, file.Id, new Allow());
+
+        Assert.Equal(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork, recovered.Recovery.Outcome);
+        Assert.True(recovered.Recovery.RequiresSafeStart);
+        Assert.Equal(1, recovered.Recovery.VerifiedThrough);
+        Assert.Equal(2, recovered.Recovery.RecoveredThrough);
+        Assert.Equal(second.Content.Version, recovered.Read(second.AggregateKind, second.AggregateId)!.Version);
+        var retainedTail = Assert.Single(recovered.ReadJournal(new JournalSequence(file.Id, 1), 10));
+        Assert.Equal(2, retainedTail.Sequence.Value);
+        Assert.NotNull(recovered.Recovery.EvidencePath);
+
+        using var evidence = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(recovered.Recovery.EvidencePath!, Path.GetFileName(file.Path)),
+            Pooling = false,
+            Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        evidence.Open();
+        using var orphanedEntry = evidence.CreateCommand();
+        orphanedEntry.CommandText = "SELECT COUNT(*) FROM journal WHERE store_id=$store AND sequence=3";
+        orphanedEntry.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+        Assert.Equal(1L, (long)orphanedEntry.ExecuteScalar()!);
+    }
+
+    [Fact]
     public void NoVerifiedSnapshotLeavesCorruptDatabaseUntouchedAndReportsEvidence()
     {
         using var file = new SnapshotFixture();

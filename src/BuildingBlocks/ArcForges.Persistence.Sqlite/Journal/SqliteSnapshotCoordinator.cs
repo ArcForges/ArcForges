@@ -30,11 +30,14 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
 
     internal StoreRecoveryReport PrepareForOpen()
     {
-        if (!File.Exists(fullDatabasePath))
+        var databaseExists = File.Exists(fullDatabasePath);
+        var databaseIsEmpty = databaseExists && new FileInfo(fullDatabasePath).Length == 0;
+        if (!databaseExists || databaseIsEmpty)
         {
             var hasOrphanedSidecars = SidecarSuffixes.Any(suffix => File.Exists(fullDatabasePath + suffix));
-            var missingDatabaseSnapshot = FindLatestVerifiedSnapshot();
-            if (missingDatabaseSnapshot is null)
+            var snapshot = FindLatestVerifiedSnapshot();
+            var databaseDescription = databaseExists ? "empty" : "missing";
+            if (snapshot is null)
             {
                 if (hasOrphanedSidecars)
                 {
@@ -45,29 +48,32 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
                     { evidenceFailure = exception; }
                     var report = new StoreRecoveryReport(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence,
                         0, 0, preservedSidecarsPath ?? fullDatabasePath + "-wal",
-                        "The owner database is missing but SQLite sidecars remain. They were preserved as evidence; automatic initialization was refused because the sidecars may contain committed content.");
+                        $"The owner database is {databaseDescription} but SQLite sidecars remain. They were preserved as evidence; automatic initialization was refused because the sidecars may contain committed content.");
                     throw new StoreRecoveryException(report, evidenceFailure);
                 }
+                if (databaseIsEmpty)
+                    return new(StoreRecoveryOutcome.Clean, 0, 0, null,
+                        "The empty owner database has no SQLite sidecars or retained snapshot; a new store will be initialized.");
                 return new(StoreRecoveryOutcome.Clean, 0, 0, null,
                     "The owner database does not exist and no retained snapshot is available; a new store will be initialized.");
             }
-            string? orphanEvidencePath = null;
+            string? replacementEvidencePath = null;
             try
             {
-                if (hasOrphanedSidecars) orphanEvidencePath = PreserveEvidence();
-                RestoreSnapshot(missingDatabaseSnapshot, orphanEvidencePath);
+                if (databaseExists || hasOrphanedSidecars) replacementEvidencePath = PreserveEvidence();
+                RestoreSnapshot(snapshot, replacementEvidencePath);
                 var missingReport = new StoreRecoveryReport(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork,
-                    missingDatabaseSnapshot.Through, missingDatabaseSnapshot.Through, orphanEvidencePath,
-                    $"Restored verified sequence {missingDatabaseSnapshot.Through} because the owner database was missing. Work after that checkpoint is unavailable; enter read-first safe start.");
-                DeleteTemporary(missingDatabaseSnapshot.DatabasePath);
+                    snapshot.Through, snapshot.Through, replacementEvidencePath,
+                    $"Restored verified sequence {snapshot.Through} because the owner database was {databaseDescription}. Work after that checkpoint is unavailable; enter read-first safe start.");
+                DeleteTemporary(snapshot.DatabasePath);
                 return missingReport;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or InvalidDataException or InvalidOperationException)
             {
-                DeleteTemporary(missingDatabaseSnapshot.DatabasePath);
+                DeleteTemporary(snapshot.DatabasePath);
                 var missingReport = new StoreRecoveryReport(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence,
-                    missingDatabaseSnapshot.Through, 0, orphanEvidencePath ?? (hasOrphanedSidecars ? fullDatabasePath + "-wal" : null),
-                    $"The owner database is missing and its verified snapshot at sequence {missingDatabaseSnapshot.Through} could not be restored.");
+                    snapshot.Through, 0, replacementEvidencePath ?? (hasOrphanedSidecars ? fullDatabasePath + "-wal" : databaseExists ? fullDatabasePath : null),
+                    $"The owner database was {databaseDescription} and its verified snapshot at sequence {snapshot.Through} could not be restored.");
                 throw new StoreRecoveryException(missingReport, exception);
             }
         }
