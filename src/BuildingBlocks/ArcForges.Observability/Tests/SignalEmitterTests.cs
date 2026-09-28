@@ -147,65 +147,33 @@ public sealed class SignalEmitterTests
     }
 
     [Fact]
-    public void MetricsUseNoPointLabelsAndCarryIdentityInScope()
+    public void MetricsUseOnlyBoundedServicePointLabelsAndCarryIdentityInScope()
     {
         var context = Context() with { Duration = TimeSpan.FromMilliseconds(8), ActorReference = "sha256:" + new string('c', 64), Task = TaskId.New() };
         var expectedInstance = context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
-        var countTags = new HashSet<string>(StringComparer.Ordinal);
-        var durationTags = new HashSet<string>(StringComparer.Ordinal);
-        var scopeTags = new Dictionary<string, object?>(StringComparer.Ordinal);
-        var count = 0L;
-        var duration = 0d;
-        using var listener = new MeterListener
-        {
-            InstrumentPublished = (instrument, meterListener) =>
-            {
-                if (instrument.Meter.Name == SignalEmitter.MeterName
-                    && instrument.Meter.Tags?.Any(tag => tag.Key == "instance.id" && Equals(tag.Value, expectedInstance)) == true)
-                {
-                    foreach (var tag in instrument.Meter.Tags!) scopeTags[tag.Key] = tag.Value;
-                    meterListener.EnableMeasurementEvents(instrument);
-                }
-            },
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
-        {
-            if (instrument.Name == "arcf_signal_count")
-            {
-                count = measurement;
-                CopyTagNames(tags, countTags);
-            }
-        });
-        listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
-        {
-            if (instrument.Name == "arcf_signal_duration")
-            {
-                duration = measurement;
-                CopyTagNames(tags, durationTags);
-            }
-        });
-        listener.Start();
+        var observation = ObserveMetrics(context);
+
+        Assert.Equal(1, observation.Count);
+        Assert.Equal(8, observation.Duration);
+        Assert.Equal(new KeyValuePair<string, object?>("service.name", nameof(SignalService.Storage)),
+            Assert.Single(observation.CountTags));
+        Assert.Equal(new KeyValuePair<string, object?>("service.name", nameof(SignalService.Storage)),
+            Assert.Single(observation.DurationTags));
+        Assert.DoesNotContain("instance.id", observation.CountTags.Keys);
+        Assert.DoesNotContain("build.id", observation.CountTags.Keys);
+        Assert.DoesNotContain("actor.ref", observation.CountTags.Keys);
+        Assert.DoesNotContain("task.id", observation.CountTags.Keys);
+        Assert.Equal(context.ApplicationId, observation.ScopeTags["application.id"]);
+        Assert.Equal(expectedInstance, observation.ScopeTags["instance.id"]);
+        Assert.Equal(context.BuildId, observation.ScopeTags["build.id"]);
+        Assert.Equal(context.Environment.ToString(), observation.ScopeTags["deployment.environment"]);
+        Assert.Equal(4, observation.ScopeTags.Count);
+
         using var emitter = new SignalEmitter(new CapturingSink());
         using (ObservabilityScope.Push(context))
         {
             emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information);
         }
-
-        Assert.Equal(1, count);
-        Assert.Equal(8, duration);
-        Assert.Empty(countTags);
-        Assert.DoesNotContain("instance.id", countTags);
-        Assert.DoesNotContain("build.id", countTags);
-        Assert.DoesNotContain("actor.ref", countTags);
-        Assert.DoesNotContain("task.id", countTags);
-        Assert.Empty(durationTags);
-        Assert.DoesNotContain("service.name", countTags);
-        Assert.Equal(context.ApplicationId, scopeTags["application.id"]);
-        Assert.Equal(expectedInstance, scopeTags["instance.id"]);
-        Assert.Equal(context.BuildId, scopeTags["build.id"]);
-        Assert.Equal(context.Environment.ToString(), scopeTags["deployment.environment"]);
-        Assert.Equal(4, scopeTags.Count);
-
         var differentInstance = new ObservabilityContext(context.Application, new InstanceId(Guid.NewGuid()),
             context.Environment)
         {
@@ -229,6 +197,20 @@ public sealed class SignalEmitterTests
         {
             Assert.Throws<InvalidOperationException>(() => emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information));
         }
+    }
+
+    [Fact]
+    public void MetricsOmitServicePointLabelsWhenServiceIsAbsent()
+    {
+        var context = Context() with { Service = null, Duration = TimeSpan.FromMilliseconds(8) };
+
+        var observation = ObserveMetrics(context);
+
+        Assert.Equal(1, observation.Count);
+        Assert.Equal(8, observation.Duration);
+        Assert.Empty(observation.CountTags);
+        Assert.Empty(observation.DurationTags);
+        Assert.Equal(4, observation.ScopeTags.Count);
     }
 
     [Fact]
@@ -277,13 +259,61 @@ public sealed class SignalEmitterTests
         Service = SignalService.Storage,
     };
 
-    private static void CopyTagNames(ReadOnlySpan<KeyValuePair<string, object?>> tags, HashSet<string> destination)
+    private static MetricObservation ObserveMetrics(ObservabilityContext context)
     {
-        foreach (var tag in tags)
+        var expectedInstance = context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
+        var countTags = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var durationTags = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var scopeTags = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var count = 0L;
+        var duration = 0d;
+        using var listener = new MeterListener
         {
-            destination.Add(tag.Key);
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == SignalEmitter.MeterName
+                    && instrument.Meter.Tags?.Any(tag => tag.Key == "instance.id" && Equals(tag.Value, expectedInstance)) == true)
+                {
+                    foreach (var tag in instrument.Meter.Tags!) scopeTags[tag.Key] = tag.Value;
+                    meterListener.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Name == "arcf_signal_count")
+            {
+                count = measurement;
+                CopyTags(tags, countTags);
+            }
+        });
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Name == "arcf_signal_duration")
+            {
+                duration = measurement;
+                CopyTags(tags, durationTags);
+            }
+        });
+        listener.Start();
+        using (var emitter = new SignalEmitter(new CapturingSink()))
+        using (ObservabilityScope.Push(context))
+        {
+            emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information);
         }
+
+        return new MetricObservation(count, duration, countTags, durationTags, scopeTags);
     }
+
+    private static void CopyTags(ReadOnlySpan<KeyValuePair<string, object?>> tags,
+        Dictionary<string, object?> destination)
+    {
+        foreach (var tag in tags) destination.Add(tag.Key, tag.Value);
+    }
+
+    private sealed record MetricObservation(long Count, double Duration,
+        Dictionary<string, object?> CountTags, Dictionary<string, object?> DurationTags,
+        Dictionary<string, object?> ScopeTags);
 
     private static void Validate(ObservabilityContext context)
     {

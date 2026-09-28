@@ -6,7 +6,8 @@ namespace ArcForges.Observability;
 
 /// <summary>
 /// The single emission surface for metrics, traces, and structured events. High-cardinality identifiers
-/// are attached to traces/events and instrumentation-scope identity; metric point labels are empty.
+/// are attached to traces/events and instrumentation-scope identity; metrics use only the optional,
+/// closed-vocabulary service dimension as a point label.
 /// </summary>
 public sealed class SignalEmitter : IDisposable
 {
@@ -57,10 +58,16 @@ public sealed class SignalEmitter : IDisposable
                 }
             }
 
-            metrics.SignalCount.Add(1);
+            TagList metricTags = default;
+            if (context.Service is { } service)
+            {
+                metricTags.Add("service.name", service.ToString());
+            }
+
+            metrics.SignalCount.Add(1, in metricTags);
             if (context.Duration is { } duration)
             {
-                metrics.SignalDuration.Record(duration.TotalMilliseconds);
+                metrics.SignalDuration.Record(duration.TotalMilliseconds, in metricTags);
             }
 
             _sink.Write(signal);
