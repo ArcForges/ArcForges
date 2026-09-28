@@ -17,7 +17,7 @@
     <None Update="Fixtures/contributions.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="VerifyContributionCatalogFixture" BeforeTargets="CoreCompile">
-    <Exec Command="python &quot;$(MSBuildProjectDirectory)\tools\emit_catalog.py&quot; --verify-drift --input &quot;$(MSBuildProjectDirectory)\Fixtures\contributions.json&quot;" />
-    <Exec Command="python &quot;$(MSBuildProjectDirectory)\tools\emit_catalog.py&quot; --check --input &quot;$(MSBuildProjectDirectory)\Fixtures\contributions.json&quot; --output &quot;$(MSBuildProjectDirectory)\Generated\ContributionCatalog.g.cs&quot;" />
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)/tools/emit_catalog.py&quot; --verify-drift --input &quot;$(MSBuildProjectDirectory)/Fixtures/contributions.json&quot;" />
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)/tools/emit_catalog.py&quot; --check --input &quot;$(MSBuildProjectDirectory)/Fixtures/contributions.json&quot; --output &quot;$(MSBuildProjectDirectory)/Generated/ContributionCatalog.g.cs&quot;" />
   </Target>
 </Project>

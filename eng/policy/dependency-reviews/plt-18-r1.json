@@ -192,7 +192,7 @@
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
       "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj": "425a68784362a47d01fc14de12c9acb8a6ac0b61d2ecdbcd42c2140bd6e062fa",
-      "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj": "34b4e06885c8366155b9d293aee01f443507d723c8a89f63c6e1d40569f441e4",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj": "fa29f3b8c84f80eef414926739f81f696c7be205b27e0b6da0463f52eace587c",
       "src/BuildingBlocks/ArcForges.Contributions/Tests/packages.lock.json": "9a910ee9362d2218b186ea55d8a0c7d92843446fa8ee95ae5553a8baef9ed506",
       "src/BuildingBlocks/ArcForges.Contributions/packages.lock.json": "b1cec678261c9def6a97de5bf36bb2e5528d8eff537c10afbde2718cadb5122a",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
