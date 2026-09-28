@@ -1,25 +1,27 @@
 {
   "review": {
     "owner": "af-20260928-p05",
-    "reviewer": "af-20260928-p05 (PLT.47 owner; dependency-input lineage only, separate from platform_ui source review)",
+    "reviewer": "af-20260928-p05 (PLT.47 dependency-input lineage only; independent source review requested separately)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "f23e621612e86ef2957dd43140e694ba15e713db",
-    "maintenanceAssessment": "PLT.47 completes the already-present non-packable Observability library and adds a nested offline test project. The library references Foundation only for typed IDs; telemetry application/service dimensions use a closed local vocabulary and add no Capabilities dependency. No third-party package or version is added. GOV.12 is retained as the prior dependency-input receipt in this refreshed lineage. Existing Foundation/protobuf/xunit licence, maintenance, provenance, audit, and publication boundaries remain unchanged.",
+    "baselineCommit": "19635a2dd205184fd89b7e7992ab24228cf23021",
+    "maintenanceAssessment": "PLT.47 completes the existing non-packable Observability library and adds its nested offline test project. The library references Foundation only for typed IDs; telemetry application/service dimensions use the closed local vocabulary and add no Capabilities dependency. No package coordinate or version is added. This immutable successor follows the currently active nat-06-r1 receipt and preserves the existing dependency closure and evidence.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 locked restore, formatting, full Release solution build, and eight offline tests were previously validated; they are being rerun on the rebased exact head, with hosted CI authoritative for the full platform matrix.",
-      "aot-trim": "Trim and AOT analyzers remain warnings-as-errors. The signal pipeline uses static BCL APIs; no NativeAOT publish execution is claimed.",
-      "compatibility": "No Contracts wire change or package publication. Typed Foundation IDs are reused; absent dimensions remain omitted.",
-      "licence-provenance": "New code and tests are AGPL-3.0-only first-party material. No third-party closure or package allowlist changes.",
-      "security-sbom": "All restored package versions already exist in the reviewed closure; NuGet audit and locked restore remain enabled. No suppression or current-vulnerability-absence claim.",
-      "runtime-performance-migration": "Eight deterministic offline tests cover dimension completeness/absence, ambient scoping, zero metric point-label cardinality, build identity and secret/path refusal. No benchmark, live exporter, service, or migration claim.",
-      "framework-runtime-posture": "No SDK pin, target framework, native ABI, Android, Kotlin, or runtime change. Official CI retains its existing SDK 10.0.400 selection."
+      "compilation": "Exact-base validation is pending on this rebased candidate: pinned SDK 10.0.400 locked restore, format verification, full Release solution build, focused observability tests, and hosted CI are required; no new-base pass is claimed.",
+      "aot-trim": "No AOT or trim behavior/configuration change is intended. Existing AOT/trim analyzers and hosted platform checks remain required; no new-base execution is claimed.",
+      "compatibility": "No Contracts wire or published package identity change. The library reuses typed Foundation IDs; optional dimensions remain omitted when absent.",
+      "licence-provenance": "PLT.47 adds first-party source and offline tests under the existing AGPL-3.0-only boundary. No third-party coordinate, licence, or nuspec evidence changes; exact-base provenance validation remains required.",
+      "security-sbom": "No external component, version, checksum, or package admission is added. Locked restore and existing dependency/security gates remain required; no advisory-absence claim is made.",
+      "runtime-performance-migration": "Offline tests cover signal dimensions, async ambient scoping, metric cardinality, build identity, and secret/path refusal. No live exporter, service, migration, benchmark, or product performance claim is made.",
+      "framework-runtime-posture": "No SDK pin, target framework, native ABI, Android/Kotlin, or runtime change. global.json remains pinned to SDK 10.0.400."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
+      "Directory.Packages.props": "5ff72ff261c1b91e2351289a069d1a48be8c2a1e8000c7bae918d3c82718229f",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+      "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
+      "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
       "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
       "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
       "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
@@ -177,6 +179,9 @@
       "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
       "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
       "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+      "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
+      "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
+      "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
       "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
       "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
       "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
@@ -191,6 +196,10 @@
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
       "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+      "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj": "425a68784362a47d01fc14de12c9acb8a6ac0b61d2ecdbcd42c2140bd6e062fa",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj": "fa29f3b8c84f80eef414926739f81f696c7be205b27e0b6da0463f52eace587c",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/packages.lock.json": "9a910ee9362d2218b186ea55d8a0c7d92843446fa8ee95ae5553a8baef9ed506",
+      "src/BuildingBlocks/ArcForges.Contributions/packages.lock.json": "b1cec678261c9def6a97de5bf36bb2e5528d8eff537c10afbde2718cadb5122a",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -211,6 +220,10 @@
       "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
       "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "3d6a0b8c73585ec0c6474b5eb13b05f1236830cf4b7375ca8e42cad55f9ce4aa",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "9392f220cd4732d5b7d0eb4a5812ac21ad8eb4711db6baef43f4cae116c519b7",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "6970e010c5ebf13723b0384730a3ff37cca8ef0e4794fc9b61c96f0f8ce0df4f",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
@@ -236,24 +249,17 @@
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
-      "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
-      "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
+      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
+      "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
+      "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
+      "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
       "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
       "tests/PersistenceTests/packages.lock.json": "d6f3ae15139d57bb69f878c15f3e66977726c828a9a9fab9b5d13eaa2c48708b"
     },
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov-12-r1.json",
-    "namingToolCandidate": {
-      "package": "ArcForges.Contracts.Validation",
-      "version": "1.0.0-ci.205.1",
-      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
-      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
-      "licence": "Apache-2.0",
-      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
-      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
-    }
+    "previousReceipt": "eng/policy/dependency-reviews/nat-06-r1.json"
   },
   "nugetClosure": {
     "arcforges.application.abstractions/1.0.0-ci.29.1": {
@@ -275,6 +281,32 @@
       "nuspecSha256": "7726a233f9ce81c4373a2ab9423c33d566b919bb2cb90d2b5577cf844bbbbfc4",
       "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.113.1/arcforges.contracts.foundation.nuspec",
       "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "arcforges.contracts.foundation/1.0.0-ci.216.1": {
+      "contentHash": "+RGxNiaoOBt+j2IOSpUa2WWD4Bnkk8Ten7jbOVFwdUVF8jUQRCCvAGhrPTzZpnr6Sk5MSoA95+pJYgN8T+jEtg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "b2704457f3245e4c44200ed4e8dd87054a81cbe53faa31cd384aad92db78839e",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.216.1/arcforges.contracts.foundation.nuspec",
+      "classification": "Exact CON.05 Foundation candidate consumed only by the PRF.04 non-packable AOT probe; source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.contracts.localrpc.platform/1.0.0-ci.216.1": {
+      "contentHash": "TdmfXUx/V6ImX9AijHou/1pzwWfQPOid3pHR2OnYNDPXj7IxylfUmiDzSIrhwaJKXTgxM3UpuAiiNJxnqjZB2A==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2e9af7a67637cdff08601ce3fb2d20a445fd34c7d535dc4d3508ff10bc9a3c1b",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.localrpc.platform/1.0.0-ci.216.1/arcforges.contracts.localrpc.platform.nuspec",
+      "classification": "Exact CON.05 generated LocalRpc producer consumed only by the PRF.04 non-packable AOT probe; source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
     },
     "arcforges.foundation/1.0.0-ci.29.1": {
       "contentHash": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==",
@@ -302,6 +334,34 @@
       "nuspecSha256": "d6a4a567ce4889e25d098fd39d13a65ce05c847e8574818edc0d1eee6277eb40",
       "source": "https://api.nuget.org/v3-flatcontainer/google.protobuf/3.36.1/google.protobuf.nuspec",
       "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "grpc.aspnetcore.server/2.83.0": {
+      "contentHash": "rWeSaXaSPIIerc82lhHKqmzlp/sgLnG+Zw1c3YEEVp/un+hJKPxJOXWuGUOS2cs3EvcZBZ2tliXsnAg5Mdk2Ew==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "b9a51de789abe619de7ee4bb9ec9f30452c4bca13d514e53ac574a0bb96116e3",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.aspnetcore.server/2.83.0/grpc.aspnetcore.server.nuspec",
+      "classification": "Exact permitted gRPC ASP.NET Core server candidate; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.core.api/2.84.0": {
+      "contentHash": "p2SOMl6q/GZ4/5MLkgboC/z55g4zKUEruRn/g46QgppjQBVnsLZVBU/9VO7n60ll38G3Eo8Zu9b7x+W01GKFVg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "bba00f5d5be8423dd351662e313648b0abd13100ef67d55f6fc29de44c544a96",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.core.api/2.84.0/grpc.core.api.nuspec",
+      "classification": "Exact CON.05 transitive and permitted gRPC client candidate dependency; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.net.client/2.84.0": {
+      "contentHash": "My6Fms2YCyAbihTBZZ3kLS39iTY2pkMAzGDBTC6XhPOujg70eB07AEJ7tPiW3tZ70bhFzHcc3+d4j3DaIPF3aA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "32a43f3448ab90bb71c946533db4d5135cef4728a3ee29bf88d9a0cbf1e67413",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.client/2.84.0/grpc.net.client.nuspec",
+      "classification": "Exact permitted gRPC .NET client candidate; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.net.common/2.84.0": {
+      "contentHash": "DPxm/H8G/lDRrz997wM0M2zN/PGqVeZKDakhBbtABEbv6WIW4HI9g3BvntBQT6ZUROuGacMzfyyF9e5kiTVFfQ==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "f621aa566e63340b572a4f0bd2b996b934407c77b8cdf121f38578e93ee796cb",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.common/2.84.0/grpc.net.common.nuspec",
+      "classification": "Exact shared gRPC transport dependency selected by the permitted server/client candidates; used by the non-packable PRF.04 AOT proof only."
     },
     "microsoft.applicationinsights/2.23.0": {
       "contentHash": "nWArUZTdU7iqZLycLKWe0TDms48KKGE6pONH2terYNa8REXiqixrMOkf1sk5DHGMaUTqONU2YkS4SAXBhLStgw==",
@@ -554,6 +614,34 @@
       "nuspecSha256": "c0407f2bfbba8b98dfc27d55a8707c47afffa3debf66b1b562aba818159f43e8",
       "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3/4.0.1/xunit.v3.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "avalonia.buildservices/11.3.2": {
+      "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
+      "licence": "MIT",
+      "nuspecSha256": "a8846537f7d074b8f9ed753c03678128c36bd046939ee245fad8c575a7cd3e9b",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.buildservices/11.3.2/avalonia.buildservices.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia.remote.protocol/12.1.3": {
+      "contentHash": "HcF69DKyihgg5coLOSp7GTqxQvWAy58LMKauwcHA28uSBJVwu0h5+gTNdJA8Sn/nqJVTRDU98zYsk6i1QSwDVQ==",
+      "licence": "MIT",
+      "nuspecSha256": "4c0cd5ec137d2a376bab20e62bb2cbbdc9b71ffcb044acf41adeaf25cf5025b1",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.remote.protocol/12.1.3/avalonia.remote.protocol.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia/12.1.3": {
+      "contentHash": "l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==",
+      "licence": "MIT",
+      "nuspecSha256": "8fd64a84c229548a71e61390f4a310219f50529af0ee53162ffd39e7874ff4dc",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia/12.1.3/avalonia.nuspec",
+      "classification": "Build-only verification dependency for the isolated PRF.09 Native AOT probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "microcom.runtime/0.11.6": {
+      "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ==",
+      "licence": "MIT",
+      "nuspecSha256": "c7aeab4b73acdba3bb8e66865c2bbe67566b8593d972be2089181344adef345f",
+      "source": "https://api.nuget.org/v3-flatcontainer/microcom.runtime/0.11.6/microcom.runtime.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
     }
   },
   "pythonClosure": {
