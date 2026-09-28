@@ -13,8 +13,8 @@ The project file explicitly declares its existing AGPL-3.0-only licence and AGPL
 
 Run date: 2026-09-28 UTC
 
-Implementation revision: `a7a791e97722aa4e248a7cd904b83f050c1629b2`
-Base: DesktopPlatform `main` at `f23e621612e86ef2957dd43140e694ba15e713db`
+Implementation revision: `80698e81eb4aea5c971f731e22f7c282ae12f46d`
+Base: DesktopPlatform `main` at `3f9a226779b9196ad3e3f1746f549b9a38eec456` (PLT.03 snapshot-recovery provenance preserved)
 Machine: Windows 11 Pro for Workstations, version `10.0.26200`, build `26200`, 64-bit
 Pinned SDK: .NET SDK `10.0.400` (`C:\Users\J7Rdm\.dotnet\dotnet.exe`)
 Runtime ID: `win-x64`
@@ -29,17 +29,17 @@ python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-2026
 python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- artifacts/prf-04/win-x64/LocalRpcAotTests.exe
 ```
 
-All three commands exited `0`. The published win-x64 Native AOT executable completed the two-process named-pipe probe, including retaining owner A and its owner session while B restarted as B2 at the same endpoint:
+All five commands exited `0`. The published win-x64 Native AOT executable completed the two-process named-pipe probe, including retaining owner A and its owner session while B restarted as B2 at the same endpoint:
 
 ```text
-PASS: retained owner session completed bidirectional LocalBootstrap, OS-bound peer identity, concurrent/fenced/expiry renewal, cancellation, malformed-input, same-user spoof refusal, reconnect and bounded-message checks.
-Evidence: pipe; owner process 36204 / instance 57FCFE92E1584D5FAAA5DEEE18C5B5A0; peer restarted 8300 / instance B0E43A4070224D25A0515DC9029B0463; owner session 68649038e475471da40790f03b18673f.
+PASS: retained owner session completed bidirectional LocalBootstrap, OS-bound peer identity, concurrent/fenced/expiry renewal, cancellation, malformed-input recovery, same-user spoof refusal, PID-reuse-tolerant reconnect and bounded-message checks.
+Evidence: pipe; owner process 36280 / instance 5E8FAA167AD54AB0ABC3375B570C1E62; peer restarted 33104 / instance FE4E40B706DE42E3A88659C738146180; PID equality is allowed and B2 is rebound by a fresh instance/launch tuple; owner session a946a9c996334244b22aea2d7db772ac.
 ```
 
-The server binds the expected named-pipe client PID using `GetNamedPipeClientProcessId` on the accepted pipe handle; the connecting process observes the server PID using `GetNamedPipeServerProcessId`. The immutable test launch nonce and installation ID are provisioned through private inherited stdin, and caller claims are checked against OS-observed PID plus the parent-provisioned instance/installation/launch tuple. A same-user rogue child receives the real test secret but claims a different PID/instance and is refused. No generated contract DTO was changed.
+The server binds the expected named-pipe client PID using `GetNamedPipeClientProcessId` on the accepted pipe handle; the connecting process observes the server PID using `GetNamedPipeServerProcessId`. The immutable test launch nonce and installation ID are provisioned through private inherited stdin, and caller claims are checked against OS-observed PID plus the parent-provisioned instance/installation/launch tuple. A same-user rogue child receives the real test secret but claims a different PID/instance and is refused. Reattach preserves installation identity but rotates the instance ID and one-use launch nonce; equal or different OS PIDs are both accepted only when the fresh tuple is authenticated. No generated contract DTO was changed.
 
 Lease renewal is serialized against current lease ID, epoch, fence, and expiry in the test service. Concurrent renewal attempts and a barrier-controlled expiry-boundary race are exercised. The reattach check keeps A and its owner session alive, observes B's old lease/channel become unusable, starts B2 with a new process and instance identity, then authenticates B2 through the retained A session. These are test-fixture proofs only; they do not claim a production lease/session service.
 
-This run used Kestrel HTTP/2 over Windows named pipes with `CurrentUserOnly=true`; no TCP listener was configured. A one-byte malformed protobuf was rejected with bounded, sanitized status metadata before generated service dispatch, the connection recovered for a normal generated challenge, and the over-limit request was rejected at the configured 4 MiB receive bound. The private probe harness passed the one-use bootstrap secret only over inherited process stdin and kept it out of arguments and output.
+This run used Kestrel HTTP/2 over Windows named pipes with `CurrentUserOnly=true`; no TCP listener was configured. The authorized owner sent a one-byte raw malformed protobuf and then, on the same `GrpcChannel`, successfully completed the normal generated `Challenge`/`Confirm` admission using its parent-provisioned peer identity and launch nonce. The server dispatch counter proved the malformed request did not reach generated service dispatch while the following valid challenge dispatched exactly once. Bounded, sanitized refusal metadata and the configured 4 MiB receive bound were also checked. The private probe harness passed the one-use bootstrap secret only over inherited process stdin and kept it out of arguments and output.
 
 Linux and macOS runtime execution was not performed on this Windows machine and is not claimed here. Hosted CI compiles/publishes its permitted Linux and Windows targets but does not claim or perform hosted runtime acceptance.
