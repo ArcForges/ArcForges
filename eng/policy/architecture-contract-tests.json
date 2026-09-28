@@ -938,5 +938,40 @@
     "apiSymbol": "ArcForges.Persistence.Derived.StoragePressureEvictionPolicy.ExecuteAsync(ArcForges.Persistence.Derived.DerivedEvictionPlan, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
     "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EvictionLocksEveryPlannedStoreBeforeValidationAndSerializesUsageUpdates()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionInput.Capture(ArcForges.Security.InstructionOrigin, string, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.EveryInstructionOriginIsMarkedAndInjectionContentCannotAuthorizeAlone()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionInput.Capture(ArcForges.Security.InstructionOrigin, string, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.InstructionCaptureRejectsMissingOrMalformedProvenance()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionSnapshot.Encode(ArcForges.Security.InstructionInput)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.InstructionSnapshotPreservesUntrustedMarkAndActorChainAcrossBoundary()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionSnapshot.Encode(ArcForges.Security.InstructionInput)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.SnapshotWritersBoundRawAndEscapedPayloadsBeforeGrowingPastTheirBudget()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionSnapshot.Decode(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.InstructionSnapshotPreservesUntrustedMarkAndActorChainAcrossBoundary()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionSnapshot.Decode(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.InstructionSnapshotRejectsUnmarkedUnknownDuplicateAndChangedContent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.InstructionSnapshot.Decode(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ActorChainTests.SnapshotWritersBoundRawAndEscapedPayloadsBeforeGrowingPastTheirBudget()"
   }
 ]
