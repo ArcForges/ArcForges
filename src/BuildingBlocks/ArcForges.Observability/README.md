@@ -14,9 +14,10 @@ traces and structured events. Metric labels are deliberately restricted to appli
 environment, and service identity: actor, workspace, command, run, attempt, resource, and correlation
 identifiers remain trace/log dimensions so they do not create high-cardinality metric series.
 
-Resource references passed through this surface must already be redacted. Event fields are typed
-scalars, not preformatted sentences; fields that describe secret material, credentials, tokens, raw
-content, or request payloads are rejected. Hosts own export configuration and data retention.
+The emitter has no caller-supplied event-property bag: it accepts only the closed ambient dimension
+schema, so adding an event cannot smuggle arbitrary prompt, path, request, or secret text into logs or
+trace tags. String dimensions are bounded identifier tokens; actor and resource references must be
+lowercase SHA-256 references, never raw identifiers. Hosts own export configuration and data retention.
 
 This project is not currently an admitted package. See the [repository README](../../../README.md)
 for ownership and publication policy.

@@ -14,15 +14,15 @@ public sealed record ObservabilityContext
 {
     public ObservabilityContext(string applicationId, InstanceId instanceId, string buildId, string environment)
     {
-        ApplicationId = RequireText(applicationId, nameof(applicationId));
+        ApplicationId = RequireToken(applicationId, nameof(applicationId));
         if (instanceId.Value == Guid.Empty)
         {
             throw new ArgumentException("A non-empty instance identity is required.", nameof(instanceId));
         }
 
         InstanceId = instanceId;
-        BuildId = RequireText(buildId, nameof(buildId));
-        Environment = RequireText(environment, nameof(environment));
+        BuildId = RequireToken(buildId, nameof(buildId));
+        Environment = RequireToken(environment, nameof(environment));
     }
 
     public string ApplicationId { get; }
@@ -30,6 +30,7 @@ public sealed record ObservabilityContext
     public string BuildId { get; }
     public string Environment { get; }
 
+    /// <summary>SHA-256 reference only; human-readable actor identity is not a signal dimension.</summary>
     public string? ActorReference { get; init; }
     public WorkspaceId? Workspace { get; init; }
     public string? Transport { get; init; }
@@ -37,7 +38,7 @@ public sealed record ObservabilityContext
     public string? Interface { get; init; }
     public string? Method { get; init; }
     public string? Capability { get; init; }
-    /// <summary>Must already be redacted; raw resource identifiers are never accepted by this API.</summary>
+    /// <summary>Must be a SHA-256 reference; raw resource identifiers are never accepted by this API.</summary>
     public string? RedactedResourceReference { get; init; }
     public CommandId? Command { get; init; }
     public TaskId? Task { get; init; }
@@ -112,11 +113,30 @@ public sealed record ObservabilityContext
         return values;
     }
 
-    private static string RequireText(string value, string parameterName)
+    private static string RequireToken(string value, string parameterName)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 256)
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 128 || value.Any(character =>
+                !(character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-' or '+' or ':')))
         {
-            throw new ArgumentException("A non-empty value of at most 256 characters is required.", parameterName);
+            throw new ArgumentException("A bounded identifier token is required; free-form text is not accepted.", parameterName);
+        }
+
+        return value;
+    }
+
+    private static string RequireHashReference(string value, string parameterName)
+    {
+        if (value.Length != 71 || !value.StartsWith("sha256:", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("A lowercase SHA-256 reference is required; raw identifiers are not accepted.", parameterName);
+        }
+
+        foreach (char character in value.AsSpan(7))
+        {
+            if (character is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
+            {
+                throw new ArgumentException("A lowercase SHA-256 reference is required; raw identifiers are not accepted.", parameterName);
+            }
         }
 
         return value;
@@ -144,7 +164,7 @@ public sealed record ObservabilityContext
     {
         if (value is not null)
         {
-            values.Add(name, RequireText(value, name));
+            values.Add(name, name is "actor.ref" or "resource.ref" ? RequireHashReference(value, name) : RequireToken(value, name));
         }
     }
 

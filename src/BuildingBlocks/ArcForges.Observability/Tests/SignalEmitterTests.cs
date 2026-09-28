@@ -16,14 +16,14 @@ public sealed class SignalEmitterTests
     {
         var context = new ObservabilityContext("arcscope", new InstanceId(Guid.NewGuid()), "local.0123456789abcdef", "test")
         {
-            ActorReference = "actor-hash-1",
+            ActorReference = "sha256:" + new string('a', 64),
             Workspace = new WorkspaceId(Guid.NewGuid()),
             Transport = "local-rpc",
             Service = "storage",
             Interface = "IStore",
             Method = "Commit",
             Capability = "resource.write",
-            RedactedResourceReference = "resource-hash-1",
+            RedactedResourceReference = "sha256:" + new string('b', 64),
             Command = new CommandId(Guid.NewGuid()),
             Task = TaskId.New(),
             Run = RunId.New(),
@@ -54,13 +54,10 @@ public sealed class SignalEmitterTests
 
         using (ObservabilityScope.Push(context))
         {
-            var signal = emitter.Emit("store.commit", SignalLevel.Information,
-                new Dictionary<string, object?> { ["record.count"] = 3, ["replayed"] = false });
+            var signal = emitter.Emit("store.commit", SignalLevel.Information);
 
             Assert.Same(signal, sink.Signal);
             Assert.Equal("store.commit", signal.Name);
-            Assert.Equal(3, signal.Properties["record.count"]);
-            Assert.Equal(false, signal.Properties["replayed"]);
         }
 
         Assert.NotNull(stopped);
@@ -70,7 +67,7 @@ public sealed class SignalEmitterTests
             "transport", "service.name", "interface.name", "method.name", "capability.name", "resource.ref",
             "command.id", "task.id", "run.id", "attempt.id", "correlation.id", "causation.id",
             "expected.revision", "result.revision", "duration.ms", "queue.time.ms", "result.code", "reason.code",
-            "native.abi.version", "native.abi.build", "reconnect.count", "sequence.gap.count", "record.count", "replayed",
+            "native.abi.version", "native.abi.build", "reconnect.count", "sequence.gap.count",
         };
         foreach (var key in expected)
         {
@@ -178,7 +175,7 @@ public sealed class SignalEmitterTests
             }
         });
         listener.Start();
-        var context = Context() with { Duration = TimeSpan.FromMilliseconds(8), ActorReference = "actor-unique", Task = TaskId.New() };
+        var context = Context() with { Duration = TimeSpan.FromMilliseconds(8), ActorReference = "sha256:" + new string('c', 64), Task = TaskId.New() };
 
         using (ObservabilityScope.Push(context))
         {
@@ -198,18 +195,20 @@ public sealed class SignalEmitterTests
     }
 
     [Fact]
-    public void StructuredFieldsRejectSensitiveNamesCollisionsAndComplexPayloads()
+    public void SignalEmitterHasNoCallerPropertyBagAndRejectsMarkerContent()
     {
         using var scope = ObservabilityScope.Push(Context());
         var emitter = new SignalEmitter(new CapturingSink());
-
-        Assert.Throws<ArgumentException>(() => emitter.Emit("secret.used", SignalLevel.Information,
-            new Dictionary<string, object?> { ["access.token"] = "never-log-this" }));
-        Assert.Throws<ArgumentException>(() => emitter.Emit("secret.used", SignalLevel.Information,
-            new Dictionary<string, object?> { ["application.id"] = "other" }));
-        Assert.Throws<ArgumentException>(() => emitter.Emit("secret.used", SignalLevel.Information,
-            new Dictionary<string, object?> { ["items"] = new object() }));
+        Assert.Equal(2, typeof(SignalEmitter).GetMethod(nameof(SignalEmitter.Emit))!.GetParameters().Length);
         Assert.Throws<ArgumentException>(() => emitter.Emit("Secret Used", SignalLevel.Information));
+
+        const string marker = "[[SECRET-CANARY]] prompt=/home/user/private.txt access_token=never-log-this";
+        Assert.Throws<ArgumentException>(() => ObservabilityScope.Push(Context() with { Method = marker }));
+        Assert.Throws<ArgumentException>(() => ObservabilityScope.Push(Context() with { ActorReference = marker }));
+        Assert.Throws<ArgumentException>(() => ObservabilityScope.Push(Context() with { RedactedResourceReference = marker }));
+
+        var emitted = emitter.Emit("secret.used", SignalLevel.Information);
+        Assert.DoesNotContain("SECRET-CANARY", string.Join("|", emitted.Properties.Values), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -219,6 +218,8 @@ public sealed class SignalEmitterTests
         Assert.Throws<ArgumentOutOfRangeException>(() => Validate(Context() with { Duration = TimeSpan.FromMilliseconds(-1) }));
         Assert.Throws<ArgumentOutOfRangeException>(() => Validate(Context() with { SequenceGapCount = -1 }));
         Assert.Throws<ArgumentException>(() => Validate(Context() with { Correlation = new CorrelationId(Guid.Empty) }));
+        Assert.Throws<ArgumentException>(() => new ObservabilityContext("/var/tmp/token=marker", new InstanceId(Guid.NewGuid()), "build-17", "test"));
+        Assert.Throws<ArgumentException>(() => new ObservabilityContext("arcscope", new InstanceId(Guid.NewGuid()), "build prompt has secret", "test"));
     }
 
     private static ObservabilityContext Context() => new("arcscope", new InstanceId(Guid.NewGuid()), "build-17", "test")
