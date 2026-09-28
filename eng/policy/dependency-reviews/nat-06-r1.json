@@ -3,10 +3,10 @@
     "owner": "af-20260928-c02",
     "reviewer": "af-20260928-p03",
     "reviewedOn": "pending",
-    "baselineCommit": "a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3",
-    "maintenanceAssessment": "NAT.06 adds only the authorized ProjectReference from NativeAbiTests to the existing ArcForges.Native.Abstractions project and its project-only lock entry. This immutable successor follows the active PLT.07 receipt and preserves exactly the current 51 NuGet coordinates/content hashes/licences/source evidence and the unchanged 10-package Python closure. It introduces no PackageReference, package coordinate or version, licence, framework selection, package identity change, or production/runtime dependency edge. The only dependency inputs changed are tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj and tests/NativeAbiTests/packages.lock.json; the ProjectReference is required to compile the authorized managed common-ABI layout tests.",
+    "baselineCommit": "a2c36acfef24e3cbbc1b44ec0a013114b0aec38b",
+    "maintenanceAssessment": "NAT.06 adds only the authorized ProjectReference from NativeAbiTests to the existing ArcForges.Native.Abstractions project and its project-only lock entry. This immutable successor follows the currently active nat-03-r1 receipt, preserving NAT.03 -> PLT.07 -> PRF.09 history and the exact current 51 NuGet coordinates/content hashes/licences/source evidence plus the unchanged 10-package Python closure. It introduces no PackageReference, package coordinate or version, licence, framework selection, package identity change, or production/runtime dependency edge. Only the two existing NativeAbiTests csproj/packages.lock.json input hashes change for this task; the project-only lock entry is required to compile the authorized managed common-ABI layout tests.",
     "upgradeChecks": {
-      "compilation": "After rebasing on DesktopPlatform main a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3, exact C17 and C++20 syntax-only declaration/layout test translation units pass with MSVC /W4 /WX. The earlier pre-rebase pinned SDK 10.0.400 locked restore, Windows shim-static CMake build/install, CTest 2/2, filtered managed layout tests 3/3 and Native.Abstractions package creation passed; full current-base native/managed/policy gates and hosted CI remain pending.",
+      "compilation": "Before the final rebase onto current DesktopPlatform main a2c36acf, exact C17 and C++20 syntax-only declaration/layout test translation units passed with MSVC /W4 /WX; the earlier pinned SDK 10.0.400 locked restore, Windows shim-static CMake build/install, CTest 2/2, filtered managed layout tests 3/3 and Native.Abstractions package creation also passed. Full post-rebase ABI/native/managed/policy gates and hosted CI are pending and will be recorded after they run.",
       "aot-trim": "Only the non-packable NativeAbiTests test project references the existing Native.Abstractions project. No runtime package or AOT configuration changes; existing AOT/trim gates remain required and no new AOT result is claimed.",
       "compatibility": "No PackageReference, package identity/version, package inventory, or production/runtime project edge is added. The NativeAbiTests ProjectReference exists only for managed common ABI layout assertions. Existing image probe exports/signatures/identity and ABI minor 0 remain unchanged; the ABI 1.1 family declarations are compile-time declarations only, not implemented or advertised exports.",
       "licence-provenance": "No dependency coordinate, content hash, licence, nuspec evidence, or Python closure changes. NAT.06 source/test paths and the immutable successor receipt are first-party provenance entries; current-base provenance and licence gates remain required.",
@@ -20,6 +20,8 @@
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
       "Directory.Packages.props": "5ff72ff261c1b91e2351289a069d1a48be8c2a1e8000c7bae918d3c82718229f",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+      "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
+      "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
       "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
       "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
       "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
@@ -255,7 +257,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-07-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-03-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
