@@ -129,6 +129,14 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
       "kind": "msbuild"
     },

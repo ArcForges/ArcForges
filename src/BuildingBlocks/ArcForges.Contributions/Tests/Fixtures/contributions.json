@@ -1,0 +1,36 @@
+{
+  "catalogs": [
+    {
+      "className": "ArcScopeFixtureCatalog",
+      "ownerProductId": "arcscope",
+      "contributions": [
+        {
+          "id": "arcscope.extension.example.item",
+          "kind": "Capability",
+          "toolSchemaId": "arcscope.extension.example.input.v1"
+        },
+        {
+          "id": "arcscope.session.compare",
+          "kind": "Capability",
+          "toolSchemaId": "arcscope.session.compare.input.v1"
+        },
+        {
+          "id": "arcscope.session.open",
+          "kind": "Action",
+          "toolSchemaId": null
+        }
+      ]
+    },
+    {
+      "className": "CompanionFixtureCatalog",
+      "ownerProductId": "companion",
+      "contributions": [
+        {
+          "id": "companion.extension.example.item",
+          "kind": "Capability",
+          "toolSchemaId": "companion.extension.example.input.v1"
+        }
+      ]
+    }
+  ]
+}

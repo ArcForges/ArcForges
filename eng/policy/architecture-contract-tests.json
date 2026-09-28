@@ -5,6 +5,36 @@
     "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ApplicationStopContractPreservesCancellationAndTypedOutcome()"
   },
   {
+    "apiSymbol": "ArcForges.Contributions.ContributionCatalogFingerprint.Compute(string, System.Collections.Generic.IEnumerable<ArcForges.Contributions.ContributionDefinition>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.CompositionValidatesCatalogFingerprintAndProductBinding()"
+  },
+  {
+    "apiSymbol": "ArcForges.Contributions.ContributionRegistration<TOwner, TRequest, TResult>.DispatchAsync(ArcForges.Capabilities.InstanceIdentity?, TRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.StaticHandlerIsTypedAndBoundToItsExactOwnerComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Contributions.ContributionRegistry<TOwner>.Register<TRequest, TResult>(ArcForges.Contributions.ContributionDefinition, System.Func<TOwner, TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.Foundation.Errors.Outcome<TResult>>>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.ForgedDescriptorsAndCallerDeclaredExternalSchemasAreRefused()"
+  },
+  {
+    "apiSymbol": "ArcForges.Contributions.ContributionRegistry<TOwner>.RegisterChild(ArcForges.Contributions.ContributionDefinition)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.AdmittedChildRegistrationPersistsAcrossRestartAndRefusesMismatchedSnapshots()"
+  },
+  {
+    "apiSymbol": "ArcForges.Contributions.IChildContributionAdmissionPort.GetCurrentAdmission(ArcForges.Capabilities.AppIdentity, ArcForges.Contributions.ContributionDefinition)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.AdmittedChildRegistrationPersistsAcrossRestartAndRefusesMismatchedSnapshots()"
+  },
+  {
+    "apiSymbol": "ArcForges.Contributions.IContributionRegistrationStore.Add(ArcForges.Capabilities.InstallationIdentity, ArcForges.Contributions.ContributionDefinition)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.ConcurrentIdenticalRegistrationsDistinguishIStoreReplayFromNewInsert()"
+  },
+  {
     "apiSymbol": "ArcForges.Foundation.Errors.Outcome<T>.TryGetValue(out T)",
     "testProject": "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj",
     "testMethod": "ArcForges.Foundation.Tests.OutcomeTests.CancellationSurvivesMappingAndNeverBecomesFailure()"

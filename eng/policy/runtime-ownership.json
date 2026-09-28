@@ -137,6 +137,14 @@
           "role": "test-or-build-tool"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
           "role": "test-or-build-tool"
         },

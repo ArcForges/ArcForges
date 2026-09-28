@@ -40,6 +40,22 @@
     "aot": false
   },
   {
+    "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
     "role": "Foundation",
     "owner": "DesktopPlatform",

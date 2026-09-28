@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="../ArcForges.Contributions.csproj" />
+    <ProjectReference Include="../../ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
+    <None Update="Fixtures/contributions.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="VerifyContributionCatalogFixture" BeforeTargets="CoreCompile">
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)/tools/emit_catalog.py&quot; --verify-drift --input &quot;$(MSBuildProjectDirectory)/Fixtures/contributions.json&quot;" />
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)/tools/emit_catalog.py&quot; --check --input &quot;$(MSBuildProjectDirectory)/Fixtures/contributions.json&quot; --output &quot;$(MSBuildProjectDirectory)/Generated/ContributionCatalog.g.cs&quot;" />
+  </Target>
+</Project>

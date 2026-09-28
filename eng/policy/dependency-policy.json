@@ -178,6 +178,10 @@
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
     "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+    "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj": "425a68784362a47d01fc14de12c9acb8a6ac0b61d2ecdbcd42c2140bd6e062fa",
+    "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj": "fa29f3b8c84f80eef414926739f81f696c7be205b27e0b6da0463f52eace587c",
+    "src/BuildingBlocks/ArcForges.Contributions/Tests/packages.lock.json": "9a910ee9362d2218b186ea55d8a0c7d92843446fa8ee95ae5553a8baef9ed506",
+    "src/BuildingBlocks/ArcForges.Contributions/packages.lock.json": "b1cec678261c9def6a97de5bf36bb2e5528d8eff537c10afbde2718cadb5122a",
     "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
     "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -598,19 +602,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-p02",
-    "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
+    "owner": "af-20260928-p03",
+    "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "3f9a226779b9196ad3e3f1746f549b9a38eec456",
-    "maintenanceAssessment": "PRF.04 appends to the immutable gov-12-r1 record while preserving its plt-26-r2/gov-14-naming-r4 lineage. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
+    "baselineCommit": "eb272b0893d42417e9255ab5ba17adc9337ffd69",
+    "maintenanceAssessment": "PLT.18 follows the current immutable PRF.04 dependency review and is based on DesktopPlatform main eb272b0893d42417e9255ab5ba17adc9337ffd69. The intervening PLT.02 merge adds only PersistenceTests/RecoveryTests.cs and has no dependency/package input or closure change; the active receipt chain therefore remains PLT.18 -> PRF.04 -> GOV.12, preserving the earlier PLT.26/GOV.14 lineage. PLT.18 adds no NuGet, Python, native, or framework coordinate/version. This successor carries forward the current locked 47-coordinate aggregate closure, including PRF.04\u2019s six exact Local RPC AOT probe coordinates, with no new PLT.18 closure entry. Contributions runtime references Capabilities only; SQLite remains test-only. Catalog generation and owner-composed child admission remain within the scoped first-party seam; the admission-port contract requires the owner host's current boundary and exact child/descriptor grant decision to pass before Admitted. The real WP41 host/grant implementation, attestation, transport and Contracts wire integration remain deferred; the registry neither handles grants nor copies a DTO, and no new dependency edge is claimed.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 locked restore and Release build pass; Windows/Linux Native AOT publication is enforced continuously by package-validation CI.",
-      "aot-trim": "The probe imports the shared full-trim/AOT posture with IL2026 and IL3050 as errors; exact-head Windows/Linux publish checks must pass without suppressed diagnostics.",
-      "compatibility": "Consumes only the exact CON.05 generated package and exercises generated LocalBootstrap calls in both directions over native OS transports; no copied wire DTOs or schema changes.",
-      "licence-provenance": "All six newly recorded coordinates have exact locked content hashes and Apache-2.0 nuspec evidence; CON.05 packages bind to source eb650e5b9ef7fc06f0eb79ee167b896e4252b50e and original CI publication 36358269955.",
-      "security-sbom": "The complete locked graph is admitted and CI retains NuGet audit; local audit was disabled only for deterministic offline restore, and no claim of absent current advisories is made.",
-      "runtime-performance-migration": "The isolated probe covers cancellation, malformed input, unauthorized same-user peer, 4 MiB receive refusal, disconnect and fresh-instance reattach. It is not a production lease/launcher or performance benchmark.",
-      "framework-runtime-posture": "No framework major, native ABI, Android Kotlin/JVM/ART/R8, or SDK change; global.json remains on .NET SDK 10.0.400. Hosted CI compiles/publishes but never runs the runtime probe."
+      "compilation": "2026-09-28 rebased PLT.18 candidate 5bd5711d1c0291a75f1682c0f6f9a6ac11364d21 on base eb272b0893d42417e9255ab5ba17adc9337ffd69 used the pinned C:/Users/J7Rdm/.dotnet/dotnet.exe SDK 10.0.400. Full-solution dotnet format DesktopPlatform.slnx --verify-no-changes --no-restore passed; the focused ArcForges.Contributions.Tests project passed 16/16 with --no-restore -c Release. The earlier full-solution validation on pre-rebase candidate 343b916 had locked restore and Release build pass with 0 warnings/errors, but ArchitectureTests returned 88/89 because external inputs artifacts/evidence/architecture-gates.json, artifacts/evidence/imported/naming/naming-architecture.json, artifacts/evidence/imported/secret/secret-architecture.json and a same-source native configure receipt under artifacts/evidence/native-architecture/**/licence-boundary.json were absent. Other solution test projects were not reached in that run, so no local full-solution green is claimed. Package version syntax validation passed; local pack was not run because artifacts/native-packages/native-artifact.json and architecture-gates.json were absent, and the packaging unittest suite had 10 passes plus 13 fixture errors because artifacts/packages/ was absent. Hosted run 36407935112 passed 14/14 on prior head 0e147cb9c48f29bdd0e27b7a3c5582f9fc33f35d before the grant-denied change; it is not evidence for this candidate, whose exact-head CI remains required. The machine default 10.0.401 is not used; no lock or dependency closure drift is introduced.",
+      "aot-trim": "The runtime project is AOT-compatible and routes only strongly typed callbacks through PLT.17; no reflection, dynamic discovery or global registration is introduced. Child-host/wire dispatch remains refused rather than implied.",
+      "compatibility": "No external package coordinate, version or Contracts public wire contract changes. Contributions references the already-admitted Capabilities project; Persistence.Sqlite is referenced by tests only. Child registration uses only the conditional local owner-composed snapshot seam; it accepts Admitted only under the documented owner-host boundary-plus-grant decision contract and reports GrantDenied as a typed refusal. The actual WP41 host/grant implementation, attestation/transport integration and any Contracts wire dependency remain deferred; this package does not interpret or carry grants.",
+      "licence-provenance": "Both projects declare the existing AGPL-3.0-only first-party boundary; all source and project paths are registered in first-party provenance. No external dependency or licence evidence changed.",
+      "security-sbom": "No new external SBOM component or security-sensitive package is introduced. Existing dependency, source, native and CI gates remain required; no current-vulnerability-absence or publication claim is made.",
+      "runtime-performance-migration": "Registration is explicit and scoped to one owning application composition, with no process discovery or cross-product lookup. No benchmark, live-service, installed-consumer or product acceptance claim.",
+      "framework-runtime-posture": "Target remains net10.0 with the repository's SDK10.0.400 pin unchanged. The machine default remains10.0.401; exact validation uses the user-local10.0.400 dotnet.exe path, with no SDK files committed. No Android, native ABI or toolchain change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -789,6 +793,10 @@
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
       "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+      "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj": "425a68784362a47d01fc14de12c9acb8a6ac0b61d2ecdbcd42c2140bd6e062fa",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj": "fa29f3b8c84f80eef414926739f81f696c7be205b27e0b6da0463f52eace587c",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/packages.lock.json": "9a910ee9362d2218b186ea55d8a0c7d92843446fa8ee95ae5553a8baef9ed506",
+      "src/BuildingBlocks/ArcForges.Contributions/packages.lock.json": "b1cec678261c9def6a97de5bf36bb2e5528d8eff537c10afbde2718cadb5122a",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
       "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
@@ -842,7 +850,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov-12-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/prf-04-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -853,7 +861,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/prf-04-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-18-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

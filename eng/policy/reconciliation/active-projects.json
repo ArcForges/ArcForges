@@ -43,6 +43,14 @@
       "blob": "600c8a2680a41831f27e17afaf4043f993995e31"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+      "blob": "ce3feff9472ef8870ebf124b41930a3d55ac984b"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+      "blob": "023e7b8a78fe2a48ac8745d86779b7018d9d6515"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
       "blob": "3772961605c198c4e204dec02af39b607dd7a615"
     },
