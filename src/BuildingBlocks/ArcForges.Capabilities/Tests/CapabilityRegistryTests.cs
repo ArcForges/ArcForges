@@ -80,6 +80,19 @@ public sealed class CapabilityRegistryTests
         Xunit.Assert.Same(SearchService.Instance, registry.Find("search.query")!.Owner.CloudServiceIdentity);
     }
 
+    [Xunit.Fact]
+    public void ProductOwnerFactoryBindsTheExactProductAndRejectsNull()
+    {
+        foreach (var app in new[] { AppIdentity.ArcScope, AppIdentity.Companion })
+        {
+            var owner = CapabilityOwner.Product(app);
+            Xunit.Assert.Same(app, owner.ProductApp);
+            Xunit.Assert.Null(owner.CloudServiceIdentity);
+        }
+
+        Xunit.Assert.Throws<ArgumentNullException>(() => CapabilityOwner.Product(null!));
+    }
+
     private static void AssertMatches(ExpectedCapability expected, CapabilityRegistration registration)
     {
         Xunit.Assert.Equal(expected.Key, registration.Key);

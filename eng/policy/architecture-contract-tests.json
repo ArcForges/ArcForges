@@ -1065,9 +1065,9 @@
     "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.InitialMatrixMatchesIndependentHardCodedProductAndCloudCatalogueOracle()"
   },
   {
-    "apiSymbol": "ArcForges.Capabilities.CapabilityOwner.Product(ArcForges.Contracts.Foundation.V1.AppIdentity)",
+    "apiSymbol": "ArcForges.Capabilities.CapabilityOwner.Product(ArcForges.Capabilities.AppIdentity)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
-    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.InitialMatrixMatchesIndependentHardCodedProductAndCloudCatalogueOracle()"
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.ProductOwnerFactoryBindsTheExactProductAndRejectsNull()"
   },
   {
     "apiSymbol": "ArcForges.Capabilities.CapabilityRegistry.CreateInitial()",
