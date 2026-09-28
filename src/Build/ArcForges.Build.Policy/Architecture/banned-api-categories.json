@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "categories": [
+    {
+      "id": "BAN-REFLECTION",
+      "name": "Runtime reflection",
+      "description": "Reject reflective type or member discovery and dynamic invocation on paths classified as AOT."
+    },
+    {
+      "id": "BAN-CODEGEN",
+      "name": "Runtime code generation",
+      "description": "Reject runtime code generation through Reflection.Emit and compiled expression trees."
+    },
+    {
+      "id": "BAN-BLOCKING",
+      "name": "Blocking waits in asynchronous paths",
+      "description": "Reject synchronous waits, result extraction and thread sleeps in asynchronous paths."
+    },
+    {
+      "id": "BAN-PROVIDER",
+      "name": "Provider SDK outside adapters",
+      "description": "Reject provider SDK calls and construction outside a project classified as an adapter."
+    },
+    {
+      "id": "BAN-LOGGING",
+      "name": "Sensitive values in logs",
+      "description": "Reject logging calls that receive secret-bearing or message-content values."
+    },
+    {
+      "id": "BAN-MONEY",
+      "name": "Binary floating point in monetary paths",
+      "description": "Reject single- or double-precision binary floating-point values in money or credit paths."
+    },
+    {
+      "id": "BAN-POINTER",
+      "name": "Raw native pointers outside lifetime adapters",
+      "description": "Reject raw pointer fields outside the native adapter that owns their lifetime."
+    }
+  ]
+}
