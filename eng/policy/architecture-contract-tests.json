@@ -685,6 +685,11 @@
     "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
   },
   {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.SqliteStore.CreateSnapshot()",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.RecoveryTests.PolicySnapshotIsSelfDescribingTruncatesOnlyVerifiedPrefixAndReopensCleanly()"
+  },
+  {
     "apiSymbol": "ArcForges.Persistence.Sqlite.SqliteStore.ReadJournal(ArcForges.Persistence.Sqlite.JournalSequence?, int)",
     "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
     "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"

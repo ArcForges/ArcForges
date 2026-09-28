@@ -29,7 +29,25 @@ exclusive schema session and a transaction per numbered step. The SQL authorizer
 mechanism tables, transaction controls and temporary schema shadows; it is not a sandbox
 for untrusted SQL. No provider connection or transaction is part of the public API.
 
-PLT.02's real journal mechanics are delivered here. Its verified-snapshot truncation
-interface remains a PLT.03 integration seam: no durable snapshot producer or full crash
-recovery capability is claimed by this bundle. The real-file fault tests model interrupted
-control flow, not an OS process kill, power loss, device filesystem or network failure.
+PLT.03 completes journal retention with policy-triggered, self-describing SQLite snapshots.
+The snapshot envelope binds the owner identity, sequence, storage schema version,
+journal-boundary checksum and full database bytes under SHA-256 checksums. It is written and flushed as a sibling temporary file,
+atomically published, reopened and verified, then authorizes truncation of only its exact
+committed journal prefix. Two verified generations are retained. A failed snapshot never
+changes an already durable write receipt or truncates its journal prefix; `LastSnapshotFailure`
+reports the post-commit maintenance failure.
+
+On open, the owner validates SQLite integrity and the retained checksummed journal. If repair
+is needed, it preserves the original database and sidecars, restores the newest verifiable
+snapshot, and replays the contiguous valid journal suffix. `Recovery` exposes a typed outcome;
+when any tail is unavailable the store enters read-first safe start and refuses canonical
+writes. If no snapshot can verify, `StoreRecoveryException.Report` identifies the untouched
+database as evidence and opening fails without replacing it. A healthy canonical database is
+never rolled back just because a snapshot file is damaged.
+
+Offline real-file tests cover policy publication/truncation, clean reopen, corrupt snapshot,
+corrupt journal tail with verified-prefix replay, evidence preservation, orphaned SQLite
+sidecars, injected `SQLITE_FULL` transaction rollback, snapshot-stage interruption and
+numbered-migration interruption. These tests do not claim to simulate power loss, device
+filesystems or real hardware. Native process-kill validation remains an explicit local opt-in;
+it is not run as part of normal CI.

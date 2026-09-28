@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Foundation.Values;
+using ArcForges.Foundation;
 using ArcForges.Persistence.Sqlite.Migrations;
 using Microsoft.Data.Sqlite;
 
@@ -13,14 +14,30 @@ public sealed class SqliteStore : IStore
 {
     private readonly StoreDatabase database;
     private readonly IStoreAuthorization authorization;
-    private readonly SqliteJournal journal = new();
+    private readonly SqliteJournal journal;
+    private readonly SqliteSnapshotCoordinator snapshots;
     private readonly Action<CommitStage>? fault;
-    public SqliteStore(string path, Guid storeId, IStoreAuthorization authorization) : this(path, storeId, authorization, null) { }
+    private readonly bool runSnapshotPolicy;
+
+    public SqliteStore(string path, Guid storeId, IStoreAuthorization authorization)
+        : this(path, storeId, authorization, null, null, performRecovery: true, runSnapshotPolicy: true) { }
+
     internal SqliteStore(string path, Guid storeId, IStoreAuthorization authorization, Action<CommitStage>? fault)
+        : this(path, storeId, authorization, fault, null, performRecovery: true, runSnapshotPolicy: true) { }
+
+    internal SqliteStore(string path, Guid storeId, IStoreAuthorization authorization, Action<CommitStage>? fault,
+        JournalSnapshotPolicy? snapshotPolicy, bool performRecovery, bool runSnapshotPolicy,
+        Action<SnapshotStage>? snapshotFault = null)
     {
         ArgumentNullException.ThrowIfNull(authorization);
         this.authorization = authorization;
         this.fault = fault;
+        this.runSnapshotPolicy = runSnapshotPolicy;
+        snapshots = new(path, storeId, snapshotFault);
+        Recovery = performRecovery
+            ? snapshots.PrepareForOpen()
+            : new(StoreRecoveryOutcome.Clean, 0, 0, null, "Recovery is disabled for this internal replay session.");
+        journal = new(snapshots, snapshotPolicy);
         database = new(path, storeId);
         database.WithTransaction(context =>
         {
@@ -53,12 +70,28 @@ public sealed class SqliteStore : IStore
         Migrations = new(database);
     }
     public MigrationRunner Migrations { get; }
+    public StoreRecoveryReport Recovery { get; }
+    /// <summary>The most recently published policy snapshot, if one was produced by this open instance.</summary>
+    public JournalSnapshotReceipt? LastSnapshot { get; private set; }
+    /// <summary>Diagnostic for a post-commit policy snapshot failure; the write receipt remains authoritative.</summary>
+    public string? LastSnapshotFailure { get; private set; }
     public event EventHandler<StoreCommittedEventArgs>? Committed;
     public StoredContent? Read(string aggregateKind, Guid aggregateId) => database.Read(context => ReadContent(context, aggregateKind, aggregateId));
     public IReadOnlyList<JournalEntry> ReadJournal(JournalSequence? after, int limit) => database.Read(context => journal.Read(context, after, limit));
 
+    /// <summary>Creates a durable verified snapshot and truncates only the journal prefix it binds.</summary>
+    public JournalSnapshotReceipt? CreateSnapshot()
+    {
+        EnsureWritableRecoveryState();
+        var receipt = snapshots.CreateSnapshot(database, journal);
+        LastSnapshot = receipt;
+        LastSnapshotFailure = null;
+        return receipt;
+    }
+
     public CommitReceipt Write(WriteCommand command)
     {
+        EnsureWritableRecoveryState();
         ArgumentNullException.ThrowIfNull(command);
         command.Content.ValidateForWrite();
         if (!command.Content.Version.IsSuccessorOf(command.Expected)) throw new ArgumentException("The next version must advance the materialized source token.", nameof(command));
@@ -153,11 +186,41 @@ public sealed class SqliteStore : IStore
             fault?.Invoke(CommitStage.ReceiptRecorded);
             return new CommitReceipt(command.CommandId, command.Content.Version, sequence, EffectCertainty.Happened, false);
         });
+        if (!receipt.Replayed) TryPolicySnapshot();
         fault?.Invoke(CommitStage.Committed);
         // A failed notification leaves the durable receipt intact. The caller reconciles by retrying
         // the same command; the replay path never repeats the effect or its notification.
         if (!receipt.Replayed) Committed?.Invoke(this, new(receipt));
         return receipt;
+    }
+
+    private void EnsureWritableRecoveryState()
+    {
+        if (Recovery.RequiresSafeStart)
+            throw new InvalidOperationException("The owner store is in read-first safe start after recovery; canonical writes are disabled until its evidence is resolved.");
+    }
+
+    private void TryPolicySnapshot()
+    {
+        if (!runSnapshotPolicy) return;
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (!SqliteSnapshotCoordinator.RequiresSnapshot(database, journal, new ArcForges.Foundation.Instant(now, 0)))
+            {
+                LastSnapshotFailure = null;
+                return;
+            }
+            LastSnapshot = snapshots.CreateSnapshot(database, journal);
+            LastSnapshotFailure = null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or
+            InvalidDataException or InvalidOperationException)
+        {
+            // The write and its receipt are already durable. Snapshot failure is reported separately and
+            // leaves the journal prefix untouched, so callers must not retry the write as if it rolled back.
+            LastSnapshotFailure = exception.Message;
+        }
     }
 
     private static StoredContent? ReadContent(SqliteReadContext context, string kind, Guid id)
