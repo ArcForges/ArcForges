@@ -297,6 +297,7 @@
     "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
     "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props",
     "src/Build/ArcForges.Build.Policy/Architecture/BannedSymbolScanner.cs",
+    "src/Build/ArcForges.Build.Policy/Architecture/banned-api-categories.json",
     "src/Build/ArcForges.Build.Policy/Architecture/FixtureCompiler.cs",
     "src/Build/ArcForges.Build.Policy/Architecture/NativeProjectGraph.cs",
     "src/Build/ArcForges.Build.Policy/Architecture/PolicyEngine.cs",

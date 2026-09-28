@@ -13,7 +13,7 @@ namespace ArcForges.Build.Policy.Architecture;
 /// <summary>Shared AT/RP enforcement. Repository inputs are explicit, complete and fail closed.</summary>
 internal static class PolicyEngine
 {
-    private static readonly string[] BannedRules = ["BAN-REFLECTION", "BAN-CODEGEN", "BAN-BLOCKING", "BAN-PROVIDER", "BAN-LOGGING", "BAN-MONEY", "BAN-POINTER"];
+    private static readonly string[] BannedRules = BannedSymbolScanner.CategoryCatalog.Select(category => category.Id).ToArray();
     public static IReadOnlyList<string> Rules { get; } = Enumerable.Range(1, 14).Select(value => $"AT-{value:00}")
         .Concat(Enumerable.Range(1, 10).Select(value => $"RP-{value:00}")).ToArray();
 

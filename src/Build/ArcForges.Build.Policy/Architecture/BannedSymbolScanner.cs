@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.Collections.ObjectModel;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -9,9 +11,25 @@ namespace ArcForges.Build.Policy.Architecture;
 /// <summary>Semantic symbol checks: aliases and qualified spellings resolve to the same policy decision.</summary>
 internal static class BannedSymbolScanner
 {
+    private static readonly string[] RequiredCategoryIds =
+    [
+        "BAN-REFLECTION",
+        "BAN-CODEGEN",
+        "BAN-BLOCKING",
+        "BAN-PROVIDER",
+        "BAN-LOGGING",
+        "BAN-MONEY",
+        "BAN-POINTER",
+    ];
+    private static readonly ReadOnlyCollection<BannedApiCategory> LoadedCategories = LoadCategories();
+    private static readonly Dictionary<string, BannedApiCategory> CategoriesById =
+        LoadedCategories.ToDictionary(category => category.Id, StringComparer.Ordinal);
     private static readonly string[] ProviderPrefixes = ["Azure", "Amazon", "OpenAI", "Cloudflare"];
     private static readonly string[] SensitiveParts = ["secret", "password", "credential", "accessToken", "prompt", "contentBody", "messageBody"];
     private static readonly string[] MoneyParts = ["money", "credit", "price", "balance", "budget"];
+
+    internal static IReadOnlyList<BannedApiCategory> CategoryCatalog => LoadedCategories;
+
     public static IReadOnlyList<PolicyFinding> Scan(CSharpCompilation compilation, ProjectClassification project)
     {
         ArgumentNullException.ThrowIfNull(compilation);
@@ -107,12 +125,89 @@ internal static class BannedSymbolScanner
 
             void Add(string rule, SyntaxNode node, string message)
             {
-                findings.Add(new PolicyFinding(rule, tree.FilePath, message,
+                if (!CategoriesById.TryGetValue(rule, out var category))
+                {
+                    throw new InvalidOperationException("Scanner emitted a category absent from the canonical catalog: " + rule);
+                }
+
+                findings.Add(new PolicyFinding(category.Id, tree.FilePath, message,
                     node.GetLocation().GetLineSpan().StartLinePosition.Line + 1));
             }
         }
 
         return findings.Distinct().ToArray();
+    }
+
+    private static ReadOnlyCollection<BannedApiCategory> LoadCategories(
+        [System.Runtime.CompilerServices.CallerFilePath] string sourcePath = "")
+    {
+        string catalogPath = Path.Combine(Path.GetDirectoryName(sourcePath) ?? "", "banned-api-categories.json");
+        using var stream = File.OpenRead(catalogPath);
+        using var document = JsonDocument.Parse(stream, new JsonDocumentOptions
+        {
+            AllowTrailingCommas = false,
+            CommentHandling = JsonCommentHandling.Disallow,
+        });
+
+        ValidateFields(document.RootElement, "catalog", "schemaVersion", "categories");
+        if (document.RootElement.GetProperty("schemaVersion").GetInt32() != 1)
+        {
+            throw new InvalidOperationException("Unsupported banned-API catalog schema version.");
+        }
+
+        var categories = document.RootElement.GetProperty("categories");
+        if (categories.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Banned-API catalog categories must be an array.");
+        }
+
+        var result = new List<BannedApiCategory>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in categories.EnumerateArray())
+        {
+            ValidateFields(item, "category", "id", "name", "description");
+            string id = RequiredText(item, "id");
+            string name = RequiredText(item, "name");
+            string description = RequiredText(item, "description");
+            if (!seen.Add(id))
+            {
+                throw new InvalidOperationException("Duplicate banned-API category ID: " + id);
+            }
+
+            result.Add(new BannedApiCategory(id, name, description));
+        }
+
+        if (!result.Select(category => category.Id).SequenceEqual(RequiredCategoryIds, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException("Banned-API catalog must contain the seven canonical IDs in stable order.");
+        }
+
+        return result.AsReadOnly();
+    }
+
+    private static void ValidateFields(JsonElement value, string context, params string[] expected)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Banned-API catalog " + context + " must be an object.");
+        }
+
+        string[] fields = value.EnumerateObject().Select(property => property.Name).ToArray();
+        if (fields.Length != expected.Length || !fields.ToHashSet(StringComparer.Ordinal).SetEquals(expected))
+        {
+            throw new InvalidOperationException("Banned-API catalog " + context + " has missing, duplicate or unknown fields.");
+        }
+    }
+
+    private static string RequiredText(JsonElement value, string field)
+    {
+        string? text = value.GetProperty(field).GetString();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException("Banned-API catalog field must be nonblank: " + field);
+        }
+
+        return text;
     }
 
     public static bool IsNativePointer(ITypeSymbol type) => IsRawPointer(type)
@@ -237,3 +332,5 @@ internal static class BannedSymbolScanner
             || symbolName.Contains("credit", StringComparison.OrdinalIgnoreCase);
     }
 }
+
+internal sealed record BannedApiCategory(string Id, string Name, string Description);
