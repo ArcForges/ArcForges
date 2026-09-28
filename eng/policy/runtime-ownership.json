@@ -25,6 +25,10 @@
           "role": "test-or-build-tool"
         },
         {
+          "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "native/CMakeLists.txt",
           "role": "native-build"
         },

@@ -145,6 +145,10 @@
     {
       "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
       "blob": "d203942b009adf899953dab2b85b5cb503ce883b"
+    },
+    {
+      "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
+      "blob": "e3c2337390ec6ea9b22ebcbdeb8df6131fbfc23f"
     }
   ]
 }

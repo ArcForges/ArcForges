@@ -164,6 +164,9 @@
     "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
     "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
     "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+    "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
+    "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
+    "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
     "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
     "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
     "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
@@ -585,6 +588,34 @@
       "nuspecSha256": "c0407f2bfbba8b98dfc27d55a8707c47afffa3debf66b1b562aba818159f43e8",
       "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3/4.0.1/xunit.v3.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "avalonia.buildservices/11.3.2": {
+      "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
+      "licence": "MIT",
+      "nuspecSha256": "a8846537f7d074b8f9ed753c03678128c36bd046939ee245fad8c575a7cd3e9b",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.buildservices/11.3.2/avalonia.buildservices.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia.remote.protocol/12.1.3": {
+      "contentHash": "HcF69DKyihgg5coLOSp7GTqxQvWAy58LMKauwcHA28uSBJVwu0h5+gTNdJA8Sn/nqJVTRDU98zYsk6i1QSwDVQ==",
+      "licence": "MIT",
+      "nuspecSha256": "4c0cd5ec137d2a376bab20e62bb2cbbdc9b71ffcb044acf41adeaf25cf5025b1",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.remote.protocol/12.1.3/avalonia.remote.protocol.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia/12.1.3": {
+      "contentHash": "l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==",
+      "licence": "MIT",
+      "nuspecSha256": "8fd64a84c229548a71e61390f4a310219f50529af0ee53162ffd39e7874ff4dc",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia/12.1.3/avalonia.nuspec",
+      "classification": "Build-only verification dependency for the isolated PRF.09 Native AOT probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "microcom.runtime/0.11.6": {
+      "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ==",
+      "licence": "MIT",
+      "nuspecSha256": "c7aeab4b73acdba3bb8e66865c2bbe67566b8593d972be2089181344adef345f",
+      "source": "https://api.nuget.org/v3-flatcontainer/microcom.runtime/0.11.6/microcom.runtime.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
     }
   },
   "publisher": {
@@ -602,19 +633,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-p03",
-    "reviewer": "Independent exact-head review required before merge",
+    "owner": "af-20260928-c04",
+    "reviewer": "Independent exact-head reviewer (pending)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "eb272b0893d42417e9255ab5ba17adc9337ffd69",
-    "maintenanceAssessment": "PLT.18 follows the current immutable PRF.04 dependency review and is based on DesktopPlatform main eb272b0893d42417e9255ab5ba17adc9337ffd69. The intervening PLT.02 merge adds only PersistenceTests/RecoveryTests.cs and has no dependency/package input or closure change; the active receipt chain therefore remains PLT.18 -> PRF.04 -> GOV.12, preserving the earlier PLT.26/GOV.14 lineage. PLT.18 adds no NuGet, Python, native, or framework coordinate/version. This successor carries forward the current locked 47-coordinate aggregate closure, including PRF.04\u2019s six exact Local RPC AOT probe coordinates, with no new PLT.18 closure entry. Contributions runtime references Capabilities only; SQLite remains test-only. Catalog generation and owner-composed child admission remain within the scoped first-party seam; the admission-port contract requires the owner host's current boundary and exact child/descriptor grant decision to pass before Admitted. The real WP41 host/grant implementation, attestation, transport and Contracts wire integration remain deferred; the registry neither handles grants nor copies a DTO, and no new dependency edge is claimed.",
+    "baselineCommit": "b0ac601379213862ab34b5d678f67363d62e605a",
+    "maintenanceAssessment": "PRF.09 appends the isolated Avalonia TableView compile-only verification probe to the immutable dependency-review lineage, chaining from the then-current PLT.18 receipt and preserving all earlier admissions. It admits exactly the four MIT-licensed Avalonia packages selected by the probe lock graph, with exact content hashes and nuspec evidence. These build-only verification dependencies do not enter any shipped product dependency closure or package allowlist; no product adoption, runtime behavior, framework version, package identity, or dependency version change is made. The probe uses the pinned .NET SDK 10.0.400 and Windows win-x64 Native AOT publish.",
     "upgradeChecks": {
-      "compilation": "2026-09-28 rebased PLT.18 candidate 5bd5711d1c0291a75f1682c0f6f9a6ac11364d21 on base eb272b0893d42417e9255ab5ba17adc9337ffd69 used the pinned C:/Users/J7Rdm/.dotnet/dotnet.exe SDK 10.0.400. Full-solution dotnet format DesktopPlatform.slnx --verify-no-changes --no-restore passed; the focused ArcForges.Contributions.Tests project passed 16/16 with --no-restore -c Release. The earlier full-solution validation on pre-rebase candidate 343b916 had locked restore and Release build pass with 0 warnings/errors, but ArchitectureTests returned 88/89 because external inputs artifacts/evidence/architecture-gates.json, artifacts/evidence/imported/naming/naming-architecture.json, artifacts/evidence/imported/secret/secret-architecture.json and a same-source native configure receipt under artifacts/evidence/native-architecture/**/licence-boundary.json were absent. Other solution test projects were not reached in that run, so no local full-solution green is claimed. Package version syntax validation passed; local pack was not run because artifacts/native-packages/native-artifact.json and architecture-gates.json were absent, and the packaging unittest suite had 10 passes plus 13 fixture errors because artifacts/packages/ was absent. Hosted run 36407935112 passed 14/14 on prior head 0e147cb9c48f29bdd0e27b7a3c5582f9fc33f35d before the grant-denied change; it is not evidence for this candidate, whose exact-head CI remains required. The machine default 10.0.401 is not used; no lock or dependency closure drift is introduced.",
-      "aot-trim": "The runtime project is AOT-compatible and routes only strongly typed callbacks through PLT.17; no reflection, dynamic discovery or global registration is introduced. Child-host/wire dispatch remains refused rather than implied.",
-      "compatibility": "No external package coordinate, version or Contracts public wire contract changes. Contributions references the already-admitted Capabilities project; Persistence.Sqlite is referenced by tests only. Child registration uses only the conditional local owner-composed snapshot seam; it accepts Admitted only under the documented owner-host boundary-plus-grant decision contract and reports GrantDenied as a typed refusal. The actual WP41 host/grant implementation, attestation/transport integration and any Contracts wire dependency remain deferred; this package does not interpret or carry grants.",
-      "licence-provenance": "Both projects declare the existing AGPL-3.0-only first-party boundary; all source and project paths are registered in first-party provenance. No external dependency or licence evidence changed.",
-      "security-sbom": "No new external SBOM component or security-sensitive package is introduced. Existing dependency, source, native and CI gates remain required; no current-vulnerability-absence or publication claim is made.",
-      "runtime-performance-migration": "Registration is explicit and scoped to one owning application composition, with no process discovery or cross-product lookup. No benchmark, live-service, installed-consumer or product acceptance claim.",
-      "framework-runtime-posture": "Target remains net10.0 with the repository's SDK10.0.400 pin unchanged. The machine default remains10.0.401; exact validation uses the user-local10.0.400 dotnet.exe path, with no SDK files committed. No Android, native ABI or toolchain change."
+      "compilation": "Pinned .NET SDK 10.0.400 locked restore and Windows x64 Native AOT publish pass for the actual Avalonia TableView probe; a separate Windows package-validation aot-probe job continuously enforces locked restore and compile-only publish with --verbosity minimal.",
+      "aot-trim": "PublishAot, full trimming, and the existing IL2026/IL3050-as-errors posture are exercised by the real probe; the recorded publish has zero warnings and errors with ILC and the native linker invoked, and no diagnostic suppression.",
+      "compatibility": "The probe constructs the actual Avalonia.Controls.TableView with typed compiled-binding columns and a real row; it is isolated verification only and makes no production-shell or runtime compatibility claim.",
+      "licence-provenance": "All four exact locked Avalonia coordinates have immutable content hashes, MIT license expressions, and exact NuGet nuspec SHA-256/source evidence; the probe remains outside shipped product dependency closures and allowlists.",
+      "security-sbom": "The complete exact locked graph is admitted and hosted CI retains NuGet audit; no claim is made that the package graph has no current advisories.",
+      "runtime-performance-migration": "The probe is compile/publish-only: no executable or GUI is run, and no runtime behavior, performance, migration, launcher, or product-adoption result is claimed.",
+      "framework-runtime-posture": "No framework-major, native ABI, Android Kotlin/JVM/ART/R8, SDK, or shipped package change; global.json remains on .NET SDK 10.0.400. Hosted CI compiles and publishes only, without running the probe."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -779,6 +810,9 @@
       "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
       "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
       "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+      "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
+      "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
+      "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
       "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
       "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
       "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
@@ -850,18 +884,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/prf-04-r1.json",
-    "namingToolCandidate": {
-      "package": "ArcForges.Contracts.Validation",
-      "version": "1.0.0-ci.205.1",
-      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
-      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
-      "licence": "Apache-2.0",
-      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
-      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
-    }
+    "previousReceipt": "eng/policy/dependency-reviews/plt-18-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-18-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/prf-09-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
