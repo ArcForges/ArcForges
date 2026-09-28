@@ -195,6 +195,10 @@
     "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
     "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+    "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
+    "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
+    "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
+    "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "519a1224b3069eaf9f3d57a172259c386f8dccceec7f067d4099f5ece718de5f",
     "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
@@ -533,19 +537,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-20260927-foundation",
-    "reviewer": "Independent exact-head review required on FND.07 pull request before merge",
+    "owner": "w-20260927-dother",
+    "reviewer": "w-20260927-dother (admission assessment; independent exact-head review required)",
     "reviewedOn": "2026-09-27",
-    "baselineCommit": "48a3ef4fcb5e356d4a50d0317f93a1cb1f314b6e",
-    "maintenanceAssessment": "Retain every existing framework/build/native closure. Add only exact own Foundation/Application.Abstractions 1.0.0-ci.29.1 to a local-only acceptance consumer; cached nuspec confirms AGPL-3.0-only and immutable source ace60538849047184954baed09fb05ec7676d367. Existing Contracts113.1/Google.Protobuf closure unchanged. Exact npm manifest/lock bind Contracts proto/fixtures113.1 (Apache-2.0) and protobuf2.15.0 (Apache-2.0 AND BSD-3-Clause); use locked restore, no vendored sources or product npm runtime.",
+    "baselineCommit": "761d7c9801b5ced005fd2a5266a1f38fca827044",
+    "maintenanceAssessment": "PLT06 adds the adoption-owned nonpackable Resources append-store project and offline tests. Only existing Foundation and test-toolchain references; no package version, external dependency closure, framework or native input changes. Existing CI retained; child-process interruption diagnostics explicitly local opt-in and skipped hosted.",
     "upgradeChecks": {
-      "compilation": "FND.07 receipt records local published-package C# consumer build on existing SDK10.0.401 with zero warnings/errors and C#/TypeScript binary exchange. Retained applicable pinned-SDK CI remains required before merge.",
-      "aot-trim": "No producer framework/AOT posture change. Acceptance consumer is explicit local test tooling; existing producer candidate29.1 AOT/trim publication remains authoritative. No new AOT execution claimed.",
-      "compatibility": "Real published C# and TS independent vectors cover int64/uint64 limits, exact decimal/rational, UUID, unknown fields/enums, duplicate command identity and unknown effects;44 producer reason registrations. Kotlin runtime not claimed.",
-      "licence-provenance": "Two exact own AGPL packages stay inside AGPL DesktopPlatform test-tool boundary; cached nuspec hashes/source commit and locked package digests recorded. npm Apache/BSD licence closure bound by exact manifest/lock hashes. No general AGPL admission.",
-      "security-sbom": "Retain exact locked content, NuGet audit and all existing policy/security checks. Added adversarial coordinate/publisher/source/licence/hash and npm owner/path tests. No claim of offline current vulnerability absence.",
-      "runtime-performance-migration": "Local binary exchange once against real immutable published artifacts; no provider/device/installed-release execution, durable effects or migration-performance claim. Acceptance runner refuses CI and performs no restore.",
-      "framework-runtime-posture": "No framework upgrade, SDK pin change, native ABI change or product runtime addition. Exact local-only npm tool ownership does not admit a production JavaScript runtime."
+      "compilation": "Existing SDK10.0.401 build passed zero warnings/errors; pinned10.0.400 CI required.",
+      "aot-trim": "Production IsAotCompatible=true; bounded binary codecs and no reflection runtime; no suppressed diagnostics.",
+      "compatibility": "Version1local frame codec with checksums, explicit seal, typed gap/segment metadata and durable loss receipts; malformed/future versions refused.",
+      "licence-provenance": "First-party AGPL3-only implementation; existing Foundation dependency retains Apache contract licence and notices. No source copied from reference products.",
+      "security-sbom": "No external dependency changes; all prior admission/licence/security gates retained.",
+      "runtime-performance-migration": "4MiB chunks and ranges,1024slices and1million-frame index bounds.13local tests pass including actual writer kill at boundary/midpayload; no existing storage migration.",
+      "framework-runtime-posture": "No runtime/framework upgrades. Local SDK401 adapter only preserves pinned10.0.11packs; no installation or committed pin changes."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -741,6 +745,10 @@
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "519a1224b3069eaf9f3d57a172259c386f8dccceec7f067d4099f5ece718de5f",
       "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
@@ -766,9 +774,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-01-02-04-r2.json"
+    "previousReceipt": "eng/policy/dependency-reviews/fnd-07-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/fnd-07-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-06-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

@@ -708,5 +708,55 @@
     "apiSymbol": "ArcForges.Persistence.Sqlite.Migrations.MigrationRunner.MigrateTo(ArcForges.Persistence.Sqlite.Migrations.MigrationPlan, ArcForges.Foundation.Versions.StorageSchemaVersion)",
     "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
     "testMethod": "ArcForges.Tests.PersistenceTests.MigrationsTests.EveryHistoricalDatabaseReopensAndPreservesGoldenMeaning(uint)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.Create(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.InvalidMapsAndGapsCannotEnterTheStore()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.AppendChunk(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.SegmentsSpanChunksAndRangesPreserveRawBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.MapSegment(System.Guid, System.Collections.Generic.IReadOnlyList<ArcForges.Persistence.Resources.ChunkSlice>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.InvalidMapsAndGapsCannotEnterTheStore()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.RecordGap(ArcForges.Persistence.Resources.CaptureGap)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.SegmentsSpanChunksAndRangesPreserveRawBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.Seal()",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.SegmentsSpanChunksAndRangesPreserveRawBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.RecoveryPersistsLossAndNeverMutatesOriginal()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.CaptureSnapshot.Open(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.RecoveryPersistsLossAndNeverMutatesOriginal()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.CaptureSnapshot.SegmentLength(System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.SegmentsSpanChunksAndRangesPreserveRawBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.CaptureSnapshot.ReadRange(System.Guid, long, int)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.SegmentsSpanChunksAndRangesPreserveRawBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Resources.CaptureSnapshot.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.RecoveryPersistsLossAndNeverMutatesOriginal()"
   }
 ]
