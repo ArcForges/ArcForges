@@ -1010,7 +1010,7 @@
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.AmbientContextsFollowAsyncFlowAndRestoreNestedValues()"
   },
   {
-    "apiSymbol": "ArcForges.Observability.SignalEmitter.Emit(string, ArcForges.Observability.SignalLevel, System.Collections.Generic.IReadOnlyDictionary<string, object?>?)",
+    "apiSymbol": "ArcForges.Observability.SignalEmitter.Emit(string, ArcForges.Observability.SignalLevel)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
   },
