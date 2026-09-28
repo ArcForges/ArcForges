@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <Import Project="../../eng/build/desktop-aot.props" />
+  <Import Project="../../eng/build/desktop-rids.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.LocalRpc.Platform" />
+    <PackageReference Include="Grpc.AspNetCore.Server" />
+    <PackageReference Include="Grpc.Net.Client" />
+  </ItemGroup>
+</Project>

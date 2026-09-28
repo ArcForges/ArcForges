@@ -27,6 +27,27 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
   TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
 jobs:
+  local-rpc-aot:
+    name: Local RPC AOT compile (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - run: dotnet restore tests/LocalRpcAotTests/LocalRpcAotTests.csproj --locked-mode
+      - name: Publish the process probe with Native AOT (compile only)
+        run: dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r ${{ matrix.rid }} --no-restore
   pack:
     runs-on: ubuntu-latest
     outputs:

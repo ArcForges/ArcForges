@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
+    "Directory.Packages.props": "5ff72ff261c1b91e2351289a069d1a48be8c2a1e8000c7bae918d3c82718229f",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
     "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
@@ -221,6 +221,8 @@
     "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+    "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
+    "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
     "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
     "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
@@ -246,6 +248,32 @@
       "nuspecSha256": "7726a233f9ce81c4373a2ab9423c33d566b919bb2cb90d2b5577cf844bbbbfc4",
       "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.113.1/arcforges.contracts.foundation.nuspec",
       "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "arcforges.contracts.foundation/1.0.0-ci.216.1": {
+      "contentHash": "+RGxNiaoOBt+j2IOSpUa2WWD4Bnkk8Ten7jbOVFwdUVF8jUQRCCvAGhrPTzZpnr6Sk5MSoA95+pJYgN8T+jEtg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "b2704457f3245e4c44200ed4e8dd87054a81cbe53faa31cd384aad92db78839e",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.216.1/arcforges.contracts.foundation.nuspec",
+      "classification": "Exact CON.05 Foundation candidate consumed only by the PRF.04 non-packable AOT probe; source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.contracts.localrpc.platform/1.0.0-ci.216.1": {
+      "contentHash": "TdmfXUx/V6ImX9AijHou/1pzwWfQPOid3pHR2OnYNDPXj7IxylfUmiDzSIrhwaJKXTgxM3UpuAiiNJxnqjZB2A==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2e9af7a67637cdff08601ce3fb2d20a445fd34c7d535dc4d3508ff10bc9a3c1b",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.localrpc.platform/1.0.0-ci.216.1/arcforges.contracts.localrpc.platform.nuspec",
+      "classification": "Exact CON.05 generated LocalRpc producer consumed only by the PRF.04 non-packable AOT probe; source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
     },
     "arcforges.foundation/1.0.0-ci.29.1": {
       "contentHash": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==",
@@ -273,6 +301,34 @@
       "nuspecSha256": "d6a4a567ce4889e25d098fd39d13a65ce05c847e8574818edc0d1eee6277eb40",
       "source": "https://api.nuget.org/v3-flatcontainer/google.protobuf/3.36.1/google.protobuf.nuspec",
       "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "grpc.aspnetcore.server/2.83.0": {
+      "contentHash": "rWeSaXaSPIIerc82lhHKqmzlp/sgLnG+Zw1c3YEEVp/un+hJKPxJOXWuGUOS2cs3EvcZBZ2tliXsnAg5Mdk2Ew==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "b9a51de789abe619de7ee4bb9ec9f30452c4bca13d514e53ac574a0bb96116e3",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.aspnetcore.server/2.83.0/grpc.aspnetcore.server.nuspec",
+      "classification": "Exact permitted gRPC ASP.NET Core server candidate; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.core.api/2.84.0": {
+      "contentHash": "p2SOMl6q/GZ4/5MLkgboC/z55g4zKUEruRn/g46QgppjQBVnsLZVBU/9VO7n60ll38G3Eo8Zu9b7x+W01GKFVg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "bba00f5d5be8423dd351662e313648b0abd13100ef67d55f6fc29de44c544a96",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.core.api/2.84.0/grpc.core.api.nuspec",
+      "classification": "Exact CON.05 transitive and permitted gRPC client candidate dependency; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.net.client/2.84.0": {
+      "contentHash": "My6Fms2YCyAbihTBZZ3kLS39iTY2pkMAzGDBTC6XhPOujg70eB07AEJ7tPiW3tZ70bhFzHcc3+d4j3DaIPF3aA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "32a43f3448ab90bb71c946533db4d5135cef4728a3ee29bf88d9a0cbf1e67413",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.client/2.84.0/grpc.net.client.nuspec",
+      "classification": "Exact permitted gRPC .NET client candidate; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.net.common/2.84.0": {
+      "contentHash": "DPxm/H8G/lDRrz997wM0M2zN/PGqVeZKDakhBbtABEbv6WIW4HI9g3BvntBQT6ZUROuGacMzfyyF9e5kiTVFfQ==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "f621aa566e63340b572a4f0bd2b996b934407c77b8cdf121f38578e93ee796cb",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.common/2.84.0/grpc.net.common.nuspec",
+      "classification": "Exact shared gRPC transport dependency selected by the permitted server/client candidates; used by the non-packable PRF.04 AOT proof only."
     },
     "microsoft.applicationinsights/2.23.0": {
       "contentHash": "nWArUZTdU7iqZLycLKWe0TDms48KKGE6pONH2terYNa8REXiqixrMOkf1sk5DHGMaUTqONU2YkS4SAXBhLStgw==",
@@ -542,25 +598,25 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-g02",
-    "reviewer": "af-20260928-g02 (GOV.12 producer; dependency-input lineage only, not an independent PR review)",
+    "owner": "af-20260928-p02",
+    "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "0ba78d58cb31c1226d8e0b70f2879ecc42d00699",
-    "maintenanceAssessment": "GOV.12 adds a first-party canonical banned API category catalog as static Build.Policy package content and embeds it for explicit opt-in consumers through ArchitecturePolicy.props. The only dependency inputs changed are the package inventory path, Build.Policy project file, and ArchitecturePolicy.props. The exact NuGet and Python closures, versions, licensing evidence, package identity, and framework selection remain unchanged; this receipt records input-hash lineage only.",
+    "baselineCommit": "3f9a226779b9196ad3e3f1746f549b9a38eec456",
+    "maintenanceAssessment": "PRF.04 appends to the immutable gov-12-r1 record while preserving its plt-26-r2/gov-14-naming-r4 lineage. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
     "upgradeChecks": {
-      "compilation": "GOV.12 adds the canonical static JSON as Build.Policy package content without changing dependency coordinates; the exact-head build, pack candidate, formatting, and registered tests remain required in CI.",
-      "aot-trim": "No dependency, AOT setting, or native ABI changes; the existing policy engine consumes the packaged catalog and the existing AOT/trimming gates remain required.",
-      "compatibility": "The existing project and package IDs, version, dependencies, and package identity are unchanged; only the required catalog content path is added.",
-      "licence-provenance": "The catalog is first-party AGPL-3.0-only content and is included in provenance inventory; historical dependency and license evidence remains immutable.",
-      "security-sbom": "NuGet and Python closures and versions are unchanged; no dependency expansion is admitted and the exact-head security, provenance, and package gates remain required.",
-      "runtime-performance-migration": "No dependency or runtime upgrade, migration, performance, device, or product acceptance claim is made.",
-      "framework-runtime-posture": "The repository-pinned .NET SDK remains 10.0.400; no framework, runtime, native toolchain, or owner framework changes."
+      "compilation": "Pinned SDK 10.0.400 locked restore and Release build pass; Windows/Linux Native AOT publication is enforced continuously by package-validation CI.",
+      "aot-trim": "The probe imports the shared full-trim/AOT posture with IL2026 and IL3050 as errors; exact-head Windows/Linux publish checks must pass without suppressed diagnostics.",
+      "compatibility": "Consumes only the exact CON.05 generated package and exercises generated LocalBootstrap calls in both directions over native OS transports; no copied wire DTOs or schema changes.",
+      "licence-provenance": "All six newly recorded coordinates have exact locked content hashes and Apache-2.0 nuspec evidence; CON.05 packages bind to source eb650e5b9ef7fc06f0eb79ee167b896e4252b50e and original CI publication 36358269955.",
+      "security-sbom": "The complete locked graph is admitted and CI retains NuGet audit; local audit was disabled only for deterministic offline restore, and no claim of absent current advisories is made.",
+      "runtime-performance-migration": "The isolated probe covers cancellation, malformed input, unauthorized same-user peer, 4 MiB receive refusal, disconnect and fresh-instance reattach. It is not a production lease/launcher or performance benchmark.",
+      "framework-runtime-posture": "No framework major, native ABI, Android Kotlin/JVM/ART/R8, or SDK change; global.json remains on .NET SDK 10.0.400. Hosted CI compiles/publishes but never runs the runtime probe."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
+      "Directory.Packages.props": "5ff72ff261c1b91e2351289a069d1a48be8c2a1e8000c7bae918d3c82718229f",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
       "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
@@ -776,6 +832,8 @@
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
+      "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
       "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
       "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
@@ -784,7 +842,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-26-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/gov-12-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -795,7 +853,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/gov-12-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/prf-04-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

@@ -31,6 +31,9 @@
   <Folder Name="/tests/NativeAbiTests/">
     <Project Path="tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj" />
   </Folder>
+  <Folder Name="/tests/LocalRpcAotTests/">
+    <Project Path="tests/LocalRpcAotTests/LocalRpcAotTests.csproj" />
+  </Folder>
   <Project Path="src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj" />
   <Project Path="tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj" />
   <Project Path="tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj" />
