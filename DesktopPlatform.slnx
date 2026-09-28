@@ -21,6 +21,10 @@
     <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj" />
   </Folder>
+  <Folder Name="/src/DesignSystem/">
+    <Project Path="src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj" />
+    <Project Path="src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj" />
+  </Folder>
   <Folder Name="/src/DesktopHelpers/">
     <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj" />
   </Folder>
