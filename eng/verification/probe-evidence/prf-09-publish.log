@@ -1,4 +1,4 @@
-Build started 9/28/2026 11:23:09 AM.
+Build started 9/28/2026 12:06:33 PM.
      1>Project "C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-09\eng\verification\probe-evidence\Prf09.TableViewProbe.csproj" on node 1 (Publish target(s)).
      1>GenerateTargetFrameworkMonikerAttribute:
        Skipping target "GenerateTargetFrameworkMonikerAttribute" because all output files are up-to-date with respect to the input files.
@@ -35,8 +35,6 @@ Build started 9/28/2026 11:23:09 AM.
          Begin reading response for Prf09.TableViewProbe (net10.0)
          End reading response for Prf09.TableViewProbe (net10.0)
          CompilerServer: server - server processed compilation - Prf09.TableViewProbe (net10.0)
-       GenerateBuildRuntimeConfigurationFiles:
-       Skipping target "GenerateBuildRuntimeConfigurationFiles" because all output files are up-to-date with respect to the input files.
        CopyFilesToOutputDirectory:
          Copying file from "C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-09\artifacts\obj\dotnet\windows\Prf09.TableViewProbe\Release\net10.0\win-x64\Prf09.TableViewProbe.dll" to "C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-09\artifacts\bin\dotnet\windows\Prf09.TableViewProbe\Release\net10.0\win-x64\Prf09.TableViewProbe.dll".
          Copying reference assembly from "C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-09\artifacts/obj/dotnet/windows/Prf09.TableViewProbe/Release\net10.0\win-x64\refint\Prf09.TableViewProbe.dll" to "C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-09\artifacts\obj\dotnet\windows\Prf09.TableViewProbe\Release\net10.0\win-x64\ref\Prf09.TableViewProbe.dll".
@@ -67,4 +65,4 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:11.22
+Time Elapsed 00:00:11.03
