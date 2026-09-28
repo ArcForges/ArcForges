@@ -12,6 +12,7 @@
     <!-- This suite is exercised after native staging, outside the managed taxonomy. -->
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Native\ArcForges.Native.Abstractions\ArcForges.Native.Abstractions.csproj" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />

@@ -43,4 +43,38 @@ endfunction()
 if(ARCFORGES_NATIVE_PROFILE STREQUAL "shim-static")
     find_package(OpenImageIO CONFIG REQUIRED)
     add_subdirectory(arcimage-abi)
+
+    if(ARCFORGES_BUILD_TESTS)
+        find_package(Threads REQUIRED)
+
+        add_executable(arc_native_abi_c17_layout_tests "shared/tests/arc_native_abi_c17_layout.c")
+        arcforges_declare_target_licence(arc_native_abi_c17_layout_tests)
+        set_target_properties(arc_native_abi_c17_layout_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)
+        target_compile_features(arc_native_abi_c17_layout_tests PRIVATE c_std_17)
+        target_include_directories(arc_native_abi_c17_layout_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shared/include")
+        if(MSVC)
+            target_compile_options(arc_native_abi_c17_layout_tests PRIVATE /W4 /WX /permissive-)
+        else()
+            target_compile_options(arc_native_abi_c17_layout_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME arc_native_abi_c17_layout_tests COMMAND arc_native_abi_c17_layout_tests)
+
+        add_executable(arc_native_abi_cpp20_tests
+            "shared/tests/arc_native_abi_cpp20_tests.cpp"
+            "${ARCFORGES_SHARED_ABI_SOURCE}")
+        arcforges_declare_target_licence(arc_native_abi_cpp20_tests)
+        set_target_properties(arc_native_abi_cpp20_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)
+        add_dependencies(arc_native_abi_cpp20_tests arcforges_build_identity)
+        target_compile_features(arc_native_abi_cpp20_tests PRIVATE cxx_std_20)
+        target_include_directories(arc_native_abi_cpp20_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/shared/include"
+            "${ARCFORGES_SHARED_ABI_PRIVATE_INCLUDE}")
+        target_link_libraries(arc_native_abi_cpp20_tests PRIVATE Threads::Threads)
+        if(MSVC)
+            target_compile_options(arc_native_abi_cpp20_tests PRIVATE /W4 /WX /permissive- /EHsc /GR-)
+        else()
+            target_compile_options(arc_native_abi_cpp20_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
+        endif()
+        add_test(NAME arc_native_abi_cpp20_tests COMMAND arc_native_abi_cpp20_tests)
+    endif()
 endif()
