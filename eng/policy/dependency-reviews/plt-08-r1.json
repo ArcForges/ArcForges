@@ -3,15 +3,15 @@
     "owner": "af-20260928-p02",
     "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "fe48620d57a8d18f7b10d831bfa76b43227fb5d8",
-    "maintenanceAssessment": "PLT.08 makes only the already-existing Resources and Derived building-block projects packable, declares their explicit package identities/readmes/descriptions and unchanged AGPL-3.0-only metadata, and appends those two existing projects to the package inventory. Resources retains its existing Foundation project reference and exact already-admitted Contracts.Foundation candidate pin; Derived remains dependency-free. No PackageReference, dependency coordinate/version, lock, dependency closure, framework, public source API, solution membership or package-policy algorithm changes. This immutable successor follows the then-active NAT.06 receipt, preserving the complete existing dependency-admission receipt chain and its exact current NuGet/Python closures. CLOUD.38 was checkpointed but not merged; its unmerged bytes are not incorporated.",
+    "baselineCommit": "94b3f12e802c225ac16fea4b72ceb2717214a32b",
+    "maintenanceAssessment": "PLT.08 makes only the already-existing Persistence.Resources and Persistence.Derived projects packable, adds their explicit package identities/readmes/descriptions and unchanged AGPL-3.0-only metadata, and appends those two existing projects to the package inventory. Resources retains its existing Foundation project reference and exact already-admitted Contracts.Foundation pin; Derived remains dependency-free. No PackageReference, dependency coordinate/version, lock, dependency closure, framework, public source API, solution membership or package-policy algorithm changes. This successor follows the active PLT.47 receipt and preserves its Observability source/test project inputs, the entire existing NuGet/Python closure and prior receipt chain.",
     "upgradeChecks": {
-      "compilation": "On the candidate rebased onto DesktopPlatform main fe48620d57a8d18f7b10d831bfa76b43227fb5d8, pinned .NET SDK 10.0.400 locked restore and format verification passed; the full DesktopPlatform.slnx Release build completed with 0 warnings/errors. Focused tests passed: Foundation 65/65, Persistence.Resources 19 passed with 2 explicit local process-kill diagnostics skipped, Persistence.Derived 15/15, and PersistenceTests 81/81. The hosted exact-head package-candidate gate and candidate verification remain pending; no candidate/publication result is claimed yet.",
-      "aot-trim": "No AOT or trimming settings/runtime behavior changed; final applicable repository AOT/trim gates remain required.",
+      "compilation": "On exact base DesktopPlatform main 94b3f12e802c225ac16fea4b72ceb2717214a32b, pinned .NET SDK 10.0.400 locked solution restore and format verification passed; the full Release solution build completed with 0 warnings/errors. Focused suites passed: Foundation 65/65, Persistence.Resources 19 passed with 2 explicit local process-kill diagnostics skipped (21 total), Persistence.Derived 15/15, and PersistenceTests 81/81. Hosted candidate verification is recorded separately.",
+      "aot-trim": "The change is limited to packaging metadata, readmes and package inventory for two existing libraries; no executable source, AOT/trimming setting or runtime behavior changed.",
       "compatibility": "No framework, project reference, package dependency coordinate/version/lock, public source API or dependency closure changed; Resources retains its existing Foundation reference.",
-      "licence-provenance": "All three packages remain within the existing AGPL-3.0-only boundary and no dependency/license row changes. On the candidate rebased onto fe48620d57a8d18f7b10d831bfa76b43227fb5d8, source provenance passed for 556 files/140 records (10 reused), and generated NOTICE content was unchanged (SHA256 9fa2317d54eb0256911ab0feeec394e30429d4040616f4a1a00bfa19ad8a0cac5). The hosted exact-head provenance/package gates remain pending; no publication result is claimed yet.",
-      "security-sbom": "No dependency coordinate or lock closure change; final existing SBOM, provenance and package gates remain required.",
-      "runtime-performance-migration": "No runtime behavior, schema, migration, benchmark or performance claim is added; existing focused tests and publication validation remain required.",
+      "licence-provenance": "On exact base 94b3f12e802c225ac16fea4b72ceb2717214a32b, source provenance passed for 564 files/10 reused/140 records; generated NOTICE SHA256 is unchanged at 9fa2317d54eb0256911ab0feeec394e30429d4040616f4a1a00bfa19ad8a0cac. Licence boundary passed for 41 projects; PLT.08 remains in the existing AGPL-3.0-only boundary.",
+      "security-sbom": "The exact-base dependency admission audit passed with 51 NuGet dependencies, 10 Python tool dependencies and 240 hashed inputs; dependency-policy tests passed 16/16. PLT.08 adds no dependency coordinate, version, lock or closure entry.",
+      "runtime-performance-migration": "No runtime behavior, schema, migration, benchmark or performance claim is added; this is packaging metadata for existing projects.",
       "framework-runtime-posture": "The target remains net10.0 with pinned SDK 10.0.400; no framework, runtime, native ABI, Android/Kotlin/ART/R8 or toolchain update."
     },
     "inputHashes": {
@@ -216,8 +216,10 @@
       "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "e497179dcd202af6385dbbef3e7664479bd53cb3419e9e39e0f333d2872e2650",
       "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
-      "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "e2b25493769b3a72348382593d6b6d89a9b1548fce8d06a599cc6d615097f1ea",
+      "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
+      "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "3d6a0b8c73585ec0c6474b5eb13b05f1236830cf4b7375ca8e42cad55f9ce4aa",
+      "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "9392f220cd4732d5b7d0eb4a5812ac21ad8eb4711db6baef43f4cae116c519b7",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "c811b4409a75567b7140dd928db29cd130b4d3161f0384b5702ec50e8a7950e1",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
@@ -257,7 +259,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-06-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-47-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
