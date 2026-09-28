@@ -19,7 +19,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "0293462b584f97f79f4646ea00e6d2700ad72b3b8140ed5e63dc0840fcc017b6",
+    "eng/packaging/packages.json": "d9c9e340f317b8664ce54c7290b5718aa6dca6fbf241b745453344f1d06d2e41",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -179,6 +179,8 @@
     "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
     "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+    "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj": "38f313d8eaa527683cbcf2f72eeb78a79fad7a341acf0b10f34cf26159a2859e",
+    "src/BuildingBlocks/ArcForges.Assistant.Abstractions/packages.lock.json": "a7552808299eae7fa12c9de6155dc33c798f38a1e7e80e28f0e11da1b59a847a",
     "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "c2674139542b9145e4317a982bc3c34900b767b26f8f919cb370087ea189000d",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
@@ -234,6 +236,8 @@
     "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+    "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
+    "tests/AssistantAbstractionsTests/packages.lock.json": "67e6a655dedcf69cd474ff8365d38e8c9a8ef8141e6c0627b1f6cf6256ef1a5a",
     "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
     "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
@@ -639,19 +643,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-c02",
-    "reviewer": "af-20260928-p03",
+    "owner": "af-20260928-a01",
+    "reviewer": "Independent exact-head dependency-admission review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "213424c4944e7ed208ef21f3493068fcc26c7210",
-    "maintenanceAssessment": "NAT.06 adds only the authorized ProjectReference from NativeAbiTests to the existing ArcForges.Native.Abstractions project and its project-only lock entry. This immutable successor follows the currently active nat-03-r1 receipt, preserving NAT.03 -> PLT.07 -> PRF.09 history and the exact current 51 NuGet coordinates/content hashes/licences/source evidence plus the unchanged 10-package Python closure. It introduces no PackageReference, package coordinate or version, licence, framework selection, package identity change, or production/runtime dependency edge. Only the two existing NativeAbiTests csproj/packages.lock.json input hashes change for this task; the project-only lock entry is required to compile the authorized managed common-ABI layout tests.",
+    "baselineCommit": "19635a2dd205184fd89b7e7992ab24228cf23021",
+    "maintenanceAssessment": "APP.01 publishes only Assistant.Abstractions host-port contracts and product/profile/installation/instance identity and lifetime contracts, with offline two-identity isolation tests. Its only direct production project references are ArcForges.Foundation and ArcForges.Application.Abstractions; PLT.17 is an application-identity/composition precedent only. APP.01 does not implement the APP.08 real Capabilities/Shell/Sqlite integration sample, an adapter, or a direct Capabilities edge. No external package coordinate, version, central pin, or lockfile dependency is added. This immutable successor follows the active NAT.06 dependency-admission receipt and preserves all existing NAT.06 inputs, including the four isolated build-only Avalonia coordinates; it does not consume the PLT.07 .48.1 NuGet candidate. The aggregate remains exactly 51 NuGet and 10 Python coordinates.",
     "upgradeChecks": {
-      "compilation": "On the candidate rebased onto DesktopPlatform main 213424c4944e7ed208ef21f3493068fcc26c7210, pinned .NET SDK 10.0.400 locked restore, NativeAbiTests format verification, and filtered NativeAbiLayout managed tests (3/3) passed. Development dependency audit passed with 51 NuGet and 10 Python dependencies across 238 input hashes; dependency policy tests passed 16/16; native provenance passed (21 components); IDE licence evaluation passed (40 projects); reconciliation passed (7 owners/67 projects/166 historical/326 directories/7 native) with tests 8/8; runtime ownership tests passed 25/25; source provenance passed (550 files/140 records). The local host has no pinned VCPKG_ROOT/toolchain, so CMake configure/build/install, native ABI CTest 2/2, and native package staging were not run locally. Exact-head hosted native/package CI remains required and pending. The stable audit remains inapplicable to this prerelease candidate closure; no publication or final independent review is claimed.",
-      "aot-trim": "Only the non-packable NativeAbiTests test project references the existing Native.Abstractions project. No runtime package or AOT configuration changes; existing AOT/trim gates remain required and no new AOT result is claimed.",
-      "compatibility": "No PackageReference, package identity/version, package inventory, or production/runtime project edge is added. The NativeAbiTests ProjectReference exists only for managed common ABI layout assertions. Existing image probe exports/signatures/identity and ABI minor 0 remain unchanged; the ABI 1.1 family declarations are compile-time declarations only, not implemented or advertised exports.",
-      "licence-provenance": "No dependency coordinate, content hash, licence, nuspec evidence, or Python closure changes. NAT.06 source/test paths and the immutable successor receipt are first-party provenance entries; current-base provenance and licence gates remain required.",
-      "security-sbom": "The exact 51-coordinate NuGet closure and 10-coordinate Python closure are preserved; no external component, checksum, licence, or version is added or changed. Existing development/stable dependency admission and audit gates remain required; no stable publication is claimed.",
-      "runtime-performance-migration": "No dependency migration or runtime behavior/performance claim. The test-only project reference and common ABI assertions do not change product runtime composition.",
-      "framework-runtime-posture": "Target remains net10.0 and global.json remains pinned to SDK 10.0.400. Validation uses the pinned SDK; no framework, runtime, Android, or native toolchain version change is introduced."
+      "compilation": "Against source checkpoint 4ea7d72295bc0213f927146d3aea5719a6601707 on DesktopPlatform base a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3, dependency, licence, runtime ownership, reconciliation, provenance, package-guard and 111 eng policy tests have passed. Locked .NET solution restore, format/build, focused C# tests and the temporary NativeAOT consumer proof remain pending the shared build slot, queued behind NAT.03 and NAT.06; fresh hosted CI remains required.",
+      "aot-trim": "The production project declares IsAotCompatible and uses existing trim/AOT analyzers without suppressions. A temporary win-x64 NativeAOT consumer against the real production project remains pending the shared build-slot queue; it will be compiled/linked only, not committed or run.",
+      "compatibility": "The production project has exactly two direct project edges: Foundation and Application.Abstractions. No Capabilities dependency, runtime adapter, wire-schema change, third-party coordinate, or PLT.07 package candidate dependency is introduced; PLT.17 is precedent only.",
+      "licence-provenance": "Production and test projects explicitly declare AGPL-3.0-only and are registered in the applicable architecture, licence, runtime ownership, active-project and first-party provenance inventories. The APP.01 immutable receipt is the successor to the active NAT.06 receipt.",
+      "security-sbom": "No external package coordinate or version is added. The active lock closure remains exactly the existing 51 admitted coordinates, including the isolated PRF.09 build-only AOT probe dependencies; existing admission, licence, provenance, secret and hosted CI gates remain required.",
+      "runtime-performance-migration": "This is a storage-free host-port and identity/lifetime contract package with offline two-identity isolation tests only. No production integration sample, live-service, performance, migration, or product-acceptance claim is made; APP.08 owns the real WP-14.00 Capabilities/Shell/Sqlite sample.",
+      "framework-runtime-posture": "Target remains net10.0 and repository SDK pin remains 10.0.400. No framework major, native ABI, mobile runtime, compiler toolchain, central package pin, or shared lock file changes."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -671,7 +675,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "0293462b584f97f79f4646ea00e6d2700ad72b3b8140ed5e63dc0840fcc017b6",
+      "eng/packaging/packages.json": "d9c9e340f317b8664ce54c7290b5718aa6dca6fbf241b745453344f1d06d2e41",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -831,6 +835,8 @@
       "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
       "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+      "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj": "38f313d8eaa527683cbcf2f72eeb78a79fad7a341acf0b10f34cf26159a2859e",
+      "src/BuildingBlocks/ArcForges.Assistant.Abstractions/packages.lock.json": "a7552808299eae7fa12c9de6155dc33c798f38a1e7e80e28f0e11da1b59a847a",
       "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "c2674139542b9145e4317a982bc3c34900b767b26f8f919cb370087ea189000d",
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "f0340b0ce9ec31dd828bd923aba9bc1144ba3fdcb964a67b2b3626e9230413b4",
@@ -886,6 +892,8 @@
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+      "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
+      "tests/AssistantAbstractionsTests/packages.lock.json": "67e6a655dedcf69cd474ff8365d38e8c9a8ef8141e6c0627b1f6cf6256ef1a5a",
       "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
       "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
@@ -896,7 +904,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-03-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-06-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -907,7 +915,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-06-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/app-01-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
