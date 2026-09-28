@@ -15,6 +15,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
     private const int FormatVersion = 1;
     private const int HeaderLength = 120;
     private const int DigestLength = 32;
+    private const string LeaseFileName = ".snapshot-coordinator.lock";
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("AFSNAP01");
     private static readonly string[] SidecarSuffixes = ["-wal", "-shm", "-journal"];
     private readonly string fullDatabasePath = Path.GetFullPath(databasePath);
@@ -30,6 +31,8 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
 
     internal StoreRecoveryReport PrepareForOpen()
     {
+        using var snapshotLease = AcquireSnapshotLease(createDirectory: false);
+        if (snapshotLease is not null) ScavengeAbandonedTemporaryFiles();
         var databaseExists = File.Exists(fullDatabasePath);
         var databaseIsEmpty = databaseExists && new FileInfo(fullDatabasePath).Length == 0;
         if (!databaseExists || databaseIsEmpty)
@@ -154,8 +157,9 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(journal);
-        Directory.CreateDirectory(snapshotDirectory);
-        RejectReparsePoint(snapshotDirectory);
+        using var snapshotLease = AcquireSnapshotLease(createDirectory: true)
+            ?? throw new InvalidOperationException("Snapshot storage is unavailable.");
+        ScavengeAbandonedTemporaryFiles();
 
         var scratchDatabase = Path.Combine(snapshotDirectory, $".snapshot-{Guid.NewGuid():N}.db.tmp");
         var scratchEnvelope = Path.Combine(snapshotDirectory, $".snapshot-{Guid.NewGuid():N}.afsnap.tmp");
@@ -173,6 +177,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
             fault?.Invoke(SnapshotStage.EnvelopeFlushed);
             verified = VerifySnapshot(scratchEnvelope);
             if (verified is null) throw new InvalidDataException("The newly written snapshot did not verify.");
+            fault?.Invoke(SnapshotStage.SnapshotVerified);
 
             publishedPath = Path.Combine(snapshotDirectory,
                 $"snapshot-{verified.Through:D20}-{Guid.NewGuid():N}.afsnap");
@@ -356,7 +361,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
             var boundary = new VerifiedSnapshotBoundary(new JournalSequence(storeId, header.Through),
                 header.JournalChecksum, storedEnvelopeDigest);
             return new(path, databaseTemp, header.Through, header.CreatedAtMilliseconds,
-                header.SchemaVersion, boundary);
+                header.SchemaVersion, header.DatabaseChecksum, boundary);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or SqliteException or
             ArgumentException or FormatException or OverflowException or UnauthorizedAccessException)
@@ -534,9 +539,12 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
                 source.CopyTo(destination);
                 destination.Flush(flushToDisk: true);
             }
+            fault?.Invoke(SnapshotStage.RestoreCopied);
+            if (!CryptographicOperations.FixedTimeEquals(HashFile(restorePath), candidate.DatabaseChecksum))
+                throw new InvalidDataException("The restored snapshot copy does not match its verified database checksum.");
             VerifySnapshotDatabase(restorePath, new Header(storeId, candidate.Through,
                 candidate.CreatedAtMilliseconds, candidate.SchemaVersion, new FileInfo(restorePath).Length,
-                candidate.Boundary.JournalChecksum.ToArray(), HashFile(restorePath)));
+                candidate.Boundary.JournalChecksum.ToArray(), candidate.DatabaseChecksum));
 
             if (File.Exists(fullDatabasePath))
             {
@@ -656,6 +664,62 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
     private static string BoundaryKey(VerifiedSnapshotBoundary boundary) =>
         $"{boundary.Through.StoreId:D}:{boundary.Through.Value}:{Convert.ToHexString(boundary.JournalChecksum.Span)}:{Convert.ToHexString(boundary.SnapshotChecksum.Span)}";
 
+    private FileStream? AcquireSnapshotLease(bool createDirectory)
+    {
+        if (!Directory.Exists(snapshotDirectory))
+        {
+            if (!createDirectory) return null;
+            Directory.CreateDirectory(snapshotDirectory);
+        }
+        RejectReparsePoint(snapshotDirectory);
+        var leasePath = Path.Combine(snapshotDirectory, LeaseFileName);
+        if (File.Exists(leasePath) || Directory.Exists(leasePath)) RejectReparsePoint(leasePath);
+
+        var deadline = Environment.TickCount64 + 30_000;
+        while (true)
+        {
+            try { return new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (Environment.TickCount64 < deadline)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(50));
+            }
+            catch (IOException exception)
+            {
+                throw new IOException("Timed out waiting for the snapshot operation lease.", exception);
+            }
+        }
+    }
+
+    private void ScavengeAbandonedTemporaryFiles()
+    {
+        RejectReparsePoint(snapshotDirectory);
+        foreach (var path in Directory.EnumerateFiles(snapshotDirectory, "*", SearchOption.TopDirectoryOnly))
+        {
+            if (!IsOwnedTemporaryFileName(Path.GetFileName(path))) continue;
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(path); }
+            catch (FileNotFoundException) { continue; }
+            if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+            DeleteTemporary(path);
+        }
+    }
+
+    private static bool IsOwnedTemporaryFileName(string name) =>
+        HasOwnedTemporaryIdentity(name, ".snapshot-", ".db.tmp") ||
+        HasOwnedTemporaryIdentity(name, ".snapshot-", ".afsnap.tmp") ||
+        HasOwnedTemporaryIdentity(name, ".verify-", ".db.tmp");
+
+    private static bool HasOwnedTemporaryIdentity(string name, string prefix, string suffix)
+    {
+        if (!name.StartsWith(prefix, StringComparison.Ordinal) || !name.EndsWith(suffix, StringComparison.Ordinal))
+            return false;
+        var identityLength = name.Length - prefix.Length - suffix.Length;
+        if (identityLength != 32) return false;
+        var identity = name.Substring(prefix.Length, identityLength);
+        return Guid.TryParseExact(identity, "N", out var parsed) &&
+            string.Equals(parsed.ToString("N"), identity, StringComparison.Ordinal);
+    }
+
     private static void RejectReparsePoint(string path)
     {
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
@@ -666,12 +730,13 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
     {
         var full = Path.GetFullPath(path);
         var parent = Path.GetDirectoryName(full);
-        var expectedParents = new[] { snapshotDirectory, Path.GetDirectoryName(fullDatabasePath) ?? Environment.CurrentDirectory }
-            .Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (parent is null || !expectedParents.Contains(parent) ||
-            !(Path.GetFileName(full).StartsWith(".verify-", StringComparison.Ordinal) ||
-              Path.GetFileName(full).StartsWith(".snapshot-", StringComparison.Ordinal) ||
-              Path.GetFileName(full).Contains(".restore-", StringComparison.Ordinal)))
+        var name = Path.GetFileName(full);
+        var databaseDirectory = Path.GetDirectoryName(fullDatabasePath) ?? Environment.CurrentDirectory;
+        var isSnapshotTemporary = string.Equals(parent, snapshotDirectory, StringComparison.OrdinalIgnoreCase) &&
+            IsOwnedTemporaryFileName(name);
+        var isRestoreTemporary = string.Equals(parent, databaseDirectory, StringComparison.OrdinalIgnoreCase) &&
+            HasOwnedTemporaryIdentity(name, Path.GetFileName(fullDatabasePath) + ".restore-", ".tmp");
+        if (!isSnapshotTemporary && !isRestoreTemporary)
             throw new InvalidOperationException("Refusing to remove a file outside the snapshot temporary scope.");
         if (File.Exists(full)) File.Delete(full);
     }
@@ -680,7 +745,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         long PayloadLength, byte[] JournalChecksum, byte[] DatabaseChecksum);
     private readonly record struct SnapshotBoundaryInfo(long Through, byte[] JournalChecksum, uint SchemaVersion);
     private sealed record SnapshotCandidate(string EnvelopePath, string DatabasePath, long Through,
-        long CreatedAtMilliseconds, uint SchemaVersion, VerifiedSnapshotBoundary Boundary);
+        long CreatedAtMilliseconds, uint SchemaVersion, byte[] DatabaseChecksum, VerifiedSnapshotBoundary Boundary);
     private sealed record DatabaseInspection(bool RequiresRecovery, bool CanReadJournal,
         long? Head, long? Floor, string Detail);
 
@@ -694,5 +759,7 @@ internal enum SnapshotStage
 {
     EnvelopeFlushed,
     EnvelopePublished,
-    JournalTruncated
+    JournalTruncated,
+    SnapshotVerified,
+    RestoreCopied
 }

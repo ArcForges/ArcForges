@@ -463,6 +463,176 @@ public sealed class RecoveryTests
     }
 
     [Fact]
+    public async Task KilledSnapshotWriterLeavesOnlyUnpublishedTempsAndRestartReclaimsThem()
+    {
+        using var file = new SnapshotFixture();
+        var first = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        var second = Command(StoreVersion.Native(new(1)), StoreVersion.Native(new(2)), first.AggregateId);
+        string committedSnapshotPath;
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false))
+        {
+            store.Write(first);
+            var receipt = store.CreateSnapshot();
+            Assert.NotNull(receipt);
+            committedSnapshotPath = receipt!.Path;
+            store.Write(second);
+        }
+
+        var marker = System.IO.Path.Combine(file.DirectoryPath, "snapshot-crash-ready");
+        var childPath = System.IO.Path.Combine(AppContext.BaseDirectory,
+            OperatingSystem.IsWindows() ? "ArcForges.Tests.PersistenceTests.exe" : "ArcForges.Tests.PersistenceTests");
+        Assert.True(File.Exists(childPath), "The snapshot process-kill regression requires the test apphost.");
+        using var child = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = childPath,
+                WorkingDirectory = Environment.CurrentDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
+        child.StartInfo.ArgumentList.Add("-method");
+        child.StartInfo.ArgumentList.Add("ArcForges.Tests.PersistenceTests.RecoveryTests.NativeCrashChildWaitsDuringSnapshotCreation");
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_SNAPSHOT_CRASH_CHILD"] = "1";
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_SNAPSHOT_DATABASE"] = file.Path;
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_SNAPSHOT_STORE"] = file.Id.ToString("D");
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_SNAPSHOT_MARKER"] = marker;
+        Assert.True(child.Start(), "The snapshot crash child did not start.");
+        var standardOutput = child.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var standardError = child.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        string[] snapshotDatabaseTemps = [];
+        string[] snapshotEnvelopeTemps = [];
+        string[] verificationDatabaseTemps = [];
+        var unrelatedSimilarFile = System.IO.Path.Combine(file.SnapshotDirectory, ".snapshot-not-owned.db.tmp");
+        var writerReachedVerifiedSnapshot = false;
+        var allOwnedTempsWerePresent = false;
+        var openStartedSuccessfully = false;
+        var waitedForActiveLease = false;
+        Task<SqliteStore>? concurrentOpen = null;
+        ManualResetEventSlim? openStarted = null;
+        try
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (!File.Exists(marker) && !child.HasExited && DateTime.UtcNow < deadline)
+                await Task.Delay(TimeSpan.FromMilliseconds(25), TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+            writerReachedVerifiedSnapshot = File.Exists(marker);
+            if (writerReachedVerifiedSnapshot)
+            {
+                snapshotDatabaseTemps = Directory.GetFiles(file.SnapshotDirectory, ".snapshot-*.db.tmp");
+                snapshotEnvelopeTemps = Directory.GetFiles(file.SnapshotDirectory, ".snapshot-*.afsnap.tmp");
+                verificationDatabaseTemps = Directory.GetFiles(file.SnapshotDirectory, ".verify-*.db.tmp");
+                allOwnedTempsWerePresent = snapshotDatabaseTemps.Length > 0 && snapshotEnvelopeTemps.Length > 0 &&
+                    verificationDatabaseTemps.Length > 0;
+                await File.WriteAllTextAsync(unrelatedSimilarFile, "retain unrelated file",
+                    TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+                openStarted = new ManualResetEventSlim();
+                concurrentOpen = Task.Run(() =>
+                {
+                    openStarted.Set();
+                    return new SqliteStore(file.Path, file.Id, new Allow());
+                });
+                openStartedSuccessfully = openStarted.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+                if (openStartedSuccessfully)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(150), TestContext.Current.CancellationToken).ConfigureAwait(true);
+                    waitedForActiveLease = !concurrentOpen.IsCompleted;
+                }
+            }
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+        }
+
+        var output = await standardOutput.ConfigureAwait(true);
+        var error = await standardError.ConfigureAwait(true);
+        var reopenedStore = concurrentOpen is null ? null : await concurrentOpen.ConfigureAwait(true);
+        openStarted?.Dispose();
+        Assert.True(writerReachedVerifiedSnapshot,
+            $"The crash child did not reach its verified snapshot. stdout={output} stderr={error}");
+        Assert.True(allOwnedTempsWerePresent, "The killed snapshot writer must leave all three owned temp kinds behind.");
+        Assert.True(openStartedSuccessfully, "The concurrent store open did not start.");
+        Assert.True(waitedForActiveLease, "Startup must wait for the active snapshot lease rather than scavenging its temporary files.");
+        Assert.NotEqual(0, child.ExitCode);
+
+        using var reopened = reopenedStore ?? throw new InvalidOperationException("The concurrent store open was not scheduled.");
+        Assert.Equal(StoreRecoveryOutcome.Clean, reopened.Recovery.Outcome);
+        Assert.Equal(second.Content.Version, reopened.Read(second.AggregateKind, second.AggregateId)!.Version);
+        Assert.True(File.Exists(committedSnapshotPath), "Scavenging must retain a committed snapshot envelope.");
+        Assert.Single(Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"));
+        Assert.All(snapshotDatabaseTemps.Concat(snapshotEnvelopeTemps).Concat(verificationDatabaseTemps),
+            path => Assert.False(File.Exists(path), $"Abandoned owned temp was not reclaimed: {path}"));
+        Assert.Equal("retain unrelated file",
+            await File.ReadAllTextAsync(unrelatedSimilarFile, TestContext.Current.CancellationToken).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public void NativeCrashChildWaitsDuringSnapshotCreation()
+    {
+        if (Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_SNAPSHOT_CRASH_CHILD") != "1") return;
+
+        var database = Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_SNAPSHOT_DATABASE")
+            ?? throw new InvalidOperationException("The snapshot crash-child database path is missing.");
+        var storeId = Guid.Parse(Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_SNAPSHOT_STORE")
+            ?? throw new InvalidOperationException("The snapshot crash-child store identity is missing."));
+        var marker = Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_SNAPSHOT_MARKER")
+            ?? throw new InvalidOperationException("The snapshot crash-child marker path is missing.");
+        using var store = new SqliteStore(database, storeId, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false,
+            snapshotFault: stage =>
+            {
+                if (stage != SnapshotStage.SnapshotVerified) return;
+                using var ready = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                ready.WriteByte(1);
+                ready.Flush(flushToDisk: true);
+                Thread.Sleep(Timeout.Infinite);
+            });
+        _ = store.CreateSnapshot();
+    }
+
+    [Fact]
+    public void RestoreRejectsCopyWhoseBytesNoLongerMatchVerifiedEnvelopeChecksum()
+    {
+        using var file = new SnapshotFixture();
+        var command = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        string snapshotPath;
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false))
+        {
+            store.Write(command);
+            snapshotPath = store.CreateSnapshot()!.Path;
+        }
+
+        var corruptDatabase = "corrupt owner database"u8.ToArray();
+        File.WriteAllBytes(file.Path, corruptDatabase);
+        var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false,
+            snapshotFault: stage =>
+            {
+                if (stage != SnapshotStage.RestoreCopied) return;
+                var restorePath = Assert.Single(Directory.GetFiles(file.DirectoryPath, "owner.db.restore-*.tmp"));
+                using var changed = new FileStream(restorePath, FileMode.Open, FileAccess.Write, FileShare.None);
+                changed.Seek(0, SeekOrigin.End);
+                changed.WriteByte(0xA5);
+                changed.Flush(flushToDisk: true);
+            }));
+
+        Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+        Assert.NotNull(exception.Report.EvidencePath);
+        Assert.Equal(corruptDatabase, File.ReadAllBytes(file.Path));
+        Assert.Equal(corruptDatabase, File.ReadAllBytes(System.IO.Path.Combine(exception.Report.EvidencePath!, "owner.db")));
+        Assert.Empty(Directory.GetFiles(file.DirectoryPath, "owner.db.restore-*.tmp"));
+        Assert.True(File.Exists(snapshotPath));
+    }
+
+    [Fact]
     public void SqliteFullDuringWriteRollsBackAndReopensAtThePriorBoundary()
     {
         using var file = new SnapshotFixture();
