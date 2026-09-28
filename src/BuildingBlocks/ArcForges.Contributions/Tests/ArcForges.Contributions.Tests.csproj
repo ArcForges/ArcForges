@@ -14,5 +14,10 @@
     <PackageReference Include="xunit.v3" />
     <ProjectReference Include="../ArcForges.Contributions.csproj" />
     <ProjectReference Include="../../ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
+    <None Update="Fixtures/contributions.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <Target Name="VerifyContributionCatalogFixture" BeforeTargets="CoreCompile">
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)\tools\emit_catalog.py&quot; --verify-drift --input &quot;$(MSBuildProjectDirectory)\Fixtures\contributions.json&quot;" />
+    <Exec Command="python &quot;$(MSBuildProjectDirectory)\tools\emit_catalog.py&quot; --check --input &quot;$(MSBuildProjectDirectory)\Fixtures\contributions.json&quot; --output &quot;$(MSBuildProjectDirectory)\Generated\ContributionCatalog.g.cs&quot;" />
+  </Target>
 </Project>

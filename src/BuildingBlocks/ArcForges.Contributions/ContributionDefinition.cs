@@ -50,6 +50,8 @@ public enum ContributionRegistrationFailure
     UndeclaredToolSchema,
     ChildUnavailable,
     PersistenceConflict,
+    ChildExpired,
+    ChildRevoked,
 }
 
 public enum ContributionPersistenceResult

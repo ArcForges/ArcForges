@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Text.Json;
 using ArcForges.Capabilities;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Foundation.Values;
@@ -6,6 +7,7 @@ using ArcForges.Contributions;
 using ArcForges.Foundation;
 using ArcForges.Foundation.Errors;
 using ArcForges.Persistence.Sqlite;
+using ArcForges.Contributions.Tests.Generated;
 
 namespace ArcForges.Contributions.Tests;
 
@@ -114,6 +116,35 @@ public sealed class ContributionRegistryTests
     }
 
     [Xunit.Fact]
+    public void GeneratedCatalogRuntimeEntriesMatchTheirSingleJsonSource()
+    {
+        var fixturePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "contributions.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(fixturePath));
+        var sourceCatalogs = document.RootElement.GetProperty("catalogs").EnumerateArray().ToArray();
+        var generatedCatalogs = GeneratedContributionCatalogs.All;
+
+        Xunit.Assert.Equal(sourceCatalogs.Length, generatedCatalogs.Length);
+        foreach (var source in sourceCatalogs)
+        {
+            var owner = source.GetProperty("ownerProductId").GetString();
+            var generated = Xunit.Assert.Single(generatedCatalogs, catalog => catalog.OwnerProductId == owner);
+            var expected = source.GetProperty("contributions").EnumerateArray().ToArray();
+            var actual = generated.Descriptors.OrderBy(value => value.Id, StringComparer.Ordinal).ToArray();
+
+            Xunit.Assert.Equal(expected.Length, actual.Length);
+            for (var index = 0; index < expected.Length; index++)
+            {
+                Xunit.Assert.Equal(expected[index].GetProperty("id").GetString(), actual[index].Id);
+                Xunit.Assert.Equal(owner, actual[index].OwnerProductId);
+                Xunit.Assert.Equal(expected[index].GetProperty("kind").GetString(), actual[index].Kind.ToString());
+                Xunit.Assert.Equal(expected[index].GetProperty("toolSchemaId").GetString(), actual[index].ToolSchemaId);
+            }
+
+            Xunit.Assert.Equal(ContributionCatalogFingerprint.Compute(generated.OwnerProductId, actual), generated.Fingerprint);
+        }
+    }
+
+    [Xunit.Fact]
     public void CompositionValidatesCatalogFingerprintAndProductBinding()
     {
         var store = new MemoryStore();
@@ -152,10 +183,123 @@ public sealed class ContributionRegistryTests
         var registry = new ContributionRegistry<FixtureOwner>(composition, new MemoryStore(), ArcScopeCatalog());
 
         var refusal = Xunit.Assert.Throws<ContributionRegistrationException>(() =>
-            registry.RegisterChild(Definition("arcscope.extension.example.item", ContributionKind.Action)));
+            registry.RegisterChild(ArcScopeCatalog().Descriptors.Single(value => value.Id == "arcscope.extension.example.item")));
 
         Xunit.Assert.Equal(ContributionRegistrationFailure.ChildUnavailable, refusal.Failure);
         Xunit.Assert.Empty(registry.Definitions);
+    }
+
+    [Xunit.Fact]
+    public void AdmittedChildRegistrationPersistsAcrossRestartAndRefusesMismatchedSnapshots()
+    {
+        var catalog = ArcScopeCatalog();
+        var descriptor = catalog.Descriptors.Single(value => value.Id == "arcscope.extension.example.item");
+        var installation = Installed();
+        var store = new MemoryStore();
+        var firstChild = new ChildConnectionIdentity(new Guid("30000000-0000-0000-0000-000000000001"), 1);
+        var firstPort = new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, firstChild, descriptor));
+        var first = new ContributionRegistry<FixtureOwner>(Start(installation, epoch: 1), store, catalog, firstPort);
+
+        first.RegisterChild(descriptor);
+        Xunit.Assert.Equal(1, store.AddCalls);
+        Xunit.Assert.Single(first.Definitions);
+        Xunit.Assert.Equal(AppIdentity.ArcScope, firstPort.LastOwner);
+        Xunit.Assert.Equal(descriptor, firstPort.LastDescriptor);
+
+        var restartedChild = new ChildConnectionIdentity(new Guid("30000000-0000-0000-0000-000000000002"), 2);
+        var restartedPort = new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor));
+        var restarted = new ContributionRegistry<FixtureOwner>(Start(installation, epoch: 2), store, catalog, restartedPort);
+        restarted.RegisterChild(descriptor);
+        Xunit.Assert.Equal(2, store.AddCalls);
+        Xunit.Assert.Equal(ContributionPersistenceResult.AlreadyPresent, store.LastResult);
+        Xunit.Assert.Single(restarted.Definitions);
+        Xunit.Assert.NotEqual(firstPort.Admission!.CurrentChild, restartedPort.Admission!.CurrentChild);
+        var restartedAdmission = restartedPort.Admission ?? throw new InvalidOperationException("The fixture admission is required.");
+        Xunit.Assert.Equal(AppIdentity.ArcScope, restartedAdmission.OwnerProduct);
+        Xunit.Assert.Equal(descriptor.Id, restartedAdmission.ContributionId);
+        Xunit.Assert.Equal(descriptor.Kind, restartedAdmission.Kind);
+        Xunit.Assert.Equal(descriptor.ToolSchemaId, restartedAdmission.ToolSchemaId);
+        Xunit.Assert.Equal(descriptor.Fingerprint, restartedAdmission.DescriptorFingerprint);
+        Xunit.Assert.Equal(restartedChild, restartedAdmission.CurrentChild);
+        Xunit.Assert.Equal(2UL, restartedAdmission.CurrentChild!.Epoch);
+        Xunit.Assert.True(restartedAdmission.ExpiresAt > DateTimeOffset.UtcNow);
+
+        AssertChildRefused(ContributionRegistrationFailure.ChildUnavailable, descriptor, catalog, null);
+        AssertChildRefused(ContributionRegistrationFailure.ChildUnavailable, descriptor, catalog,
+            new FixedAdmissionPort(null));
+        AssertChildRefused(ContributionRegistrationFailure.ChildUnavailable, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
+                ChildContributionAdmissionState.Unavailable)));
+        AssertChildRefused(ContributionRegistrationFailure.ChildUnavailable, descriptor, catalog,
+            new FixedAdmissionPort(new ChildContributionAdmissionSnapshot(AppIdentity.ArcScope, null, descriptor,
+                ChildContributionAdmissionState.Admitted, DateTimeOffset.UtcNow.AddMinutes(1))));
+        AssertChildRefused(ContributionRegistrationFailure.ChildUnavailable, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
+                (ChildContributionAdmissionState)99)));
+        AssertChildRefused(ContributionRegistrationFailure.ChildExpired, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
+                ChildContributionAdmissionState.Expired)));
+        AssertChildRefused(ContributionRegistrationFailure.ChildExpired, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
+                expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1))));
+        AssertChildRefused(ContributionRegistrationFailure.ChildRevoked, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor,
+                ChildContributionAdmissionState.Revoked)));
+        AssertChildRefused(ContributionRegistrationFailure.WrongOwner, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.Companion, restartedChild, descriptor)));
+        AssertChildRefused(ContributionRegistrationFailure.WrongOwner,
+            Definition(descriptor.Id, descriptor.Kind, ownerProductId: "companion"), catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor)));
+        AssertChildRefused(ContributionRegistrationFailure.UndeclaredToolSchema,
+            Definition(descriptor.Id, ContributionKind.Capability, "external.extension.example.input.v1"), catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, descriptor)));
+        AssertChildRefused(ContributionRegistrationFailure.UndeclaredToolSchema, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild,
+                Definition(descriptor.Id, ContributionKind.Capability, "external.extension.example.input.v1"))));
+        AssertChildRefused(ContributionRegistrationFailure.InvalidDescriptor, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild,
+                Definition(descriptor.Id, ContributionKind.Capability))));
+        AssertChildRefused(ContributionRegistrationFailure.InvalidDescriptor, descriptor, catalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild,
+                Definition("arcscope.extension.other.item", ContributionKind.Action))));
+
+        var companionCatalog = GeneratedContributionCatalogs.All.Single(value => value.OwnerProductId == "companion");
+        var companionDescriptor = companionCatalog.Descriptors.Single();
+        var companionPort = new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild, companionDescriptor));
+        var companionRegistry = new ContributionRegistry<FixtureOwner>(
+            Start(Installed(AppIdentity.Companion)), new MemoryStore(), companionCatalog, companionPort);
+        var crossOwner = Xunit.Assert.Throws<ContributionRegistrationException>(() =>
+            companionRegistry.RegisterChild(companionDescriptor));
+        Xunit.Assert.Equal(ContributionRegistrationFailure.WrongOwner, crossOwner.Failure);
+
+        var crossCatalog = new ContributionRegistry<FixtureOwner>(
+            Start(Installed(AppIdentity.Companion)), new MemoryStore(), companionCatalog,
+            new FixedAdmissionPort(Admitted(AppIdentity.Companion, restartedChild, companionDescriptor)));
+        var crossProductDescriptor = Xunit.Assert.Throws<ContributionRegistrationException>(() =>
+            crossCatalog.RegisterChild(descriptor));
+        Xunit.Assert.Equal(ContributionRegistrationFailure.WrongOwner, crossProductDescriptor.Failure);
+    }
+
+    private static ChildContributionAdmissionSnapshot Admitted(
+        AppIdentity owner,
+        ChildConnectionIdentity child,
+        ContributionDefinition descriptor,
+        ChildContributionAdmissionState state = ChildContributionAdmissionState.Admitted,
+        DateTimeOffset? expiresAt = null) =>
+        new(owner, child, descriptor, state, expiresAt ?? DateTimeOffset.UtcNow.AddMinutes(1));
+
+    private static void AssertChildRefused(
+        ContributionRegistrationFailure expected,
+        ContributionDefinition descriptor,
+        IContributionCatalog catalog,
+        IChildContributionAdmissionPort? port)
+    {
+        var store = new MemoryStore();
+        var registry = new ContributionRegistry<FixtureOwner>(Start(), store, catalog, port);
+        var refusal = Xunit.Assert.Throws<ContributionRegistrationException>(() => registry.RegisterChild(descriptor));
+        Xunit.Assert.Equal(expected, refusal.Failure);
+        Xunit.Assert.Empty(registry.Definitions);
+        Xunit.Assert.Equal(0, store.AddCalls);
     }
 
     [Xunit.Fact]
@@ -203,6 +347,49 @@ public sealed class ContributionRegistryTests
         Xunit.Assert.Equal(ContributionPersistenceResult.AlreadyPresent, restoredRegistration.PersistenceResult);
         Xunit.Assert.True(result.TryGetValue(out var value));
         Xunit.Assert.Equal(42, value);
+    }
+
+    [Xunit.Fact]
+    public void AdmittedChildRegistrationSurvivesSqliteRestartWithANewCurrentConnection()
+    {
+        using var file = new DatabaseFile();
+        var installation = Installed();
+        var descriptor = ArcScopeCatalog().Descriptors.Single(value => value.Id == "arcscope.extension.example.item");
+        var firstComposition = Start(installation, epoch: 1);
+        using (var store = new SqliteStore(file.Path, file.StoreId, new AllowWrites()))
+        {
+            var stateStore = new StoreBackedRegistrationStore(store);
+            var registry = new ContributionRegistry<FixtureOwner>(firstComposition, stateStore, ArcScopeCatalog(),
+                new FixedAdmissionPort(Admitted(AppIdentity.ArcScope,
+                    new ChildConnectionIdentity(new Guid("30000000-0000-0000-0000-000000000011"), 1), descriptor)));
+            registry.RegisterChild(descriptor);
+            Xunit.Assert.Single(registry.Definitions);
+        }
+
+        var restartedComposition = Start(installation, epoch: 2);
+        Xunit.Assert.NotEqual(firstComposition.Identity.InstanceId, restartedComposition.Identity.InstanceId);
+        using var reopenedStore = new SqliteStore(file.Path, file.StoreId, new AllowWrites());
+        var reopenedRegistrationStore = new StoreBackedRegistrationStore(reopenedStore);
+        var reopenedChild = new ChildConnectionIdentity(new Guid("30000000-0000-0000-0000-000000000012"), 2);
+        var reopenedPort = new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, reopenedChild, descriptor));
+        var reopenedRegistry = new ContributionRegistry<FixtureOwner>(restartedComposition, reopenedRegistrationStore,
+            ArcScopeCatalog(), reopenedPort);
+
+        reopenedRegistry.RegisterChild(descriptor);
+        Xunit.Assert.Single(reopenedRegistry.Definitions);
+        Xunit.Assert.Equal(AppIdentity.ArcScope, reopenedPort.LastOwner);
+        Xunit.Assert.Equal(descriptor, reopenedPort.LastDescriptor);
+        var reopenedAdmission = reopenedPort.Admission ?? throw new InvalidOperationException("The fixture admission is required.");
+        Xunit.Assert.Equal(AppIdentity.ArcScope, reopenedAdmission.OwnerProduct);
+        Xunit.Assert.Equal(descriptor.Id, reopenedAdmission.ContributionId);
+        Xunit.Assert.Equal(descriptor.Kind, reopenedAdmission.Kind);
+        Xunit.Assert.Equal(descriptor.ToolSchemaId, reopenedAdmission.ToolSchemaId);
+        Xunit.Assert.Equal(descriptor.Fingerprint, reopenedAdmission.DescriptorFingerprint);
+        Xunit.Assert.Equal(reopenedChild, reopenedAdmission.CurrentChild);
+        Xunit.Assert.Equal(2UL, reopenedAdmission.CurrentChild!.Epoch);
+        Xunit.Assert.True(reopenedAdmission.ExpiresAt > DateTimeOffset.UtcNow);
+        Xunit.Assert.Equal(ContributionPersistenceResult.AlreadyPresent,
+            reopenedRegistrationStore.Add(installation, descriptor));
     }
 
     [Xunit.Fact]
@@ -266,7 +453,8 @@ public sealed class ContributionRegistryTests
     private static ContributionDefinition Definition(string id, ContributionKind kind, string? toolSchemaId = null,
         string ownerProductId = "arcscope") => new(id, ownerProductId, kind, toolSchemaId);
 
-    private static StaticCatalogFixture ArcScopeCatalog() => new("arcscope", [SessionCompare, SessionOpen]);
+    private static IContributionCatalog ArcScopeCatalog() =>
+        GeneratedContributionCatalogs.All.Single(value => value.OwnerProductId == "arcscope");
 
     private static (ContributionPersistenceResult? Result, Exception? Exception) TryAdd(
         IContributionRegistrationStore store, InstallationIdentity installation, ContributionDefinition definition)
@@ -314,10 +502,25 @@ public sealed class ContributionRegistryTests
         public string Fingerprint { get; }
     }
 
+    private sealed class FixedAdmissionPort(ChildContributionAdmissionSnapshot? admission) : IChildContributionAdmissionPort
+    {
+        public ChildContributionAdmissionSnapshot? Admission { get; } = admission;
+        public AppIdentity? LastOwner { get; private set; }
+        public ContributionDefinition? LastDescriptor { get; private set; }
+
+        public ChildContributionAdmissionSnapshot? GetCurrentAdmission(AppIdentity owner, ContributionDefinition descriptor)
+        {
+            LastOwner = owner;
+            LastDescriptor = descriptor;
+            return Admission;
+        }
+    }
+
     private sealed class MemoryStore : IContributionRegistrationStore
     {
         private readonly Dictionary<(Guid Installation, string Id), ContributionDefinition> entries = new();
         public int AddCalls { get; private set; }
+        public ContributionPersistenceResult? LastResult { get; private set; }
 
         public ContributionPersistenceResult Add(InstallationIdentity installation, ContributionDefinition definition)
         {
@@ -326,10 +529,15 @@ public sealed class ContributionRegistryTests
             if (!entries.TryGetValue(key, out var existing))
             {
                 entries.Add(key, definition);
-                return ContributionPersistenceResult.Added;
+                LastResult = ContributionPersistenceResult.Added;
+                return LastResult.Value;
             }
 
-            if (existing == definition) return ContributionPersistenceResult.AlreadyPresent;
+            if (existing == definition)
+            {
+                LastResult = ContributionPersistenceResult.AlreadyPresent;
+                return LastResult.Value;
+            }
             throw new ContributionPersistenceConflictException("The contribution key already has different metadata.");
         }
     }

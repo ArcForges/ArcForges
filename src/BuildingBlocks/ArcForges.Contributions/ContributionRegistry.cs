@@ -12,15 +12,18 @@ public sealed class ContributionRegistry<TOwner> where TOwner : class
     private readonly object gate = new();
     private readonly ApplicationComposition<TOwner> composition;
     private readonly IContributionRegistrationStore stateStore;
+    private readonly IChildContributionAdmissionPort? childAdmission;
     private readonly Dictionary<string, ContributionDefinition> catalog;
     private readonly Dictionary<string, ContributionDefinition> definitions = new(StringComparer.Ordinal);
 
     public ContributionRegistry(ApplicationComposition<TOwner> composition,
         IContributionRegistrationStore stateStore,
-        IContributionCatalog catalog)
+        IContributionCatalog catalog,
+        IChildContributionAdmissionPort? childAdmission = null)
     {
         this.composition = composition ?? throw new ArgumentNullException(nameof(composition));
         this.stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
+        this.childAdmission = childAdmission;
         this.catalog = SnapshotCatalog(catalog, composition.Identity.Installation.App.ProductId);
     }
 
@@ -79,14 +82,111 @@ public sealed class ContributionRegistry<TOwner> where TOwner : class
     }
 
     /// <summary>
-    /// Refuses child-process registrations until a pinned generated contract and admitted host/grant
-    /// boundary are connected. A child cannot become an in-process callback by metadata alone.
+    /// Registers exact catalog metadata only while the owner-composed admission port reports its
+    /// current child as admitted. This does not create an in-process callback or invoke permission.
     /// </summary>
     public void RegisterChild(ContributionDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
-        throw Failure(ContributionRegistrationFailure.ChildUnavailable,
-            "No admitted extension-child boundary is connected to this registration package.");
+        var declared = Validate(definition);
+
+        lock (gate)
+        {
+            if (definitions.ContainsKey(declared.Id))
+            {
+                throw Failure(ContributionRegistrationFailure.DuplicateId,
+                    "A contribution ID can be registered only once in an application composition.");
+            }
+
+            ValidateChildAdmission(declared);
+            ContributionPersistenceResult persisted;
+            try
+            {
+                persisted = stateStore.Add(composition.Identity.Installation, declared);
+            }
+            catch (ContributionPersistenceConflictException exception)
+            {
+                throw Failure(ContributionRegistrationFailure.PersistenceConflict,
+                    "The durable contribution ID is already bound to different metadata.", exception);
+            }
+
+            if (persisted is not (ContributionPersistenceResult.Added or ContributionPersistenceResult.AlreadyPresent))
+            {
+                throw Failure(ContributionRegistrationFailure.PersistenceConflict,
+                    "The owner store returned an unknown contribution persistence result.");
+            }
+
+            definitions.Add(declared.Id, declared);
+        }
+    }
+
+    private void ValidateChildAdmission(ContributionDefinition declared)
+    {
+        if (childAdmission is null)
+        {
+            throw Failure(ContributionRegistrationFailure.ChildUnavailable,
+                "No owner-composed child admission port is connected.");
+        }
+
+        var owner = composition.Identity.Installation.App;
+        var snapshot = childAdmission.GetCurrentAdmission(owner, declared);
+        if (snapshot is null || snapshot.State == ChildContributionAdmissionState.Unavailable)
+        {
+            throw Failure(ContributionRegistrationFailure.ChildUnavailable,
+                "The owner host has no currently admitted child for this contribution.");
+        }
+
+        if (!Equals(snapshot.OwnerProduct, owner))
+        {
+            throw Failure(ContributionRegistrationFailure.WrongOwner,
+                "The child admission snapshot belongs to a different product owner.");
+        }
+
+        if (!string.Equals(snapshot.ContributionId, declared.Id, StringComparison.Ordinal) ||
+            snapshot.Kind != declared.Kind)
+        {
+            throw Failure(ContributionRegistrationFailure.InvalidDescriptor,
+                "The child admission snapshot does not bind the exact catalog descriptor.");
+        }
+
+        if (!string.Equals(snapshot.ToolSchemaId, declared.ToolSchemaId, StringComparison.Ordinal))
+        {
+            throw Failure(ContributionRegistrationFailure.UndeclaredToolSchema,
+                "The child admission snapshot does not bind the exact catalog tool schema.");
+        }
+
+        if (!string.Equals(snapshot.DescriptorFingerprint, declared.Fingerprint, StringComparison.Ordinal))
+        {
+            throw Failure(ContributionRegistrationFailure.InvalidDescriptor,
+                "The child admission snapshot descriptor fingerprint does not match the immutable owner catalog.");
+        }
+
+        switch (snapshot.State)
+        {
+            case ChildContributionAdmissionState.Expired:
+                throw Failure(ContributionRegistrationFailure.ChildExpired,
+                    "The child admission snapshot has expired.");
+            case ChildContributionAdmissionState.Revoked:
+                throw Failure(ContributionRegistrationFailure.ChildRevoked,
+                    "The child admission snapshot has been revoked.");
+            case ChildContributionAdmissionState.Admitted:
+                break;
+            default:
+                throw Failure(ContributionRegistrationFailure.ChildUnavailable,
+                    "The child admission state is unknown and cannot be accepted.");
+        }
+
+        if (snapshot.CurrentChild is null)
+        {
+            throw Failure(ContributionRegistrationFailure.ChildUnavailable,
+                "The admitted child has no current local connection identity.");
+        }
+
+        if (snapshot.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            throw Failure(ContributionRegistrationFailure.ChildExpired,
+                "The child admission snapshot has expired.");
+        }
     }
 
     private ContributionDefinition Validate(ContributionDefinition definition)

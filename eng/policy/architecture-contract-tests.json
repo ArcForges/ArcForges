@@ -22,7 +22,12 @@
   {
     "apiSymbol": "ArcForges.Contributions.ContributionRegistry<TOwner>.RegisterChild(ArcForges.Contributions.ContributionDefinition)",
     "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
-    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.UnavailableChildRegistrationIsExplicitlyRefused()"
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.AdmittedChildRegistrationPersistsAcrossRestartAndRefusesMismatchedSnapshots()"
+  },
+  {
+    "apiSymbol": "ArcForges.Contributions.IChildContributionAdmissionPort.GetCurrentAdmission(ArcForges.Capabilities.AppIdentity, ArcForges.Contributions.ContributionDefinition)",
+    "testProject": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+    "testMethod": "ArcForges.Contributions.Tests.ContributionRegistryTests.AdmittedChildRegistrationPersistsAcrossRestartAndRefusesMismatchedSnapshots()"
   },
   {
     "apiSymbol": "ArcForges.Contributions.IContributionRegistrationStore.Add(ArcForges.Capabilities.InstallationIdentity, ArcForges.Contributions.ContributionDefinition)",
