@@ -123,3 +123,99 @@ public static class ActorChainSnapshot
         }
     }
 }
+
+/// <summary>Bounded serialization for marked instruction input; decoding never upgrades provenance.</summary>
+public static class InstructionSnapshot
+{
+    public const int MaximumBytes = 1_048_576;
+
+    public static byte[] Encode(InstructionInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("version", 1);
+            writer.WriteNumber("origin", (int)input.Provenance.Origin);
+            writer.WriteString("sourceReference", input.Provenance.SourceReference);
+            writer.WriteString("content", input.Content);
+            writer.WriteString("inputSha256", input.Provenance.InputSha256);
+            writer.WriteEndObject();
+        }
+
+        if (buffer.WrittenCount > MaximumBytes)
+        {
+            throw new ArgumentException("Instruction snapshot exceeds the boundary limit.", nameof(input));
+        }
+
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    public static InstructionInput Decode(ReadOnlySpan<byte> snapshot)
+    {
+        if (snapshot.Length is 0 or > MaximumBytes)
+        {
+            throw new ArgumentException("Instruction snapshot size is invalid.", nameof(snapshot));
+        }
+
+        using var document = JsonDocument.Parse(snapshot.ToArray(), new JsonDocumentOptions { MaxDepth = 4 });
+        var root = document.RootElement;
+        RequireFields(root, "version", "origin", "sourceReference", "content", "inputSha256");
+        if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number ||
+            !version.TryGetInt32(out var versionNumber) || versionNumber != 1)
+        {
+            throw new JsonException("Unsupported instruction snapshot version.");
+        }
+
+        if (!root.TryGetProperty("origin", out var originValue) || originValue.ValueKind != JsonValueKind.Number ||
+            !originValue.TryGetInt32(out var originNumber) || !Enum.IsDefined((InstructionOrigin)originNumber))
+        {
+            throw new JsonException("Instruction snapshot origin is invalid.");
+        }
+
+        var sourceReference = ReadString(root, "sourceReference");
+        var content = ReadString(root, "content");
+        var inputSha256 = ReadString(root, "inputSha256");
+        try
+        {
+            return InstructionInput.Restore((InstructionOrigin)originNumber, sourceReference, content, inputSha256);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new JsonException("Instruction snapshot provenance is invalid.", exception);
+        }
+    }
+
+    private static string ReadString(JsonElement value, string name)
+    {
+        if (!value.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.String || property.GetString() is not { } result)
+        {
+            throw new JsonException($"Instruction snapshot field '{name}' is invalid.");
+        }
+
+        return result;
+    }
+
+    private static void RequireFields(JsonElement value, params string[] names)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("Instruction snapshot object expected.");
+        }
+
+        var remaining = new HashSet<string>(names, StringComparer.Ordinal);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!remaining.Remove(property.Name))
+            {
+                throw new JsonException("Unknown or duplicate instruction snapshot field.");
+            }
+        }
+
+        if (remaining.Count != 0)
+        {
+            throw new JsonException("Incomplete instruction snapshot.");
+        }
+    }
+}

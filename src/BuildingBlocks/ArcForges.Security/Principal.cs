@@ -41,6 +41,27 @@ public enum ActorKind
     InternalService = 4,
 }
 
+/// <summary>
+/// Origin labels for content that may carry instructions. These labels are descriptive only;
+/// none authenticates the source or grants authority.
+/// </summary>
+public enum InstructionOrigin
+{
+    None = 0,
+    ModelOutput = 1,
+    ExtensionOutput = 2,
+    RetrievedContent = 3,
+    ImportedDocument = 4,
+    DeepLink = 5,
+    CatalogMetadata = 6,
+}
+
+/// <summary>Instruction inputs have no trust level that can authorize operations.</summary>
+public enum InstructionTrust
+{
+    Untrusted = 0,
+}
+
 /// <summary>A delegated actor, distinct from its executor and software identity.</summary>
 public sealed record DelegatedActor
 {
