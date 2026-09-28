@@ -20,7 +20,7 @@
     },
     {
       "path": "native/CMakeLists.txt",
-      "blob": "f223097639a9bf7398a843f3c478e121ea40d05b"
+      "blob": "76b9e2fe6b1292ff48d16c56661704647dbd273f"
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
@@ -136,7 +136,7 @@
     },
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
-      "blob": "87b5bfceadd816497a18225b52a1149c53355dbe"
+      "blob": "e2ddd8ea87705280a92fdbba21630610fe2ff503"
     },
     {
       "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",

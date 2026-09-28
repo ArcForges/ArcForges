@@ -236,8 +236,8 @@
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
     "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
     "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
-    "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
-    "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
+    "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
+    "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
     "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
     "tests/PersistenceTests/packages.lock.json": "d6f3ae15139d57bb69f878c15f3e66977726c828a9a9fab9b5d13eaa2c48708b"
   },
@@ -639,19 +639,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-p01",
-    "reviewer": "Independent exact-head review required before merge",
+    "owner": "af-20260928-c02",
+    "reviewer": "af-20260928-p03",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3",
-    "maintenanceAssessment": "NAT.03 adds an isolated standalone acquisition BuildTool under the task-authorized benchmarks/probes/acquisition path; it is excluded from DesktopPlatform.slnx, produces no product runtime, and declares AGPL-3.0-only. The project and lockfile are the only new dependency-policy inputs attributable to this task. This successor follows the active immutable PLT.07 receipt, which preserves PRF.09 -> PLT.18 and the earlier dependency-review history; GOV.13 changes validation/accounting and provenance inputs but not the package closure. The probe uses only already-admitted dependency coordinates and adds no package identity or version. The pinned .NET SDK 10.0.400 gate includes restore, locked restore, format verification, Release build and real localhost TCP acceptance; exact observed measurements are preserved in benchmarks/probes/acquisition/evidence/nat-03-run.json. The 1,000,000 scalar samples/s for at least 10 seconds floor is task-authorized probe-only evidence, not a product SLA, shipping requirement, or downstream target. Support binding is limited to the task project and file inventory rows; no package, ABI, framework, or solution membership change is introduced. Hosted CI and exact-head review remain required.",
+    "baselineCommit": "213424c4944e7ed208ef21f3493068fcc26c7210",
+    "maintenanceAssessment": "NAT.06 adds only the authorized ProjectReference from NativeAbiTests to the existing ArcForges.Native.Abstractions project and its project-only lock entry. This immutable successor follows the currently active nat-03-r1 receipt, preserving NAT.03 -> PLT.07 -> PRF.09 history and the exact current 51 NuGet coordinates/content hashes/licences/source evidence plus the unchanged 10-package Python closure. It introduces no PackageReference, package coordinate or version, licence, framework selection, package identity change, or production/runtime dependency edge. Only the two existing NativeAbiTests csproj/packages.lock.json input hashes change for this task; the project-only lock entry is required to compile the authorized managed common-ABI layout tests.",
     "upgradeChecks": {
-      "compilation": "On the candidate rebased onto DesktopPlatform main a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3, the explicit .NET SDK 10.0.400 passed locked restore for DesktopPlatform.slnx and the standalone AcquisitionProbe, format verification for both, and Release builds for the full solution and probe (0 warnings/errors). The exact LocalAcceptanceSelectionRetainsDefaultBuildTools architecture test passed 1/1. The real localhost TCP acceptance committed 14,400,000/14,400,000 samples in 11.9881142 seconds at 1,201,189.76 scalar samples/s with 0 sustained drops; the fixed 65,536-sample/3,670,016-byte ring recorded 49,332,224-byte peak working set and 10,666,984-byte managed heap. Induced overrun recorded 8,192 drops over [4096,12288), disconnect recorded an open gap at sequence 5,000, pause recorded all 50,000 samples, and downsampling preserved the spike. Exact output is in benchmarks/probes/acquisition/evidence/nat-03-run.json. Hosted exact-head CI and independent review remain required.",
-      "aot-trim": "No AOT publish claim or production artifact; the project is classified BuildTool and is excluded from the product solution. The task does not alter AOT or trimming settings.",
-      "compatibility": "No external package coordinate or version, public Contracts wire API, native ABI, project reference, or solution membership changed. The standalone probe uses only .NET sockets and BCL types.",
-      "licence-provenance": "The new AGPL-3.0-only project is within the DesktopPlatform boundary. Microsoft.CodeAnalysis.NetAnalyzers/10.0.401 remains in the approved 51-coordinate NuGet closure with the same lock content hash; the unchanged Python tooling closure contains 10 dependencies. NAT.03 adds no dependency coordinate or external licence evidence.",
-      "security-sbom": "The locked closure and all package coordinates remain identical to the predecessor receipt; existing dependency, source, native, and hosted gates remain required. No current-advisory absence claim is made.",
-      "runtime-performance-migration": "This is a bounded early-risk localhost TCP probe, not shipped runtime, SLA, or marketing evidence. The NAT.03 task-authorized 1,000,000 scalar samples/s for at least 10 seconds floor is probe-only, not a shipping or downstream target.",
-      "framework-runtime-posture": "Target remains net10.0 with pinned SDK 10.0.400; no framework, native ABI, Android/Kotlin/ART/R8, or toolchain update."
+      "compilation": "On the candidate rebased onto DesktopPlatform main 213424c4944e7ed208ef21f3493068fcc26c7210, pinned .NET SDK 10.0.400 locked restore, NativeAbiTests format verification, and filtered NativeAbiLayout managed tests (3/3) passed. Development dependency audit passed with 51 NuGet and 10 Python dependencies across 238 input hashes; dependency policy tests passed 16/16; native provenance passed (21 components); IDE licence evaluation passed (40 projects); reconciliation passed (7 owners/67 projects/166 historical/326 directories/7 native) with tests 8/8; runtime ownership tests passed 25/25; source provenance passed (550 files/140 records). The local host has no pinned VCPKG_ROOT/toolchain, so CMake configure/build/install, native ABI CTest 2/2, and native package staging were not run locally. Exact-head hosted native/package CI remains required and pending. The stable audit remains inapplicable to this prerelease candidate closure; no publication or final independent review is claimed.",
+      "aot-trim": "Only the non-packable NativeAbiTests test project references the existing Native.Abstractions project. No runtime package or AOT configuration changes; existing AOT/trim gates remain required and no new AOT result is claimed.",
+      "compatibility": "No PackageReference, package identity/version, package inventory, or production/runtime project edge is added. The NativeAbiTests ProjectReference exists only for managed common ABI layout assertions. Existing image probe exports/signatures/identity and ABI minor 0 remain unchanged; the ABI 1.1 family declarations are compile-time declarations only, not implemented or advertised exports.",
+      "licence-provenance": "No dependency coordinate, content hash, licence, nuspec evidence, or Python closure changes. NAT.06 source/test paths and the immutable successor receipt are first-party provenance entries; current-base provenance and licence gates remain required.",
+      "security-sbom": "The exact 51-coordinate NuGet closure and 10-coordinate Python closure are preserved; no external component, checksum, licence, or version is added or changed. Existing development/stable dependency admission and audit gates remain required; no stable publication is claimed.",
+      "runtime-performance-migration": "No dependency migration or runtime behavior/performance claim. The test-only project reference and common ABI assertions do not change product runtime composition.",
+      "framework-runtime-posture": "Target remains net10.0 and global.json remains pinned to SDK 10.0.400. Validation uses the pinned SDK; no framework, runtime, Android, or native toolchain version change is introduced."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -888,15 +888,15 @@
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
       "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
       "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
-      "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
-      "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
+      "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
+      "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
       "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
       "tests/PersistenceTests/packages.lock.json": "d6f3ae15139d57bb69f878c15f3e66977726c828a9a9fab9b5d13eaa2c48708b"
     },
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-07-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-03-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -907,7 +907,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-03-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-06-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
