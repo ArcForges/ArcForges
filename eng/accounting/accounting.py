@@ -277,6 +277,7 @@ def _parse_trx(path: Path, suite_id: str, project: str) -> dict[str, Any]:
 
     case_outcomes: dict[str, list[str]] = defaultdict(list)
     outcome_counts: Counter[str] = Counter()
+    result_counts: Counter[str] = Counter()
     for result in test_results:
         test_id = result.attrib.get("testId")
         outcome = result.attrib.get("outcome")
@@ -286,6 +287,7 @@ def _parse_trx(path: Path, suite_id: str, project: str) -> dict[str, Any]:
             raise AccountingError(f"TRX result has an unknown outcome {outcome!r}: {path.name}")
         case_outcomes[definitions_by_id[test_id]].append(outcome)
         outcome_counts[outcome] += 1
+        result_counts[test_id] += 1
 
     summary = summary_nodes[0]
     counters_nodes = _children_named(summary, "Counters")
@@ -300,9 +302,13 @@ def _parse_trx(path: Path, suite_id: str, project: str) -> dict[str, Any]:
         failed = int(counters["failed"])
     except (KeyError, ValueError) as error:
         raise AccountingError(f"TRX counters are incomplete: {path.name}") from error
-    result_test_ids = {result.attrib.get("testId", "") for result in test_results}
-    if total != len(test_results) or result_test_ids != set(definitions_by_id):
-        raise AccountingError(f"TRX result/definition total does not reconcile: {path.name}")
+    result_test_ids = set(result_counts)
+    if (
+        total != len(test_results)
+        or result_test_ids != set(definitions_by_id)
+        or any(count != 1 for count in result_counts.values())
+    ):
+        raise AccountingError(f"TRX result/definition mapping is not one-to-one: {path.name}")
     if passed != outcome_counts[PASS] or failed != outcome_counts[FAIL]:
         raise AccountingError(f"TRX passed/failed counters do not reconcile: {path.name}")
     if executed != passed + failed:

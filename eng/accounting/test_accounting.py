@@ -134,6 +134,32 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(6, len(parsed))
         self.assertTrue(all(item["summaryOutcome"] == "completed" for item in parsed))
 
+    def test_trx_rejects_duplicate_results_for_one_test_id(self) -> None:
+        trx_dir = self._trx_dir()
+        path = trx_dir / "architecture-tests.trx"
+        root = ET.parse(path).getroot()
+        results = next(node for node in root if node.tag == "Results")
+        first_result = next(node for node in results if node.tag == "UnitTestResult")
+        duplicate = ET.Element(first_result.tag, first_result.attrib)
+        results.append(duplicate)
+
+        counters = next(node for node in next(node for node in root if node.tag == "ResultSummary") if node.tag == "Counters")
+        counters.set("total", str(int(counters.attrib["total"]) + 1))
+        if first_result.attrib["outcome"] == "Passed":
+            counters.set("passed", str(int(counters.attrib["passed"]) + 1))
+            counters.set("executed", str(int(counters.attrib["executed"]) + 1))
+        elif first_result.attrib["outcome"] == "Failed":
+            counters.set("failed", str(int(counters.attrib["failed"]) + 1))
+            counters.set("executed", str(int(counters.attrib["executed"]) + 1))
+        path.write_bytes(ET.tostring(root, encoding="utf-8", xml_declaration=True))
+
+        with self.assertRaisesRegex(accounting.AccountingError, "result/definition mapping is not one-to-one"):
+            accounting._parse_trx(
+                path,
+                "architecture-tests",
+                dict(accounting.TRX_SUITES)["architecture-tests"],
+            )
+
     def test_report_rejects_missing_and_unexpected_trx_inputs(self) -> None:
         trx_dir = self._trx_dir()
         (trx_dir / "security-tests.trx").unlink()
