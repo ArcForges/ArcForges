@@ -183,7 +183,7 @@ internal static class ResourceReferenceValidation
         ownerAppId = string.Empty;
         if (reference is null || !TryGetOwner(reference.Resource, out ownerAppId) ||
             reference.RevisionCase == ResourceVersionRef.RevisionOneofCase.None ||
-            !IsSha256(reference.ContentHash, reference.HasContentHash))
+            !reference.HasContentHash || !IsSha256(reference.ContentHash, present: true))
         {
             return false;
         }
@@ -205,8 +205,7 @@ internal static class ResourceReferenceValidation
             if (reference.Blob is not null)
             {
                 _ = BlobId.FromWire(reference.Blob.BlobId);
-                if (!IsSha256(reference.Blob.ContentHash, reference.Blob.HasContentHash) ||
-                    reference.HasContentHash && reference.Blob.HasContentHash &&
+                if (!reference.Blob.HasContentHash || !IsSha256(reference.Blob.ContentHash, present: true) ||
                     !string.Equals(reference.ContentHash, reference.Blob.ContentHash, StringComparison.Ordinal))
                 {
                     return false;
@@ -306,7 +305,7 @@ internal static class ResourceReferenceValidation
     {
         if (!present) return true;
         if (value is not { Length: 64 }) return false;
-        return value.All(character => IsLowerAlpha(character) || character is >= '0' and <= '9');
+        return value.All(character => character is >= 'a' and <= 'f' or >= '0' and <= '9');
     }
 
     private static bool HasId(Id? value)

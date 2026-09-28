@@ -85,6 +85,7 @@ public sealed class ResourceResolutionTests
     {
         var registry = new ResourceResolutionRegistry<string>(AppIdentity.ArcScope);
         var pinned = PinnedResource(FloatingResource());
+        pinned.Blob = BlobReference(pinned.ContentHash);
         int floatingChecks = 0;
         int pinnedChecks = 0;
         int pinnedOpens = 0;
@@ -125,6 +126,51 @@ public sealed class ResourceResolutionTests
         var unpinned = new ResourceVersionRef { Resource = FloatingResource() };
         Refused(await registry.ResolvePinnedAsync(unpinned, Xunit.TestContext.Current.CancellationToken), "validation.invalid_request");
         Xunit.Assert.Equal(0, floatingChecks);
+    }
+
+    [Xunit.Fact]
+    public async Task PinnedResolutionRejectsMissingOrMismatchedHashesBeforeOwnerCallbacks()
+    {
+        var registry = new ResourceResolutionRegistry<string>(AppIdentity.ArcScope);
+        int authorizationCalls = 0;
+        int accessCalls = 0;
+        registry.Register("arcscope.session",
+            (_, _) =>
+            {
+                authorizationCalls++;
+                return ValueTask.FromResult(Outcome.Success(true));
+            },
+            (_, _) => ValueTask.FromResult(Outcome.Success("floating")),
+            (_, _) =>
+            {
+                authorizationCalls++;
+                return ValueTask.FromResult(Outcome.Success(true));
+            },
+            (_, _) =>
+            {
+                accessCalls++;
+                return ValueTask.FromResult(Outcome.Success("pinned"));
+            });
+
+        var missingVersionHash = PinnedResource(FloatingResource());
+        missingVersionHash.ClearContentHash();
+
+        var malformedVersionHash = PinnedResource(FloatingResource());
+        malformedVersionHash.ContentHash = new string('g', 64);
+
+        var missingBlobHash = PinnedResource(FloatingResource());
+        missingBlobHash.Blob = BlobReference(contentHash: null);
+
+        var mismatchedBlobHash = PinnedResource(FloatingResource());
+        mismatchedBlobHash.Blob = BlobReference(new string('b', 64));
+
+        foreach (var invalid in new[] { missingVersionHash, malformedVersionHash, missingBlobHash, mismatchedBlobHash })
+        {
+            Refused(await registry.ResolvePinnedAsync(invalid, Xunit.TestContext.Current.CancellationToken), "validation.invalid_request");
+        }
+
+        Xunit.Assert.Equal(0, authorizationCalls);
+        Xunit.Assert.Equal(0, accessCalls);
     }
 
     [Xunit.Fact]
@@ -206,6 +252,13 @@ public sealed class ResourceResolutionTests
         Cloud = new Revision { Value = 42 },
         ContentHash = new string('a', 64),
     };
+
+    private static BlobRef BlobReference(string? contentHash)
+    {
+        var blob = new BlobRef { BlobId = IdentityGeneration.NewResource().ToWire() };
+        if (contentHash is not null) blob.ContentHash = contentHash;
+        return blob;
+    }
 
     private static string Value(Outcome<string> outcome)
     {
