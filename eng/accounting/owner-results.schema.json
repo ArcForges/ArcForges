@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcforges.dev/schemas/invariant-owner-results-v1.json",
+  "title": "ArcForges normalized invariant owner results",
+  "description": "A CI-run-bound receipt for registered invariant test cases. The owner and each result row carry the exact repository, source commit, CI run, and attempt. Only passed or failed executed cases are representable; skipped, inconclusive, missing, or malformed registered results must be rejected before a receipt is emitted. Source summaryOutcome preserves the MTP TRX runner summary as completed or failed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "repository",
+    "sourceCommit",
+    "ciRun",
+    "attempt",
+    "sources",
+    "results"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "repository": {
+      "type": "string",
+      "pattern": "^ArcForges/[A-Za-z0-9._-]+$"
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "ciRun": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceId",
+          "source",
+          "resultFile",
+          "sha256",
+          "total",
+          "passed",
+          "failed",
+          "skipped",
+          "summaryOutcome"
+        ],
+        "properties": {
+          "sourceId": { "type": "string", "minLength": 1 },
+          "source": { "type": "string", "minLength": 1 },
+          "resultFile": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "total": { "type": "integer", "minimum": 1 },
+          "passed": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 },
+          "skipped": { "type": "integer", "minimum": 0 },
+          "summaryOutcome": { "enum": ["completed", "failed"] }
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "invariantId",
+          "caseId",
+          "sourceId",
+          "outcome",
+          "repository",
+          "sourceCommit",
+          "ciRun",
+          "attempt"
+        ],
+        "properties": {
+          "invariantId": {
+            "type": "string",
+            "pattern": "^I-[0-9]{3}$"
+          },
+          "caseId": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+          },
+          "sourceId": { "type": "string", "minLength": 1 },
+          "outcome": { "enum": ["passed", "failed"] },
+          "repository": {
+            "type": "string",
+            "pattern": "^ArcForges/[A-Za-z0-9._-]+$"
+          },
+          "sourceCommit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "ciRun": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}
