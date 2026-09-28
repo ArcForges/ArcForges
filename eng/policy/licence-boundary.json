@@ -147,6 +147,10 @@
     {
       "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
+      "kind": "msbuild"
     }
   ]
 }

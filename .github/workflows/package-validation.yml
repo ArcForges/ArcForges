@@ -48,6 +48,20 @@ jobs:
       - run: dotnet restore tests/LocalRpcAotTests/LocalRpcAotTests.csproj --locked-mode
       - name: Publish the process probe with Native AOT (compile only)
         run: dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r ${{ matrix.rid }} --no-restore
+  aot-probe:
+    name: Avalonia TableView Native AOT probe (compile only)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - name: Restore the exact probe lock graph
+        run: dotnet restore eng/verification/probe-evidence/Prf09.TableViewProbe.csproj --locked-mode
+      - name: Publish the candidate control with Native AOT (compile only)
+        run: dotnet publish eng/verification/probe-evidence/Prf09.TableViewProbe.csproj -c Release -r win-x64 --no-restore
   pack:
     runs-on: ubuntu-latest
     outputs:

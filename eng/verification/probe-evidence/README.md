@@ -9,12 +9,18 @@ suppression or reflection-based binding is used.
 
 | Input | Exact identity |
 |---|---|
-| Source revision | `b2b5d0742a0cc116f28676e15818613664d7b6d5` |
+| Source revision | `b3a6db97bd3d68f5bbc562d83de1fd1866298e29` |
 | SDK | .NET SDK `10.0.400` from the repository `global.json` |
 | Target | `net10.0`, `win-x64`, `PublishAot=true`, full trimming |
 | Candidate package | `Avalonia` `12.1.3`; NuGet package SHA-256 `DFFB6605B02E144866CB23765EB5AF7255379EBB7EDE75CF11066F3248D83734` |
 | Lock/source binding | `packages.lock.json` and NuGet's `.nupkg.metadata` both record content hash `l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==` from `https://api.nuget.org/v3/index.json`; the separate SHA-256 above binds the exact cached signed `.nupkg` bytes |
-| Publish output | `prf-09-publish.log` (captured stdout/stderr, unedited) |
+| Publish output | `prf-09-publish.log` (captured publish stdout/stderr, unedited) |
+
+The locked restore command was:
+
+```text
+C:\Users\J7Rdm\.dotnet\dotnet.exe restore eng/verification/probe-evidence/Prf09.TableViewProbe.csproj --locked-mode --verbosity minimal
+```
 
 The exact publish command was:
 
@@ -25,9 +31,11 @@ C:\Users\J7Rdm\.dotnet\dotnet.exe publish eng/verification/probe-evidence/Prf09.
 The retained log shows the SDK invoking ILC and the native linker, followed by `Build succeeded`,
 `0 Warning(s)`, and `0 Error(s)`. The output executable was produced at
 `artifacts/bin/dotnet/windows/Prf09.TableViewProbe/Release/net10.0/win-x64/publish/Prf09.TableViewProbe.exe`;
-its SHA-256 was `76F2F511D06439B86E1E527AC7C0519460466710356E6F6D5E3FBD3073E81208`.
+its SHA-256 was `C003E3106C745B1F3CBED1AFC51D5CB4942A95936825243036F36800E1D9D413`.
 
 This is publish-only evidence for the candidate control in a probe host. The binary was not run;
-no GUI/runtime behavior, production shell integration, package adoption, or continuous main-build
-gate is claimed. PRF.09 schedules VG-03 for WP-10, and any shipped-shell use still needs its own
+no GUI/runtime behavior, production shell integration, or product adoption is claimed. A separate
+Windows `aot-probe` job in `package-validation.yml` repeats locked restore and compile-only publish
+for PR and main package-validation runs; it does not run or upload the executable or create a
+product package. PRF.09 schedules VG-03 for WP-10, and any shipped-shell use still needs its own
 real consuming-application proof and the repository's recorded licence/admission decision.

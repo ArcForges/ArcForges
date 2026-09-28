@@ -27,8 +27,10 @@ must be repeated for that exact candidate.
 
 ## Current position and candidate
 
-The current `DesktopPlatform` source tree has no Avalonia control or XAML usage. The following
-is a proposed first candidate, not an admitted dependency:
+The shipped `DesktopPlatform` applications have no Avalonia control or XAML usage. PRF.09 adds
+an isolated, non-shipping verification project under `eng/verification/probe-evidence` to
+compile-prove the exact candidate below; it is not part of the product solution or runtime.
+The following remains a proposed first product candidate, not an admitted dependency:
 
 | Status | Control | Package / version | Licence | Intended consuming boundary |
 |---|---|---|---|---|
@@ -44,14 +46,16 @@ The consuming boundary must preserve the MIT copyright and licence notice when t
 redistributed. MIT permits copying, modifying, and redistributing the code subject to its
 notice condition; keeping Avalonia's implementation in its package is an ArcForges design
 choice, not a restriction imposed by MIT. Any combined-work obligations must be assessed for
-the actual shell distribution. No Avalonia package reference, copied source, or runtime usage
-is added to `DesktopPlatform` by this record.
+the actual shell distribution. The isolated PRF.09 probe references the package only to perform
+build-time Native AOT verification; it adds no Avalonia reference, copied source, or runtime
+usage to any shipped product or shell and does not change the candidate's product-admission
+state.
 
 | Evidence | Value |
 |---|---|
-| Real Native AOT proof | Not recorded; required before admission |
-| Admission state | Not admitted; PRF.09 must exercise this process against the real candidate |
-| Current package ownership | None in `DesktopPlatform`; the candidate remains outside its dependency closure |
+| Real Native AOT proof | Windows x64 compile-only probe recorded in `eng/verification/probe-evidence/README.md`; a shipped-shell consumer proof is still required before admission |
+| Admission state | Not admitted; PRF.09 exercises only a probe and does not establish shipped-shell suitability |
+| Current package ownership | Build-only verification probe; the candidate remains outside all shipped product dependency closures |
 
 ## Authoritative references
 
