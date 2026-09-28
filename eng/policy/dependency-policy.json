@@ -7,6 +7,11 @@
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
     "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+    "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
+    "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
+    "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
+    "eng/acceptance/foundation/package.json": "32361db70e2072b195385c9141b7bd5b003fd51f6a919b566fcb2c152da8b780",
+    "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
     "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
     "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
@@ -213,12 +218,38 @@
     "tests/PersistenceTests/packages.lock.json": "d6f3ae15139d57bb69f878c15f3e66977726c828a9a9fab9b5d13eaa2c48708b"
   },
   "nugetClosure": {
+    "arcforges.application.abstractions/1.0.0-ci.29.1": {
+      "contentHash": "8ICXm8LvJsaXgNz6RfiHSoxxqxE3jLJMz8IWCcweW0FIzv6isEl3SMH+pbBATNKIqApDmCN78FT/csCAqMBMRA==",
+      "licence": "AGPL-3.0-only",
+      "nuspecSha256": "ee357e2c21126b5278bba1b94212302e1dd30e25af1adbd45d185f0863ec634a",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.application.abstractions/1.0.0-ci.29.1/arcforges.application.abstractions.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/DesktopPlatform",
+        "workflow": "publish-nuget.yml",
+        "sourceCommit": "ace60538849047184954baed09fb05ec7676d367",
+        "feed": "https://api.nuget.org/v3/index.json"
+      },
+      "classification": "Exact existing DesktopPlatform publication consumed only by the local FND.07 acceptance runner; same AGPL boundary."
+    },
     "arcforges.contracts.foundation/1.0.0-ci.113.1": {
       "contentHash": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA==",
       "licence": "Apache-2.0",
       "nuspecSha256": "7726a233f9ce81c4373a2ab9423c33d566b919bb2cb90d2b5577cf844bbbbfc4",
       "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.113.1/arcforges.contracts.foundation.nuspec",
       "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "arcforges.foundation/1.0.0-ci.29.1": {
+      "contentHash": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==",
+      "licence": "AGPL-3.0-only",
+      "nuspecSha256": "e935bdbe249491c131cdc2c9a07dc55a1b9724c664acd3064bd8393a646bdc59",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.foundation/1.0.0-ci.29.1/arcforges.foundation.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/DesktopPlatform",
+        "workflow": "publish-nuget.yml",
+        "sourceCommit": "ace60538849047184954baed09fb05ec7676d367",
+        "feed": "https://api.nuget.org/v3/index.json"
+      },
+      "classification": "Exact existing DesktopPlatform publication consumed only by the local FND.07 acceptance runner; same AGPL boundary."
     },
     "coverlet.collector/10.0.1": {
       "contentHash": "27jXSV/0DbVqF5jDrAxuQFZ9oaz6gmG03p8ttxAFk+X0M4woFYj7MoWDLCna5EGLb0CE6OE7X6ZH3Wt5smTtaA==",
@@ -503,18 +534,18 @@
   "sourceGate": "eng/check_provenance.py",
   "review": {
     "owner": "w-20260927-foundation",
-    "reviewer": "Independent exact-head reviewer recorded in DesktopPlatform PR71",
-    "reviewedOn": "2026-09-28",
-    "baselineCommit": "cdd16cf5ed8b505779facf8bb55f18d95ba7cdcd",
-    "maintenanceAssessment": "PLT.01 admits Microsoft.Data.Sqlite and Core 10.0.12 (MIT, dotnet/dotnet source 95017c711e6afc1085133d440e42b4bd78155701), plus SQLitePCLRaw bundle, core, native e_sqlite3 and provider 2.1.12 (Apache-2.0 package metadata, ericsink/SQLitePCL.raw). Exact cached nuspec versions/licences and full generated lock closure inspected. Provider/native patches require owner review and new immutable receipt; no framework or native ABI upgrade. Native SQLite remains an upstream NuGet dependency, not a new first-party native family. Final integration preserves merged GOV.04, PLT.36 and PLT.17 inputs and their immutable receipts; solution locks regenerated with the existing SDK adapter without version changes.",
+    "reviewer": "Independent exact-head review required on FND.07 pull request before merge",
+    "reviewedOn": "2026-09-27",
+    "baselineCommit": "48a3ef4fcb5e356d4a50d0317f93a1cb1f314b6e",
+    "maintenanceAssessment": "Retain every existing framework/build/native closure. Add only exact own Foundation/Application.Abstractions 1.0.0-ci.29.1 to a local-only acceptance consumer; cached nuspec confirms AGPL-3.0-only and immutable source ace60538849047184954baed09fb05ec7676d367. Existing Contracts113.1/Google.Protobuf closure unchanged. Exact npm manifest/lock bind Contracts proto/fixtures113.1 (Apache-2.0) and protobuf2.15.0 (Apache-2.0 AND BSD-3-Clause); use locked restore, no vendored sources or product npm runtime.",
     "upgradeChecks": {
-      "compilation": "After final cdd16cf base integration and generated lock refresh, existing SDK10.0.401 direct adapter compiled Release PersistenceTests with warnings-as-errors; actual real-file suite passed47/47, zero failed/skipped in6.0s. Pinned SDK10.0.400 CI remains authoritative before merge. No toolchain installation.",
-      "aot-trim": "Inherited IsAotCompatible and trim/AOT diagnostics remain errors. Microsoft.Data.Sqlite calls the static SQLitePCLRaw provider; actual compile and retained CI evidence must pass before merge; no Native AOT executable execution claim.",
-      "compatibility": "47 actual temporary SQLite file tests pass: write fault stages, command receipt retry, canonical origin omission/parent-kind invariants, bounded history/origin collection, journal replay/corruption/local edit identities,16 migration cases including historical semantic fixtures/public-store reopen and protected-schema refusal. Existing Contracts and merged platform closure preserved.",
-      "licence-provenance": "Read cached exact six added nuspec files: Microsoft MIT, SQLitePCLRaw Apache-2.0. Digests and lock content hashes recorded below; upstream native SQLite supplied transitively by SQLitePCLRaw.lib.e_sqlite3. Existing source and native receipts preserved.",
-      "security-sbom": "NuGet audit and existing dependency-review retained; no assertion of current vulnerability absence from offline metadata. Actual lock closure records native provider; authorization/SQL authorizer guards are independently reviewed in PR71.",
-      "runtime-performance-migration": "Final affected Windows x64 real-file offline suite passed47/47 zero failed/skipped via workstation build slot. No device, installed-consumer, benchmark or process-kill result claimed. PLT.02 snapshot producer acceptance remains PLT.03 completion prerequisite.",
-      "framework-runtime-posture": "No framework major upgrade; net10.0 and pinned SDK10.0.400 unchanged. No Kotlin/JVM/ART/R8 dependency change; no platform expansion or native family provisioning."
+      "compilation": "FND.07 receipt records local published-package C# consumer build on existing SDK10.0.401 with zero warnings/errors and C#/TypeScript binary exchange. Retained applicable pinned-SDK CI remains required before merge.",
+      "aot-trim": "No producer framework/AOT posture change. Acceptance consumer is explicit local test tooling; existing producer candidate29.1 AOT/trim publication remains authoritative. No new AOT execution claimed.",
+      "compatibility": "Real published C# and TS independent vectors cover int64/uint64 limits, exact decimal/rational, UUID, unknown fields/enums, duplicate command identity and unknown effects;44 producer reason registrations. Kotlin runtime not claimed.",
+      "licence-provenance": "Two exact own AGPL packages stay inside AGPL DesktopPlatform test-tool boundary; cached nuspec hashes/source commit and locked package digests recorded. npm Apache/BSD licence closure bound by exact manifest/lock hashes. No general AGPL admission.",
+      "security-sbom": "Retain exact locked content, NuGet audit and all existing policy/security checks. Added adversarial coordinate/publisher/source/licence/hash and npm owner/path tests. No claim of offline current vulnerability absence.",
+      "runtime-performance-migration": "Local binary exchange once against real immutable published artifacts; no provider/device/installed-release execution, durable effects or migration-performance claim. Acceptance runner refuses CI and performs no restore.",
+      "framework-runtime-posture": "No framework upgrade, SDK pin change, native ABI change or product runtime addition. Exact local-only npm tool ownership does not admit a production JavaScript runtime."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -522,6 +553,11 @@
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
       "Directory.Packages.props": "ee4baf13198c32254ed0729b6b3c841d8870198c205ec3b56cf3c9a51004ebf8",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+      "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
+      "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
+      "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
+      "eng/acceptance/foundation/package.json": "32361db70e2072b195385c9141b7bd5b003fd51f6a919b566fcb2c152da8b780",
+      "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
       "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
       "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
@@ -730,9 +766,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-01-02-04-r1.json"
+    "previousReceipt": "eng/policy/dependency-reviews/plt-01-02-04-r2.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-01-02-04-r2.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/fnd-07-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

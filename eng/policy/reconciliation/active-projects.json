@@ -7,6 +7,14 @@
       "blob": "77177ca01ea3406e2caa6048ffe094d54f5734bf"
     },
     {
+      "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
+      "blob": "877c108341f0a95dae5ec0fefa57e4ca6643d2c7"
+    },
+    {
+      "path": "eng/acceptance/foundation/package.json",
+      "blob": "9dd4b59ef3cdc95ccf995bf7c255334775099015"
+    },
+    {
       "path": "native/CMakeLists.txt",
       "blob": "f223097639a9bf7398a843f3c478e121ea40d05b"
     },

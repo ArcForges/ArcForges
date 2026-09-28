@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "ArcForges.Application.Abstractions": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.29.1, )",
+        "resolved": "1.0.0-ci.29.1",
+        "contentHash": "8ICXm8LvJsaXgNz6RfiHSoxxqxE3jLJMz8IWCcweW0FIzv6isEl3SMH+pbBATNKIqApDmCN78FT/csCAqMBMRA==",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.113.1]",
+          "ArcForges.Foundation": "[1.0.0-ci.29.1]"
+        }
+      },
+      "ArcForges.Contracts.Foundation": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.113.1, )",
+        "resolved": "1.0.0-ci.113.1",
+        "contentHash": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA==",
+        "dependencies": {
+          "Google.Protobuf": "3.36.1"
+        }
+      },
+      "ArcForges.Foundation": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.29.1, )",
+        "resolved": "1.0.0-ci.29.1",
+        "contentHash": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.113.1]"
+        }
+      },
+      "Microsoft.CodeAnalysis.NetAnalyzers": {
+        "type": "Direct",
+        "requested": "[10.0.401, )",
+        "resolved": "10.0.401",
+        "contentHash": "qGPLk4hknvVp6j9Lowa0qykw1cK7CyEyyy2aVs4dkOGroOMHJLRsMpUT53IKvYT6q78jxv96FZhzy3BrKCPgmA=="
+      },
+      "Google.Protobuf": {
+        "type": "Transitive",
+        "resolved": "3.36.1",
+        "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
+      }
+    }
+  }
+}
