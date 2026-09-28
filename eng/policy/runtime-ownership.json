@@ -97,6 +97,10 @@
           "role": "test-or-build-tool"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj",
           "role": "aot-library"
         },

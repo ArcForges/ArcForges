@@ -998,5 +998,35 @@
     "apiSymbol": "ArcForges.Capabilities.ResourceResolutionRegistry<TAccess>.ResolvePinnedAsync(ArcForges.Contracts.Foundation.V1.ResourceVersionRef?, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.PinnedResolutionPreservesTheExactRevisionAndNeverFallsBackToFloating()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.ObservabilityContext.FromApplicationAssembly(ArcForges.Observability.SignalApplicationDimension, ArcForges.Contracts.Foundation.Values.InstanceId, ArcForges.Observability.SignalEnvironment, System.Reflection.Assembly?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.ApplicationBuildIdentityComesFromThePolicyStampedAssembly()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.ObservabilityScope.Push(ArcForges.Observability.ObservabilityContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.AmbientContextsFollowAsyncFlowAndRestoreNestedValues()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.SignalEmitter.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.MetricsUseNoPointLabelsAndCarryIdentityInScope()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.SignalEmitter.Emit(ArcForges.Observability.SignalEventName, ArcForges.Observability.SignalLevel)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.NativeAbiVersion.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.IStructuredEventSink.Write(ArcForges.Observability.StructuredSignal)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
   }
 ]

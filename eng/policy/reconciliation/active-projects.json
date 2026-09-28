@@ -88,7 +88,11 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
-      "blob": "2240e37c65a0756ab39187fd6cc6d463443e30fc"
+      "blob": "4e572fd06fc3e9da79263ffd2a9160a998f75bcd"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+      "blob": "7a6ffddb8104c96ebb51bac699006cae341ff126"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj",

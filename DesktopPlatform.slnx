@@ -19,6 +19,7 @@
     <Project Path="src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />

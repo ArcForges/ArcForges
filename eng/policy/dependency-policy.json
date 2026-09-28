@@ -203,8 +203,10 @@
     "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "e497179dcd202af6385dbbef3e7664479bd53cb3419e9e39e0f333d2872e2650",
     "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
     "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
-    "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+    "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "e2b25493769b3a72348382593d6b6d89a9b1548fce8d06a599cc6d615097f1ea",
+    "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
+    "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "3d6a0b8c73585ec0c6474b5eb13b05f1236830cf4b7375ca8e42cad55f9ce4aa",
+    "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "9392f220cd4732d5b7d0eb4a5812ac21ad8eb4711db6baef43f4cae116c519b7",
     "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "6970e010c5ebf13723b0384730a3ff37cca8ef0e4794fc9b61c96f0f8ce0df4f",
     "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
     "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
@@ -639,19 +641,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-c02",
-    "reviewer": "af-20260928-p03",
+    "owner": "af-20260928-p05",
+    "reviewer": "af-20260928-p05 (PLT.47 dependency-input lineage only; independent source review requested separately)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "213424c4944e7ed208ef21f3493068fcc26c7210",
-    "maintenanceAssessment": "NAT.06 adds only the authorized ProjectReference from NativeAbiTests to the existing ArcForges.Native.Abstractions project and its project-only lock entry. This immutable successor follows the currently active nat-03-r1 receipt, preserving NAT.03 -> PLT.07 -> PRF.09 history and the exact current 51 NuGet coordinates/content hashes/licences/source evidence plus the unchanged 10-package Python closure. It introduces no PackageReference, package coordinate or version, licence, framework selection, package identity change, or production/runtime dependency edge. Only the two existing NativeAbiTests csproj/packages.lock.json input hashes change for this task; the project-only lock entry is required to compile the authorized managed common-ABI layout tests.",
+    "baselineCommit": "19635a2dd205184fd89b7e7992ab24228cf23021",
+    "maintenanceAssessment": "PLT.47 completes the existing non-packable Observability library and adds its nested offline test project. The library references Foundation only for typed IDs; telemetry application/service dimensions use the closed local vocabulary and add no Capabilities dependency. No package coordinate or version is added. This immutable successor follows the currently active nat-06-r1 receipt and preserves the existing dependency closure and evidence.",
     "upgradeChecks": {
-      "compilation": "On the candidate rebased onto DesktopPlatform main 213424c4944e7ed208ef21f3493068fcc26c7210, pinned .NET SDK 10.0.400 locked restore, NativeAbiTests format verification, and filtered NativeAbiLayout managed tests (3/3) passed. Development dependency audit passed with 51 NuGet and 10 Python dependencies across 238 input hashes; dependency policy tests passed 16/16; native provenance passed (21 components); IDE licence evaluation passed (40 projects); reconciliation passed (7 owners/67 projects/166 historical/326 directories/7 native) with tests 8/8; runtime ownership tests passed 25/25; source provenance passed (550 files/140 records). The local host has no pinned VCPKG_ROOT/toolchain, so CMake configure/build/install, native ABI CTest 2/2, and native package staging were not run locally. Exact-head hosted native/package CI remains required and pending. The stable audit remains inapplicable to this prerelease candidate closure; no publication or final independent review is claimed.",
-      "aot-trim": "Only the non-packable NativeAbiTests test project references the existing Native.Abstractions project. No runtime package or AOT configuration changes; existing AOT/trim gates remain required and no new AOT result is claimed.",
-      "compatibility": "No PackageReference, package identity/version, package inventory, or production/runtime project edge is added. The NativeAbiTests ProjectReference exists only for managed common ABI layout assertions. Existing image probe exports/signatures/identity and ABI minor 0 remain unchanged; the ABI 1.1 family declarations are compile-time declarations only, not implemented or advertised exports.",
-      "licence-provenance": "No dependency coordinate, content hash, licence, nuspec evidence, or Python closure changes. NAT.06 source/test paths and the immutable successor receipt are first-party provenance entries; current-base provenance and licence gates remain required.",
-      "security-sbom": "The exact 51-coordinate NuGet closure and 10-coordinate Python closure are preserved; no external component, checksum, licence, or version is added or changed. Existing development/stable dependency admission and audit gates remain required; no stable publication is claimed.",
-      "runtime-performance-migration": "No dependency migration or runtime behavior/performance claim. The test-only project reference and common ABI assertions do not change product runtime composition.",
-      "framework-runtime-posture": "Target remains net10.0 and global.json remains pinned to SDK 10.0.400. Validation uses the pinned SDK; no framework, runtime, Android, or native toolchain version change is introduced."
+      "compilation": "Exact-base validation is pending on this rebased candidate: pinned SDK 10.0.400 locked restore, format verification, full Release solution build, focused observability tests, and hosted CI are required; no new-base pass is claimed.",
+      "aot-trim": "No AOT or trim behavior/configuration change is intended. Existing AOT/trim analyzers and hosted platform checks remain required; no new-base execution is claimed.",
+      "compatibility": "No Contracts wire or published package identity change. The library reuses typed Foundation IDs; optional dimensions remain omitted when absent.",
+      "licence-provenance": "PLT.47 adds first-party source and offline tests under the existing AGPL-3.0-only boundary. No third-party coordinate, licence, or nuspec evidence changes; exact-base provenance validation remains required.",
+      "security-sbom": "No external component, version, checksum, or package admission is added. Locked restore and existing dependency/security gates remain required; no advisory-absence claim is made.",
+      "runtime-performance-migration": "Offline tests cover signal dimensions, async ambient scoping, metric cardinality, build identity, and secret/path refusal. No live exporter, service, migration, benchmark, or product performance claim is made.",
+      "framework-runtime-posture": "No SDK pin, target framework, native ABI, Android/Kotlin, or runtime change. global.json remains pinned to SDK 10.0.400."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -855,8 +857,10 @@
       "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "e497179dcd202af6385dbbef3e7664479bd53cb3419e9e39e0f333d2872e2650",
       "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
-      "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "e2b25493769b3a72348382593d6b6d89a9b1548fce8d06a599cc6d615097f1ea",
+      "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
+      "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "3d6a0b8c73585ec0c6474b5eb13b05f1236830cf4b7375ca8e42cad55f9ce4aa",
+      "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "9392f220cd4732d5b7d0eb4a5812ac21ad8eb4711db6baef43f4cae116c519b7",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "6970e010c5ebf13723b0384730a3ff37cca8ef0e4794fc9b61c96f0f8ce0df4f",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
       "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
@@ -896,18 +900,9 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-03-r1.json",
-    "namingToolCandidate": {
-      "package": "ArcForges.Contracts.Validation",
-      "version": "1.0.0-ci.205.1",
-      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
-      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
-      "licence": "Apache-2.0",
-      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
-      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
-    }
+    "previousReceipt": "eng/policy/dependency-reviews/nat-06-r1.json"
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-06-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-47-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
