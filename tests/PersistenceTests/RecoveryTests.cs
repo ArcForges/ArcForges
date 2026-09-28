@@ -312,7 +312,8 @@ public sealed class RecoveryTests
         var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
 
         Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
-        Assert.Equal(file.Path, exception.Report.EvidencePath);
+        Assert.NotNull(exception.Report.EvidencePath);
+        Assert.Equal(originalDatabase, File.ReadAllBytes(Path.Combine(exception.Report.EvidencePath!, "owner.db")));
         Assert.Equal(originalDatabase, File.ReadAllBytes(file.Path));
         Assert.NotEmpty(Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"));
     }
@@ -731,7 +732,7 @@ public sealed class RecoveryTests
 
             restoreCopyReached = File.Exists(marker);
             if (restoreCopyReached)
-                restoreTemps = Directory.GetFiles(file.DirectoryPath, "owner.db.restore-*.tmp");
+                restoreTemps = FindOwnedRestoreTemps(file.DirectoryPath);
         }
         finally
         {
@@ -1091,6 +1092,19 @@ public sealed class RecoveryTests
         tableCount.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
         Assert.Equal(0L, (long)tableCount.ExecuteScalar()!);
     }
+
+    private static string[] FindOwnedRestoreTemps(string directory) =>
+        Directory.EnumerateFiles(directory, "owner.db.restore-*.tmp", SearchOption.TopDirectoryOnly)
+            .Where(path =>
+            {
+                var name = Path.GetFileName(path);
+                const string prefix = "owner.db.restore-";
+                const string suffix = ".tmp";
+                var identity = name[prefix.Length..^suffix.Length];
+                return Guid.TryParseExact(identity, "N", out var parsed) &&
+                    string.Equals(parsed.ToString("N"), identity, StringComparison.Ordinal);
+            })
+            .ToArray();
 
     private sealed class Allow : IStoreAuthorization
     {
