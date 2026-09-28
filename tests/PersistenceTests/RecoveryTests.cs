@@ -187,6 +187,18 @@ public sealed class RecoveryTests
     }
 
     [Fact]
+    public void MissingDatabaseWithoutRecoveryEvidenceInitializesAsFirstRun()
+    {
+        using var file = new SnapshotFixture();
+
+        using var store = new SqliteStore(file.Path, file.Id, new Allow());
+
+        Assert.Equal(StoreRecoveryOutcome.Clean, store.Recovery.Outcome);
+        Assert.True(File.Exists(file.Path));
+        Assert.Empty(store.ReadJournal(null, 10));
+    }
+
+    [Fact]
     public void EmptyDatabaseRestoresVerifiedSnapshotAndPreservesDatabaseAndOrphanedSidecars()
     {
         using var file = new SnapshotFixture();
@@ -230,6 +242,100 @@ public sealed class RecoveryTests
         Assert.Equal(Array.Empty<byte>(), File.ReadAllBytes(Path.Combine(exception.Report.EvidencePath!, Path.GetFileName(file.Path))));
         Assert.Equal(orphanedWal, File.ReadAllBytes(Path.Combine(exception.Report.EvidencePath!, Path.GetFileName(file.Path) + "-wal")));
         Assert.Equal(orphanedWal, File.ReadAllBytes(file.Path + "-wal"));
+    }
+
+    [Fact]
+    public void ZeroByteDatabaseWithoutRecoveryEvidenceFailsClosed()
+    {
+        using var file = new SnapshotFixture();
+        using (new SqliteStore(file.Path, file.Id, new Allow())) { }
+        File.WriteAllBytes(file.Path, []);
+
+        var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
+
+        Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+        Assert.Equal(file.Path, exception.Report.EvidencePath);
+        Assert.Empty(File.ReadAllBytes(file.Path));
+    }
+
+    [Fact]
+    public void ValidUninitializedSqliteDatabaseRestoresVerifiedSnapshot()
+    {
+        using var file = new SnapshotFixture();
+        var command = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow()))
+        {
+            store.Write(command);
+            Assert.NotNull(store.CreateSnapshot());
+        }
+
+        CreateValidUninitializedSqliteDatabase(file.Path);
+        var emptyDatabase = File.ReadAllBytes(file.Path);
+        Assert.NotEmpty(emptyDatabase);
+        Assert.Empty(Directory.GetFiles(file.DirectoryPath, "owner.db-*"));
+
+        using var reopened = new SqliteStore(file.Path, file.Id, new Allow());
+
+        Assert.Equal(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork, reopened.Recovery.Outcome);
+        Assert.True(reopened.Recovery.RequiresSafeStart);
+        Assert.NotNull(reopened.Recovery.EvidencePath);
+        Assert.Equal(emptyDatabase, File.ReadAllBytes(Path.Combine(reopened.Recovery.EvidencePath!, "owner.db")));
+        Assert.Equal(command.Content.Version, reopened.Read(command.AggregateKind, command.AggregateId)!.Version);
+    }
+
+    [Fact]
+    public void ValidUninitializedSqliteDatabaseWithoutRecoveryEvidenceInitializesAsFirstRun()
+    {
+        using var file = new SnapshotFixture();
+        CreateValidUninitializedSqliteDatabase(file.Path);
+
+        using var store = new SqliteStore(file.Path, file.Id, new Allow());
+
+        Assert.Equal(StoreRecoveryOutcome.Clean, store.Recovery.Outcome);
+        Assert.Empty(store.ReadJournal(null, 10));
+    }
+
+    [Fact]
+    public void ValidUninitializedSqliteDatabaseWithOnlyInvalidSnapshotsFailsClosed()
+    {
+        using var file = new SnapshotFixture();
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow()))
+        {
+            store.Write(Command(StoreVersion.NewRoot, StoreVersion.Native(new(1))));
+            Assert.NotNull(store.CreateSnapshot());
+        }
+        foreach (var snapshot in Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"))
+            File.WriteAllBytes(snapshot, "not a verified snapshot"u8.ToArray());
+        CreateValidUninitializedSqliteDatabase(file.Path);
+        var originalDatabase = File.ReadAllBytes(file.Path);
+
+        var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
+
+        Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+        Assert.Equal(file.Path, exception.Report.EvidencePath);
+        Assert.Equal(originalDatabase, File.ReadAllBytes(file.Path));
+        Assert.NotEmpty(Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"));
+    }
+
+    [Fact]
+    public void MissingDatabaseWithOnlyInvalidCommittedSnapshotsFailsClosed()
+    {
+        using var file = new SnapshotFixture();
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow()))
+        {
+            store.Write(Command(StoreVersion.NewRoot, StoreVersion.Native(new(1))));
+            Assert.NotNull(store.CreateSnapshot());
+        }
+        foreach (var snapshot in Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"))
+            File.WriteAllBytes(snapshot, "not a verified snapshot"u8.ToArray());
+        File.Delete(file.Path);
+
+        var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
+
+        Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+        Assert.Equal(file.SnapshotDirectory, exception.Report.EvidencePath);
+        Assert.False(File.Exists(file.Path));
+        Assert.NotEmpty(Directory.GetFiles(file.SnapshotDirectory, "*.afsnap"));
     }
 
     [Fact]
@@ -574,6 +680,83 @@ public sealed class RecoveryTests
     }
 
     [Fact]
+    public async Task KilledSnapshotRestoreLeavesOnlyRestoreTempAndRestartReclaimsIt()
+    {
+        using var file = new SnapshotFixture();
+        var command = Command(StoreVersion.NewRoot, StoreVersion.Native(new(1)));
+        string committedSnapshotPath;
+        using (var store = new SqliteStore(file.Path, file.Id, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false))
+        {
+            store.Write(command);
+            committedSnapshotPath = store.CreateSnapshot()!.Path;
+        }
+        File.Delete(file.Path);
+
+        var marker = System.IO.Path.Combine(file.DirectoryPath, "restore-crash-ready");
+        var unrelatedSimilarFile = System.IO.Path.Combine(file.DirectoryPath, "owner.db.restore-not-owned.tmp");
+        await File.WriteAllTextAsync(unrelatedSimilarFile, "retain unrelated file",
+            TestContext.Current.CancellationToken).ConfigureAwait(true);
+        var childPath = System.IO.Path.Combine(AppContext.BaseDirectory,
+            OperatingSystem.IsWindows() ? "ArcForges.Tests.PersistenceTests.exe" : "ArcForges.Tests.PersistenceTests");
+        Assert.True(File.Exists(childPath), "The restore process-kill regression requires the test apphost.");
+        using var child = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = childPath,
+                WorkingDirectory = Environment.CurrentDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
+        child.StartInfo.ArgumentList.Add("-method");
+        child.StartInfo.ArgumentList.Add("ArcForges.Tests.PersistenceTests.RecoveryTests.NativeCrashChildWaitsDuringSnapshotRestore");
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_RESTORE_CRASH_CHILD"] = "1";
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_RESTORE_DATABASE"] = file.Path;
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_RESTORE_STORE"] = file.Id.ToString("D");
+        child.StartInfo.Environment["ARCFORGES_RECOVERY_RESTORE_MARKER"] = marker;
+        Assert.True(child.Start(), "The restore crash child did not start.");
+        var standardOutput = child.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var standardError = child.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        string[] restoreTemps = [];
+        var restoreCopyReached = false;
+        try
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (!File.Exists(marker) && !child.HasExited && DateTime.UtcNow < deadline)
+                await Task.Delay(TimeSpan.FromMilliseconds(25), TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+            restoreCopyReached = File.Exists(marker);
+            if (restoreCopyReached)
+                restoreTemps = Directory.GetFiles(file.DirectoryPath, "owner.db.restore-*.tmp");
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+        }
+
+        var output = await standardOutput.ConfigureAwait(true);
+        var error = await standardError.ConfigureAwait(true);
+        Assert.True(restoreCopyReached,
+            $"The crash child did not reach the restore copy. stdout={output} stderr={error}");
+        Assert.Single(restoreTemps);
+        Assert.NotEqual(0, child.ExitCode);
+
+        using var reopened = new SqliteStore(file.Path, file.Id, new Allow());
+
+        Assert.Equal(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork, reopened.Recovery.Outcome);
+        Assert.Equal(command.Content.Version, reopened.Read(command.AggregateKind, command.AggregateId)!.Version);
+        Assert.True(File.Exists(committedSnapshotPath), "Restart scavenging must retain the committed envelope.");
+        Assert.All(restoreTemps, path => Assert.False(File.Exists(path), $"Abandoned restore temp was not reclaimed: {path}"));
+        Assert.Equal("retain unrelated file",
+            await File.ReadAllTextAsync(unrelatedSimilarFile, TestContext.Current.CancellationToken).ConfigureAwait(true));
+    }
+
+    [Fact]
     public void NativeCrashChildWaitsDuringSnapshotCreation()
     {
         if (Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_SNAPSHOT_CRASH_CHILD") != "1") return;
@@ -595,6 +778,29 @@ public sealed class RecoveryTests
                 Thread.Sleep(Timeout.Infinite);
             });
         _ = store.CreateSnapshot();
+    }
+
+    [Fact]
+    public void NativeCrashChildWaitsDuringSnapshotRestore()
+    {
+        if (Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_RESTORE_CRASH_CHILD") != "1") return;
+
+        var database = Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_RESTORE_DATABASE")
+            ?? throw new InvalidOperationException("The restore crash-child database path is missing.");
+        var storeId = Guid.Parse(Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_RESTORE_STORE")
+            ?? throw new InvalidOperationException("The restore crash-child store identity is missing."));
+        var marker = Environment.GetEnvironmentVariable("ARCFORGES_RECOVERY_RESTORE_MARKER")
+            ?? throw new InvalidOperationException("The restore crash-child marker path is missing.");
+        _ = new SqliteStore(database, storeId, new Allow(), null,
+            new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600), performRecovery: true, runSnapshotPolicy: false,
+            snapshotFault: stage =>
+            {
+                if (stage != SnapshotStage.RestoreCopied) return;
+                using var ready = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                ready.WriteByte(1);
+                ready.Flush(flushToDisk: true);
+                Thread.Sleep(Timeout.Infinite);
+            });
     }
 
     [Fact]
@@ -867,6 +1073,23 @@ public sealed class RecoveryTests
         return new(new(Guid.NewGuid()), "recovery-test", aggregateId ?? Guid.NewGuid(), expected,
             new(next, payload, origin), "recovery.replace", new(Guid.Parse("00000000-0000-4000-8000-000000000001")),
             Guid.NewGuid(), ArcForges.Foundation.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow));
+    }
+
+    private static void CreateValidUninitializedSqliteDatabase(string path)
+    {
+        File.Delete(path);
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Pooling = false
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version=1";
+        command.ExecuteNonQuery();
+        using var tableCount = connection.CreateCommand();
+        tableCount.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
+        Assert.Equal(0L, (long)tableCount.ExecuteScalar()!);
     }
 
     private sealed class Allow : IStoreAuthorization

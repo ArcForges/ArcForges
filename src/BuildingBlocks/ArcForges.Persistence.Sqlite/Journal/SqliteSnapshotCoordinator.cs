@@ -38,25 +38,36 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         if (!databaseExists || databaseIsEmpty)
         {
             var hasOrphanedSidecars = SidecarSuffixes.Any(suffix => File.Exists(fullDatabasePath + suffix));
+            var hasCommittedSnapshots = HasCommittedSnapshotEvidence();
             var snapshot = FindLatestVerifiedSnapshot();
             var databaseDescription = databaseExists ? "empty" : "missing";
             if (snapshot is null)
             {
-                if (hasOrphanedSidecars)
+                if (hasOrphanedSidecars || hasCommittedSnapshots)
                 {
                     string? preservedSidecarsPath = null;
                     Exception? evidenceFailure = null;
-                    try { preservedSidecarsPath = PreserveEvidence(); }
+                    try
+                    {
+                        if (databaseExists || hasOrphanedSidecars)
+                            preservedSidecarsPath = PreserveEvidence();
+                    }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                     { evidenceFailure = exception; }
                     var report = new StoreRecoveryReport(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence,
-                        0, 0, preservedSidecarsPath ?? fullDatabasePath + "-wal",
-                        $"The owner database is {databaseDescription} but SQLite sidecars remain. They were preserved as evidence; automatic initialization was refused because the sidecars may contain committed content.");
+                        0, 0, preservedSidecarsPath ?? (hasCommittedSnapshots ? snapshotDirectory : fullDatabasePath + "-wal"),
+                        hasOrphanedSidecars
+                            ? $"The owner database is {databaseDescription} but SQLite sidecars remain. They were preserved as evidence; automatic initialization was refused because the sidecars may contain committed content."
+                            : $"The owner database is {databaseDescription} and committed snapshot envelopes exist, but none can be verified. Evidence was preserved and automatic initialization was refused.");
                     throw new StoreRecoveryException(report, evidenceFailure);
                 }
                 if (databaseIsEmpty)
-                    return new(StoreRecoveryOutcome.Clean, 0, 0, null,
-                        "The empty owner database has no SQLite sidecars or retained snapshot; a new store will be initialized.");
+                {
+                    var report = new StoreRecoveryReport(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence,
+                        0, 0, fullDatabasePath,
+                        "The zero-byte owner database is not a valid empty SQLite store and no verified snapshot is available. Automatic initialization was refused.");
+                    throw new StoreRecoveryException(report);
+                }
                 return new(StoreRecoveryOutcome.Clean, 0, 0, null,
                     "The owner database does not exist and no retained snapshot is available; a new store will be initialized.");
             }
@@ -82,6 +93,49 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         }
 
         var inspection = InspectDatabase();
+        if (inspection.IsUninitialized)
+        {
+            var hasOrphanedSidecars = SidecarSuffixes.Any(suffix => File.Exists(fullDatabasePath + suffix));
+            var hasCommittedSnapshots = HasCommittedSnapshotEvidence();
+            if (!hasOrphanedSidecars && !hasCommittedSnapshots)
+                return new(StoreRecoveryOutcome.Clean, 0, 0, null,
+                    "The valid empty owner database has no journal, sidecars, or retained snapshot; a new store will be initialized.");
+
+            var snapshot = FindLatestVerifiedSnapshot();
+            if (snapshot is null)
+            {
+                string? preservedEvidencePath = null;
+                Exception? evidenceFailure = null;
+                try { preservedEvidencePath = PreserveEvidence(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                { evidenceFailure = exception; }
+                var report = new StoreRecoveryReport(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence,
+                    0, 0, preservedEvidencePath ?? fullDatabasePath,
+                    hasOrphanedSidecars
+                        ? "The valid empty owner database has SQLite sidecars but no verified snapshot. Evidence was preserved and automatic initialization was refused."
+                        : "The valid empty owner database has committed snapshot envelopes, but none can be verified. Evidence was preserved and automatic initialization was refused.");
+                throw new StoreRecoveryException(report, evidenceFailure);
+            }
+
+            string? emptyDatabaseEvidencePath = null;
+            try
+            {
+                emptyDatabaseEvidencePath = PreserveEvidence();
+                RestoreSnapshot(snapshot, emptyDatabaseEvidencePath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or InvalidDataException or InvalidOperationException)
+            {
+                DeleteTemporary(snapshot.DatabasePath);
+                var report = new StoreRecoveryReport(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence,
+                    snapshot.Through, 0, emptyDatabaseEvidencePath ?? fullDatabasePath,
+                    $"The valid empty owner database had recovery evidence, but its verified snapshot at sequence {snapshot.Through} could not be restored.");
+                throw new StoreRecoveryException(report, exception);
+            }
+            DeleteTemporary(snapshot.DatabasePath);
+            return new(StoreRecoveryOutcome.RecoveredWithLossOfUncommittedWork, snapshot.Through,
+                snapshot.Through, emptyDatabaseEvidencePath,
+                $"Restored verified sequence {snapshot.Through} because the owner database was a valid but uninitialized SQLite file. Work after that checkpoint is unavailable; enter read-first safe start.");
+        }
         if (!inspection.RequiresRecovery)
             return new(StoreRecoveryOutcome.Clean, inspection.Head ?? 0, inspection.Head ?? 0, null,
                 "The owner database and its retained journal are structurally valid.");
@@ -229,7 +283,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
                 using var tables = connection.CreateCommand();
                 tables.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
                 if (Convert.ToInt64(tables.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0)
-                    return new(false, false, 0, 0, "the store has not been initialized yet");
+                    return new(false, false, 0, 0, "the store has not been initialized yet", IsUninitialized: true);
                 return new(true, false, ReadHeadIfAvailable(connection), null,
                     "the owner identity table is missing from an initialized database");
             }
@@ -315,6 +369,13 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         if (latest is not null)
             lock (boundaryLock) authorizedBoundaries.Add(BoundaryKey(latest.Boundary));
         return latest;
+    }
+
+    private bool HasCommittedSnapshotEvidence()
+    {
+        if (!Directory.Exists(snapshotDirectory)) return false;
+        RejectReparsePoint(snapshotDirectory);
+        return Directory.EnumerateFiles(snapshotDirectory, "*.afsnap", SearchOption.TopDirectoryOnly).Any();
     }
 
     private SnapshotCandidate? VerifySnapshot(string path)
@@ -692,10 +753,18 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
 
     private void ScavengeAbandonedTemporaryFiles()
     {
-        RejectReparsePoint(snapshotDirectory);
-        foreach (var path in Directory.EnumerateFiles(snapshotDirectory, "*", SearchOption.TopDirectoryOnly))
+        ScavengeOwnedFiles(snapshotDirectory, IsOwnedTemporaryFileName);
+        var databaseDirectory = Path.GetDirectoryName(fullDatabasePath) ?? Environment.CurrentDirectory;
+        if (Directory.Exists(databaseDirectory))
+            ScavengeOwnedFiles(databaseDirectory, IsOwnedRestoreTemporaryFileName);
+    }
+
+    private void ScavengeOwnedFiles(string directory, Func<string, bool> isOwned)
+    {
+        RejectReparsePoint(directory);
+        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
         {
-            if (!IsOwnedTemporaryFileName(Path.GetFileName(path))) continue;
+            if (!isOwned(Path.GetFileName(path))) continue;
             FileAttributes attributes;
             try { attributes = File.GetAttributes(path); }
             catch (FileNotFoundException) { continue; }
@@ -708,6 +777,9 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         HasOwnedTemporaryIdentity(name, ".snapshot-", ".db.tmp") ||
         HasOwnedTemporaryIdentity(name, ".snapshot-", ".afsnap.tmp") ||
         HasOwnedTemporaryIdentity(name, ".verify-", ".db.tmp");
+
+    private bool IsOwnedRestoreTemporaryFileName(string name) =>
+        HasOwnedTemporaryIdentity(name, Path.GetFileName(fullDatabasePath) + ".restore-", ".tmp");
 
     private static bool HasOwnedTemporaryIdentity(string name, string prefix, string suffix)
     {
@@ -735,7 +807,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
         var isSnapshotTemporary = string.Equals(parent, snapshotDirectory, StringComparison.OrdinalIgnoreCase) &&
             IsOwnedTemporaryFileName(name);
         var isRestoreTemporary = string.Equals(parent, databaseDirectory, StringComparison.OrdinalIgnoreCase) &&
-            HasOwnedTemporaryIdentity(name, Path.GetFileName(fullDatabasePath) + ".restore-", ".tmp");
+            IsOwnedRestoreTemporaryFileName(name);
         if (!isSnapshotTemporary && !isRestoreTemporary)
             throw new InvalidOperationException("Refusing to remove a file outside the snapshot temporary scope.");
         if (File.Exists(full)) File.Delete(full);
@@ -747,7 +819,7 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
     private sealed record SnapshotCandidate(string EnvelopePath, string DatabasePath, long Through,
         long CreatedAtMilliseconds, uint SchemaVersion, byte[] DatabaseChecksum, VerifiedSnapshotBoundary Boundary);
     private sealed record DatabaseInspection(bool RequiresRecovery, bool CanReadJournal,
-        long? Head, long? Floor, string Detail);
+        long? Head, long? Floor, string Detail, bool IsUninitialized = false);
 
     private sealed class RecoveryAuthorization : IStoreAuthorization
     {
