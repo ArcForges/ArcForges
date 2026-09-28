@@ -127,6 +127,14 @@
     {
       "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+      "kind": "msbuild"
     }
   ]
 }

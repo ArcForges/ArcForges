@@ -144,6 +144,22 @@
     "aot": true
   },
   {
+    "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
     "role": "NativeAdapter",
     "owner": "DesktopPlatform",
