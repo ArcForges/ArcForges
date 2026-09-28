@@ -125,13 +125,13 @@ class AccountingTests(unittest.TestCase):
         self.assertTrue(report["registrationScan"]["complete"])
         self.assertEqual(0, report["registrationScan"]["registeredCaseCount"])
 
-    def test_all_six_mtp_suites_parse_and_report_skips(self) -> None:
+    def test_all_seven_mtp_suites_parse_and_report_skips(self) -> None:
         trx_dir = self._trx_dir()
         parsed = [
             accounting._parse_trx(trx_dir / f"{suite_id}.trx", suite_id, project)
             for suite_id, project in accounting.TRX_SUITES
         ]
-        self.assertEqual(6, len(parsed))
+        self.assertEqual(7, len(parsed))
         self.assertTrue(all(item["summaryOutcome"] == "completed" for item in parsed))
 
     def test_trx_rejects_duplicate_results_for_one_test_id(self) -> None:
@@ -163,12 +163,12 @@ class AccountingTests(unittest.TestCase):
     def test_report_rejects_missing_and_unexpected_trx_inputs(self) -> None:
         trx_dir = self._trx_dir()
         (trx_dir / "security-tests.trx").unlink()
-        with self.assertRaisesRegex(accounting.AccountingError, "exactly six unique TRX"):
+        with self.assertRaisesRegex(accounting.AccountingError, "exactly seven unique TRX"):
             accounting._normalize_desktop(trx_dir, {}, set(self.ids), self.audit, "784f238c4c01590e8de6fe5e1472ed79b70ac222", "12345", 1)
 
         trx_dir = self._trx_dir()
         (trx_dir / "unexpected.trx").write_text("<TestRun id='extra'/>", encoding="utf-8")
-        with self.assertRaisesRegex(accounting.AccountingError, "exactly six unique TRX"):
+        with self.assertRaisesRegex(accounting.AccountingError, "exactly seven unique TRX"):
             accounting._normalize_desktop(trx_dir, {}, set(self.ids), self.audit, "784f238c4c01590e8de6fe5e1472ed79b70ac222", "12345", 1)
 
     def test_registered_case_must_have_exactly_one_executed_result(self) -> None:
