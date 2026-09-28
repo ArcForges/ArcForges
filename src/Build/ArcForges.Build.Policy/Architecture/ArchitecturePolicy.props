@@ -3,6 +3,8 @@
   <!-- Import explicitly from an offline test/build-tool project; this file is not in build/ or buildTransitive/. -->
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)*.cs" Link="ArchitecturePolicy/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)banned-api-categories.json"
+                      LogicalName="ArcForges.Build.Policy.Architecture.banned-api-categories.json" />
     <Reference Include="Microsoft.CodeAnalysis">
       <HintPath>$(MSBuildToolsPath)/Roslyn/bincore/Microsoft.CodeAnalysis.dll</HintPath>
       <Private>true</Private>

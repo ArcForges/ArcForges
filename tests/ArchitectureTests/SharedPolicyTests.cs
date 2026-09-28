@@ -112,6 +112,22 @@ public sealed class SharedPolicyTests
         });
     }
 
+    [Xunit.Fact]
+    public void BannedApiCatalogLoadsFromConsumerResourceWithMappedMissingSourcePath()
+    {
+        const string mappedSourcePath = "/_/src/Build/ArcForges.Build.Policy/Architecture/BannedSymbolScanner.cs";
+        using var resource = typeof(BannedSymbolScanner).Assembly
+            .GetManifestResourceStream(BannedSymbolScanner.CategoryCatalogResourceName);
+        Xunit.Assert.NotNull(resource);
+
+        var compilation = FixtureCompiler.Compile("MappedSourcePath", new Dictionary<string, string>
+        {
+            [mappedSourcePath] = "class C { int M() => 1; }",
+        });
+        Xunit.Assert.Empty(BannedSymbolScanner.Scan(compilation,
+            new ProjectClassification("fixture.csproj", ProjectRole.Foundation, "DesktopPlatform", Aot: true)));
+    }
+
     [Xunit.Theory]
     [Xunit.InlineData("BAN-REFLECTION", "using static System.Activator; class C { object? M() => CreateInstance(typeof(string)); }")]
     [Xunit.InlineData("BAN-REFLECTION", "class C { object M(dynamic value) => value.Run(); }")]

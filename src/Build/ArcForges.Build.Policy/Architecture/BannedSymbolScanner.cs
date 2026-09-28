@@ -11,6 +11,8 @@ namespace ArcForges.Build.Policy.Architecture;
 /// <summary>Semantic symbol checks: aliases and qualified spellings resolve to the same policy decision.</summary>
 internal static class BannedSymbolScanner
 {
+    internal const string CategoryCatalogResourceName = "ArcForges.Build.Policy.Architecture.banned-api-categories.json";
+
     private static readonly string[] RequiredCategoryIds =
     [
         "BAN-REFLECTION",
@@ -138,11 +140,10 @@ internal static class BannedSymbolScanner
         return findings.Distinct().ToArray();
     }
 
-    private static ReadOnlyCollection<BannedApiCategory> LoadCategories(
-        [System.Runtime.CompilerServices.CallerFilePath] string sourcePath = "")
+    private static ReadOnlyCollection<BannedApiCategory> LoadCategories()
     {
-        string catalogPath = Path.Combine(Path.GetDirectoryName(sourcePath) ?? "", "banned-api-categories.json");
-        using var stream = File.OpenRead(catalogPath);
+        using var stream = typeof(BannedSymbolScanner).Assembly.GetManifestResourceStream(CategoryCatalogResourceName)
+            ?? throw new InvalidOperationException("The canonical banned-API catalog manifest resource is missing.");
         using var document = JsonDocument.Parse(stream, new JsonDocumentOptions
         {
             AllowTrailingCommas = false,

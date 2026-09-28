@@ -4,7 +4,7 @@
     "reviewer": "af-20260928-g02 (GOV.12 producer; dependency-input lineage only, not an independent PR review)",
     "reviewedOn": "2026-09-28",
     "baselineCommit": "497263e3f2cea3056a502e8f956b099f13a173f7",
-    "maintenanceAssessment": "GOV.12 adds a first-party canonical banned API category catalog as static Build.Policy package content. The only dependency inputs changed are the package inventory path and Build.Policy project file. The exact NuGet and Python closures, versions, licensing evidence, package identity, and framework selection remain unchanged; this receipt records input-hash lineage only.",
+    "maintenanceAssessment": "GOV.12 adds a first-party canonical banned API category catalog as static Build.Policy package content and embeds it for explicit opt-in consumers through ArchitecturePolicy.props. The only dependency inputs changed are the package inventory path, Build.Policy project file, and ArchitecturePolicy.props. The exact NuGet and Python closures, versions, licensing evidence, package identity, and framework selection remain unchanged; this receipt records input-hash lineage only.",
     "upgradeChecks": {
       "compilation": "GOV.12 adds the canonical static JSON as Build.Policy package content without changing dependency coordinates; the exact-head build, pack candidate, formatting, and registered tests remain required in CI.",
       "aot-trim": "No dependency, AOT setting, or native ABI changes; the existing policy engine consumes the packaged catalog and the existing AOT/trimming gates remain required.",
@@ -180,7 +180,7 @@
       "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
       "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
       "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
-      "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "30f9bc6819011d4dafe5797b83c24c6663514e7c481a9d2dd6eef3b7ee974c3e",
+      "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "b49df8103b7251e16412b236bcb2e4a9b665365b3f1b034840a4801653fdeb96",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Metadata.targets": "c0d516a0c0b956689ddfc78ff061d6f3add7a9fe22b4b05baa31bbfed1aca985",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.targets": "8c15dc21c5bf599b458e41ea126d2a22157d70f32c81512d25d7f886c504e34e",
