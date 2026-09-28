@@ -42,7 +42,7 @@ public sealed class SignalEmitterTests
             SequenceGapCount = 2,
         };
         var sink = new CapturingSink();
-        var emitter = new SignalEmitter(sink);
+        using var emitter = new SignalEmitter(sink);
         Activity? stopped = null;
         using var listener = new ActivityListener
         {
@@ -84,11 +84,12 @@ public sealed class SignalEmitterTests
     public void MissingOptionalDimensionsStayOmittedAndCoreIdentityIsAlwaysPresent()
     {
         var sink = new CapturingSink();
+        using var emitter = new SignalEmitter(sink);
         var context = new ObservabilityContext("companion", new InstanceId(Guid.NewGuid()), "build-17", "development");
 
         using (ObservabilityScope.Push(context))
         {
-            new SignalEmitter(sink).Emit("startup.ready", SignalLevel.Debug);
+            emitter.Emit("startup.ready", SignalLevel.Debug);
         }
 
         Assert.Equal(4, sink.Signal!.Properties.Count);
@@ -144,16 +145,21 @@ public sealed class SignalEmitterTests
     [Fact]
     public void MetricsUseOnlyLowCardinalityIdentityAndRecordPresentDuration()
     {
+        var context = Context() with { Duration = TimeSpan.FromMilliseconds(8), ActorReference = "sha256:" + new string('c', 64), Task = TaskId.New() };
+        var expectedInstance = context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
         var countTags = new HashSet<string>(StringComparer.Ordinal);
         var durationTags = new HashSet<string>(StringComparer.Ordinal);
+        var scopeTags = new Dictionary<string, object?>(StringComparer.Ordinal);
         var count = 0L;
         var duration = 0d;
         using var listener = new MeterListener
         {
             InstrumentPublished = (instrument, meterListener) =>
             {
-                if (instrument.Meter.Name == SignalEmitter.MeterName)
+                if (instrument.Meter.Name == SignalEmitter.MeterName
+                    && instrument.Meter.Tags?.Any(tag => tag.Key == "instance.id" && Equals(tag.Value, expectedInstance)) == true)
                 {
+                    foreach (var tag in instrument.Meter.Tags!) scopeTags[tag.Key] = tag.Value;
                     meterListener.EnableMeasurementEvents(instrument);
                 }
             },
@@ -175,30 +181,41 @@ public sealed class SignalEmitterTests
             }
         });
         listener.Start();
-        var context = Context() with { Duration = TimeSpan.FromMilliseconds(8), ActorReference = "sha256:" + new string('c', 64), Task = TaskId.New() };
-
+        using var emitter = new SignalEmitter(new CapturingSink());
         using (ObservabilityScope.Push(context))
         {
-            new SignalEmitter(new CapturingSink()).Emit("execution.completed", SignalLevel.Information);
+            emitter.Emit("execution.completed", SignalLevel.Information);
         }
 
         Assert.Equal(1, count);
         Assert.Equal(8, duration);
-        Assert.Contains("application.id", countTags);
-        Assert.Contains("build.id", countTags);
-        Assert.Contains("deployment.environment", countTags);
-        Assert.Contains("service.name", countTags);
+        Assert.True(countTags.SetEquals(["service.name"]));
         Assert.DoesNotContain("instance.id", countTags);
+        Assert.DoesNotContain("build.id", countTags);
         Assert.DoesNotContain("actor.ref", countTags);
         Assert.DoesNotContain("task.id", countTags);
         Assert.True(countTags.SetEquals(durationTags));
+        Assert.Equal(context.ApplicationId, scopeTags["application.id"]);
+        Assert.Equal(expectedInstance, scopeTags["instance.id"]);
+        Assert.Equal(context.BuildId, scopeTags["build.id"]);
+        Assert.Equal(context.Environment, scopeTags["deployment.environment"]);
+
+        var differentInstance = new ObservabilityContext(context.ApplicationId, new InstanceId(Guid.NewGuid()),
+            context.BuildId, context.Environment)
+        {
+            Service = context.Service
+        };
+        using (ObservabilityScope.Push(differentInstance))
+        {
+            Assert.Throws<InvalidOperationException>(() => emitter.Emit("execution.completed", SignalLevel.Information));
+        }
     }
 
     [Fact]
     public void SignalEmitterHasNoCallerPropertyBagAndRejectsMarkerContent()
     {
         using var scope = ObservabilityScope.Push(Context());
-        var emitter = new SignalEmitter(new CapturingSink());
+        using var emitter = new SignalEmitter(new CapturingSink());
         Assert.Equal(2, typeof(SignalEmitter).GetMethod(nameof(SignalEmitter.Emit))!.GetParameters().Length);
         Assert.Throws<ArgumentException>(() => emitter.Emit("Secret Used", SignalLevel.Information));
 

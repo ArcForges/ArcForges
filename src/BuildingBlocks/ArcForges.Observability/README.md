@@ -9,10 +9,11 @@ unstamped assemblies.
 
 Each emission creates an OpenTelemetry-compatible `ActivitySource` span when a listener is present,
 increments a `Meter` counter, records duration when available, and writes one typed `StructuredSignal`
-through a host-provided sink. The same dimensions go to
-traces and structured events. Metric labels are deliberately restricted to application, build,
-environment, and service identity: actor, workspace, command, run, attempt, resource, and correlation
-identifiers remain trace/log dimensions so they do not create high-cardinality metric series.
+through a host-provided sink. The same dimensions go to traces and structured events. Each emitter is
+bound on first use to one application/build/instance/environment identity; those required identities
+are attached to its Meter instrumentation scope, not to measurement point labels. Point labels contain
+only the optional bounded service name. Actor, workspace, command, run, attempt, resource, and
+correlation identifiers remain trace/log dimensions so they do not create high-cardinality metric series.
 
 The emitter has no caller-supplied event-property bag: it accepts only the closed ambient dimension
 schema, so adding an event cannot smuggle arbitrary prompt, path, request, or secret text into logs or

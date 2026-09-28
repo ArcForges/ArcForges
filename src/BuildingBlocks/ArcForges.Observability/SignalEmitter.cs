@@ -6,19 +6,18 @@ namespace ArcForges.Observability;
 
 /// <summary>
 /// The single emission surface for metrics, traces, and structured events. High-cardinality identifiers
-/// are attached to traces/events only; metric labels are deliberately limited to low-cardinality identity.
+/// are attached to traces/events and instrumentation-scope identity; metric point labels remain low-cardinality.
 /// </summary>
-public sealed class SignalEmitter
+public sealed class SignalEmitter : IDisposable
 {
     public const string SourceName = "ArcForges.Observability";
     public const string MeterName = "ArcForges.Observability";
 
     private static readonly ActivitySource Activities = new(SourceName);
-    private static readonly Meter Meter = new(MeterName);
-    private static readonly Counter<long> SignalCount = Meter.CreateCounter<long>("arcf_signal_count", "{signal}");
-    private static readonly Histogram<double> SignalDuration = Meter.CreateHistogram<double>("arcf_signal_duration", "ms");
-
+    private readonly object _metricsGate = new();
     private readonly IStructuredEventSink _sink;
+    private Metrics? _metrics;
+    private bool _disposed;
 
     public SignalEmitter(IStructuredEventSink sink)
     {
@@ -36,6 +35,7 @@ public sealed class SignalEmitter
 
         var context = ObservabilityScope.Current
             ?? throw new InvalidOperationException("A complete observability context must be installed before emitting a signal.");
+        var metrics = GetMetrics(context);
         var properties = context.MaterializeDimensions();
         var timestamp = DateTimeOffset.UtcNow;
         var signal = new StructuredSignal(eventName, level, timestamp, properties);
@@ -56,10 +56,10 @@ public sealed class SignalEmitter
             }
 
             var metricTags = GetMetricTags(context);
-            SignalCount.Add(1, metricTags);
+            metrics.SignalCount.Add(1, metricTags);
             if (context.Duration is { } duration)
             {
-                SignalDuration.Record(duration.TotalMilliseconds, metricTags);
+                metrics.SignalDuration.Record(duration.TotalMilliseconds, metricTags);
             }
 
             _sink.Write(signal);
@@ -68,20 +68,90 @@ public sealed class SignalEmitter
         return signal;
     }
 
+    public void Dispose()
+    {
+        lock (_metricsGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _metrics?.Dispose();
+        }
+    }
+
+    private Metrics GetMetrics(ObservabilityContext context)
+    {
+        lock (_metricsGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_metrics is not null)
+            {
+                if (_metrics.Identity != SignalIdentity.From(context))
+                {
+                    throw new InvalidOperationException("A SignalEmitter is bound to one application/build/instance identity.");
+                }
+
+                return _metrics;
+            }
+
+            var identity = SignalIdentity.From(context);
+            _metrics = new Metrics(identity);
+            return _metrics;
+        }
+    }
+
     private static TagList GetMetricTags(ObservabilityContext context)
     {
-        var tags = new TagList
-        {
-            { "application.id", context.ApplicationId },
-            { "build.id", context.BuildId },
-            { "deployment.environment", context.Environment },
-        };
+        var tags = new TagList();
         if (context.Service is { } service)
         {
             tags.Add("service.name", service);
         }
 
         return tags;
+    }
+
+    private static Meter CreateMeter(SignalIdentity identity) => new(new MeterOptions(MeterName)
+    {
+        Tags = new KeyValuePair<string, object?>[]
+        {
+            new("application.id", identity.ApplicationId),
+            new("instance.id", identity.InstanceId),
+            new("build.id", identity.BuildId),
+            new("deployment.environment", identity.Environment),
+        },
+    });
+
+    private sealed class Metrics : IDisposable
+    {
+        public Metrics(SignalIdentity identity)
+        {
+            Identity = identity;
+            Meter = CreateMeter(identity);
+            try
+            {
+                SignalCount = Meter.CreateCounter<long>("arcf_signal_count", "{signal}");
+                SignalDuration = Meter.CreateHistogram<double>("arcf_signal_duration", "ms");
+            }
+            catch
+            {
+                Meter.Dispose();
+                throw;
+            }
+        }
+
+        public SignalIdentity Identity { get; }
+        public Meter Meter { get; }
+        public Counter<long> SignalCount { get; }
+        public Histogram<double> SignalDuration { get; }
+
+        public void Dispose() => Meter.Dispose();
+    }
+
+    private readonly record struct SignalIdentity(string ApplicationId, string InstanceId, string BuildId, string Environment)
+    {
+        public static SignalIdentity From(ObservabilityContext context) => new(context.ApplicationId,
+            context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture), context.BuildId,
+            context.Environment);
     }
 
     private static void ValidateEventName(string eventName)
