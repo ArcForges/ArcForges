@@ -18,7 +18,7 @@
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
     "eng/packaging/packages.json": "d19e3b09d9fa835a5458abebe244ecdeeb05e9a8ff13ec6852013b8b25d2c3c6",
-    "eng/policy/naming-package.json": "46e193b74566c402a5c52f1c3240c4e1250e4ce16bc7c5531a816438fc96c3c8",
+    "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
     "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
@@ -30,6 +30,7 @@
     "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
     "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
     "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
+    "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
     "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
     "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
     "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
@@ -537,19 +538,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-20260927-dother",
-    "reviewer": "w-20260927-dother (admission assessment; independent exact-head review required)",
+    "owner": "w-20260927-baseline-01",
+    "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-27",
-    "baselineCommit": "761d7c9801b5ced005fd2a5266a1f38fca827044",
-    "maintenanceAssessment": "PLT06 adds the adoption-owned nonpackable Resources append-store project and offline tests. Only existing Foundation and test-toolchain references; no package version, external dependency closure, framework or native input changes. Existing CI retained; child-process interruption diagnostics explicitly local opt-in and skipped hosted.",
+    "baselineCommit": "d1fb6d0af306ec3553729dc7e46e16de1d414b28",
+    "maintenanceAssessment": "GOV.14 upgrades only the existing canonical naming-tool candidate from 129.1 to normally published 205.1. Contracts PR58 changes exactly two Design source identity fields; scanner and declaration bytes remain unchanged. All managed/Python/native dependency closures and framework selections remain unchanged.",
     "upgradeChecks": {
-      "compilation": "Existing SDK10.0.401 build passed zero warnings/errors; pinned10.0.400 CI required.",
-      "aot-trim": "Production IsAotCompatible=true; bounded binary codecs and no reflection runtime; no suppressed diagnostics.",
-      "compatibility": "Version1local frame codec with checksums, explicit seal, typed gap/segment metadata and durable loss receipts; malformed/future versions refused.",
-      "licence-provenance": "First-party AGPL3-only implementation; existing Foundation dependency retains Apache contract licence and notices. No source copied from reference products.",
-      "security-sbom": "No external dependency changes; all prior admission/licence/security gates retained.",
-      "runtime-performance-migration": "4MiB chunks and ranges,1024slices and1million-frame index bounds.13local tests pass including actual writer kill at boundary/midpayload; no existing storage migration.",
-      "framework-runtime-posture": "No runtime/framework upgrades. Local SDK401 adapter only preserves pinned10.0.11packs; no installation or committed pin changes."
+      "compilation": "Build-time naming policy data only; existing managed/native compilation and packaging remain required latest-head CI. No product source change in this candidate pin delta.",
+      "aot-trim": "No runtime dependency, generated codec, native ABI or reflection change; existing AOT/trim diagnostics retained.",
+      "compatibility": "Exact existing package identity; official NuGet catalog binds version205.1, signed package SHA512 and producer source696242d. Two source identity fields now match the already pinned Design export ec1a1e7; declaration hashes and scanner unchanged. Contracts naming suite31tests passed.",
+      "licence-provenance": "Official NuGet catalog confirms Apache-2.0 and ArcForges/Contracts source696242d. New receipt appended and first-party registered; every prior dependency/source receipt retained.",
+      "security-sbom": "Contracts main CI36356146302 and Security36356146280 succeeded, including original NuGet/npm/Maven publication. Exact signed public package hash comes from official metadata, not pre-sign candidate bytes. Existing dependency/security gates retained.",
+      "runtime-performance-migration": "Canonical build-time metadata consumer only; no runtime migration or performance change. No installed-consumer, device, live-service or product acceptance claim.",
+      "framework-runtime-posture": "No framework major upgrade, .NET SDK10.0.400 unchanged; no Android Kotlin/JVM/ART/R8 or native toolchain change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -568,7 +569,7 @@
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
       "eng/packaging/packages.json": "d19e3b09d9fa835a5458abebe244ecdeeb05e9a8ff13ec6852013b8b25d2c3c6",
-      "eng/policy/naming-package.json": "46e193b74566c402a5c52f1c3240c4e1250e4ce16bc7c5531a816438fc96c3c8",
+      "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
       "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
@@ -580,6 +581,7 @@
       "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
       "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
       "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
+      "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
       "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
       "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
       "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
@@ -774,9 +776,18 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/fnd-07-r1.json"
+    "previousReceipt": "eng/policy/dependency-reviews/gov14-r3.json",
+    "namingToolCandidate": {
+      "package": "ArcForges.Contracts.Validation",
+      "version": "1.0.0-ci.205.1",
+      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
+      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
+      "licence": "Apache-2.0",
+      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
+      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
+    }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-06-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/gov-14-naming-r4.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

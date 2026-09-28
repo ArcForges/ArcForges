@@ -3,11 +3,13 @@
 
 from copy import deepcopy
 import json
+import posixpath
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import design_corpus as corpus
 import design_policy as policy
@@ -110,6 +112,9 @@ def register(items=None):
 
 class Fixture(unittest.TestCase):
     def setUp(self):
+        authority = patch.object(policy, 'naming_authority', return_value=(('RetiredFixture',), {'fixture': True}))
+        authority.start()
+        self.addCleanup(authority.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve() / 'design'
@@ -144,6 +149,28 @@ class Fixture(unittest.TestCase):
         self.docs['docs/planning/delivery/README.md'] = '# Model\n' + ''.join(
             f'<a id="rule-dlv-{i:02}"></a>\n| DLV-{i:02} | Fixture |\n' for i in range(1,43))
         self.docs['docs/decisions/phase-2-specification-decisions.md'] = '# Decisions\n<a id="rule-p2-018"></a>\n## P2-018 — Fixture\n'
+        matrix = 'docs/assurance/traceability-matrix.md'
+        rows = ['# Decision mapping']
+        active_citations = []
+        for identity, home in corpus.DECISION_HOMES.items():
+            filename = 'phase-1-foundation-decisions.md' if identity.startswith('D-') else 'phase-2-specification-decisions.md'
+            definition_path = 'docs/decisions/' + filename
+            self.docs.setdefault(definition_path, '# Decisions\n')
+            self.docs[definition_path] += f'<a id="rule-{identity.lower()}"></a>\n## {identity} — Fixture\n'
+            decision_link = f'[{identity}](../decisions/{filename}#rule-{identity.lower()})'
+            status = 'Withdrawn ordering' if identity == 'P2-002' else 'Adopted fixture'
+            rows.append(f'| {decision_link} | {status} | [Primary]({home}) | Historical provenance | Checked gate |')
+            active_citations.append(decision_link)
+        for home in corpus.DECISION_HOMES.values():
+            name, _, fragment = home.partition('#')
+            path = posixpath.normpath(posixpath.join('docs/assurance', name))
+            self.docs.setdefault(path, '# Home\n')
+            if fragment and f'id="{fragment}"' not in self.docs[path]:
+                self.docs[path] += f'<a id="{fragment}"></a>\n'
+        self.docs[matrix] = '\n'.join(rows) + '\n'
+        self.docs['docs/architecture/fixture.md'] += '\n'.join(active_citations) + '\n'
+        self.docs['docs/assurance/phase-2-design-closure-review.md'] = '# Closure\n## 2. Twelve repaired groups\n' + '\n'.join(
+            f'| {i} | Design repair | Owning producer |' for i in range(1, 13)) + '\n'
         for name, body in self.docs.items(): self.write(name, body)
         for name, body in design_views(Graph(self.root)).items(): self.write(name, body)
         self.docs.update(design_views(Graph(self.root)))
@@ -411,6 +438,70 @@ class GraphTests(Fixture):
         errors=repr(graph(self.root,self.docs)['errors'])
         self.assertIn('does not depend on real producer',errors)
         self.assertIn('does not depend on consumer',errors)
+
+
+class SpecificationIntegrityTests(unittest.TestCase):
+    def test_new_or_modified_superseded_name_cannot_reuse_a_classification(self):
+        path = 'docs/architecture/names.md'
+        old = 'RetiredFixture is excluded.'
+        exact = {(path, policy.text_hash(old)): 1}
+        self.assertEqual(corpus.superseded_names({path: old}, ('RetiredFixture',), exact)['findings'], [])
+        for changed in (old + ' Ship RetiredFixture now.', old + '\n' + old, 'Ship retiredfixture now.'):
+            self.assertTrue(corpus.superseded_names({path: changed}, ('RetiredFixture',), exact)['findings'])
+        self.assertTrue(corpus.superseded_names({'docs/architecture/new.md': old}, ('RetiredFixture',), exact)['findings'])
+        self.assertEqual(corpus.superseded_names({path: 'ArcImageNative is a logical library.'}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'], [])
+        self.assertEqual(corpus.superseded_names({path: '`native/arcimage-abi` is its directory.'}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'], [])
+        hostile = ['RetiredFixtureWidget', 'RetiredFixture2']
+        for technical in ('ArcImageNative', 'arcimage-abi'):
+            hostile.extend((technical + '2', 'my_' + technical, technical + '-extra'))
+        for name in hostile:
+            with self.subTest(name=name):
+                self.assertTrue(corpus.superseded_names({path: 'Publish ' + name}, ('RetiredFixture', 'ArcImageNative', 'arcimage-abi'), {})['findings'])
+
+    def test_archived_inputs_cannot_become_authority_through_tables_or_renames(self):
+        bad = [
+            ('docs/requirements/new.md', '> Governing authority: I1'),
+            ('docs/planning/work-packages/new.md', '| Required input | I2 section III |'),
+            ('docs/architecture/data-model/new.md', 'Acceptance: Stage 13 §49'),
+            ('docs/assurance/new-gate.md', '[source](../deprecated-inputs/%72enamed.md)'),
+            ('docs/architecture/new.md', '[source](../inputs/arbitrary-new-name.md)'),
+            ('docs/architecture/new.md', 'Read platform-architecture-concept.md.'),
+            ('docs/assurance/invariant-coverage.md', '| Current gate | Required input I4 |'),
+        ]
+        for path, text in bad:
+            with self.subTest(path=path, text=text):
+                self.assertTrue(corpus.archived_input_dependencies({path: text})['findings'])
+
+    def test_formal_rules_archive_navigation_and_dated_history_remain_distinct(self):
+        docs = {
+            'docs/architecture/new.md': '[I-001](../requirements/rules.md#rule-i-001)',
+            'docs/planning/README.md': '[Archive navigation](../deprecated-inputs/README.md) is not an input.',
+            'docs/planning/new.md': 'The Stage 2 repair is historical evidence.',
+            'docs/assurance/phase-1-official-verification.md': 'Original input I4 §Stage 11.30.',
+        }
+        report = corpus.archived_input_dependencies(docs)
+        self.assertEqual(report['findings'], [])
+        self.assertEqual(report['documents'], 3)
+        self.assertEqual(report['historicalRecords'], ['docs/assurance/phase-1-official-verification.md'])
+
+    def test_semantic_decision_home_and_withdrawn_successor_are_checked(self):
+        path = 'docs/assurance/traceability-matrix.md'
+        row = '| [P2-002](../decisions/phase-2-specification-decisions.md#rule-p2-002) | Withdrawn ordering | [Effective successor](../decisions/phase-2-specification-decisions.md#rule-p2-004) | Historical provenance | No executable obligation |'
+        good = corpus.decision_coverage({path: row}, [])
+        self.assertFalse(any('wrong primary' in str(x) or 'treated as active' in str(x) for x in good['findings']))
+        for broken in (row.replace('#rule-p2-004', '#rule-p2-003'), row.replace('Withdrawn ordering', 'Adopted ordering')):
+            result = corpus.decision_coverage({path: broken}, [])
+            self.assertTrue(any('wrong primary' in str(x) or 'treated as active' in str(x) for x in result['findings']))
+
+    def test_valid_anchor_for_wrong_decision_and_duplicate_group_fail(self):
+        path = 'docs/assurance/traceability-matrix.md'
+        row = '| [D-003](../decisions/phase-1-foundation-decisions.md#rule-d-002) | Verification | `open-gates-register.md` | Active references | Gates |'
+        closure = 'docs/assurance/phase-2-design-closure-review.md'
+        docs = {path: row, closure: '\n'.join(f'| {i} | Design | Producer |' for i in [*range(1, 12), 11])}
+        result = corpus.decision_coverage(docs, [])
+        self.assertTrue(any('wrong decision definition' in str(x) for x in result['findings']))
+        self.assertTrue(any('closure groups' in str(x) for x in result['findings']))
+        self.assertTrue(any('active Phase 2 citation' in str(x) for x in result['findings']))
 
 
 if __name__ == '__main__':

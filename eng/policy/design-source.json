@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "license": "AGPL-3.0-only",
   "repository": "ArcForges/ArcForges-Design",
-  "commit": "7aa84e69ad6808461b34181de261fab03bede076",
+  "commit": "ec1a1e7400683a6f971693cf84c8480183b4b6c5",
   "sourceHashes": {
     "docs/requirements/01-normative-glossary-and-invariants.md": "9041df86987324c25446dc3a5cfbfbabd6b6df1ea20381135a8caf84f98e44d4",
     "docs/assurance/invariant-coverage.md": "4ef00061e928ab1555f9557ef5c52a39a07a1ae31d672055fd3453c12d6f2cca",
     "docs/assurance/citation-classifications.json": "404bd1e8a545bcc45cd1f21296b274a0dcc9562bd2351ac5074f7bd2f160d9c9",
-    "docs/planning/delivery/delivery-graph.json": "ed3aa38d3582e7a2d49f3d57fc6ea10b6c08f68b0645db6946251762b1b90a73"
+    "docs/planning/delivery/delivery-graph.json": "a76b77393f37c674a59d7d2d30ef8f1222f46fa00342b381cb2db2844bd0c3f5"
   },
-  "corpusSha256": "9c1e7c5d43791bbea9d71edeadd98586fdc4fa69ee70d8fecb56de8c96b8b53c"
+  "corpusSha256": "4bbdff80061b27482d578417d6ed853759ddb8bb4f0c4634d5c6b3d4c4c0ccfe"
 }

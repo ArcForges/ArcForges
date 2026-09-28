@@ -8,6 +8,8 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
+from functools import lru_cache
 import json
 from pathlib import Path
 import re
@@ -265,6 +267,19 @@ def classify(docs, report, register):
     return {'records': len(expected), 'occurrences': sum(observed.values()), 'items': register['classifications']}
 
 
+@lru_cache(maxsize=1)
+def naming_authority():
+    from runtime_ownership import naming_package
+    pin = read_json(POLICY / 'naming-package.json')
+    with tempfile.TemporaryDirectory(prefix='arcforges-design-naming-') as directory:
+        scanner = naming_package(pin, Path(directory))
+        spec = importlib.util.spec_from_file_location('design_owned_naming', scanner)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        data = module.load_policy()
+    return tuple(item['name'] for item in data['forbiddenNames']), pin
+
+
 def verify(root, policy_root, *, refresh=False, preview=False):
     pin = validate_pin(read_json(policy_root / 'design-source.json'))
     before = state(root)
@@ -278,6 +293,14 @@ def verify(root, policy_root, *, refresh=False, preview=False):
     require(preview or (inputs == pin['sourceHashes'] and digest == pin['corpusSha256']), 'pinned Design source hashes differ')
     report = corpus.audit(root, docs)
     require(not report['errors'] and not report['missingAnchors'], 'corpus integrity failure: ' + repr((report['errors'] + report['missingAnchors'])[:5]))
+    input_integrity = corpus.archived_input_dependencies(docs)
+    names, naming_pin = naming_authority()
+    naming_integrity = corpus.superseded_names(docs, names)
+    naming_integrity['authority'] = naming_pin
+    decisions = corpus.decision_coverage(docs, report['citations'])
+    for name, evidence in [('archived inputs', input_integrity), ('superseded names', naming_integrity),
+                           ('decision coverage', decisions)]:
+        require(not evidence['findings'], name + ' integrity failure: ' + repr(evidence['findings'][:5]))
     classifications = classify(docs, report, json.loads(register_text, object_pairs_hook=unique_keys))
     dependency = graph(root, docs)
     require(not dependency['errors'], 'delivery graph failure: ' + repr(dependency['errors'][:5]))
@@ -301,6 +324,16 @@ def verify(root, policy_root, *, refresh=False, preview=False):
             'outputs': {name: hashlib.sha256(data).hexdigest() for name, data in outputs.items()},
             'forbiddenAliasesSha256': canonical_hash(vocabulary['forbiddenAliases']),
             'corpus': report, 'classifications': classifications, 'graph': dependency,
+            'specificationIntegrity': {
+                'result': 'passed', 'findings': [],
+                'checks': {
+                    'internalLinks': {'result': 'passed', 'count': report['links']},
+                    'citedIdentifiers': {'result': 'passed', 'count': len(report['citations'])},
+                    'supersededNames': {'result': 'passed', **naming_integrity},
+                    'decisionCoverage': {'result': 'passed', **decisions},
+                    'dependencyGraph': {'result': 'passed', 'source': GRAPH_REL},
+                    'currentInputAuthority': {'result': 'passed', **input_integrity},
+                }},
             'limitations': 'Policy and planned-verification data only; no implemented invariant or product readiness claim.'}
 
 
