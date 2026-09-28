@@ -43,3 +43,40 @@ Lease renewal is serialized against current lease ID, epoch, fence, and expiry i
 This run used Kestrel HTTP/2 over Windows named pipes with `CurrentUserOnly=true`; no TCP listener was configured. The authorized owner sent a one-byte raw malformed protobuf and then, on the same `GrpcChannel`, successfully completed the normal generated `Challenge`/`Confirm` admission using its parent-provisioned peer identity and launch nonce. The server dispatch counter proved the malformed request did not reach generated service dispatch while the following valid challenge dispatched exactly once. Bounded, sanitized refusal metadata and the configured 4 MiB receive bound were also checked. The private probe harness passed the one-use bootstrap secret only over inherited process stdin and kept it out of arguments and output.
 
 Linux and macOS runtime execution was not performed on this Windows machine and is not claimed here. Hosted CI compiles/publishes its permitted Linux and Windows targets but does not claim or perform hosted runtime acceptance.
+
+## Darwin UDS peer identity backend
+
+The review follow-up adds a macOS backend for both the connecting-client and accepted-server socket paths. Linux continues to use `getsockopt(SOL_SOCKET, SO_PEERCRED)` and its `ucred` PID; macOS uses `getsockopt(SOL_LOCAL, LOCAL_PEERPID)` and an `int32` `pid_t` output. The values are from Apple's XNU `<sys/un.h>` (`SOL_LOCAL=0`, `LOCAL_PEERPID=0x002`): [Apple XNU header](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/sys/un.h#L81-L89). Platform backend selection is isolated in a pure selector so the supported Linux/macOS routes and unsupported-platform fail-closed route can be checked without invoking a native socket call.
+
+This host is Windows and has no macOS runtime. No Mac host was installed, provisioned, simulated, or claimed. The actual macOS local-opt-in two-process run remains unobserved; this code/API path and the Windows/Linux compilation evidence do not replace that runtime evidence. PRF.04 must remain `delivered`, not `complete`, until the required macOS process run is recorded on a real macOS host.
+
+Darwin follow-up source revision: `00668b557f405dcc102deba8f963fedbbb41bf5a`.
+
+After this source change, pinned SDK 10.0.400 restore, formatting, Release build,
+the platform-dispatch check, Windows Native AOT publish, and the published
+Windows process probe all exited `0`, each build/publish/run performed through
+the task build-slot. The dispatch check was run against both the managed build
+and the published Native AOT binary:
+
+```powershell
+C:\Users\J7Rdm\.dotnet\dotnet.exe exec artifacts/bin/dotnet/windows/LocalRpcAotTests/Release/net10.0/LocalRpcAotTests.dll --verify-unix-peer-pid-backends
+artifacts/prf-04/win-x64/LocalRpcAotTests.exe --verify-unix-peer-pid-backends
+```
+
+```text
+PASS: Linux SO_PEERCRED and macOS SOL_LOCAL/LOCAL_PEERPID dispatch; unsupported platforms fail closed.
+```
+
+The repeated Native AOT `win-x64` two-process run also passed:
+
+```text
+PASS: retained owner session completed bidirectional LocalBootstrap, OS-bound peer identity, concurrent/fenced/expiry renewal, cancellation, malformed-input recovery, same-user spoof refusal, PID-reuse-tolerant reconnect and bounded-message checks.
+Evidence: pipe; owner process 25284 / instance B75D7185207E40779BE84606C9F149BA; peer restarted 27756 / instance F2642D60C263413E81EE017DA59E059E; PID equality is allowed and B2 is rebound by a fresh instance/launch tuple; owner session 290550f604ec4966bc6c282bbd30e0e8.
+```
+
+Post-follow-up policy checks passed: dependency policy (47 NuGet coordinates,
+225 inputs), all 16 dependency-policy tests, provenance (499 tracked files),
+reconciliation (7 owners, 67 projects, 166 historical projects, 326
+directories, 7 native records), and `git diff --check`. No package or lock
+file changed. These checks validate the supported native backend selection and
+Windows transport but do not constitute macOS runtime execution.
