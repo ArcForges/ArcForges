@@ -26,6 +26,10 @@ using Microsoft.Win32.SafeHandles;
 internal static partial class Program
 {
     private const int MaximumMessageBytes = 4 * 1024 * 1024;
+    private const int LinuxSolSocket = 1;
+    private const int LinuxSoPeerCred = 17;
+    private const int DarwinSolLocal = 0;
+    private const int DarwinLocalPeerPid = 0x002;
 
     [SuppressMessage("Usage", "CA1031", Justification = "This executable is a test boundary; report every probe failure and return a failing process exit code.")]
     public static async Task<int> Main(string[] args)
@@ -40,6 +44,13 @@ internal static partial class Program
             if (args.Length > 0 && args[0] == "--rogue")
             {
                 return await RunRogueAsync(args[1..]).ConfigureAwait(false);
+            }
+
+            if (args.Length > 0 && args[0] == "--verify-unix-peer-pid-backends")
+            {
+                VerifyUnixPeerPidBackends();
+                Console.WriteLine("PASS: Linux SO_PEERCRED and macOS SOL_LOCAL/LOCAL_PEERPID dispatch; unsupported platforms fail closed.");
+                return 0;
             }
 
             if (RuntimeFeature.IsDynamicCodeSupported)
@@ -60,9 +71,9 @@ internal static partial class Program
 
     private static async Task RunProbeAsync()
     {
-        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
         {
-            throw new PlatformNotSupportedException("The peer-process probe currently supports Windows named pipes and Linux Unix-domain sockets.");
+            throw new PlatformNotSupportedException("The peer-process probe supports Windows named pipes and Linux/macOS Unix-domain sockets.");
         }
 
         var executable = Environment.ProcessPath
@@ -1252,20 +1263,80 @@ internal static partial class Program
 
     private static int GetUnixPeerProcessId(Socket socket)
     {
-        if (!OperatingSystem.IsLinux())
+        return SelectUnixPeerPidBackend(GetCurrentUnixPeerPidPlatform()) switch
         {
-            throw new PlatformNotSupportedException("Unix-domain peer PID binding is currently implemented for Linux only.");
+            UnixPeerPidBackend.LinuxPeerCredentials => GetLinuxPeerProcessId(socket),
+            UnixPeerPidBackend.DarwinPeerPid => GetDarwinPeerProcessId(socket),
+            _ => throw new PlatformNotSupportedException("Unix-domain peer PID binding is not implemented for this platform."),
+        };
+    }
+
+    private static UnixPeerPidPlatform GetCurrentUnixPeerPidPlatform() =>
+        SelectUnixPeerPidPlatform(OperatingSystem.IsLinux(), OperatingSystem.IsMacOS());
+
+    internal static UnixPeerPidPlatform SelectUnixPeerPidPlatform(bool isLinux, bool isMacOS) =>
+        (isLinux, isMacOS) switch
+        {
+            (true, false) => UnixPeerPidPlatform.Linux,
+            (false, true) => UnixPeerPidPlatform.MacOS,
+            _ => UnixPeerPidPlatform.Unsupported,
+        };
+
+    internal static UnixPeerPidBackend SelectUnixPeerPidBackend(UnixPeerPidPlatform platform) => platform switch
+    {
+        UnixPeerPidPlatform.Linux => UnixPeerPidBackend.LinuxPeerCredentials,
+        UnixPeerPidPlatform.MacOS => UnixPeerPidBackend.DarwinPeerPid,
+        _ => throw new PlatformNotSupportedException("Unix-domain peer PID binding is not implemented for this platform."),
+    };
+
+    private static void VerifyUnixPeerPidBackends()
+    {
+        if (SelectUnixPeerPidPlatform(isLinux: true, isMacOS: false) != UnixPeerPidPlatform.Linux ||
+            SelectUnixPeerPidBackend(SelectUnixPeerPidPlatform(isLinux: true, isMacOS: false)) != UnixPeerPidBackend.LinuxPeerCredentials ||
+            SelectUnixPeerPidPlatform(isLinux: false, isMacOS: true) != UnixPeerPidPlatform.MacOS ||
+            SelectUnixPeerPidBackend(SelectUnixPeerPidPlatform(isLinux: false, isMacOS: true)) != UnixPeerPidBackend.DarwinPeerPid ||
+            SelectUnixPeerPidPlatform(isLinux: false, isMacOS: false) != UnixPeerPidPlatform.Unsupported ||
+            SelectUnixPeerPidPlatform(isLinux: true, isMacOS: true) != UnixPeerPidPlatform.Unsupported)
+        {
+            throw new InvalidOperationException("A supported Unix platform selected the wrong peer-PID backend.");
         }
 
+        try
+        {
+            _ = SelectUnixPeerPidBackend(UnixPeerPidPlatform.Unsupported);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("An unsupported Unix platform did not fail closed.");
+    }
+
+    private static int GetLinuxPeerProcessId(Socket socket)
+    {
         var credentials = default(LinuxPeerCredentials);
         uint length = (uint)Marshal.SizeOf<LinuxPeerCredentials>();
-        if (NativeMethods.GetSocketOption(socket.SafeHandle, level: 1, option: 17, out credentials, ref length) != 0 ||
+        if (NativeMethods.GetSocketOption(socket.SafeHandle, level: LinuxSolSocket, option: LinuxSoPeerCred, out credentials, ref length) != 0 ||
             length < Marshal.SizeOf<LinuxPeerCredentials>() || credentials.ProcessId <= 0)
         {
             throw new IOException("The Unix-domain socket peer process ID could not be observed.", new Win32Exception(Marshal.GetLastPInvokeError()));
         }
 
         return credentials.ProcessId;
+    }
+
+    private static int GetDarwinPeerProcessId(Socket socket)
+    {
+        var processId = 0;
+        uint length = sizeof(int);
+        if (NativeMethods.GetDarwinSocketOption(socket.SafeHandle, level: DarwinSolLocal, option: DarwinLocalPeerPid, out processId, ref length) != 0 ||
+            length != sizeof(int) || processId <= 0)
+        {
+            throw new IOException("The Unix-domain socket peer process ID could not be observed.", new Win32Exception(Marshal.GetLastPInvokeError()));
+        }
+
+        return processId;
     }
 
     internal static Metadata LaunchResponseHeaders(byte[] launchNonce) =>
@@ -1441,6 +1512,19 @@ internal static partial class Program
         public uint GroupId;
     }
 
+    internal enum UnixPeerPidPlatform
+    {
+        Unsupported,
+        Linux,
+        MacOS,
+    }
+
+    internal enum UnixPeerPidBackend
+    {
+        LinuxPeerCredentials,
+        DarwinPeerPid,
+    }
+
     private static partial class NativeMethods
     {
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -1456,6 +1540,10 @@ internal static partial class Program
         [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
         [LibraryImport("libc", EntryPoint = "getsockopt", SetLastError = true)]
         internal static partial int GetSocketOption(SafeSocketHandle socket, int level, int option, out LinuxPeerCredentials value, ref uint valueLength);
+
+        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+        [LibraryImport("libc", EntryPoint = "getsockopt", SetLastError = true)]
+        internal static partial int GetDarwinSocketOption(SafeSocketHandle socket, int level, int option, out int value, ref uint valueLength);
     }
 }
 
