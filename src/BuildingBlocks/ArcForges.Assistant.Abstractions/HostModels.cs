@@ -322,7 +322,7 @@ public sealed record HostResourceReadGrant
     public AssistantResourceReference Resource { get; }
 }
 
-public sealed record ResolvedHostResource(AssistantResourceReference Reference, HostFileGrant? ReadGrant,
+public sealed record ResolvedHostResource(AssistantResourceReference Reference, HostResourceReadGrant? ReadGrant,
     string AvailabilityKey);
 
 public sealed record HostPreview(AssistantResourceReference Reference, HostPreviewMode Mode, string PreviewKey);

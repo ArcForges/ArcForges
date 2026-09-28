@@ -180,6 +180,48 @@ public sealed class CompositionTests
     }
 
     [Xunit.Fact]
+    public async Task ResolvedResourceReadGrantFeedsOpenReadAndRejectsForeignResourceOrOwner()
+    {
+        var owner = Host();
+        var reference = new AssistantResourceReference(ResourceVersion());
+        var resources = new ResourceReadFixture(owner, reference);
+        var cancellationToken = Xunit.TestContext.Current.CancellationToken;
+
+        var resolution = resources.Resolve(reference);
+        Xunit.Assert.True(resolution.TryGetValue(out var resolved));
+        var grant = resolved!.ReadGrant;
+        Xunit.Assert.NotNull(grant);
+        Xunit.Assert.Equal(reference.ToWire(), grant!.Resource.ToWire());
+
+        var openResult = await resources.OpenReadAsync(grant, new HostByteRange(0, 3), cancellationToken);
+        Xunit.Assert.True(openResult.TryGetValue(out var stream));
+        using (stream)
+        {
+            var bytes = new byte[3];
+            Xunit.Assert.Equal(3, await stream!.ReadAsync(bytes, cancellationToken));
+            Xunit.Assert.Equal((byte)0x41, bytes[0]);
+            Xunit.Assert.Equal((byte)0x42, bytes[1]);
+            Xunit.Assert.Equal((byte)0x43, bytes[2]);
+        }
+
+        var otherVersion = ResourceVersion();
+        otherVersion.ContentHash = new string('b', 64);
+        var otherResource = new AssistantResourceReference(otherVersion);
+        var mismatchedGrant = new HostResourceReadGrant(owner, Guid.NewGuid(), otherResource);
+        var mismatchedResult = await resources.OpenReadAsync(mismatchedGrant, new HostByteRange(0, 3),
+            cancellationToken);
+        Xunit.Assert.True(mismatchedResult.TryGetFailure(out var mismatchFailure));
+        Xunit.Assert.Equal("perm.capability_denied", mismatchFailure!.Code);
+
+        var foreignOwner = Host(new AssistantInstallationIdentity(AssistantProductIdentity.ArcScope,
+            new InstallationId(new Guid("30000000-0000-0000-0000-000000000001"))));
+        var foreignGrant = new HostResourceReadGrant(foreignOwner, Guid.NewGuid(), reference);
+        var foreignResult = await resources.OpenReadAsync(foreignGrant, new HostByteRange(0, 3), cancellationToken);
+        Xunit.Assert.True(foreignResult.TryGetFailure(out var foreignFailure));
+        Xunit.Assert.Equal("perm.capability_denied", foreignFailure!.Code);
+    }
+
+    [Xunit.Fact]
     public async Task NavigationLifecycleAndPlatformPortsRemainHostBound()
     {
         var identity = Host();
@@ -374,6 +416,53 @@ public sealed class CompositionTests
             Native = new NativeContentRev(),
             ContentHash = new string('a', 64),
         };
+
+    private sealed class ResourceReadFixture(AssistantHostIdentity owner, AssistantResourceReference reference)
+        : IHostResources
+    {
+        private readonly AssistantResourceReference _reference = new(reference.ToWire());
+        private readonly HostResourceReadGrant _grant = new(owner, Guid.NewGuid(), reference);
+        private readonly byte[] _content = [0x41, 0x42, 0x43];
+
+        public AssistantHostIdentity Owner { get; } = owner;
+
+        public Outcome<ResolvedHostResource> Resolve(AssistantResourceReference requested)
+        {
+            if (!SameResource(requested, _reference))
+            {
+                return Outcome.Failure<ResolvedHostResource>(TypedFailure.Create("state.not_found"));
+            }
+
+            return Outcome.Success(new ResolvedHostResource(_reference, _grant, "resource.available"));
+        }
+
+        public ValueTask<Outcome<Stream>> OpenReadAsync(HostResourceReadGrant grant, HostByteRange range,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (grant.Owner != Owner || grant.GrantId != _grant.GrantId || !SameResource(grant.Resource, _reference))
+            {
+                return ValueTask.FromResult(Outcome.Failure<Stream>(TypedFailure.Create("perm.capability_denied")));
+            }
+
+            if (range.Offset != 0 || range.Length != _content.Length)
+            {
+                return ValueTask.FromResult(Outcome.Failure<Stream>(TypedFailure.Create("arg.invalid")));
+            }
+
+            return ValueTask.FromResult(Outcome.Success<Stream>(new MemoryStream(_content, writable: false)));
+        }
+
+        public Outcome<HostPreview> Present(AssistantResourceReference requested, HostPreviewMode previewMode)
+            => Outcome.Failure<HostPreview>(TypedFailure.Create("state.not_found"));
+
+        public ValueTask<Outcome<HostSaveReceipt>> SaveAsAsync(AssistantResourceReference requested,
+            HostFileGrant destination, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(Outcome.Failure<HostSaveReceipt>(TypedFailure.Create("state.not_found")));
+
+        private static bool SameResource(AssistantResourceReference left, AssistantResourceReference right)
+            => left.ToWire().Equals(right.ToWire());
+    }
 
     private static AssistantHostServices Services(PortFixture fixture, IHostActions actions,
         IHostPlatformServices? platform = null)
