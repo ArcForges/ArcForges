@@ -9,6 +9,14 @@
       "kind": "cmake"
     },
     {
+      "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "eng/acceptance/foundation/package.json",
+      "kind": "npm"
+    },
+    {
       "path": "native/CMakeLists.txt",
       "kind": "cmake"
     },
@@ -106,6 +114,18 @@
     },
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
       "kind": "msbuild"
     }
   ]

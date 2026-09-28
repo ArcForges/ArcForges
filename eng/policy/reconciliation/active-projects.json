@@ -7,6 +7,14 @@
       "blob": "77177ca01ea3406e2caa6048ffe094d54f5734bf"
     },
     {
+      "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
+      "blob": "877c108341f0a95dae5ec0fefa57e4ca6643d2c7"
+    },
+    {
+      "path": "eng/acceptance/foundation/package.json",
+      "blob": "9dd4b59ef3cdc95ccf995bf7c255334775099015"
+    },
+    {
       "path": "native/CMakeLists.txt",
       "blob": "f223097639a9bf7398a843f3c478e121ea40d05b"
     },
@@ -25,6 +33,14 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
       "blob": "02ff1201122fde30678a74607a9173e59ac0b8db"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+      "blob": "042868c4108d8df6fd0ad18138b198b96712fe38"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+      "blob": "600c8a2680a41831f27e17afaf4043f993995e31"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
@@ -72,7 +88,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
-      "blob": "6b4a9d54a67da08b17f2ae1d5842ac05d712d15d"
+      "blob": "439261198ed7e999ef2871fe1c68f7c0e61a680b"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
@@ -105,6 +121,10 @@
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
       "blob": "87b5bfceadd816497a18225b52a1149c53355dbe"
+    },
+    {
+      "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+      "blob": "37d1b57f89ef5156d2780ce48697de5f7c6bb12c"
     }
   ]
 }

@@ -64,6 +64,33 @@ class AdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Forbidden'):
             check_admission(self.policy, self.actual)
 
+    def test_exact_foundation_acceptance_refuses_changed_boundary(self):
+        key = 'arcforges.foundation/1.0.0-ci.29.1'
+        check_admission(self.policy, self.actual)
+        for field, value in [('licence', 'MIT'), ('source', 'https://example.invalid/source'),
+                             ('internalPublisher', {'repository': 'someone/DesktopPlatform'})]:
+            with self.subTest(field=field):
+                policy = copy.deepcopy(self.policy)
+                policy['nugetClosure'][key][field] = value
+                with self.assertRaises(ValueError):
+                    check_admission(policy, self.actual)
+        for replacement in ['other.foundation/1.0.0-ci.29.1', 'arcforges.foundation/1.0.0-ci.30.1']:
+            with self.subTest(coordinate=replacement):
+                policy, actual = copy.deepcopy(self.policy), dict(self.actual)
+                policy['nugetClosure'][replacement] = policy['nugetClosure'].pop(key)
+                actual[replacement] = actual.pop(key)
+                with self.assertRaises(ValueError):
+                    check_admission(policy, actual)
+        policy, actual = copy.deepcopy(self.policy), dict(self.actual)
+        policy['nugetClosure'][key]['contentHash'] = actual[key] = 'changed-together'
+        with self.assertRaises(ValueError):
+            check_admission(policy, actual)
+        for field in ['repository', 'workflow', 'sourceCommit', 'feed']:
+            policy = copy.deepcopy(self.policy)
+            policy['nugetClosure'][key]['internalPublisher'][field] = 'changed'
+            with self.subTest(publisher_field=field), self.assertRaises(ValueError):
+                check_admission(policy, self.actual)
+
     def test_mutable_admitted_version(self):
         self.actual[next(iter(self.actual))] = 'different-content'
         with self.assertRaisesRegex(ValueError, 'Mutable'):

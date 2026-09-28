@@ -17,6 +17,14 @@
           "role": "native-build"
         },
         {
+          "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "eng/acceptance/foundation/package.json",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "native/CMakeLists.txt",
           "role": "native-build"
         },
@@ -114,6 +122,18 @@
         },
         {
           "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
           "role": "test-or-build-tool"
         }
       ]

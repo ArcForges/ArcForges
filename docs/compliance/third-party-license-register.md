@@ -41,3 +41,15 @@ immutable native producer artifact before both consumer validation and public up
 The old monorepo's planned product-source adoption register remains in Git at base commit
 `99bfe7d695ed0d65a0d035af7d219fc9b86100f5`; those product imports are not DesktopPlatform imports.
 No reference-repository code was copied by this extraction.
+
+## SQLite persistence producer (PLT.01, PLT.02, PLT.04)
+
+`ArcForges.Persistence.Sqlite` retains exact NuGet dependencies rather than embedding copied
+upstream source or binaries. Microsoft.Data.Sqlite and Microsoft.Data.Sqlite.Core 10.0.12
+declare MIT and source commit `95017c711e6afc1085133d440e42b4bd78155701` in dotnet/dotnet.
+SQLitePCLRaw.bundle_e_sqlite3, core, provider.e_sqlite3 and lib.e_sqlite3 2.1.12 declare
+Apache-2.0 package licensing and the ericsink/SQLitePCL.raw source repository. The latter
+supplies the native SQLite dependency; consumers must preserve its original package notices.
+The immutable PLT.01/02/04 dependency receipt binds all six exact cached nuspec digests and
+generated lock content hashes. It does not claim a new first-party native-family build,
+device execution, or product snapshot/recovery acceptance.

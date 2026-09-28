@@ -113,6 +113,43 @@
         "NOTICE.md",
         "build-identity.json"
       ]
+    },
+    {
+      "id": "ArcForges.Capabilities",
+      "project": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Foundation"
+      ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Capabilities.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
+    },
+    {
+      "id": "ArcForges.Persistence.Sqlite",
+      "project": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Foundation"
+      ],
+      "externalDependencies": {
+        "Microsoft.Data.Sqlite": "10.0.12",
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Persistence.Sqlite.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
     }
   ]
 }

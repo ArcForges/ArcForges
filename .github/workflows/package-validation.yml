@@ -94,8 +94,12 @@ jobs:
           if ($LASTEXITCODE) { throw 'Foundation primitive tests failed.' }
           dotnet test --project src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj -c Release --no-build
           if ($LASTEXITCODE) { throw 'Append store offline tests failed.' }
+          dotnet test --project src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj -c Release --no-build
+          if ($LASTEXITCODE) { throw 'Application composition tests failed.' }
           dotnet test --project src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj -c Release --no-build
           if ($LASTEXITCODE) { throw 'Security actor chain tests failed.' }
+          dotnet test --project tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj -c Release --no-build
+          if ($LASTEXITCODE) { throw 'Persistence transaction, journal and migration tests failed.' }
           python src/BuildingBlocks/ArcForges.Foundation/Errors/generate_registry.py --check
           if ($LASTEXITCODE) { throw 'Foundation reason registry drifted.' }
       - name: Pack explicit release allowlist and verify immutable manifest

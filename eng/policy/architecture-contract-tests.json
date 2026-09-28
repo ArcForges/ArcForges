@@ -600,6 +600,116 @@
     "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
   },
   {
+    "apiSymbol": "ArcForges.Capabilities.AppIdentity.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InstallationIdentity.ToApplicationScope()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.GeneratedApplicationScopeIsAnOwnedCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.Bind<TRequest, TResult>(System.Func<TOwner, TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.Foundation.Errors.Outcome<TResult>>>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.TwoProductsOnOneDeviceOwnSeparateSessionHistoryAndCapabilityState()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.DispatchAsync<TRequest, TResult>(ArcForges.Capabilities.ApplicationHandler<TOwner, TRequest, TResult>, ArcForges.Capabilities.InstanceIdentity?, TRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.MissingDeviceInstallationInstanceAndEpochTargetsNeverReachHandler()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition<TOwner>.Stop()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StopFencesNewAdmissionButDoesNotEraseIdentityOrRollBackAdmittedEffects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ApplicationComposition.Start<TOwner>(ArcForges.Capabilities.InstallationIdentity, ulong, System.Func<ArcForges.Capabilities.InstanceIdentity, TOwner>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.ConcurrentInstancesAndRestartNeverRetargetCapturedCalls()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.StoreVersion.Cloud(ArcForges.Contracts.Foundation.Values.CloudRevision)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.JournalTests.ReplayPreservesEveryMetadataFieldAndDefensivelyOwnsPayloadBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.StoreVersion.Native(ArcForges.Contracts.Foundation.Values.NativeRevision)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.StoreVersion.Local(ArcForges.Contracts.Foundation.Values.CloudRevision?, long)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.CompositeLocalTokenRejectsStaleIndexWorkAfterEditAndAcknowledgement()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.StoreVersion.IsSuccessorOf(ArcForges.Persistence.Sqlite.StoreVersion)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.StoreVersion.ParseCanonicalText(string)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.StoredContent.FromJournal(ArcForges.Persistence.Sqlite.JournalEntry)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.IStore.Read(string, System.Guid)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.IStore.Write(ArcForges.Persistence.Sqlite.WriteCommand)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.IStore.ReadJournal(ArcForges.Persistence.Sqlite.JournalSequence?, int)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.SqliteStore.Read(string, System.Guid)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.SqliteStore.Write(ArcForges.Persistence.Sqlite.WriteCommand)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.SqliteStore.ReadJournal(ArcForges.Persistence.Sqlite.JournalSequence?, int)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.SqliteStore.Dispose()",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.EveryBoundaryReopensAtomicallyAndRetryHasOneEffect(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.IStoreAuthorization.CanWrite(ArcForges.Persistence.Sqlite.WriteCommand)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.StoreTests.ReceiptBindsSemanticCommandAndAuthorizationPrecedesDisclosure()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.JournalEntry.Create(ArcForges.Persistence.Sqlite.JournalSequence, string, System.Guid, ArcForges.Persistence.Sqlite.StoreVersion, ArcForges.Persistence.Sqlite.StoreVersion, ArcForges.Contracts.Foundation.Values.CommandId, string, int, System.ReadOnlySpan<byte>, string?, ArcForges.Contracts.Foundation.Values.UserId, System.Guid, System.Guid?, ArcForges.Foundation.Instant, long?)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.JournalTests.ReplayPreservesEveryMetadataFieldAndDefensivelyOwnsPayloadBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Sqlite.Migrations.MigrationRunner.MigrateTo(ArcForges.Persistence.Sqlite.Migrations.MigrationPlan, ArcForges.Foundation.Versions.StorageSchemaVersion)",
+    "testProject": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
+    "testMethod": "ArcForges.Tests.PersistenceTests.MigrationsTests.EveryHistoricalDatabaseReopensAndPreservesGoldenMeaning(uint)"
+  },
+  {
     "apiSymbol": "ArcForges.Persistence.Resources.AppendStore.Create(string)",
     "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
     "testMethod": "ArcForges.Persistence.Resources.Tests.AppendStoreTests.InvalidMapsAndGapsCannotEnterTheStore()"
