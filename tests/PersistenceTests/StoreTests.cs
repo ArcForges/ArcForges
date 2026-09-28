@@ -210,7 +210,8 @@ public sealed class StoreTests
         origin.Kinds.Add("nonAi");
         if (parent is not null) origin.ParentOriginIds.Add(parent.OriginId.Clone());
         return new(command ?? new(Guid.NewGuid()), "report", aggregate ?? Guid.NewGuid(), expected, new(next, payload, origin),
-            "report.edit", new(Guid.Parse("00000000-0000-4000-8000-000000000001")), Guid.NewGuid(), new(0, 0));
+            "report.edit", new(Guid.Parse("00000000-0000-4000-8000-000000000001")), Guid.NewGuid(),
+            ArcForges.Foundation.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow));
     }
     private sealed class Allow : IStoreAuthorization { public bool Allowed { get; set; } = true; public bool CanWrite(WriteCommand command) => Allowed; }
     private sealed class DatabaseFile : IDisposable

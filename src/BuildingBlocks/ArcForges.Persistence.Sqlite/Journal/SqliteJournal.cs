@@ -175,6 +175,62 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
         return result.AsReadOnly();
     }
 
+    /// <summary>Returns only the checksummed contiguous suffix. Recovery callers must report any omitted tail.</summary>
+    internal static JournalPrefix ReadValidPrefix(SqliteReadContext context, JournalSequence after)
+    {
+        after.RequireStore(context.StoreId);
+        using var state = context.CreateCommand("SELECT last_sequence,truncated_through FROM journal_state WHERE store_id=$store");
+        state.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));
+        long head;
+        long floor;
+        using (var reader = state.ExecuteReader())
+        {
+            if (!reader.Read()) throw new InvalidDataException("The journal has no durable state.");
+            head = reader.GetInt64(0);
+            floor = reader.GetInt64(1);
+            if (head < floor || floor < 0) throw new InvalidDataException("The journal watermarks are invalid.");
+        }
+
+        var position = after.Value;
+        if (position > head) return new([], position, head, true);
+        if (position < floor) return new([], floor, head, true);
+        using var command = context.CreateCommand("""
+            SELECT sequence,aggregate_kind,aggregate_id,previous_version,next_version,command_id,
+                operation,operation_version,payload,durable_reference,actor_id,correlation_id,causation_id,
+                committed_seconds,committed_nanos,checksum,encoded_length,local_seq
+            FROM journal WHERE store_id=$store AND sequence>$after ORDER BY sequence
+            """);
+        command.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));
+        command.Parameters.AddWithValue("$after", position);
+        using var rows = command.ExecuteReader();
+        var result = new List<JournalEntry>();
+        var expected = checked(position + 1);
+        var corrupt = false;
+        while (rows.Read())
+        {
+            if (rows.GetInt64(0) != expected)
+            {
+                corrupt = true;
+                break;
+            }
+
+            try
+            {
+                result.Add(Restore(context.StoreId, rows));
+            }
+            catch (Exception exception) when (exception is InvalidDataException or ArgumentException or FormatException or OverflowException or InvalidCastException)
+            {
+                corrupt = true;
+                break;
+            }
+            expected = checked(expected + 1);
+        }
+
+        var through = expected - 1;
+        if (through != head) corrupt = true;
+        return new(result.AsReadOnly(), through, head, corrupt);
+    }
+
     public void Truncate(SqliteCommitContext context, VerifiedSnapshotBoundary boundary)
     {
         ArgumentNullException.ThrowIfNull(boundary);
@@ -222,3 +278,5 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
         }
     }
 }
+
+internal sealed record JournalPrefix(IReadOnlyList<JournalEntry> Entries, long Through, long Head, bool HasCorruption);
