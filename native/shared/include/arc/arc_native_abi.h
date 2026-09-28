@@ -230,6 +230,38 @@ typedef struct arc_pdf_page_v1 {
 } arc_pdf_page_v1;
 #pragma pack(pop)
 
+/* ABI 1.1 family declarations are shared here; family bodies/exports are delivered separately. */
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_instruments_list(uint32_t transport, arc_mut_buffer_t* devices);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_instruments_open(const arc_instrument_options_v1* options,
+                                                              arc_handle_t* device);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_instruments_read(arc_handle_t device, const arc_transfer_v1* transfer,
+                                                              arc_mut_buffer_t* data, uint64_t* actual,
+                                                              const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_instruments_write(arc_handle_t device, const arc_transfer_v1* transfer,
+                                                               arc_byte_view_t data, uint64_t* actual,
+                                                               const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_instruments_cancel(arc_handle_t device);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_instruments_close(arc_handle_t device);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_options_v1* options,
+                                                        arc_handle_t* image, arc_mut_buffer_t* metadata,
+                                                        const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1* region,
+                                                        arc_mut_buffer_t* pixels, const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_close(arc_handle_t image);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_open(const arc_io_v1* io, arc_string_view_t password,
+                                                      const arc_limits_v1* limits, arc_handle_t* document,
+                                                      uint32_t* pages, const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_page_info(arc_handle_t document, uint32_t index,
+                                                           arc_pdf_page_v1* page);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_render(arc_handle_t document, const arc_pdf_page_v1* page,
+                                                        const arc_region_v1* region, uint32_t full_width,
+                                                        uint32_t full_height, arc_mut_buffer_t* rgba8,
+                                                        const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uint32_t start,
+                                                      uint32_t count, arc_mut_buffer_t* text_geometry,
+                                                      const arc_cancel_token_t* cancel);
+ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_close(arc_handle_t document);
+
 #ifdef __cplusplus
 }
 #endif

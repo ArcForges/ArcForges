@@ -8,8 +8,50 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <type_traits>
 
 namespace {
+
+using arc_instruments_list_signature_t = arc_status_t(ARC_ABI_CALL*)(uint32_t, arc_mut_buffer_t*);
+using arc_instruments_open_signature_t = arc_status_t(ARC_ABI_CALL*)(const arc_instrument_options_v1*, arc_handle_t*);
+using arc_instruments_read_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t, const arc_transfer_v1*,
+                                                                     arc_mut_buffer_t*, uint64_t*,
+                                                                     const arc_cancel_token_t*);
+using arc_instruments_write_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t, const arc_transfer_v1*,
+                                                                      arc_byte_view_t, uint64_t*,
+                                                                      const arc_cancel_token_t*);
+using arc_instruments_cancel_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t);
+using arc_instruments_close_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t);
+using arc_image_open_signature_t = arc_status_t(ARC_ABI_CALL*)(const arc_io_v1*, const arc_image_options_v1*,
+                                                               arc_handle_t*, arc_mut_buffer_t*,
+                                                               const arc_cancel_token_t*);
+using arc_image_read_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t, const arc_region_v1*, arc_mut_buffer_t*,
+                                                               const arc_cancel_token_t*);
+using arc_image_close_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t);
+using arc_pdf_open_signature_t = arc_status_t(ARC_ABI_CALL*)(const arc_io_v1*, arc_string_view_t, const arc_limits_v1*,
+                                                             arc_handle_t*, uint32_t*, const arc_cancel_token_t*);
+using arc_pdf_page_info_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t, uint32_t, arc_pdf_page_v1*);
+using arc_pdf_render_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t, const arc_pdf_page_v1*,
+                                                               const arc_region_v1*, uint32_t, uint32_t,
+                                                               arc_mut_buffer_t*, const arc_cancel_token_t*);
+using arc_pdf_text_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t, uint32_t, uint32_t, uint32_t,
+                                                             arc_mut_buffer_t*, const arc_cancel_token_t*);
+using arc_pdf_close_signature_t = arc_status_t(ARC_ABI_CALL*)(arc_handle_t);
+
+static_assert(std::is_same_v<decltype(&arc_instruments_list), arc_instruments_list_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_instruments_open), arc_instruments_open_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_instruments_read), arc_instruments_read_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_instruments_write), arc_instruments_write_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_instruments_cancel), arc_instruments_cancel_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_instruments_close), arc_instruments_close_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_image_open), arc_image_open_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_image_read), arc_image_read_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_image_close), arc_image_close_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_pdf_open), arc_pdf_open_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_pdf_page_info), arc_pdf_page_info_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_pdf_render), arc_pdf_render_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_pdf_text), arc_pdf_text_signature_t>);
+static_assert(std::is_same_v<decltype(&arc_pdf_close), arc_pdf_close_signature_t>);
 
 int failures = 0;
 
