@@ -13,6 +13,7 @@ public sealed class EvaluatedPolicyTests
 {
     private const string LocalAcceptanceProject = "eng/acceptance/foundation/Foundation.Acceptance.csproj";
     private const string Prf09ProbeProject = "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj";
+    private const string AcquisitionProbeProject = "benchmarks/probes/acquisition/AcquisitionProbe.csproj";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -104,6 +105,7 @@ public sealed class EvaluatedPolicyTests
         [
             new(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false),
             new(Prf09ProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false),
+            new(AcquisitionProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false),
         ];
         foreach (var expected in exactBuildToolExclusions)
         {
@@ -148,8 +150,11 @@ public sealed class EvaluatedPolicyTests
     {
         var local = new ProjectClassification(LocalAcceptanceProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
         var probe = new ProjectClassification(Prf09ProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
+        var acquisition = new ProjectClassification(AcquisitionProbeProject, ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
+        var lookalike = new ProjectClassification("benchmarks/probes/acquisition/AcquisitionProbe.Extra.csproj", ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
         var tool = new ProjectClassification("src/Build/tool.csproj", ProjectRole.BuildTool, "DesktopPlatform", "", false, false);
-        Xunit.Assert.Equal([tool], DefaultProjects([local, probe, tool], [tool.Path], [local.Path, probe.Path, tool.Path]));
+        Xunit.Assert.Equal([tool, lookalike], DefaultProjects([local, probe, acquisition, tool, lookalike],
+            [tool.Path, lookalike.Path], [local.Path, probe.Path, acquisition.Path, tool.Path, lookalike.Path]));
     }
 
     [Xunit.Theory]
