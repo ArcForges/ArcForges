@@ -15,7 +15,7 @@ import dependency_policy  # noqa: E402
 
 ACTIVE_RECEIPT = "eng/policy/dependency-reviews/gov-12-r1.json"
 RECEIPT = "eng/policy/dependency-reviews/prf-04-r1.json"
-BASELINE_COMMIT = "f23e621612e86ef2957dd43140e694ba15e713db"
+BASELINE_COMMIT = "3f9a226779b9196ad3e3f1746f549b9a38eec456"
 SOURCE_COMMIT = "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e"
 NUGET_FEED = "https://api.nuget.org/v3/index.json"
 

@@ -79,8 +79,8 @@ internal static partial class Program
         try
         {
             var evidence = await RunPairAsync(executable, transport, directory, runId).ConfigureAwait(false);
-            Console.WriteLine("PASS: retained owner session completed bidirectional LocalBootstrap, OS-bound peer identity, concurrent/fenced/expiry renewal, cancellation, malformed-input, same-user spoof refusal, reconnect and bounded-message checks.");
-            Console.WriteLine($"Evidence: {transport}; owner process {evidence.Owner.ProcessId} / instance {evidence.Owner.InstanceId}; peer restarted {evidence.Peer.ProcessId} / instance {evidence.Peer.InstanceId}; owner session {evidence.OwnerSessionId}.");
+            Console.WriteLine("PASS: retained owner session completed bidirectional LocalBootstrap, OS-bound peer identity, concurrent/fenced/expiry renewal, cancellation, malformed-input recovery, same-user spoof refusal, PID-reuse-tolerant reconnect and bounded-message checks.");
+            Console.WriteLine($"Evidence: {transport}; owner process {evidence.Owner.ProcessId} / instance {evidence.Owner.InstanceId}; peer restarted {evidence.Peer.ProcessId} / instance {evidence.Peer.InstanceId}; PID equality is allowed and B2 is rebound by a fresh instance/launch tuple; owner session {evidence.OwnerSessionId}.");
         }
         finally
         {
@@ -123,10 +123,28 @@ internal static partial class Program
             await RunUnauthorizedChecksAsync(executable, transport, addressB, processB, sharedSecret, identityA, identityB)
                 .ConfigureAwait(false);
 
-            await SendCommandAsync(processA, "GO").ConfigureAwait(false);
+            var afterUnauthorized = await ReadChallengeDispatchCountAsync(processB).ConfigureAwait(false);
+            if (afterUnauthorized != 1)
+            {
+                throw new InvalidOperationException("Malformed and oversized inputs unexpectedly reached the generated Challenge service method.");
+            }
+
+            await SendCommandAsync(processA, "MALFORMED-RECOVERY").ConfigureAwait(false);
             await SendCommandAsync(processB, "GO").ConfigureAwait(false);
-            var initialA = ParseSession(await ReadLineAsync(processA, TimeSpan.FromSeconds(60)).ConfigureAwait(false));
+            if (await ReadLineAsync(processA, TimeSpan.FromSeconds(30)).ConfigureAwait(false) != "MALFORMED-RECOVERY|PASS")
+            {
+                throw new InvalidOperationException("The authorized peer did not recover from malformed protobuf input on the same connection.");
+            }
+
             var initialB = ParseSession(await ReadLineAsync(processB, TimeSpan.FromSeconds(60)).ConfigureAwait(false));
+            var afterMalformedRecovery = await ReadChallengeDispatchCountAsync(processB).ConfigureAwait(false);
+            if (afterMalformedRecovery != afterUnauthorized + 2)
+            {
+                throw new InvalidOperationException("Malformed input reached service dispatch, or the expected cancellation/generated recovery Challenges did not each dispatch exactly once.");
+            }
+
+            await SendCommandAsync(processA, "GO").ConfigureAwait(false);
+            var initialA = ParseSession(await ReadLineAsync(processA, TimeSpan.FromSeconds(60)).ConfigureAwait(false));
             if (initialA.ProcessId != identityA.ProcessId || initialA.InstanceId != identityA.InstanceId || initialA.InstallationId != identityA.InstallationId ||
                 initialB.ProcessId != identityB.ProcessId || initialB.InstanceId != identityB.InstanceId || initialB.InstallationId != identityB.InstallationId ||
                 initialA.OwnerSessionId != readyA.OwnerSessionId)
@@ -168,9 +186,11 @@ internal static partial class Program
             launchB2 = RandomNumberGenerator.GetBytes(32);
             processB2 = StartWorker(executable, "b2", transport, addressB, addressA, reattachSecret!, installationB, launchB2!);
             var readyB2 = await ReadReadyAsync(processB2, installationB, launchB2!).ConfigureAwait(false);
-            if (readyB2.Identity.ProcessId == identityB.ProcessId || readyB2.Identity.InstanceId == identityB.InstanceId)
+            if (readyB2.Identity.InstallationId != identityB.InstallationId ||
+                readyB2.Identity.InstanceId == identityB.InstanceId ||
+                readyB2.Identity.LaunchNonce == identityB.LaunchNonce)
             {
-                throw new InvalidOperationException("The restarted peer did not receive a fresh process/instance identity.");
+                throw new InvalidOperationException("The restarted peer did not preserve installation identity while rotating its instance and one-use launch tuple; PID equality is allowed.");
             }
 
             await ExpectPeerAsync(processB2, identityA).ConfigureAwait(false);
@@ -488,9 +508,31 @@ internal static partial class Program
 
                     if (command == "GO")
                     {
-                        ownerClientSession = await RunClientChecksAsync(state, transport, peerAddress, runCancellationCheck: role != "b2").ConfigureAwait(false);
+                        ownerClientSession ??= await RunClientChecksAsync(
+                            state,
+                            transport,
+                            peerAddress,
+                            runCancellationCheck: role != "b2",
+                            verifyMalformedRecovery: false).ConfigureAwait(false);
                         await WaitForAuthenticatedPeerAsync(state).ConfigureAwait(false);
                         await Console.Out.WriteLineAsync(FormatSession(state)).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (command == "MALFORMED-RECOVERY")
+                    {
+                        if (role != "a" || ownerClientSession is not null)
+                        {
+                            throw new InvalidOperationException("Malformed-input recovery must run once from the retained authorized owner before its initial session command.");
+                        }
+
+                        ownerClientSession = await RunClientChecksAsync(
+                            state,
+                            transport,
+                            peerAddress,
+                            runCancellationCheck: true,
+                            verifyMalformedRecovery: true).ConfigureAwait(false);
+                        await Console.Out.WriteLineAsync("MALFORMED-RECOVERY|PASS").ConfigureAwait(false);
                         continue;
                     }
 
@@ -555,7 +597,12 @@ internal static partial class Program
 
                         state.BeginPeerEpoch(newSecret, expectedPeer);
                         CryptographicOperations.ZeroMemory(newSecret);
-                        ownerClientSession = await RunClientChecksAsync(state, transport, peerAddress, runCancellationCheck: false).ConfigureAwait(false);
+                        ownerClientSession = await RunClientChecksAsync(
+                            state,
+                            transport,
+                            peerAddress,
+                            runCancellationCheck: false,
+                            verifyMalformedRecovery: false).ConfigureAwait(false);
                         await WaitForAuthenticatedPeerAsync(state).ConfigureAwait(false);
                         await Console.Out.WriteLineAsync($"REATTACHED|{state.OwnerSessionId}|{Environment.ProcessId}|{Convert.ToHexString(GuidBytes(state.InstanceId))}|{expectedPeer.InstanceId}").ConfigureAwait(false);
                         continue;
@@ -602,7 +649,8 @@ internal static partial class Program
         BootstrapState state,
         string transport,
         string peerAddress,
-        bool runCancellationCheck)
+        bool runCancellationCheck,
+        bool verifyMalformedRecovery)
     {
         var expectedPeer = state.ExpectedPeer ?? throw new InvalidOperationException("The parent did not provision an expected peer identity.");
         if (runCancellationCheck)
@@ -628,56 +676,51 @@ internal static partial class Program
         try
         {
             var client = new LocalBootstrapService.LocalBootstrapServiceClient(channel.Channel);
-            var clientChallenge = RandomNumberGenerator.GetBytes(32);
-            var challengeCall = client.ChallengeAsync(
-                NewChallengeRequest(state.Manifest, clientChallenge),
-                headers: IdentityHeaders(state.LaunchNonce),
-                deadline: DateTime.UtcNow.AddSeconds(5));
-            var challengeResponse = await challengeCall.ResponseAsync.ConfigureAwait(false);
-            var challengeHeaders = await challengeCall.ResponseHeadersAsync.ConfigureAwait(false);
-            if (challengeResponse.OutcomeCase != LocalBootstrapServiceChallengeResponse.OutcomeOneofCase.Value)
+            if (verifyMalformedRecovery)
             {
-                throw new InvalidOperationException("The peer did not issue a valid LocalBootstrap challenge.");
+                await VerifyMalformedInputAsync(channel.Channel).ConfigureAwait(false);
             }
 
+            var challenge = await VerifyNormalChallengeAsync(client, state, transport, peerAddress, expectedPeer, channel).ConfigureAwait(false);
+            var challengeResponse = challenge.Response;
             var server = challengeResponse.Value.Server;
-            if (server.ProcessId != (ulong)expectedPeer.ProcessId ||
-                !server.InstanceId.Value.Span.SequenceEqual(Convert.FromHexString(expectedPeer.InstanceId)) ||
-                !server.Endpoint.InstanceId.Value.Span.SequenceEqual(Convert.FromHexString(expectedPeer.InstanceId)) ||
-                !server.InstallationId.Value.Span.SequenceEqual(Convert.FromHexString(expectedPeer.InstallationId)) ||
-                server.Endpoint.Transport != transport ||
-                server.Endpoint.Address != peerAddress ||
-                server.AppId != "org.arcforges.prf04.probe" ||
-                server.SchemaVersion != "1" ||
-                server.ContractSetHash != state.Manifest.ContractSetHash ||
-                challengeHeaders.GetValue("x-af-launch") != expectedPeer.LaunchNonce ||
-                !channel.PeerProcessIds.All(processId => processId == expectedPeer.ProcessId) ||
-                challengeResponse.Value.ServerChallenge.Length != 32 ||
-                !IsFutureBounded(challengeResponse.Value.ExpiresAt, TimeSpan.FromSeconds(5)))
+            byte[] proof;
+            try
             {
-                throw new InvalidOperationException("The authenticated peer manifest or bounded challenge did not match the parent-verified process identity.");
+                proof = BootstrapProof(
+                    state.Secret,
+                    challengeResponse.Value.ChallengeId.Value.Span,
+                    challenge.ClientChallenge,
+                    challengeResponse.Value.ServerChallenge.Span,
+                    state.Manifest.InstanceId.Value.Span,
+                    server.InstanceId.Value.Span);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(challenge.ClientChallenge);
             }
 
-            var proof = BootstrapProof(
-                state.Secret,
-                challengeResponse.Value.ChallengeId.Value.Span,
-                clientChallenge,
-                challengeResponse.Value.ServerChallenge.Span,
-                state.Manifest.InstanceId.Value.Span,
-                server.InstanceId.Value.Span);
-            CryptographicOperations.ZeroMemory(clientChallenge);
-            var confirmCall = client.ConfirmAsync(
-                new LocalBootstrapServiceConfirmRequest
-                {
-                    Meta = NewMeta(),
-                    ChallengeId = challengeResponse.Value.ChallengeId,
-                    Proof = ByteString.CopyFrom(proof),
-                },
-                headers: IdentityHeaders(state.LaunchNonce),
-                deadline: DateTime.UtcNow.AddSeconds(5));
-            var confirmResponse = await confirmCall.ResponseAsync.ConfigureAwait(false);
-            var confirmHeaders = await confirmCall.ResponseHeadersAsync.ConfigureAwait(false);
-            CryptographicOperations.ZeroMemory(proof);
+            LocalBootstrapServiceConfirmResponse confirmResponse;
+            Metadata confirmHeaders;
+            try
+            {
+                var confirmCall = client.ConfirmAsync(
+                    new LocalBootstrapServiceConfirmRequest
+                    {
+                        Meta = NewMeta(),
+                        ChallengeId = challengeResponse.Value.ChallengeId,
+                        Proof = ByteString.CopyFrom(proof),
+                    },
+                    headers: IdentityHeaders(state.LaunchNonce),
+                    deadline: DateTime.UtcNow.AddSeconds(5));
+                confirmResponse = await confirmCall.ResponseAsync.ConfigureAwait(false);
+                confirmHeaders = await confirmCall.ResponseHeadersAsync.ConfigureAwait(false);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(proof);
+            }
+
             if (confirmResponse.OutcomeCase != LocalBootstrapServiceConfirmResponse.OutcomeOneofCase.Value ||
                 confirmResponse.Value.PeerNonce.Length != 32)
             {
@@ -916,23 +959,52 @@ internal static partial class Program
         value.IndexOf("path", StringComparison.OrdinalIgnoreCase) < 0 &&
         value.IndexOf("secret", StringComparison.OrdinalIgnoreCase) < 0;
 
-    private static async Task VerifyNormalChallengeAsync(LocalBootstrapService.LocalBootstrapServiceClient client, string transport)
+    private static async Task<(LocalBootstrapServiceChallengeResponse Response, byte[] ClientChallenge)> VerifyNormalChallengeAsync(
+        LocalBootstrapService.LocalBootstrapServiceClient client,
+        BootstrapState state,
+        string transport,
+        string peerAddress,
+        PeerIdentity expectedPeer,
+        ProbeChannel channel)
     {
         var challenge = RandomNumberGenerator.GetBytes(32);
         try
         {
-            var response = await client.ChallengeAsync(
-                NewChallengeRequest(CreateManifest(transport, "post-malformed", Guid.NewGuid()), challenge),
-                deadline: DateTime.UtcNow.AddSeconds(5)).ResponseAsync.ConfigureAwait(false);
-            if (response.OutcomeCase != LocalBootstrapServiceChallengeResponse.OutcomeOneofCase.Value ||
-                response.Value.ServerChallenge.Length != 32)
+            var challengeCall = client.ChallengeAsync(
+                NewChallengeRequest(state.Manifest, challenge),
+                headers: IdentityHeaders(state.LaunchNonce),
+                deadline: DateTime.UtcNow.AddSeconds(5));
+            var response = await challengeCall.ResponseAsync.ConfigureAwait(false);
+            var responseHeaders = await challengeCall.ResponseHeadersAsync.ConfigureAwait(false);
+            if (response.OutcomeCase != LocalBootstrapServiceChallengeResponse.OutcomeOneofCase.Value)
             {
-                throw new InvalidOperationException("A normal generated LocalBootstrap call did not succeed after malformed input.");
+                throw new InvalidOperationException("A normal generated LocalBootstrap call did not succeed.");
             }
+
+            var server = response.Value.Server;
+            if (server.ProcessId != (ulong)expectedPeer.ProcessId ||
+                !server.InstanceId.Value.Span.SequenceEqual(Convert.FromHexString(expectedPeer.InstanceId)) ||
+                !server.Endpoint.InstanceId.Value.Span.SequenceEqual(Convert.FromHexString(expectedPeer.InstanceId)) ||
+                !server.InstallationId.Value.Span.SequenceEqual(Convert.FromHexString(expectedPeer.InstallationId)) ||
+                server.Endpoint.Transport != transport ||
+                server.Endpoint.Address != peerAddress ||
+                server.AppId != "org.arcforges.prf04.probe" ||
+                server.SchemaVersion != "1" ||
+                server.ContractSetHash != state.Manifest.ContractSetHash ||
+                responseHeaders.GetValue("x-af-launch") != expectedPeer.LaunchNonce ||
+                !channel.PeerProcessIds.All(processId => processId == expectedPeer.ProcessId) ||
+                response.Value.ServerChallenge.Length != 32 ||
+                !IsFutureBounded(response.Value.ExpiresAt, TimeSpan.FromSeconds(5)))
+            {
+                throw new InvalidOperationException("The recovered challenge did not preserve authenticated peer, launch nonce, OS identity, and bounded-expiry checks.");
+            }
+
+            return (response, challenge);
         }
-        finally
+        catch
         {
             CryptographicOperations.ZeroMemory(challenge);
+            throw;
         }
     }
 

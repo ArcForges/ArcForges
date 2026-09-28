@@ -37,8 +37,13 @@ tuple but runs under a different OS PID; it must be refused before confirmation.
 The executable also checks bidirectional challenge/confirm, eight overlapping
 same-epoch renewals (one linearized success, stale fences refused), an
 expiry-boundary race held behind a server barrier (all post-expiry renewals
-refused), cancellation, sanitized malformed-protobuf refusal, and the 4 MiB
-receive bound. The lease epoch/fence headers are private test-fixture state;
+refused), cancellation, sanitized malformed-protobuf refusal followed on the
+same authorized HTTP/2 channel by a generated challenge/confirm that succeeds,
+and the 4 MiB receive bound. The malformed request must not reach service
+dispatch; the successful generated challenge must reach it exactly once. A
+reattached peer may reuse its OS PID, but must preserve its installation while
+rotating its instance ID and one-use launch nonce. The lease epoch/fence headers
+are private test-fixture state;
 they do not change the generated Contracts wire DTOs or claim production lease
 semantics.
 
