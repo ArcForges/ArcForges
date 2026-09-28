@@ -61,7 +61,7 @@ jobs:
       - name: Restore the exact probe lock graph
         run: dotnet restore eng/verification/probe-evidence/Prf09.TableViewProbe.csproj --locked-mode
       - name: Publish the candidate control with Native AOT (compile only)
-        run: dotnet publish eng/verification/probe-evidence/Prf09.TableViewProbe.csproj -c Release -r win-x64 --no-restore
+        run: dotnet publish eng/verification/probe-evidence/Prf09.TableViewProbe.csproj -c Release -r win-x64 --no-restore --verbosity minimal
   pack:
     runs-on: ubuntu-latest
     outputs:
