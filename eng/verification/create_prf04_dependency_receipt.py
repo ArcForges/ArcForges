@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "eng"))
 import dependency_policy  # noqa: E402
 
 
-ACTIVE_RECEIPT = "eng/policy/dependency-reviews/gov-14-naming-r4.json"
+ACTIVE_RECEIPT = "eng/policy/dependency-reviews/plt-26-r2.json"
 RECEIPT = "eng/policy/dependency-reviews/prf-04-r1.json"
 SOURCE_COMMIT = "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e"
 NUGET_FEED = "https://api.nuget.org/v3/index.json"
@@ -96,9 +96,10 @@ def main() -> None:
             "owner": "af-20260928-p02",
             "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
             "reviewedOn": "2026-09-28",
-            "baselineCommit": "606e8336a18946551966174b5747f9ff7f5b7eb7",
+            "baselineCommit": "497263e3f2cea3056a502e8f956b099f13a173f7",
             "maintenanceAssessment": (
-                "PRF.04 admits only the exact CON.05 generated LocalRpc/ Foundation candidates and the permitted "
+                "PRF.04 appends to plt-26-r2, whose immutable predecessor chain retains gov-14-naming-r4. It admits "
+                "only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted "
                 "Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive "
                 "closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe "
                 "project. The new project is non-packable; no capability package or dependency version is invented. "

@@ -192,6 +192,14 @@
     "aot": false
   },
   {
+    "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
     "role": "Test",
     "owner": "DesktopPlatform",

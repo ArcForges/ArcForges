@@ -113,6 +113,10 @@
       "kind": "msbuild"
     },
     {
+      "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
       "kind": "msbuild"
     },
