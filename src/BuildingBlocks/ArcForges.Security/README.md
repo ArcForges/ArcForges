@@ -9,6 +9,21 @@ Offline queue and serialization tests cover lossless propagation and malformed
 input refusal. They do not prove live process authentication, persisted queues,
 product integration, or the later PLT.38 enforcement decision pipeline.
 
+## Instruction provenance (PLT.42)
+
+Instruction-bearing text enters this building block through `InstructionInput.Capture` with
+one of six explicit origins: model output, extension output, retrieved content, imported
+document, deep link, or catalog metadata. Each input owns an immutable string and carries a
+bounded source reference plus a SHA-256 binding over the origin, reference, and content. The
+binding detects accidental snapshot corruption; it is not a signature and does not authenticate
+the asserted source.
+
+`InstructionSnapshot` is a bounded, strict process-boundary representation. It rejects unknown,
+duplicate, missing, unsupported, and content-mismatched fields. Decoding preserves the same
+untrusted status. `ActorOperation<T>` can carry or forward marked content and the actor chain,
+but it is only a carrier: neither provenance nor the chain authorizes execution. An enforcement
+point must still run the separate decision and authorization pipeline before acting.
+
 ## Supporting registrations (ADP.07)
 
 The owned artifact is `src/BuildingBlocks/ArcForges.Security/**` including its
