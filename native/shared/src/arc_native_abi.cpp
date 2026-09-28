@@ -151,8 +151,8 @@ arc_status_t arc::abi::prepare_buffer_output(arc_mut_buffer_t* output, uint64_t 
 }
 
 arc::abi::handle_lease::handle_lease(handle_table* owner, size_t index, uint32_t generation,
-                                    std::shared_ptr<void> value,
-                                    std::shared_ptr<handle_parent_retention> parent) noexcept
+                                     std::shared_ptr<void> value,
+                                     std::shared_ptr<handle_parent_retention> parent) noexcept
     : owner_(owner), index_(index), generation_(generation), value_(std::move(value)), parent_(std::move(parent))
 {
 }
@@ -267,8 +267,7 @@ arc_status_t arc::abi::handle_table::create(uint32_t kind, std::shared_ptr<void>
     return ARC_OK;
 }
 
-arc_status_t arc::abi::handle_table::acquire(arc_handle_t token, uint32_t expected_kind,
-                                             handle_lease* output)
+arc_status_t arc::abi::handle_table::acquire(arc_handle_t token, uint32_t expected_kind, handle_lease* output)
 {
     if (output == nullptr || expected_kind == 0) {
         return fail(ARC_INVALID_ARGUMENT, "Handle lease arguments are invalid", 0);
