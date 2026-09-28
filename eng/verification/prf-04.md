@@ -11,17 +11,20 @@ Claim `af-20260928-p02`, PRF.04 claim epoch 1. A pre-PR policy check (`python en
 
 The project file explicitly declares its existing AGPL-3.0-only licence and AGPL boundary, matching repository policy. `eng/policy/reconciliation/project-updates.json` was evaluated and intentionally left unchanged: its immutable successor schema applies only to projects already present in the frozen inventory, requiring a truthful original blob and a different reviewed blob; this task adds a new project and has no original blob. No prior project/history/classification or reconciliation logic changed.
 
-Run date: 2026-09-28 UTC  
-Implementation revision before final main rebase: `1191ffd31022c86e0ddfc71d3d4381869fcade98`  
-Base at that point: DesktopPlatform `main` at `0ba78d58cb31c1226d8e0b70f2879ecc42d00699`  
-Machine: Windows 11 Pro for Workstations, version `10.0.26200`, build `26200`, 64-bit  
-Pinned SDK: .NET SDK `10.0.400` (`C:\Users\J7Rdm\.dotnet\dotnet.exe`)  
+Run date: 2026-09-28 UTC
+
+Implementation revision: `a7a791e97722aa4e248a7cd904b83f050c1629b2`
+Base: DesktopPlatform `main` at `f23e621612e86ef2957dd43140e694ba15e713db`
+Machine: Windows 11 Pro for Workstations, version `10.0.26200`, build `26200`, 64-bit
+Pinned SDK: .NET SDK `10.0.400` (`C:\Users\J7Rdm\.dotnet\dotnet.exe`)
 Runtime ID: `win-x64`
 
-The project had already passed locked restore with the pinned SDK and the final dependency graph was unchanged by the runtime-test correction. After the final source edit, formatting verification and Native AOT publish were rerun with the pinned SDK and build-slot:
+After rebasing on the current main and refreshing the exact dependency closure receipt, the project passed locked restore, formatting, build and Native AOT publish with the pinned SDK and build-slot:
 
 ```powershell
-python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- C:\Users\J7Rdm\.dotnet\dotnet.exe format tests/LocalRpcAotTests/LocalRpcAotTests.csproj --no-restore --verify-no-changes --include tests/LocalRpcAotTests/Program.cs
+python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- C:\Users\J7Rdm\.dotnet\dotnet.exe restore tests/LocalRpcAotTests/LocalRpcAotTests.csproj --locked-mode
+python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- C:\Users\J7Rdm\.dotnet\dotnet.exe format tests/LocalRpcAotTests/LocalRpcAotTests.csproj --no-restore --verify-no-changes
+python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- C:\Users\J7Rdm\.dotnet\dotnet.exe build tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release --no-restore
 python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- C:\Users\J7Rdm\.dotnet\dotnet.exe publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r win-x64 -o artifacts/prf-04/win-x64 --no-restore
 python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 2 -- artifacts/prf-04/win-x64/LocalRpcAotTests.exe
 ```
@@ -30,7 +33,7 @@ All three commands exited `0`. The published win-x64 Native AOT executable compl
 
 ```text
 PASS: retained owner session completed bidirectional LocalBootstrap, OS-bound peer identity, concurrent/fenced/expiry renewal, cancellation, malformed-input, same-user spoof refusal, reconnect and bounded-message checks.
-Evidence: pipe; owner process 20632 / instance 32CFD631E2724ED4894E2015803F0407; peer restarted 15628 / instance A83DFB865C354E238CE79CFF64C54634; owner session bebbf7003d534b958e2c66e37851a678.
+Evidence: pipe; owner process 36204 / instance 57FCFE92E1584D5FAAA5DEEE18C5B5A0; peer restarted 8300 / instance B0E43A4070224D25A0515DC9029B0463; owner session 68649038e475471da40790f03b18673f.
 ```
 
 The server binds the expected named-pipe client PID using `GetNamedPipeClientProcessId` on the accepted pipe handle; the connecting process observes the server PID using `GetNamedPipeServerProcessId`. The immutable test launch nonce and installation ID are provisioned through private inherited stdin, and caller claims are checked against OS-observed PID plus the parent-provisioned instance/installation/launch tuple. A same-user rogue child receives the real test secret but claims a different PID/instance and is refused. No generated contract DTO was changed.

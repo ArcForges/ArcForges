@@ -3,8 +3,8 @@
     "owner": "af-20260928-p02",
     "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "0ba78d58cb31c1226d8e0b70f2879ecc42d00699",
-    "maintenanceAssessment": "PRF.04 appends to plt-26-r2, whose immutable predecessor chain retains gov-14-naming-r4. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
+    "baselineCommit": "f23e621612e86ef2957dd43140e694ba15e713db",
+    "maintenanceAssessment": "PRF.04 appends to the immutable gov-12-r1 record while preserving its plt-26-r2/gov-14-naming-r4 lineage. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
     "upgradeChecks": {
       "compilation": "Pinned SDK 10.0.400 locked restore and Release build pass; Windows/Linux Native AOT publication is enforced continuously by package-validation CI.",
       "aot-trim": "The probe imports the shared full-trim/AOT posture with IL2026 and IL3050 as errors; exact-head Windows/Linux publish checks must pass without suppressed diagnostics.",
@@ -30,7 +30,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "d19e3b09d9fa835a5458abebe244ecdeeb05e9a8ff13ec6852013b8b25d2c3c6",
+      "eng/packaging/packages.json": "0293462b584f97f79f4646ea00e6d2700ad72b3b8140ed5e63dc0840fcc017b6",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -179,8 +179,8 @@
       "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
       "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
       "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
-      "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "24cddc2e86c2ab80f98fe9c4cb0cb141d9d7790c4f510f841fc1164da307ec42",
-      "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "30f9bc6819011d4dafe5797b83c24c6663514e7c481a9d2dd6eef3b7ee974c3e",
+      "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
+      "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "b49df8103b7251e16412b236bcb2e4a9b665365b3f1b034840a4801653fdeb96",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Metadata.targets": "c0d516a0c0b956689ddfc78ff061d6f3add7a9fe22b4b05baa31bbfed1aca985",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
       "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.targets": "8c15dc21c5bf599b458e41ea126d2a22157d70f32c81512d25d7f886c504e34e",
@@ -234,7 +234,7 @@
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
-      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "614b37e962bb3b1dad66a64929c2a13e90f52c21da787177a05864273f46439d",
+      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
       "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
       "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
@@ -244,7 +244,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-26-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/gov-12-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",

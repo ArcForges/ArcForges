@@ -13,9 +13,9 @@ sys.path.insert(0, str(ROOT / "eng"))
 import dependency_policy  # noqa: E402
 
 
-ACTIVE_RECEIPT = "eng/policy/dependency-reviews/plt-26-r2.json"
+ACTIVE_RECEIPT = "eng/policy/dependency-reviews/gov-12-r1.json"
 RECEIPT = "eng/policy/dependency-reviews/prf-04-r1.json"
-BASELINE_COMMIT = "0ba78d58cb31c1226d8e0b70f2879ecc42d00699"
+BASELINE_COMMIT = "f23e621612e86ef2957dd43140e694ba15e713db"
 SOURCE_COMMIT = "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e"
 NUGET_FEED = "https://api.nuget.org/v3/index.json"
 
@@ -104,7 +104,8 @@ def main() -> None:
             "reviewedOn": "2026-09-28",
             "baselineCommit": BASELINE_COMMIT,
             "maintenanceAssessment": (
-                "PRF.04 appends to plt-26-r2, whose immutable predecessor chain retains gov-14-naming-r4. It admits "
+                "PRF.04 appends to the immutable gov-12-r1 record while preserving its plt-26-r2/gov-14-naming-r4 "
+                "lineage. It admits "
                 "only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted "
                 "Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive "
                 "closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe "

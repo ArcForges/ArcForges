@@ -221,7 +221,7 @@
     "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
-    "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "614b37e962bb3b1dad66a64929c2a13e90f52c21da787177a05864273f46439d",
+    "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
     "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
     "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
@@ -601,8 +601,8 @@
     "owner": "af-20260928-p02",
     "reviewer": "platform_capabilities/plt18_contributions (independent exact-head review pending)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "0ba78d58cb31c1226d8e0b70f2879ecc42d00699",
-    "maintenanceAssessment": "PRF.04 appends to plt-26-r2, whose immutable predecessor chain retains gov-14-naming-r4. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
+    "baselineCommit": "f23e621612e86ef2957dd43140e694ba15e713db",
+    "maintenanceAssessment": "PRF.04 appends to the immutable gov-12-r1 record while preserving its plt-26-r2/gov-14-naming-r4 lineage. It admits only the exact CON.05 generated LocalRpc/Foundation candidates and the permitted Grpc.AspNetCore.Server 2.83.0 / Grpc.Net.Client 2.84.0 candidates, with their exact transitive closure and Apache-2.0 nuspec evidence. Foundation 1.0.0-ci.216.1 is conditional to this probe project. The new project is non-packable; no capability package or dependency version is invented. The pinned .NET 10.0.400 SDK/runtime posture and all other dependency closures remain unchanged.",
     "upgradeChecks": {
       "compilation": "Pinned SDK 10.0.400 locked restore and Release build pass; Windows/Linux Native AOT publication is enforced continuously by package-validation CI.",
       "aot-trim": "The probe imports the shared full-trim/AOT posture with IL2026 and IL3050 as errors; exact-head Windows/Linux publish checks must pass without suppressed diagnostics.",
@@ -832,7 +832,7 @@
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
-      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "614b37e962bb3b1dad66a64929c2a13e90f52c21da787177a05864273f46439d",
+      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
       "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "81a1022efb59721ac50a5df024bed99736f8633dbfb7aff3c4cb7b9b49a22cfe",
       "tests/NativeAbiTests/packages.lock.json": "5affbe5a36928cc0cb9c2916d0f001f133b101523419cac181304aa091b57095",
@@ -842,7 +842,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-26-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/gov-12-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
