@@ -3,10 +3,10 @@
     "owner": "af-20260928-p01",
     "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "9e3cff458fbef1ce4326c5d8141e478ac9d11b6b",
-    "maintenanceAssessment": "NAT.03 adds an isolated standalone acquisition BuildTool under the task-authorized benchmarks/probes/acquisition path; it is excluded from DesktopPlatform.slnx, produces no product runtime, and declares AGPL-3.0-only. The project and lockfile are the only new dependency-policy inputs attributable to this task. This successor follows the merged PRF.09 review receipt and preserves the complete historical chain; the probe uses only already-admitted dependency coordinates and adds no package identity or version. The pinned .NET SDK 10.0.400 gate includes restore, locked restore, format verification, Release build and real localhost TCP acceptance; exact observed measurements are preserved in benchmarks/probes/acquisition/evidence/nat-03-run.json. The 1,000,000 scalar samples/s for at least 10 seconds floor is task-authorized probe-only evidence, not a product SLA, shipping requirement, or downstream target. Support binding is limited to the task project and file inventory rows; no package, ABI, framework, or solution membership change is introduced. Hosted CI and exact-head review remain required.",
+    "baselineCommit": "a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3",
+    "maintenanceAssessment": "NAT.03 adds an isolated standalone acquisition BuildTool under the task-authorized benchmarks/probes/acquisition path; it is excluded from DesktopPlatform.slnx, produces no product runtime, and declares AGPL-3.0-only. The project and lockfile are the only new dependency-policy inputs attributable to this task. This successor follows the active immutable PLT.07 receipt, which preserves PRF.09 -> PLT.18 and the earlier dependency-review history; GOV.13 changes validation/accounting and provenance inputs but not the package closure. The probe uses only already-admitted dependency coordinates and adds no package identity or version. The pinned .NET SDK 10.0.400 gate includes restore, locked restore, format verification, Release build and real localhost TCP acceptance; exact observed measurements are preserved in benchmarks/probes/acquisition/evidence/nat-03-run.json. The 1,000,000 scalar samples/s for at least 10 seconds floor is task-authorized probe-only evidence, not a product SLA, shipping requirement, or downstream target. Support binding is limited to the task project and file inventory rows; no package, ABI, framework, or solution membership change is introduced. Hosted CI and exact-head review remain required.",
     "upgradeChecks": {
-      "compilation": "On the rebased candidate based on DesktopPlatform main 9e3cff458fbef1ce4326c5d8141e478ac9d11b6b, explicit .NET SDK 10.0.400 locked restore and format verification passed; Release build passed with zero warnings/errors; the real localhost TCP self-test passed. The fresh measured run completed 14,400,000 samples in 11.9758367 seconds at 1,202,421.21 scalar samples/s with zero sustained drops, a fixed 65,536-sample ring, and recorded peak working set/managed heap; induced overrun, disconnect gap, paused-view capture, and spike-preserving downsampling evidence are in benchmarks/probes/acquisition/evidence/nat-03-run.json. This remains a standalone non-solution BuildTool; no new package closure entry is introduced.",
+      "compilation": "On the candidate rebased onto DesktopPlatform main a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3, the explicit .NET SDK 10.0.400 passed locked restore for DesktopPlatform.slnx and the standalone AcquisitionProbe, format verification for both, and Release builds for the full solution and probe (0 warnings/errors). The exact LocalAcceptanceSelectionRetainsDefaultBuildTools architecture test passed 1/1. The real localhost TCP acceptance committed 14,400,000/14,400,000 samples in 11.9881142 seconds at 1,201,189.76 scalar samples/s with 0 sustained drops; the fixed 65,536-sample/3,670,016-byte ring recorded 49,332,224-byte peak working set and 10,666,984-byte managed heap. Induced overrun recorded 8,192 drops over [4096,12288), disconnect recorded an open gap at sequence 5,000, pause recorded all 50,000 samples, and downsampling preserved the spike. Exact output is in benchmarks/probes/acquisition/evidence/nat-03-run.json. Hosted exact-head CI and independent review remain required.",
       "aot-trim": "No AOT publish claim or production artifact; the project is classified BuildTool and is excluded from the product solution. The task does not alter AOT or trimming settings.",
       "compatibility": "No external package coordinate or version, public Contracts wire API, native ABI, project reference, or solution membership changed. The standalone probe uses only .NET sockets and BCL types.",
       "licence-provenance": "The new AGPL-3.0-only project is within the DesktopPlatform boundary. Microsoft.CodeAnalysis.NetAnalyzers/10.0.401 is already in the approved 47-coordinate closure with the same lock content hash. No new external licence evidence is introduced.",
@@ -218,6 +218,10 @@
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "0d2767559301a3ec43731b6e52614b24d3178009455ee75cbb4a3f638b4f6901",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "6970e010c5ebf13723b0384730a3ff37cca8ef0e4794fc9b61c96f0f8ce0df4f",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "e34ebabfd7e9e7b54e67015dbffc1ad5e24e6cc752bc1dc235a12020820223dc",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
       "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "8805e0af065c68b3608eab5f932806a7ca80b05a1287b83666ff6e24be315267",
@@ -253,7 +257,16 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/prf-09-r1.json"
+    "previousReceipt": "eng/policy/dependency-reviews/plt-07-r1.json",
+    "namingToolCandidate": {
+      "package": "ArcForges.Contracts.Validation",
+      "version": "1.0.0-ci.205.1",
+      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
+      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
+      "licence": "Apache-2.0",
+      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
+      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
+    }
   },
   "nugetClosure": {
     "arcforges.application.abstractions/1.0.0-ci.29.1": {

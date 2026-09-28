@@ -8,7 +8,7 @@
     },
     {
       "path": "benchmarks/probes/acquisition/AcquisitionProbe.csproj",
-      "blob": "81a72b743100639502d1ee2cfccf6ded01dff744"
+      "blob": "799ba66ddaa000eca61266532514aca6ac95b330"
     },
     {
       "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",

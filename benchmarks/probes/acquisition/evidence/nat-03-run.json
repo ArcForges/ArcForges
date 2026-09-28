@@ -8,13 +8,13 @@
     "SustainedTargetSeconds": 10,
     "SamplesReceived": 14400000,
     "SamplesCommitted": 14400000,
-    "ElapsedSeconds": 11.9758367,
-    "SamplesPerSecond": 1202421.205359288,
+    "ElapsedSeconds": 11.9881142,
+    "SamplesPerSecond": 1201189.7584359015,
     "RingCapacitySamples": 65536,
     "RingCapacityBytes": 3670016,
     "ReceiveBufferBytes": 262144,
-    "PeakWorkingSetBytes": 49446912,
-    "PeakManagedHeapBytes": 9722992,
+    "PeakWorkingSetBytes": 49332224,
+    "PeakManagedHeapBytes": 10666984,
     "DroppedSamples": 0,
     "LastDropObservedTimestampTicks": 0,
     "CaptureChecksum": 1287160585473040394,
@@ -27,14 +27,14 @@
     "SamplesDropped": 8192,
     "FirstDroppedSequence": 4096,
     "EndExclusiveDroppedSequence": 12288,
-    "LastDropObservedTimestampTicks": 4705454653560,
+    "LastDropObservedTimestampTicks": 4784507230741,
     "SamplesRetained": 4096,
     "RingCapacityBytes": 229376
   },
   "InducedDisconnect": {
     "SamplesReceived": 5000,
     "FirstMissingSequence": 5000,
-    "GapObservedTimestampTicks": 4705454697157,
+    "GapObservedTimestampTicks": 4784507280433,
     "GapIsOpen": true,
     "RecordingSessionIsOpen": true,
     "SamplesCommitted": 5000
@@ -43,8 +43,8 @@
     "SamplesReceived": 50000,
     "SamplesCommittedWhilePaused": 50000,
     "SamplesCommittedTotal": 50000,
-    "RenderCallsAfterPause": 8,
+    "RenderCallsAfterPause": 7,
     "ViewIsPaused": true
   },
-  "RecordedAtUtc": "2026-09-28T13:38:57.5768584+00:00"
+  "RecordedAtUtc": "2026-09-28T15:50:42.8385379+00:00"
 }
