@@ -195,13 +195,36 @@ public sealed class FrozenContextSnapshot
             }
 
             var descriptor = message.Descriptor;
-            var serialized = message.ToByteArray();
-            totalBytes = checked(totalBytes + (uint)serialized.Length);
-            if (totalBytes > budget.MaxBytes)
+            var size = message.CalculateSize();
+            if (size < 0)
             {
-                throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, totalBytes, budget.MaxBytes);
+                throw new InvalidOperationException("A protobuf message reported a negative encoded size.");
             }
 
+            var prospectiveBytes = checked(totalBytes + (uint)size);
+            if (prospectiveBytes > budget.MaxBytes)
+            {
+                throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, prospectiveBytes, budget.MaxBytes);
+            }
+
+            var serialized = message.ToByteArray();
+            if (!ReferenceEquals(message.Descriptor, descriptor))
+            {
+                throw new InvalidOperationException("A protobuf message changed descriptor while the context snapshot was being frozen.");
+            }
+
+            if (serialized.Length != size)
+            {
+                var actualBytes = checked(totalBytes + (uint)serialized.Length);
+                if (actualBytes > budget.MaxBytes)
+                {
+                    throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, actualBytes, budget.MaxBytes);
+                }
+
+                throw new InvalidOperationException("A protobuf message changed while the context snapshot was being frozen.");
+            }
+
+            totalBytes = prospectiveBytes;
             frozen.Add(new FrozenContextItem(descriptor, serialized));
         }
 

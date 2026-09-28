@@ -108,6 +108,19 @@ public sealed class ContextSnapshotTests
         Xunit.Assert.Equal(ContextBudgetLimit.ItemCount, itemRefusal.Limit);
         Xunit.Assert.Equal(2ul, itemRefusal.Actual);
         Xunit.Assert.Equal(1u, itemRefusal.Maximum);
+
+        var overMaximum = new StringValue
+        {
+            Value = new string('x', ContextSnapshotBudget.DefaultMaximumBytes + 1),
+        };
+        Xunit.Assert.True(overMaximum.CalculateSize() > ContextSnapshotBudget.DefaultMaximumBytes);
+        var hardMaximumRefusal = Xunit.Assert.Throws<ContextBudgetExceededException>(() =>
+            FrozenContextSnapshot.Freeze(owner, [overMaximum], new ContextSnapshotBudget(
+                ContextSnapshotBudget.DefaultMaximumItems,
+                ContextSnapshotBudget.DefaultMaximumBytes)));
+        Xunit.Assert.Equal(ContextBudgetLimit.SerializedBytes, hardMaximumRefusal.Limit);
+        Xunit.Assert.Equal((ulong)overMaximum.CalculateSize(), hardMaximumRefusal.Actual);
+        Xunit.Assert.Equal((uint)ContextSnapshotBudget.DefaultMaximumBytes, hardMaximumRefusal.Maximum);
     }
 
     [Xunit.Fact]

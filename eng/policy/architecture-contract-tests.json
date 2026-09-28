@@ -635,6 +635,21 @@
     "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform()"
   },
   {
+    "apiSymbol": "ArcForges.Capabilities.IContextProvider.ProvideMessagesAsync(ArcForges.Capabilities.InstanceIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.FreezeCopiesTypedProviderOutputBeforeInvocationAndEveryReadIsIsolated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.IContextProvider<TMessage>.ProvideAsync(ArcForges.Capabilities.InstanceIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.ProviderRefusesCrossProductInstanceOrEpochBeforeInvokingOwner()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ContextProvider<TMessage>.ProvideAsync(ArcForges.Capabilities.InstanceIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.ProviderRefusesCrossProductInstanceOrEpochBeforeInvokingOwner()"
+  },
+  {
     "apiSymbol": "ArcForges.Capabilities.InstallationIdentity.ToApplicationScope()",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.GeneratedApplicationScopeIsAnOwnedCopy()"
@@ -658,6 +673,36 @@
     "apiSymbol": "ArcForges.Capabilities.ApplicationComposition.Start<TOwner>(ArcForges.Capabilities.InstallationIdentity, ulong, System.Func<ArcForges.Capabilities.InstanceIdentity, TOwner>)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.ConcurrentInstancesAndRestartNeverRetargetCapturedCalls()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.IFrozenContextItem.Deserialize()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.FreezeCopiesTypedProviderOutputBeforeInvocationAndEveryReadIsIsolated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.FrozenContextItem.Deserialize()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.FreezeCopiesTypedProviderOutputBeforeInvocationAndEveryReadIsIsolated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.FrozenContextSnapshot.Freeze<TMessage>(ArcForges.Capabilities.InstanceIdentity, System.Collections.Generic.IEnumerable<TMessage>, ArcForges.Capabilities.ContextSnapshotBudget)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.OversizedContributionIsRefusedWithoutReturningTruncatedSnapshot()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.FrozenContextSnapshot.Freeze(ArcForges.Capabilities.InstanceIdentity, System.Collections.Generic.IEnumerable<Google.Protobuf.IMessage>, ArcForges.Capabilities.ContextSnapshotBudget)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.SnapshotCombinesDifferentGeneratedTypesWithoutLosingTheirDescriptors()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.FrozenContextSnapshot.FreezeAsync<TMessage>(ArcForges.Capabilities.IContextProvider<TMessage>, ArcForges.Capabilities.InstanceIdentity, ArcForges.Capabilities.ContextSnapshotBudget?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.FreezeCopiesTypedProviderOutputBeforeInvocationAndEveryReadIsIsolated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.FrozenContextSnapshot.FreezeAsync(System.Collections.Generic.IEnumerable<ArcForges.Capabilities.IContextProvider>, ArcForges.Capabilities.InstanceIdentity, ArcForges.Capabilities.ContextSnapshotBudget?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ContextSnapshotTests.SnapshotCombinesDifferentGeneratedTypesWithoutLosingTheirDescriptors()"
   },
   {
     "apiSymbol": "ArcForges.Persistence.Sqlite.StoreVersion.Cloud(ArcForges.Contracts.Foundation.Values.CloudRevision)",
