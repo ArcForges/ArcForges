@@ -973,5 +973,30 @@
     "apiSymbol": "ArcForges.Security.InstructionSnapshot.Decode(System.ReadOnlySpan<byte>)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.ActorChainTests.SnapshotWritersBoundRawAndEscapedPayloadsBeforeGrowingPastTheirBudget()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ArtifactHandlerRegistry<TAccess>.Register(string, string, int, System.Collections.Generic.IEnumerable<ArcForges.Capabilities.ArtifactAction>, ArcForges.Capabilities.ArtifactPermissionCheck, ArcForges.Capabilities.ArtifactHandlerAccess<TAccess>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ArtifactHandlerRegistryTests.RegistrationRejectsUnownedKindsInvalidActionsAndDuplicateHandlerIds()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ArtifactHandlerRegistry<TAccess>.DispatchAsync(ArcForges.Contracts.Foundation.V1.ArtifactRef?, ArcForges.Capabilities.ArtifactAction, string?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ArtifactHandlerRegistryTests.HandlerSelectionIsKindScopedAndDeterministicByPreferenceThenPriority()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ResourceResolutionRegistry<TAccess>.Register(string, ArcForges.Capabilities.FloatingResourceAuthorizationCheck, ArcForges.Capabilities.FloatingResourceAccess<TAccess>, ArcForges.Capabilities.PinnedResourceAuthorizationCheck, ArcForges.Capabilities.PinnedResourceAccess<TAccess>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.MalformedOrForeignResourceKindCannotReachAnOwnerHandler()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ResourceResolutionRegistry<TAccess>.ResolveCurrentAsync(ArcForges.Contracts.Foundation.V1.ResourceRef?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.FloatingResolutionUsesTheRegisteredOwnerAndRechecksPermissionOnEveryAccess()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ResourceResolutionRegistry<TAccess>.ResolvePinnedAsync(ArcForges.Contracts.Foundation.V1.ResourceVersionRef?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.PinnedResolutionPreservesTheExactRevisionAndNeverFallsBackToFloating()"
   }
 ]
