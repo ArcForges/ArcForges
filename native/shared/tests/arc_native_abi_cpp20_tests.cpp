@@ -175,8 +175,13 @@ void test_handle_kind_staleness_and_zero_on_failure()
 }
 
 struct tracked_value final {
-    explicit tracked_value(std::atomic<int>& destructions) : destructions_(&destructions) {}
-    ~tracked_value() { destructions_->fetch_add(1, std::memory_order_relaxed); }
+    explicit tracked_value(std::atomic<int>& destructions) : destructions_(&destructions)
+    {
+    }
+    ~tracked_value()
+    {
+        destructions_->fetch_add(1, std::memory_order_relaxed);
+    }
 
     std::atomic<int>* destructions_;
 };

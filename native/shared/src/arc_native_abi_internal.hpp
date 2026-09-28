@@ -32,7 +32,7 @@ struct handle_parent_retention final {
 };
 
 class handle_lease final {
-public:
+  public:
     handle_lease() noexcept = default;
     ~handle_lease() noexcept;
     handle_lease(const handle_lease&) = delete;
@@ -40,20 +40,25 @@ public:
     handle_lease(handle_lease&& other) noexcept;
     handle_lease& operator=(handle_lease&& other) noexcept;
 
-    [[nodiscard]] void* get() const noexcept { return value_.get(); }
+    [[nodiscard]] void* get() const noexcept
+    {
+        return value_.get();
+    }
 
-    template <typename T>
-    [[nodiscard]] T* as() const noexcept
+    template <typename T> [[nodiscard]] T* as() const noexcept
     {
         return static_cast<T*>(value_.get());
     }
 
-    [[nodiscard]] explicit operator bool() const noexcept { return owner_ != nullptr; }
+    [[nodiscard]] explicit operator bool() const noexcept
+    {
+        return owner_ != nullptr;
+    }
 
-private:
+  private:
     friend class handle_table;
-    handle_lease(handle_table* owner, size_t index, uint32_t generation,
-                 std::shared_ptr<void> value, std::shared_ptr<handle_parent_retention> parent) noexcept;
+    handle_lease(handle_table* owner, size_t index, uint32_t generation, std::shared_ptr<void> value,
+                 std::shared_ptr<handle_parent_retention> parent) noexcept;
     void reset() noexcept;
 
     handle_table* owner_ = nullptr;
@@ -67,17 +72,17 @@ private:
 // close blocks new leases, drains active leases, invalidates the generation, and only then
 // releases the value. A child retains its parent chain after parent handles close.
 class handle_table final {
-public:
+  public:
     explicit handle_table(uint32_t maximum_open = 64) noexcept;
     handle_table(const handle_table&) = delete;
     handle_table& operator=(const handle_table&) = delete;
 
-    arc_status_t create(uint32_t kind, std::shared_ptr<void> value, arc_handle_t* output,
-                        arc_handle_t parent = 0, uint32_t parent_kind = 0);
+    arc_status_t create(uint32_t kind, std::shared_ptr<void> value, arc_handle_t* output, arc_handle_t parent = 0,
+                        uint32_t parent_kind = 0);
     arc_status_t acquire(arc_handle_t token, uint32_t expected_kind, handle_lease* output);
     arc_status_t close(arc_handle_t token, uint32_t expected_kind);
 
-private:
+  private:
     friend class handle_lease;
 
     struct slot final {
@@ -99,8 +104,7 @@ private:
     std::vector<slot> slots_;
 };
 
-template <typename T>
-void zero_output(T* output) noexcept
+template <typename T> void zero_output(T* output) noexcept
 {
     static_assert(std::is_trivially_copyable_v<T>, "C ABI output must be trivially copyable");
     if (output != nullptr) {
@@ -108,8 +112,7 @@ void zero_output(T* output) noexcept
     }
 }
 
-template <typename T>
-arc_status_t prepare_output(T* output) noexcept
+template <typename T> arc_status_t prepare_output(T* output) noexcept
 {
     if (output == nullptr) {
         return fail(ARC_INVALID_ARGUMENT, "Output pointer is required", 0);
