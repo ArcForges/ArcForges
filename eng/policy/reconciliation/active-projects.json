@@ -44,7 +44,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
-      "blob": "526a07f2135326b0c6373af9ee22e467638143df"
+      "blob": "ce3feff9472ef8870ebf124b41930a3d55ac984b"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",

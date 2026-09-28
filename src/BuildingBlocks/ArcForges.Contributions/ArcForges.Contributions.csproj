@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Contributions</AssemblyName>
     <RootNamespace>ArcForges.Contributions</RootNamespace>
-    <IsPackable>true</IsPackable>
+    <IsPackable>false</IsPackable>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>ArcForges.Contributions</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
