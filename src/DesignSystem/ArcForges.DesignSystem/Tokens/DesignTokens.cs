@@ -142,22 +142,19 @@ public readonly record struct MotionTokens(
 {
     public TimeSpan Resolve(MotionDuration duration, MotionPreference preference)
     {
-        if (preference switch
-            {
-                MotionPreference.Standard => false,
-                MotionPreference.Reduced => true,
-                _ => throw new ArgumentOutOfRangeException(nameof(preference), preference, "Unknown motion preference."),
-            })
-        {
-            return TimeSpan.Zero;
-        }
-
-        return duration switch
+        var durationValue = duration switch
         {
             MotionDuration.Fast => Fast,
             MotionDuration.Standard => Standard,
             MotionDuration.Emphasized => Emphasized,
             _ => throw new ArgumentOutOfRangeException(nameof(duration), duration, "Unknown motion duration."),
+        };
+
+        return preference switch
+        {
+            MotionPreference.Standard => durationValue,
+            MotionPreference.Reduced => TimeSpan.Zero,
+            _ => throw new ArgumentOutOfRangeException(nameof(preference), preference, "Unknown motion preference."),
         };
     }
 

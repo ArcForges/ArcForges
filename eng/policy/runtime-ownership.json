@@ -135,6 +135,14 @@
         {
           "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
           "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+          "role": "test-or-build-tool"
         }
       ]
     },

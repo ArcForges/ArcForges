@@ -1745,6 +1745,30 @@
   },
   {
     "owner": "DesktopPlatform",
+    "path": "src/DesignSystem",
+    "disposition": "Keep",
+    "present": false,
+    "producer": "WP10",
+    "reason": "Planned DesignSystem source root absent from the frozen extraction snapshot; PLT.26 binds the adopted semantic-token project under ADP-07."
+  },
+  {
+    "owner": "DesktopPlatform",
+    "path": "src/DesignSystem/ArcForges.DesignSystem",
+    "disposition": "Keep",
+    "present": false,
+    "producer": "WP10",
+    "reason": "Planned token-library project directory absent from the frozen extraction snapshot; PLT.26 binds the adopted project path under ADP-07."
+  },
+  {
+    "owner": "DesktopPlatform",
+    "path": "src/DesignSystem/ArcForges.DesignSystem/Tests",
+    "disposition": "Keep",
+    "present": false,
+    "producer": "WP10",
+    "reason": "Planned token-library test directory absent from the frozen extraction snapshot; PLT.26 binds the nested test project under ADP-07."
+  },
+  {
+    "owner": "DesktopPlatform",
     "path": "src/DesktopHelpers",
     "disposition": "Keep",
     "present": true,

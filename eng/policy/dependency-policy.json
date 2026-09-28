@@ -208,6 +208,10 @@
     "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
     "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
     "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "8feaa552bdf82d4fd957197f00da9481230cdbc123252bbc937e73cef36e6659",
+    "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
+    "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
+    "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
+    "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
     "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
     "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
     "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -538,19 +542,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-20260927-baseline-01",
-    "reviewer": "Independent exact-head review required before merge",
-    "reviewedOn": "2026-09-27",
-    "baselineCommit": "d1fb6d0af306ec3553729dc7e46e16de1d414b28",
-    "maintenanceAssessment": "GOV.14 upgrades only the existing canonical naming-tool candidate from 129.1 to normally published 205.1. Contracts PR58 changes exactly two Design source identity fields; scanner and declaration bytes remain unchanged. All managed/Python/native dependency closures and framework selections remain unchanged.",
+    "owner": "af-20260928-p04",
+    "reviewer": "platform_capabilities (independent exact-head PLT.26 reviewer; PR comment records the review)",
+    "reviewedOn": "2026-09-28",
+    "baselineCommit": "357e8a56004ff08776767ff6a9e43e138071685e",
+    "maintenanceAssessment": "PLT.26 adds a framework-neutral AOT library and a nested offline test project. The two lock files use the repository-pinned .NET SDK 10.0.400 closure, including existing SDK-provided Microsoft.NET.ILLink.Tasks 10.0.11; xUnit and Microsoft.NET.Test.Sdk coordinates are already admitted. The NuGet and Python closures, centrally pinned package versions, existing package identities, and runtime dependency surface are unchanged. Project/source/license/reconciliation inventories and current input hashes are appended without changing prior receipt bytes.",
     "upgradeChecks": {
-      "compilation": "Build-time naming policy data only; existing managed/native compilation and packaging remain required latest-head CI. No product source change in this candidate pin delta.",
-      "aot-trim": "No runtime dependency, generated codec, native ABI or reflection change; existing AOT/trim diagnostics retained.",
-      "compatibility": "Exact existing package identity; official NuGet catalog binds version205.1, signed package SHA512 and producer source696242d. Two source identity fields now match the already pinned Design export ec1a1e7; declaration hashes and scanner unchanged. Contracts naming suite31tests passed.",
-      "licence-provenance": "Official NuGet catalog confirms Apache-2.0 and ArcForges/Contracts source696242d. New receipt appended and first-party registered; every prior dependency/source receipt retained.",
-      "security-sbom": "Contracts main CI36356146302 and Security36356146280 succeeded, including original NuGet/npm/Maven publication. Exact signed public package hash comes from official metadata, not pre-sign candidate bytes. Existing dependency/security gates retained.",
-      "runtime-performance-migration": "Canonical build-time metadata consumer only; no runtime migration or performance change. No installed-consumer, device, live-service or product acceptance claim.",
-      "framework-runtime-posture": "No framework major upgrade, .NET SDK10.0.400 unchanged; no Android Kotlin/JVM/ART/R8 or native toolchain change."
+      "compilation": "The AOT-compatible library and test project use repository build settings and existing central package pins; latest-head solution build, formatting and registered offline tests remain required in CI.",
+      "aot-trim": "The production library inherits the existing unconditional IsAotCompatible, EnableTrimAnalyzer and IsTrimmable settings; no reflection, runtime dependency, generated codec or native ABI behavior is introduced.",
+      "compatibility": "No existing package/project identity or API is renamed. The new ArcForges.DesignSystem package identity is a PLT.26 outcome; both exact lock graphs match already admitted coordinates and the SDK-pinned Microsoft.NET.ILLink.Tasks 10.0.11.",
+      "licence-provenance": "Both projects are first-party AGPL-3.0-only within the existing AGPL boundary; no third-party dependency coordinate is added. New source files and lock files are classified, all previous provenance and dependency receipts remain immutable.",
+      "security-sbom": "No runtime or package closure expansion occurs; existing license, provenance, secret-scan, native and security gates remain in force on the exact PR head.",
+      "runtime-performance-migration": "This change adds only a pure token data library and offline tests; it makes no runtime, performance, device, installed-consumer or product acceptance claim.",
+      "framework-runtime-posture": "The repository-pinned .NET SDK remains 10.0.400; no framework major version, native toolchain, Android Kotlin/JVM/ART/R8 or other owner framework changes."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -759,6 +763,10 @@
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
       "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
       "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "8feaa552bdf82d4fd957197f00da9481230cdbc123252bbc937e73cef36e6659",
+      "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
+      "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
+      "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
+      "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
       "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
       "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -776,7 +784,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov14-r3.json",
+    "previousReceipt": "eng/policy/dependency-reviews/gov-14-naming-r4.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -787,7 +795,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/gov-14-naming-r4.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-26-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

@@ -125,6 +125,14 @@
     {
       "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
       "blob": "37d1b57f89ef5156d2780ce48697de5f7c6bb12c"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
+      "blob": "07ac7b5e863508036dbdb6d29b4d216e650136dd"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+      "blob": "d203942b009adf899953dab2b85b5cb503ce883b"
     }
   ]
 }

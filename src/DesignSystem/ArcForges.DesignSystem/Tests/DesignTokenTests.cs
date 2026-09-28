@@ -69,6 +69,7 @@ public sealed partial class DesignTokenTests
         Xunit.Assert.Equal(MotionCurve.Emphasized, tokens.Motion.CurveFor(MotionDuration.Emphasized));
         Xunit.Assert.Equal(7, Enum.GetValues<TypographyRole>().Length);
         Xunit.Assert.Throws<ArgumentOutOfRangeException>(() => tokens.Motion.Resolve((MotionDuration)99, MotionPreference.Standard));
+        Xunit.Assert.Throws<ArgumentOutOfRangeException>(() => tokens.Motion.Resolve((MotionDuration)99, MotionPreference.Reduced));
     }
 
     [Xunit.Fact]
