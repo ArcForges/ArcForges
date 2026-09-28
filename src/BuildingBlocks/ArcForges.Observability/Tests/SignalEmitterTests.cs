@@ -200,9 +200,10 @@ public sealed class SignalEmitterTests
     }
 
     [Fact]
-    public void MetricsOmitServicePointLabelsWhenServiceIsAbsent()
+    public void MetricsUseNoPointLabelsAndCarryIdentityInScope()
     {
         var context = Context() with { Service = null, Duration = TimeSpan.FromMilliseconds(8) };
+        var expectedInstance = context.InstanceId.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
 
         var observation = ObserveMetrics(context);
 
@@ -210,6 +211,10 @@ public sealed class SignalEmitterTests
         Assert.Equal(8, observation.Duration);
         Assert.Empty(observation.CountTags);
         Assert.Empty(observation.DurationTags);
+        Assert.Equal(context.ApplicationId, observation.ScopeTags["application.id"]);
+        Assert.Equal(expectedInstance, observation.ScopeTags["instance.id"]);
+        Assert.Equal(context.BuildId, observation.ScopeTags["build.id"]);
+        Assert.Equal(context.Environment.ToString(), observation.ScopeTags["deployment.environment"]);
         Assert.Equal(4, observation.ScopeTags.Count);
     }
 
