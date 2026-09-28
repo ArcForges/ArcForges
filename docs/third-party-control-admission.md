@@ -40,10 +40,12 @@ package publishes an MIT licence. The older `Avalonia.Controls.DataGrid` package
 for read-only tables. These facts establish candidate suitability and licensing only; they are
 not an AOT result and do not make the control safe to adopt.
 
-The planned consuming boundary must preserve the MIT copyright and licence notice when the
-package is redistributed. It does not grant permission to copy Avalonia implementation code
-into the AGPL-3.0-only first-party project. No Avalonia package reference or runtime usage is
-added to `DesktopPlatform` by this record.
+The consuming boundary must preserve the MIT copyright and licence notice when the package is
+redistributed. MIT permits copying, modifying, and redistributing the code subject to its
+notice condition; keeping Avalonia's implementation in its package is an ArcForges design
+choice, not a restriction imposed by MIT. Any combined-work obligations must be assessed for
+the actual shell distribution. No Avalonia package reference, copied source, or runtime usage
+is added to `DesktopPlatform` by this record.
 
 | Evidence | Value |
 |---|---|

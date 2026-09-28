@@ -48,6 +48,7 @@
     "docs/reconciliation-inventory.md",
     "docs/reference-baselines.md",
     "docs/runtime-ownership.md",
+    "docs/third-party-control-admission.md",
     "eng/acceptance/foundation/.gitignore",
     "eng/acceptance/foundation/Directory.Packages.props",
     "eng/acceptance/foundation/Foundation.Acceptance.csproj",
