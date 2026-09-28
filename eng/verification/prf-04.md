@@ -12,16 +12,16 @@ Claim `af-20260928-p02`, PRF.04 claim epoch 1. A pre-PR policy check (`python en
 The project file explicitly declares its existing AGPL-3.0-only licence and AGPL boundary, matching repository policy. `eng/policy/reconciliation/project-updates.json` was evaluated and intentionally left unchanged: its immutable successor schema applies only to projects already present in the frozen inventory, requiring a truthful original blob and a different reviewed blob; this task adds a new project and has no original blob. No prior project/history/classification or reconciliation logic changed.
 
 Run date: 2026-09-28 UTC  
-Source revision: `9ae3a8a1deb8875504c39e5ce1f2b1ebd8ee8ce8`, rebased on DesktopPlatform `main` at `497263e3f2cea3056a502e8f956b099f13a173f7`  
-Machine: Windows 11 Pro for Workstations, version `10.0.26200`, build `26200`, 64-bit  
-Pinned SDK: .NET SDK `10.0.400` (`C:\Users\J7Rdm\.dotnet\dotnet.exe`)  
+Source revision: `c81409ceea3384cd0bbde0ac55ca2a02bb6127a9`, rebased on DesktopPlatform `main` at `497263e3f2cea3056a502e8f956b099f13a173f7`
+Machine: Windows 11 Pro for Workstations, version `10.0.26200`, build `26200`, 64-bit
+Pinned SDK: .NET SDK `10.0.400` (`C:\Users\J7Rdm\.dotnet\dotnet.exe`)
 Runtime ID: `win-x64`
 
 The project restored with `--locked-mode` and published as Native AOT with the pinned SDK:
 
 ```powershell
-C:\Users\J7Rdm\.dotnet\dotnet.exe restore C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\tests\LocalRpcAotTests\LocalRpcAotTests.csproj --locked-mode -p:NuGetAudit=false --ignore-failed-sources
-C:\Users\J7Rdm\.dotnet\dotnet.exe publish C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\tests\LocalRpcAotTests\LocalRpcAotTests.csproj -c Release -r win-x64 --no-restore -p:NuGetAudit=false -o C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\artifacts\prf-04\win-x64
+python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 1 -- C:\Users\J7Rdm\.dotnet\dotnet.exe restore C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\tests\LocalRpcAotTests\LocalRpcAotTests.csproj --locked-mode -p:NuGetAudit=false
+python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 1 -- C:\Users\J7Rdm\.dotnet\dotnet.exe publish C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\tests\LocalRpcAotTests\LocalRpcAotTests.csproj -c Release -r win-x64 -o C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\artifacts\prf-04\win-x64 --no-restore
 ```
 
 The locked restore and Native AOT publish both exited `0`; publish produced the native `LocalRpcAotTests.exe`. The executable was run while holding the Plan workstation build slot:
@@ -30,11 +30,11 @@ The locked restore and Native AOT publish both exited `0`; publish produced the 
 python C:\MyFile\Projects\Plan\tools\delivery.py build-slot run --worker af-20260928-p02 --task PRF.04 --minutes 30 --wait-minutes 1 -- C:\MyFile\Projects\ArcForges\DesktopPlatform\.worktree\prf-04\artifacts\prf-04\win-x64\LocalRpcAotTests.exe
 ```
 
-Runtime exit code: `0`. Output:
+Final exact-head runtime exit code: `0`. Output:
 
 ```text
 PASS: two Native AOT processes completed bidirectional LocalBootstrap, generated gRPC calls, cancellation, disconnect/re-attach, malformed-input, unauthorized-peer and bounded-message checks.
-Evidence: pipe; reattached process IDs [23276,3752]; fresh instance IDs [2ECCB4C3A86C4D75994536C78DB2760A,E9395A0F7DA94E28B4ABB375307CBD12].
+Evidence: pipe; reattached process IDs [20544,16092]; fresh instance IDs [6667A8FC14F5441AA81734F60E24478E,A807168B271F4C7B8AD852091370EB95].
 ```
 
 This run used Kestrel HTTP/2 over Windows named pipes with `CurrentUserOnly=true`; no TCP listener was configured. The same-user rogue peer's wrong HMAC proof was refused as an authentication error. A one-byte malformed protobuf was rejected with bounded, sanitized status metadata, did not reach the generated `Challenge` service method, and was followed by a successful generated challenge on the same channel. The over-limit request was rejected at the configured 4 MiB receive bound. Two process pairs completed bidirectional bootstrap and renewal; the reattached pair reported fresh instance identities. The private test harness passed the one-use bootstrap secret only over inherited process stdin and kept it out of arguments/output.
