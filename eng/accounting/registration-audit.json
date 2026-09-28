@@ -11,6 +11,7 @@
     "architecture-tests",
     "foundation-tests",
     "persistence-resources-tests",
+    "persistence-derived-tests",
     "capabilities-tests",
     "security-tests",
     "persistence-tests"

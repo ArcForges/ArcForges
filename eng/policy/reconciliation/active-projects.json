@@ -149,6 +149,14 @@
     {
       "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
       "blob": "e3c2337390ec6ea9b22ebcbdeb8df6131fbfc23f"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj",
+      "blob": "d65037e7936a886d19ca77cec0b3b0a8f15f7072"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+      "blob": "6bf8cd569e85f0f0a41467ca04776c4c5078f423"
     }
   ]
 }

@@ -36,6 +36,10 @@ TRX_SUITES = (
         "persistence-resources-tests",
         "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
     ),
+    (
+        "persistence-derived-tests",
+        "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    ),
     ("capabilities-tests", "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj"),
     ("security-tests", "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj"),
     ("persistence-tests", "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj"),
@@ -447,7 +451,7 @@ def _normalize_desktop(
     if actual_files != expected_files:
         missing = sorted(expected_files - actual_files)
         extra = sorted(actual_files - expected_files)
-        raise AccountingError(f"Expected exactly six unique TRX inputs; missing={missing}, extra={extra}")
+        raise AccountingError(f"Expected exactly seven unique TRX inputs; missing={missing}, extra={extra}")
 
     parsed_suites: dict[str, dict[str, Any]] = {}
     source_rows: list[dict[str, Any]] = []
@@ -542,7 +546,7 @@ def _load_audit(path: Path, catalog_bytes: bytes, records: list[dict[str, Any]])
     if audit.get("candidateFilter") != expected_filter or not isinstance(audit.get("reviewMethod"), str) or not audit["reviewMethod"].strip():
         raise AccountingError("Registration audit candidate methodology is missing or changed")
     if audit.get("reviewedSuiteIds") != [suite_id for suite_id, _ in TRX_SUITES]:
-        raise AccountingError("Registration audit must cover exactly the six normalized owner suites")
+        raise AccountingError("Registration audit must cover exactly the seven normalized owner suites")
     candidates = []
     for record in records:
         owning_packages = record.get("owningPackages")
@@ -766,7 +770,7 @@ def generate_report(
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a fail-closed current-invariant accounting report from test receipts.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    report_parser = subparsers.add_parser("report", help="validate the six DesktopPlatform TRX inputs and emit normalized receipt/report artifacts")
+    report_parser = subparsers.add_parser("report", help="validate the seven DesktopPlatform TRX inputs and emit normalized receipt/report artifacts")
     report_parser.add_argument("--catalog", type=Path, default=ROOT / CATALOG_REL)
     report_parser.add_argument("--roster", type=Path, default=ROOT / ROSTER_REL)
     report_parser.add_argument("--audit", type=Path, default=ROOT / AUDIT_REL)
