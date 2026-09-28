@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Contributions</AssemblyName>
+    <RootNamespace>ArcForges.Contributions</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>ArcForges.Contributions</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Explicit owner-scoped static contribution registration.</Description>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
+    <Compile Remove="Tests/**/*.cs" />
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

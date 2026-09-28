@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="../ArcForges.Contributions.csproj" />
+    <ProjectReference Include="../../ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
+  </ItemGroup>
+</Project>
