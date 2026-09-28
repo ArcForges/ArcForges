@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "catalogSha256": "ab262ca5cad9a717d9d5b0c77eca6c9249ed825d422dd47c8976ecda34454f05",
+  "reviewedAtSourceCommit": "b0ac601379213862ab34b5d678f67363d62e605a",
+  "semanticOwner": "ArcForges/DesktopPlatform",
+  "obligationOwner": "GOV.04",
+  "candidatePackageId": "05",
+  "candidateFilter": "invariants.json record owningPackages includes exact string 05; candidate generation only, not evidence of enforcement",
+  "reviewMethod": "Each candidate's plannedVerification and completionGate was compared with the assertions of all six actual DesktopPlatform package-validation TRX suites. A case is registrable only when the complete semantics and invariant-specific refusal are asserted by a real owner test. NearestCases are partial matches and are explicitly not registrations.",
+  "reviewedSuiteIds": [
+    "architecture-tests",
+    "foundation-tests",
+    "persistence-resources-tests",
+    "capabilities-tests",
+    "security-tests",
+    "persistence-tests"
+  ],
+  "candidates": [
+    {
+      "invariantId": "I-015",
+      "plannedVerificationSha256": "6ee740b442eafbb4f6df066bd7b1b6cf125d0d670317825b15b37cd2656bf131",
+      "completionGateSha256": "620982928e7f48eb6a80e05be4fb3bc7531f0c623405d7b0420ec2b1c89bc8d8",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "architecture-tests",
+          "caseId": "ArcForges.Tests.ArchitectureTests.SharedPolicyTests.BannedCategoriesUseCompiledSymbols",
+          "testSource": "tests/ArchitectureTests/SharedPolicyTests.cs",
+          "whyInsufficient": "The BAN-PROVIDER fixture rejects direct provider SDK calls in a policy-role fixture; it does not assert absence of customer credential fields, APIs, settings or client key stores, nor the operator-secret server-only boundary."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-020",
+      "plannedVerificationSha256": "9a4f82b6d24062a1df571bfc7cedb07084c41f5bfdf8192f157fbed40e422a4a",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-021",
+      "plannedVerificationSha256": "fe288a7813c352eba8c2a99f0167a7ebea7c757b540282a3cffc8fd8ff0bede3",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-022",
+      "plannedVerificationSha256": "1386adafb144eaf32efb5247eafb38074b2c212432bc568fd334af2a515b13f3",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-023",
+      "plannedVerificationSha256": "979ff5e3bd671e3e885327907df93809cd50da37c22bff3eb0b5398520143e16",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-024",
+      "plannedVerificationSha256": "7d7bcb6e153daea6459460bc4a5d9d3cd0a0604394114a0d4d7893919ff07d1d",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "security-tests",
+          "caseId": "ArcForges.Security.Tests.ActorChainTests.HumanOwnerAndExecutorAreDistinctAndSequenceIsDefensivelyCopied",
+          "testSource": "src/BuildingBlocks/ArcForges.Security/Tests/ActorChainTests.cs",
+          "whyInsufficient": "This checks a caller/delegated-executor inequality but does not cover all three planned distinctions (Actor/Executor, Executor/Caller Instance, Caller Instance/Identity) or name this invariant in the refusal."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-025",
+      "plannedVerificationSha256": "11f42fa6de4d47f90d91119845dbf6468b0fdaa71c8c0c4b5eff1949b41d9a20",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "foundation-tests",
+          "caseId": "ArcForges.Foundation.Tests.VersionAxisCompileNegativeTests.EveryOrderedAxisPairRejectsAssignment",
+          "testSource": "src/BuildingBlocks/ArcForges.Foundation/Tests/VersionAxisCompileNegativeTests.cs",
+          "whyInsufficient": "The compile-negative matrix rejects AppVersion/ContractSet assignment as one of 72 generic pairs; its compiler refusal does not identify I-025, so it does not meet the invariant-specific refusal requirement."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-026",
+      "plannedVerificationSha256": "d84726d514241261db31f5614c58e3775e7f3a5e9ff78a7fb451ca4c594e358a",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-027",
+      "plannedVerificationSha256": "a3ea18ab2083a431c13cce71c09048b0d625e4349caa0d049c8d25de94060e3f",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "capabilities-tests",
+          "caseId": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform",
+          "testSource": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ApplicationCompositionTests.cs",
+          "whyInsufficient": "This rejects platform suffixes on Companion identity, but does not distinguish Companion from Professional-app Mobile/Web ports in both directions or name this invariant in a refusal."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-028",
+      "plannedVerificationSha256": "47269b0734d3afbcc6a5a0d95dbbb20ff5bb5c299cf02524cdf457f5c1b38415",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "persistence-tests",
+          "caseId": "ArcForges.Tests.PersistenceTests.JournalTests.LocalEditIdentitySurvivesReplayAndShadowAcknowledgementWithoutUsingJournalOrder",
+          "testSource": "tests/PersistenceTests/JournalTests.cs",
+          "whyInsufficient": "This verifies local journal sequence and a cloud-revision shadow acknowledgement; it does not exercise offline editor-cache retention through restart, distinct Cloud acknowledgement behavior, or rejection of a WebView replacement."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-030",
+      "plannedVerificationSha256": "989b374c069f3b9fc9059a6a37b282c37c13a422fe473ebdb17f01504f2c072c",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "capabilities-tests",
+          "caseId": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.TwoProductsOnOneDeviceOwnSeparateSessionHistoryAndCapabilityState",
+          "testSource": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ApplicationCompositionTests.cs",
+          "whyInsufficient": "This isolates product session state but does not assert independently scoped Cloud assistant execution, exactly one Workflow Harness, no client model loop, or no standalone ArcChat authority."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-031",
+      "plannedVerificationSha256": "a97ed6901412e0942a54c0b4cee549cfd1de51629ec17dff82682d54df126116",
+      "completionGateSha256": "52a0ebb7747918dfd63bcc2f02dd5f69984f0fc2ff883e1e3b2466751809bb22",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-313",
+      "plannedVerificationSha256": "b286c1bb28e5a3d3bf85ba898138b04f84fc60d53a1a70d36b93d20d4e88ead6",
+      "completionGateSha256": "620982928e7f48eb6a80e05be4fb3bc7531f0c623405d7b0420ec2b1c89bc8d8",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "security-tests",
+          "caseId": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary",
+          "testSource": "src/BuildingBlocks/ArcForges.Security/Tests/ActorChainTests.cs",
+          "whyInsufficient": "The actor-chain serialization test includes an Agent actor kind but does not assert no external-agent contribution type/delegation adapter registration or that profiles remain data for the sole Harness."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-314",
+      "plannedVerificationSha256": "46695b23cc5b84f23c942bff5dcbbbe908cf2729404a0cf741352066a102219f",
+      "completionGateSha256": "620982928e7f48eb6a80e05be4fb3bc7531f0c623405d7b0420ec2b1c89bc8d8",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-315",
+      "plannedVerificationSha256": "2241b0be303901f2db6d8d834f0b03d467781a408f9aa9a4e9b2b5f609c12475",
+      "completionGateSha256": "6291a1edffec0abc8044677aef50c37b64aacf81c3bfce3e5106980f14a445e1",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-316",
+      "plannedVerificationSha256": "7b9b76185ba6c0e43fbf1a39c12c9b7092b0507f01281f405cba16e7eae531d0",
+      "completionGateSha256": "6291a1edffec0abc8044677aef50c37b64aacf81c3bfce3e5106980f14a445e1",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-380",
+      "plannedVerificationSha256": "7d1727f2bf14f11902dcc442f96464bc4d77060d7bf3cf7dbb45b975a6b18189",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-381",
+      "plannedVerificationSha256": "9a1fedffea5db654e7f49c13b0686fbe26e7413b0d94f2f2c28f160ed0fa3dfe",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-382",
+      "plannedVerificationSha256": "edbe99428e8295baad1532a3e584d5dcf7a5910c55b9c8b028587754683f9b78",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-383",
+      "plannedVerificationSha256": "11f42fa6de4d47f90d91119845dbf6468b0fdaa71c8c0c4b5eff1949b41d9a20",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "foundation-tests",
+          "caseId": "ArcForges.Foundation.Tests.VersionAxisCompileNegativeTests.EveryOrderedAxisPairRejectsAssignment",
+          "testSource": "src/BuildingBlocks/ArcForges.Foundation/Tests/VersionAxisCompileNegativeTests.cs",
+          "whyInsufficient": "This is the same generic compile-negative matrix as the closest I-025 case; the failure is a compiler assignment error, not an invariant-naming refusal and does not cover the other runtime distinctions in WP-05.04."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-384",
+      "plannedVerificationSha256": "de8eb29d539a60dff0c5b1f044e63fb8df1c7df649fb73350cf6bd15501ce42d",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-385",
+      "plannedVerificationSha256": "56699f7b18deb104139727cafeb6671d895c89e4ca6615ce164f5ca524f03d10",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-386",
+      "plannedVerificationSha256": "38b8755ae29cb7401f61707cc411bdf08f46254db47b7ec83e448f74270b7f6f",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-387",
+      "plannedVerificationSha256": "a93e5879009a9345ebffca99de0522cc59dcc68c33ae93d4e5a1ea19b43eecfe",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "persistence-tests",
+          "caseId": "ArcForges.Tests.PersistenceTests.RecoveryTests.KilledSnapshotWriterLeavesOnlyUnpublishedTempsAndRestartReclaimsThem",
+          "testSource": "tests/PersistenceTests/RecoveryTests.cs",
+          "whyInsufficient": "This checks a storage recovery boundary after an injected process kill; it does not distinguish a crash-free observation from recoverability or name this invariant in a refusal."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-388",
+      "plannedVerificationSha256": "3fce892a8ce6ebf1a5ec9068f3d36043d3e7e756a06dad718e5cf09afd7dc07e",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-389",
+      "plannedVerificationSha256": "466672a36b1eacd0e29fa3b13e471f566320aea9c9642e981bc93301d526b04e",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-390",
+      "plannedVerificationSha256": "d32334fdc191b179fb022d067a041bc60ee400104f564bb32c3fb79aaa702dfb",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-391",
+      "plannedVerificationSha256": "348ec38d9315052d7f58e8d2fd78f669f591f7c9b6bace3ea3181d1d6a7a322d",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-392",
+      "plannedVerificationSha256": "ee6eb8c8527bb0d039f733777e6de853af6f0ed9b2ad1bec718bc929a65e245d",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-393",
+      "plannedVerificationSha256": "ee15005e70f3a68791b514788878285ac46b98c27a8f542b9c6714139385eb83",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-394",
+      "plannedVerificationSha256": "3da5728635df9bd7b62db382d6890cf3291a51760494c40937da3dd990059868",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-395",
+      "plannedVerificationSha256": "d885ed2a1ce8633acb3b3b25216baeb3cf20cf82d4b5c4644ec2b7888d3f6cba",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-396",
+      "plannedVerificationSha256": "237662149d1309ea4669683ee2784fe0af77e23e9694e42e2b3b7885b5eb8ffc",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-397",
+      "plannedVerificationSha256": "2d395e55b8c9f11d5e7c4a61511561fceb77026e263f109ca2f82d1e249b9cb6",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-398",
+      "plannedVerificationSha256": "02ea0540d26ef027a5a749c720cc68e375cc884af91342fc5ae2d56321dc8bda",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-399",
+      "plannedVerificationSha256": "2e8431cdd263f5e0d5bf1d5945c7db16af7b2932a0327880da34f29ee82f09c8",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-400",
+      "plannedVerificationSha256": "777bb2be9e8c364f7f32d786e0c3c540a5afb3b1d24bc4beda2c8c90bdb31f7d",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-401",
+      "plannedVerificationSha256": "fd493cdb8be97c6e8b4952a1e973b9a3d078ca8eb2ebbc22dbbf683eccaf8b74",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-402",
+      "plannedVerificationSha256": "9f64e91c6ea4453308de2668b9f42100d9c3623c42182ab4ba73290da4ae8143",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-403",
+      "plannedVerificationSha256": "33c9e6b088718a4e606110b2926f0497947b0e68926e333deb06dcfa03ade1e5",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-404",
+      "plannedVerificationSha256": "c5bc9a406eca7df68b76cdd5f1c85906a70d087647ca8c0d06375d0fb662ecb7",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-405",
+      "plannedVerificationSha256": "4ecf2692f60679dd465aefe21433ff82e27e0c1210aef47dcbbdcea287a171fb",
+      "completionGateSha256": "639e6d769169e874d08d403544743bface974aece622b3b7d3170b526467969b",
+      "disposition": "no-complete-current-case",
+      "nearestCases": []
+    },
+    {
+      "invariantId": "I-491",
+      "plannedVerificationSha256": "bb4b5a5ddf487ea9a045173c7cc91ea43857efb7fbf6a89f17ec7f4921e19937",
+      "completionGateSha256": "dcfd5a390d7ef946fd5717b37dba3b71be20e5c3d2d563f59d1a451e964f899c",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "architecture-tests",
+          "caseId": "ArcForges.Tests.ArchitectureTests.SharedPolicyTests.BannedCategoriesUseCompiledSymbols",
+          "testSource": "tests/ArchitectureTests/SharedPolicyTests.cs",
+          "whyInsufficient": "The BAN-PROVIDER case rejects direct provider SDK calls for a selected project role; it does not establish no client-side model turn loop across desktop/mobile/browser assemblies or toolLocality independence from Task ownership."
+        }
+      ]
+    },
+    {
+      "invariantId": "I-495",
+      "plannedVerificationSha256": "a964f5adf655d278404959c90df4b25d039565135e2a4aa47528afff1f2fd7d7",
+      "completionGateSha256": "f917c72de1bea3620308bb2325621af0de831df3c86af233533d70e793ce09a1",
+      "disposition": "no-complete-current-case",
+      "nearestCases": [
+        {
+          "sourceId": "architecture-tests",
+          "caseId": "ArcForges.Tests.ArchitectureTests.SharedPolicyTests.BannedCategoriesUseCompiledSymbols",
+          "testSource": "tests/ArchitectureTests/SharedPolicyTests.cs",
+          "whyInsufficient": "The BAN-PROVIDER case rejects direct provider SDK calls; it does not inspect customer credential input fields, operations, settings or UI."
+        }
+      ]
+    }
+  ]
+}
