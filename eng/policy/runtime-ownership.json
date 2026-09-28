@@ -17,6 +17,10 @@
           "role": "native-build"
         },
         {
+          "path": "benchmarks/probes/acquisition/AcquisitionProbe.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
           "role": "test-or-build-tool"
         },

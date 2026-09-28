@@ -7,6 +7,10 @@
       "blob": "77177ca01ea3406e2caa6048ffe094d54f5734bf"
     },
     {
+      "path": "benchmarks/probes/acquisition/AcquisitionProbe.csproj",
+      "blob": "799ba66ddaa000eca61266532514aca6ac95b330"
+    },
+    {
       "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
       "blob": "877c108341f0a95dae5ec0fefa57e4ca6643d2c7"
     },

@@ -42,6 +42,19 @@ class RuntimeOwnershipTests(unittest.TestCase):
                 policy.role(owner, relative)
         self.assertEqual(policy.role('Contracts', path), 'typescript-build')
 
+    def test_acquisition_probe_is_only_exact_benchmark_project(self):
+        project = 'benchmarks/probes/acquisition/AcquisitionProbe.csproj'
+        self.assertEqual(policy.role('DesktopPlatform', project), 'test-or-build-tool')
+        for owner, relative in [
+            ('ArcScope', project),
+            ('DesktopPlatform', 'benchmarks/probes/acquisition/AcquisitionProbe.Extra.csproj'),
+            ('DesktopPlatform', 'benchmarks/probes/acquisition/OtherProbe.csproj'),
+            ('DesktopPlatform', 'benchmarks/probes/agent-aot/AgentAotProbe.csproj'),
+            ('DesktopPlatform', 'benchmarks/probes/other/AcquisitionProbe.csproj'),
+        ]:
+            with self.subTest(owner=owner, path=relative), self.assertRaises(ValueError):
+                policy.role(owner, relative)
+
     def test_registry_rejects_missing_duplicate_and_extra_owner(self):
         original = policy.document(policy.ROOT, policy.POLICY)
         policy.validate_policy(original)

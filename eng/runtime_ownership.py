@@ -26,6 +26,7 @@ import licence_boundary as inventory
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = 'eng/policy/runtime-ownership.json'
 CONTRACT_CLI = 'src/public/dotnet/ArcForges.Cli/ArcForges.Cli.csproj'
+ACQUISITION_PROBE = 'benchmarks/probes/acquisition/AcquisitionProbe.csproj'
 RUNTIMES = {
     'DesktopPlatform': 'dotnet-nativeaot-libraries-and-native-cabi',
     'Contracts': 'proto-generated-clients',
@@ -70,6 +71,8 @@ def document(root, relative):
 
 def role(owner, relative):
     if relative.endswith('.csproj'):
+        if owner == 'DesktopPlatform' and relative == ACQUISITION_PROBE:
+            return 'test-or-build-tool'
         if owner == 'Contracts' and relative == CONTRACT_CLI:
             return 'test-or-build-tool'
         if relative.startswith(('tests/', 'eng/')) or (relative.startswith('src/') and '/Tests/' in relative):
