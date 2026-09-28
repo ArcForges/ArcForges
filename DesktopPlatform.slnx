@@ -8,6 +8,8 @@
     <Project Path="src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj" />
+    <Project Path="tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Desktop.Preview/ArcForges.Desktop.Preview.csproj" />

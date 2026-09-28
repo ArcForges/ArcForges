@@ -973,5 +973,225 @@
     "apiSymbol": "ArcForges.Security.InstructionSnapshot.Decode(System.ReadOnlySpan<byte>)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.ActorChainTests.SnapshotWritersBoundRawAndEscapedPayloadsBeforeGrowingPastTheirBudget()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantWindowId.New()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.PublicGeneratedIdentityAndPresentationFactoriesAreStable()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantConversationId.New()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.PublicGeneratedIdentityAndPresentationFactoriesAreStable()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.ContextSelectionId.New()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.PublicGeneratedIdentityAndPresentationFactoriesAreStable()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantProfileId.New()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.PublicGeneratedIdentityAndPresentationFactoriesAreStable()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantHostOptions.Supports(ArcForges.Assistant.Abstractions.AssistantPresentationMode)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.PublicGeneratedIdentityAndPresentationFactoriesAreStable()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantProductIdentity.Parse(string)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ProductAndProfileIdentityAreClosedAndInstallationOwned()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantDataRoot.ForApplication(string, ArcForges.Assistant.Abstractions.AssistantInstallationIdentity)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ProductDataRootsAndProfilePartitionsCannotAliasBySelection()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantDataRoot.ForProfile(ArcForges.Assistant.Abstractions.AssistantProfileId)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ProductDataRootsAndProfilePartitionsCannotAliasBySelection()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantResourceReference.ToWire()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ResourceReferencesAndFrozenContextAreOwnedImmutableCopies()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantHost.Create(ArcForges.Assistant.Abstractions.AssistantHostOptions, ArcForges.Assistant.Abstractions.AssistantHostServices)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostCompositionRejectsForeignPortsAndAStoreOrRegistrationCannotCrossProducts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSessionFactory.Create(ArcForges.Assistant.Abstractions.AssistantHostOptions, ArcForges.Assistant.Abstractions.AssistantHostServices)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostCompositionRejectsForeignPortsAndAStoreOrRegistrationCannotCrossProducts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostContext.DescribeSelection()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostContextAndResourcePortsReturnOwnedTypedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostContext.FreezeAsync(System.Collections.Generic.IReadOnlyCollection<ArcForges.Assistant.Abstractions.ContextSelectionId>, ArcForges.Assistant.Abstractions.AssistantContextBudget, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostContextAndResourcePortsReturnOwnedTypedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostResources.Resolve(ArcForges.Assistant.Abstractions.AssistantResourceReference)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostContextAndResourcePortsReturnOwnedTypedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostResources.OpenReadAsync(ArcForges.Assistant.Abstractions.HostResourceReadGrant, ArcForges.Assistant.Abstractions.HostByteRange, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostContextAndResourcePortsReturnOwnedTypedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostResources.Present(ArcForges.Assistant.Abstractions.AssistantResourceReference, ArcForges.Assistant.Abstractions.HostPreviewMode)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostContextAndResourcePortsReturnOwnedTypedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostResources.SaveAsAsync(ArcForges.Assistant.Abstractions.AssistantResourceReference, ArcForges.Assistant.Abstractions.HostFileGrant, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.HostContextAndResourcePortsReturnOwnedTypedResults()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostNavigation.OpenOwnedResource(ArcForges.Assistant.Abstractions.AssistantResourceReference, string?)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostNavigation.RequestPanel(ArcForges.Assistant.Abstractions.AssistantPresentationMode, ArcForges.Assistant.Abstractions.AssistantWindowId)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostNavigation.ShowAttention(ArcForges.Assistant.Abstractions.AssistantAttentionRequest)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostLifecycle.GetBusyState()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostLifecycle.PrepareShutdownAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostLifecycle.OnProfileChangingAsync(ArcForges.Assistant.Abstractions.AssistantProfileId, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostLifecycle.OnResumed()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostDispatcher.InvokeAsync(System.Action, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostSecureStorage.GetOrCreateHandleAsync(string, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostSecureStorage.DeleteAsync(ArcForges.Assistant.Abstractions.AssistantSecretHandle, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostFilePicker.RequestReadAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostFilePicker.RequestWriteAsync(string, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostClipboard.CopyTextAsync(string, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostClipboard.ReadTextAfterUserGestureAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.NavigationLifecycleAndPlatformPortsRemainHostBound()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostActions.Register<TRequest, TResult>(ArcForges.Assistant.Abstractions.AssistantActionDescriptor, System.Func<TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.Foundation.Errors.Outcome<TResult>>>, System.Func<ArcForges.Assistant.Abstractions.FrozenHostContext?, ArcForges.Assistant.Abstractions.ActionAvailability>)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ActionRegistryIsUsableThroughItsHostPortContract()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostActions.GetAvailability(string, ArcForges.Assistant.Abstractions.FrozenHostContext?)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ActionRegistryIsUsableThroughItsHostPortContract()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IHostActions.InvokeAsync<TRequest, TResult>(ArcForges.Assistant.Abstractions.AssistantActionRegistration<TRequest, TResult>, ArcForges.Assistant.Abstractions.AssistantHostIdentity, TRequest, ArcForges.Assistant.Abstractions.FrozenHostContext?, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ActionRegistryIsUsableThroughItsHostPortContract()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantActionRegistry.Register<TRequest, TResult>(ArcForges.Assistant.Abstractions.AssistantActionDescriptor, System.Func<TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.Foundation.Errors.Outcome<TResult>>>, System.Func<ArcForges.Assistant.Abstractions.FrozenHostContext?, ArcForges.Assistant.Abstractions.ActionAvailability>)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ActionRegistryIsUsableThroughItsHostPortContract()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantActionRegistry.GetAvailability(string, ArcForges.Assistant.Abstractions.FrozenHostContext?)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ActionRegistryIsUsableThroughItsHostPortContract()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantActionRegistry.InvokeAsync<TRequest, TResult>(ArcForges.Assistant.Abstractions.AssistantActionRegistration<TRequest, TResult>, ArcForges.Assistant.Abstractions.AssistantHostIdentity, TRequest, ArcForges.Assistant.Abstractions.FrozenHostContext?, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.ActionRegistryIsUsableThroughItsHostPortContract()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.OpenSurface(ArcForges.Assistant.Abstractions.AssistantSurfaceRequest)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.CreateConversationAsync(ArcForges.Assistant.Abstractions.AssistantHistoryMode, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.OpenConversationAsync(ArcForges.Assistant.Abstractions.AssistantConversationId, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.AttachContextAsync(System.Collections.Generic.IReadOnlyCollection<ArcForges.Assistant.Abstractions.ContextSelectionId>, ArcForges.Assistant.Abstractions.AssistantContextBudget, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.ObserveAttentionAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.SwitchProfileAsync(ArcForges.Assistant.Abstractions.AssistantProfileId, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantSession.PrepareShutdownAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CompositionTests.SessionSurfaceRemainsWithinOneHostComposition()"
   }
 ]

@@ -40,6 +40,14 @@
     "aot": true
   },
   {
+    "path": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
+    "role": "Abstractions",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
     "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
     "role": "Foundation",
     "owner": "DesktopPlatform",
@@ -217,6 +225,14 @@
   },
   {
     "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
+    "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
     "role": "Test",
     "owner": "DesktopPlatform",
     "module": "",
