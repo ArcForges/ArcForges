@@ -84,7 +84,24 @@ public sealed class ContextProvider<TMessage> : IContextProvider<TMessage>
         CancellationToken cancellationToken)
     {
         var messages = await ProvideAsync(expectedOwner, cancellationToken).ConfigureAwait(false);
-        return messages.Cast<IMessage>().ToArray();
+        return new MessageListView(messages);
+    }
+
+    private sealed class MessageListView(IReadOnlyList<TMessage> messages) : IReadOnlyList<IMessage>
+    {
+        public int Count => messages.Count;
+
+        public IMessage this[int index] => messages[index]!;
+
+        public IEnumerator<IMessage> GetEnumerator()
+        {
+            for (var index = 0; index < messages.Count; index++)
+            {
+                yield return messages[index]!;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
 
@@ -184,48 +201,7 @@ public sealed class FrozenContextSnapshot
         ulong totalBytes = 0;
         foreach (var message in messages)
         {
-            if (message is null)
-            {
-                throw new ArgumentException("A context provider cannot contribute a null protobuf message.", nameof(messages));
-            }
-
-            if ((ulong)frozen.Count >= budget.MaxItems)
-            {
-                throw new ContextBudgetExceededException(ContextBudgetLimit.ItemCount, (ulong)frozen.Count + 1, budget.MaxItems);
-            }
-
-            var descriptor = message.Descriptor;
-            var size = message.CalculateSize();
-            if (size < 0)
-            {
-                throw new InvalidOperationException("A protobuf message reported a negative encoded size.");
-            }
-
-            var prospectiveBytes = checked(totalBytes + (uint)size);
-            if (prospectiveBytes > budget.MaxBytes)
-            {
-                throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, prospectiveBytes, budget.MaxBytes);
-            }
-
-            var serialized = message.ToByteArray();
-            if (!ReferenceEquals(message.Descriptor, descriptor))
-            {
-                throw new InvalidOperationException("A protobuf message changed descriptor while the context snapshot was being frozen.");
-            }
-
-            if (serialized.Length != size)
-            {
-                var actualBytes = checked(totalBytes + (uint)serialized.Length);
-                if (actualBytes > budget.MaxBytes)
-                {
-                    throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, actualBytes, budget.MaxBytes);
-                }
-
-                throw new InvalidOperationException("A protobuf message changed while the context snapshot was being frozen.");
-            }
-
-            totalBytes = prospectiveBytes;
-            frozen.Add(new FrozenContextItem(descriptor, serialized));
+            FreezeMessage(message, nameof(messages), budget, frozen, ref totalBytes);
         }
 
         return new FrozenContextSnapshot(owner, frozen.ToArray(), (uint)totalBytes);
@@ -251,20 +227,94 @@ public sealed class FrozenContextSnapshot
     {
         ArgumentNullException.ThrowIfNull(providers);
         ArgumentNullException.ThrowIfNull(capturedOwner);
-        var messages = new List<IMessage>();
+        var effectiveBudget = budget ?? ContextSnapshotBudget.Default;
+        var frozen = new List<IFrozenContextItem>();
+        ulong totalBytes = 0;
         foreach (var provider in providers)
         {
             ArgumentNullException.ThrowIfNull(provider);
-            ArgumentNullException.ThrowIfNull(provider.Owner);
-            if (provider.Owner != capturedOwner)
+            var providerOwner = provider.Owner;
+            ArgumentNullException.ThrowIfNull(providerOwner);
+            if (providerOwner != capturedOwner)
             {
-                throw new ContextScopeMismatchException(provider.Owner, capturedOwner);
+                throw new ContextScopeMismatchException(providerOwner, capturedOwner);
             }
 
             var contribution = await provider.ProvideMessagesAsync(capturedOwner, cancellationToken).ConfigureAwait(false);
-            messages.AddRange(contribution);
+            ArgumentNullException.ThrowIfNull(contribution);
+
+            var contributionCount = contribution.Count;
+            if (contributionCount < 0)
+            {
+                throw new InvalidOperationException("A context provider reported a negative contribution count.");
+            }
+
+            var prospectiveCount = checked((ulong)frozen.Count + (uint)contributionCount);
+            if (prospectiveCount > effectiveBudget.MaxItems)
+            {
+                throw new ContextBudgetExceededException(
+                    ContextBudgetLimit.ItemCount,
+                    prospectiveCount,
+                    effectiveBudget.MaxItems);
+            }
+
+            for (var index = 0; index < contributionCount; index++)
+            {
+                FreezeMessage(contribution[index], nameof(providers), effectiveBudget, frozen, ref totalBytes);
+            }
         }
 
-        return Freeze(capturedOwner, messages, budget ?? ContextSnapshotBudget.Default);
+        return new FrozenContextSnapshot(capturedOwner, frozen.ToArray(), (uint)totalBytes);
+    }
+
+    private static void FreezeMessage(
+        IMessage message,
+        string parameterName,
+        ContextSnapshotBudget budget,
+        List<IFrozenContextItem> frozen,
+        ref ulong totalBytes)
+    {
+        if (message is null)
+        {
+            throw new ArgumentException("A context provider cannot contribute a null protobuf message.", parameterName);
+        }
+
+        if ((ulong)frozen.Count >= budget.MaxItems)
+        {
+            throw new ContextBudgetExceededException(ContextBudgetLimit.ItemCount, (ulong)frozen.Count + 1, budget.MaxItems);
+        }
+
+        var descriptor = message.Descriptor;
+        var size = message.CalculateSize();
+        if (size < 0)
+        {
+            throw new InvalidOperationException("A protobuf message reported a negative encoded size.");
+        }
+
+        var prospectiveBytes = checked(totalBytes + (uint)size);
+        if (prospectiveBytes > budget.MaxBytes)
+        {
+            throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, prospectiveBytes, budget.MaxBytes);
+        }
+
+        var serialized = message.ToByteArray();
+        if (!ReferenceEquals(message.Descriptor, descriptor))
+        {
+            throw new InvalidOperationException("A protobuf message changed descriptor while the context snapshot was being frozen.");
+        }
+
+        if (serialized.Length != size)
+        {
+            var actualBytes = checked(totalBytes + (uint)serialized.Length);
+            if (actualBytes > budget.MaxBytes)
+            {
+                throw new ContextBudgetExceededException(ContextBudgetLimit.SerializedBytes, actualBytes, budget.MaxBytes);
+            }
+
+            throw new InvalidOperationException("A protobuf message changed while the context snapshot was being frozen.");
+        }
+
+        totalBytes = prospectiveBytes;
+        frozen.Add(new FrozenContextItem(descriptor, serialized));
     }
 }

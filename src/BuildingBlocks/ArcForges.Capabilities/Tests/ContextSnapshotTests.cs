@@ -63,6 +63,72 @@ public sealed class ContextSnapshotTests
     }
 
     [Xunit.Fact]
+    public async Task FreezeAsyncRefusesOverLimitProviderBeforeEnumeratingOrCallingLaterProviders()
+    {
+        var owner = Owner();
+        var output = new CountingReadOnlyList<StringValue>(new StringValue { Value = "untrusted" }, count: 201);
+        var providerCalls = 0;
+        var provider = new ContextProvider<StringValue>(owner, (_, _) =>
+        {
+            providerCalls++;
+            return ValueTask.FromResult<IReadOnlyList<StringValue>>(output);
+        });
+        var laterProviderCalled = false;
+        var laterProvider = new ContextProvider<Int32Value>(owner, (_, _) =>
+        {
+            laterProviderCalled = true;
+            return ValueTask.FromResult<IReadOnlyList<Int32Value>>([new Int32Value { Value = 7 }]);
+        });
+
+        var refusal = await Xunit.Assert.ThrowsAsync<ContextBudgetExceededException>(async () =>
+            await FrozenContextSnapshot.FreezeAsync(
+                [provider, laterProvider],
+                owner,
+                new ContextSnapshotBudget(maxItems: 2, maxBytes: 128),
+                Xunit.TestContext.Current.CancellationToken).ConfigureAwait(false));
+
+        Xunit.Assert.Equal(ContextBudgetLimit.ItemCount, refusal.Limit);
+        Xunit.Assert.Equal(201ul, refusal.Actual);
+        Xunit.Assert.Equal(2u, refusal.Maximum);
+        Xunit.Assert.Equal(1, providerCalls);
+        Xunit.Assert.Equal(0, output.EnumerationCount);
+        Xunit.Assert.Equal(0, output.IndexerReadCount);
+        Xunit.Assert.False(laterProviderCalled);
+    }
+
+    [Xunit.Fact]
+    public async Task FreezeAsyncEnforcesCumulativeByteBudgetBeforeCallingLaterProviders()
+    {
+        var owner = Owner();
+        var firstMessage = new StringValue { Value = "first" };
+        var crossingMessage = new StringValue { Value = new string('x', 64) };
+        var expectedBytes = (uint)(firstMessage.CalculateSize() + crossingMessage.CalculateSize());
+        var byteBudget = expectedBytes - 1;
+        var firstProvider = new ContextProvider<StringValue>(owner,
+            (_, _) => ValueTask.FromResult<IReadOnlyList<StringValue>>([firstMessage]));
+        var crossingProvider = new ContextProvider<StringValue>(owner,
+            (_, _) => ValueTask.FromResult<IReadOnlyList<StringValue>>([crossingMessage]));
+        var laterProviderCalled = false;
+        var laterProvider = new ContextProvider<Int32Value>(owner, (_, _) =>
+        {
+            laterProviderCalled = true;
+            return ValueTask.FromResult<IReadOnlyList<Int32Value>>([new Int32Value { Value = 7 }]);
+        });
+
+        var refusal = await Xunit.Assert.ThrowsAsync<ContextBudgetExceededException>(async () =>
+            await FrozenContextSnapshot.FreezeAsync(
+                [firstProvider, crossingProvider, laterProvider],
+                owner,
+                new ContextSnapshotBudget(maxItems: 10, maxBytes: byteBudget),
+                Xunit.TestContext.Current.CancellationToken).ConfigureAwait(false));
+
+        Xunit.Assert.Equal(ContextBudgetLimit.SerializedBytes, refusal.Limit);
+        Xunit.Assert.Equal((ulong)expectedBytes, refusal.Actual);
+        Xunit.Assert.Equal(byteBudget, refusal.Maximum);
+        Xunit.Assert.False(laterProviderCalled);
+    }
+
+    [Xunit.Fact]
     public async Task ProviderRefusesCrossProductInstanceOrEpochBeforeInvokingOwner()
     {
         var owner = Owner();
@@ -132,5 +198,38 @@ public sealed class ContextSnapshotTests
             1, ContextSnapshotBudget.DefaultMaximumBytes + 1));
         Xunit.Assert.Equal(50u, ContextSnapshotBudget.Default.MaxItems);
         Xunit.Assert.Equal(65_536u, ContextSnapshotBudget.Default.MaxBytes);
+    }
+
+    private sealed class CountingReadOnlyList<T>(T item, int count) : IReadOnlyList<T>
+    {
+        public int EnumerationCount { get; private set; }
+        public int IndexerReadCount { get; private set; }
+
+        public int Count => count;
+
+        public T this[int index]
+        {
+            get
+            {
+                IndexerReadCount++;
+                if ((uint)index >= (uint)count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                }
+
+                return item;
+            }
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            EnumerationCount++;
+            for (var index = 0; index < count; index++)
+            {
+                yield return item;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
