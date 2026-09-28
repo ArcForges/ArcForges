@@ -558,7 +558,10 @@
     "tests/PersistenceTests/StoreTests.cs",
     "tests/PersistenceTests/packages.lock.json",
     "tests/tooling/test_native_provenance.py",
-    "win.slnx"
+    "win.slnx",
+    "src/BuildingBlocks/ArcForges.Capabilities/CapabilityRegistry.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/CapabilityRegistryTests.cs",
+    "eng/policy/dependency-reviews/plt-19-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
