@@ -28,7 +28,7 @@
     },
     {
       "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
-      "blob": "661867a7fe684ff892101f0c94146535d877a894"
+      "blob": "6a73e46863d2f68fa722611f3f7afed83950f2b8"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj",
