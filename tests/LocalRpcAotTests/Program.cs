@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -13,8 +14,8 @@ using Google.Protobuf.Reflection;
 using Grpc.Core;
 using Grpc.AspNetCore.Server;
 using Grpc.Net.Client;
-using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Transport.NamedPipes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -22,6 +23,7 @@ internal static class Program
 {
     private const int MaximumMessageBytes = 4 * 1024 * 1024;
 
+    [SuppressMessage("Usage", "CA1031", Justification = "This executable is a test boundary; report every probe failure and return a failing process exit code.")]
     public static async Task<int> Main(string[] args)
     {
         try
@@ -47,7 +49,7 @@ internal static class Program
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"PRF.04 failed: {exception}");
+            await Console.Error.WriteLineAsync($"PRF.04 failed: {exception}").ConfigureAwait(false);
             return 1;
         }
     }
@@ -110,6 +112,12 @@ internal static class Program
 
             if (runUnauthorizedChecks)
             {
+                var dispatchesBeforeRogue = await ReadChallengeDispatchCountAsync(processB).ConfigureAwait(false);
+                if (dispatchesBeforeRogue != 0)
+                {
+                    throw new InvalidOperationException("The target worker handled a challenge before the negative-input phase.");
+                }
+
                 var wrongSecret = RandomNumberGenerator.GetBytes(32);
                 if (CryptographicOperations.FixedTimeEquals(wrongSecret, sharedSecret))
                 {
@@ -119,13 +127,31 @@ internal static class Program
                 using var rogue = StartRogue(executable, transport, addressB, wrongSecret);
                 CryptographicOperations.ZeroMemory(wrongSecret);
                 await SendCommandAsync(rogue, "GO").ConfigureAwait(false);
-                var rogueResult = await ReadLineAsync(rogue, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-                if (rogueResult != "PASS unauthorized malformed bounded")
+                var malformedResult = await ReadLineAsync(rogue, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                if (malformedResult != "MALFORMED|refused")
                 {
-                    throw new InvalidOperationException("The same-user rogue process was not rejected or a negative bound check failed: " + rogueResult);
+                    throw new InvalidOperationException("The malformed-input check did not report its refusal stage: " + malformedResult);
+                }
+
+                var dispatchesAfterMalformed = await ReadChallengeDispatchCountAsync(processB).ConfigureAwait(false);
+                if (dispatchesAfterMalformed != dispatchesBeforeRogue + 1)
+                {
+                    throw new InvalidOperationException("The malformed protobuf request reached the Challenge service method.");
+                }
+
+                await SendCommandAsync(rogue, "CONTINUE").ConfigureAwait(false);
+                var rogueResult = await ReadLineAsync(rogue, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                if (rogueResult != "PASS unauthorized malformed recovered bounded")
+                {
+                    throw new InvalidOperationException("The same-user rogue process was not rejected or the channel failed to recover after malformed input: " + rogueResult);
                 }
 
                 await EnsureExitedAsync(rogue).ConfigureAwait(false);
+                var dispatchesAfterRecovery = await ReadChallengeDispatchCountAsync(processB).ConfigureAwait(false);
+                if (dispatchesAfterRecovery != dispatchesAfterMalformed + 1)
+                {
+                    throw new InvalidOperationException("A valid post-malformed Challenge call did not reach the service exactly once.");
+                }
             }
 
             await SendCommandAsync(processA, $"GO|{readyB.ProcessId}|{readyB.InstanceId}").ConfigureAwait(false);
@@ -211,6 +237,19 @@ internal static class Program
         return read;
     }
 
+    private static async Task<int> ReadChallengeDispatchCountAsync(Process worker)
+    {
+        await SendCommandAsync(worker, "COUNT").ConfigureAwait(false);
+        var line = await ReadLineAsync(worker, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        var parts = line.Split('|');
+        if (parts.Length != 2 || parts[0] != "CHALLENGE-DISPATCHES" || !int.TryParse(parts[1], out var count))
+        {
+            throw new InvalidOperationException("The worker returned an invalid private dispatch-count record: " + line);
+        }
+
+        return count;
+    }
+
     private static async Task SendCommandAsync(Process process, string command)
     {
         await process.StandardInput.WriteLineAsync(command).ConfigureAwait(false);
@@ -263,29 +302,47 @@ internal static class Program
         var control = Console.OpenStandardInput();
         var secret = new byte[32];
         await control.ReadExactlyAsync(secret).ConfigureAwait(false);
-        var controlReader = new StreamReader(control, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 256, leaveOpen: true);
+        using var controlReader = new StreamReader(control, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 256, leaveOpen: true);
         var instance = Guid.NewGuid();
         var ownManifest = CreateManifest(transport, ownAddress, instance);
         var state = new BootstrapState(secret, ownManifest, instance);
-        await using var app = CreateServer(transport, ownAddress, state);
-        await app.StartAsync().ConfigureAwait(false);
-        Console.WriteLine($"READY|{Environment.ProcessId}|{Convert.ToHexString(GuidBytes(instance))}");
-
-        var command = await controlReader.ReadLineAsync().ConfigureAwait(false)
-            ?? throw new InvalidOperationException("Parent closed the private probe control stream before GO.");
-        var parts = command.Split('|');
-        if (parts.Length != 3 || parts[0] != "GO" || !int.TryParse(parts[1], out var expectedPeerPid))
+        var app = CreateServer(transport, ownAddress, state);
+        await using (app.ConfigureAwait(false))
         {
-            throw new InvalidOperationException("Invalid private probe control command.");
-        }
+            await app.StartAsync().ConfigureAwait(false);
+            Console.WriteLine($"READY|{Environment.ProcessId}|{Convert.ToHexString(GuidBytes(instance))}");
 
-        var expectedPeerInstance = Convert.FromHexString(parts[2]);
-        await RunClientChecksAsync(state, transport, peerAddress, expectedPeerPid, expectedPeerInstance).ConfigureAwait(false);
-        await state.BothDirectionsAuthenticated.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-        await app.StopAsync().ConfigureAwait(false);
-        CryptographicOperations.ZeroMemory(secret);
-        Console.WriteLine("PASS worker");
-        return 0;
+            int expectedPeerPid;
+            string expectedPeerInstance;
+            while (true)
+            {
+                var command = await controlReader.ReadLineAsync().ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("Parent closed the private probe control stream before GO.");
+                if (command == "COUNT")
+                {
+                    await Console.Out.WriteLineAsync($"CHALLENGE-DISPATCHES|{state.ChallengeDispatchCount}").ConfigureAwait(false);
+                    continue;
+                }
+
+                var parts = command.Split('|');
+                if (parts.Length != 3 || parts[0] != "GO" || !int.TryParse(parts[1], out expectedPeerPid))
+                {
+                    throw new InvalidOperationException("Invalid private probe control command.");
+                }
+
+                expectedPeerInstance = parts[2];
+                break;
+            }
+
+            await RunClientChecksAsync(state, transport, peerAddress, expectedPeerPid, Convert.FromHexString(expectedPeerInstance))
+                .ConfigureAwait(false);
+            await state.BothDirectionsAuthenticated.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            await state.PeerRenewalObserved.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            await app.StopAsync().ConfigureAwait(false);
+            CryptographicOperations.ZeroMemory(secret);
+            Console.WriteLine("PASS worker");
+            return 0;
+        }
     }
 
     private static async Task RunClientChecksAsync(
@@ -389,7 +446,7 @@ internal static class Program
         var control = Console.OpenStandardInput();
         var wrongSecret = new byte[32];
         await control.ReadExactlyAsync(wrongSecret).ConfigureAwait(false);
-        var controlReader = new StreamReader(control, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 256, leaveOpen: true);
+        using var controlReader = new StreamReader(control, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 256, leaveOpen: true);
         if (await controlReader.ReadLineAsync().ConfigureAwait(false) != "GO")
         {
             throw new InvalidOperationException("Parent closed the private rogue control stream before GO.");
@@ -431,9 +488,16 @@ internal static class Program
         }
 
         await VerifyMalformedInputAsync(channel).ConfigureAwait(false);
+        await Console.Out.WriteLineAsync("MALFORMED|refused").ConfigureAwait(false);
+        if (await controlReader.ReadLineAsync().ConfigureAwait(false) != "CONTINUE")
+        {
+            throw new InvalidOperationException("Parent did not continue the malformed-input recovery check.");
+        }
+
+        await VerifyNormalChallengeAsync(client, transport).ConfigureAwait(false);
         await VerifyBoundedInputAsync(client).ConfigureAwait(false);
         CryptographicOperations.ZeroMemory(wrongSecret);
-        Console.WriteLine("PASS unauthorized malformed bounded");
+        await Console.Out.WriteLineAsync("PASS unauthorized malformed recovered bounded").ConfigureAwait(false);
         return 0;
     }
 
@@ -456,9 +520,67 @@ internal static class Program
             _ = await call.ResponseAsync.ConfigureAwait(false);
             throw new InvalidOperationException("Malformed protobuf input was accepted.");
         }
-        catch (RpcException exception) when (exception.StatusCode is StatusCode.Internal or StatusCode.InvalidArgument)
+        catch (RpcException exception)
         {
-            // The generated protobuf decoder refused the malformed wire payload.
+            VerifySanitizedMalformedRefusal(exception);
+        }
+    }
+
+    private static void VerifySanitizedMalformedRefusal(RpcException exception)
+    {
+        var detail = exception.Status.Detail;
+        if (exception.StatusCode == StatusCode.OK || !IsSanitizedDiagnostic(detail) || exception.Trailers.Count > 8)
+        {
+            throw new InvalidOperationException("Malformed protobuf refusal was successful or returned an unbounded/unsafe status detail.");
+        }
+
+        var trailerBytes = 0;
+        foreach (var trailer in exception.Trailers)
+        {
+            if (!IsSanitizedDiagnostic(trailer.Key) || trailer.IsBinary)
+            {
+                throw new InvalidOperationException("Malformed protobuf refusal returned an unsafe or opaque binary trailer.");
+            }
+
+            trailerBytes += Encoding.UTF8.GetByteCount(trailer.Key) + Encoding.UTF8.GetByteCount(trailer.Value);
+            if (!IsSanitizedDiagnostic(trailer.Value))
+            {
+                throw new InvalidOperationException("Malformed protobuf refusal trailer leaked sensitive or unbounded detail.");
+            }
+        }
+
+        if (Encoding.UTF8.GetByteCount(detail) + trailerBytes > 512)
+        {
+            throw new InvalidOperationException("Malformed protobuf refusal status metadata exceeded its 512-byte bound.");
+        }
+    }
+
+    private static bool IsSanitizedDiagnostic(string value) =>
+        value.Length <= 160 &&
+        value.All(character => character is >= ' ' and <= '~') &&
+        !value.Contains('/') &&
+        !value.Contains('\\') &&
+        value.IndexOf("stack", StringComparison.OrdinalIgnoreCase) < 0 &&
+        value.IndexOf("path", StringComparison.OrdinalIgnoreCase) < 0 &&
+        value.IndexOf("secret", StringComparison.OrdinalIgnoreCase) < 0;
+
+    private static async Task VerifyNormalChallengeAsync(LocalBootstrapService.LocalBootstrapServiceClient client, string transport)
+    {
+        var challenge = RandomNumberGenerator.GetBytes(32);
+        try
+        {
+            var response = await client.ChallengeAsync(
+                NewChallengeRequest(CreateManifest(transport, "post-malformed", Guid.NewGuid()), challenge),
+                deadline: DateTime.UtcNow.AddSeconds(5)).ResponseAsync.ConfigureAwait(false);
+            if (response.OutcomeCase != LocalBootstrapServiceChallengeResponse.OutcomeOneofCase.Value ||
+                response.Value.ServerChallenge.Length != 32)
+            {
+                throw new InvalidOperationException("A normal generated LocalBootstrap call did not succeed after malformed input.");
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(challenge);
         }
     }
 
@@ -482,6 +604,11 @@ internal static class Program
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
+        if (OperatingSystem.IsWindows())
+        {
+            builder.WebHost.UseNamedPipes(options => options.CurrentUserOnly = true);
+        }
+
         builder.WebHost.ConfigureKestrel(options =>
         {
             if (transport == "pipe")
@@ -499,11 +626,7 @@ internal static class Program
             options.MaxReceiveMessageSize = MaximumMessageBytes;
             options.MaxSendMessageSize = MaximumMessageBytes;
         });
-        if (transport == "pipe")
-        {
-            builder.Services.AddSingleton<IConnectionListenerFactory, NamedPipeStreamListenerFactory>();
-        }
-
+        builder.Services.AddSingleton(new LocalBootstrapProbeService(state));
         var app = builder.Build();
         app.MapGrpcService<LocalBootstrapProbeService>();
         return app;
@@ -513,6 +636,8 @@ internal static class Program
     {
         var handler = new SocketsHttpHandler
         {
+            UseProxy = false,
+            EnableMultipleHttp2Connections = true,
             ConnectCallback = async (_, cancellationToken) =>
             {
                 if (transport == "pipe")
@@ -660,6 +785,7 @@ internal static class Program
 internal sealed class BootstrapState(byte[] secret, EndpointManifest manifest, Guid instanceId)
 {
     private int _confirmedDirections;
+    private int _challengeDispatchCount;
     private byte[]? _secret = secret;
 
     public EndpointManifest Manifest { get; } = manifest;
@@ -668,6 +794,10 @@ internal sealed class BootstrapState(byte[] secret, EndpointManifest manifest, G
     public ConcurrentDictionary<string, byte[]> Leases { get; } = new(StringComparer.Ordinal);
     public TaskCompletionSource BothDirectionsAuthenticated { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource PeerRenewalObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int ChallengeDispatchCount => Volatile.Read(ref _challengeDispatchCount);
+
+    public void MarkChallengeDispatched() => Interlocked.Increment(ref _challengeDispatchCount);
 
     public byte[] Secret => Volatile.Read(ref _secret) ?? throw new InvalidOperationException("The one-use bootstrap secret has been destroyed.");
 
@@ -703,6 +833,7 @@ internal sealed class LocalBootstrapProbeService(BootstrapState state) : LocalBo
         LocalBootstrapServiceChallengeRequest request,
         ServerCallContext context)
     {
+        state.MarkChallengeDispatched();
         if (request.Challenge.Length == 32 && request.Challenge.Span[0] == 0xEE)
         {
             try
@@ -802,6 +933,7 @@ internal sealed class LocalBootstrapProbeService(BootstrapState state) : LocalBo
             });
         }
 
+        state.PeerRenewalObserved.TrySetResult();
         return Task.FromResult(new LocalBootstrapServiceRenewResponse
         {
             Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
