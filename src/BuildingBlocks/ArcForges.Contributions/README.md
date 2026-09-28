@@ -1,6 +1,8 @@
 # ArcForges.Contributions
 
-PLT.18 provides explicit, per-application registration for statically declared first-party contributions. A registry is bound to one `ApplicationComposition<T>` and the installation identity of that composition. It validates the product-owned contribution namespace and declared tool schemas, stores metadata through an owner-provided durable state port, and creates only strongly typed owner handlers. Registration does not grant invocation permission.
+PLT.18 provides explicit, per-application registration for first-party contributions declared in an immutable `IContributionCatalog`. A registry is bound to one `ApplicationComposition<T>` and the installation identity of that composition, snapshots the injected catalog, and verifies its owner, namespace, descriptor/schema bindings and SHA-256 fingerprint before accepting registrations. A runtime caller can select and bind a handler only to an exact catalog descriptor; constructing another descriptor or schema at runtime cannot extend the catalog. Registered metadata is stored through an owner-provided durable state port, and handlers remain strongly typed. Registration does not grant invocation permission.
+
+`IContributionCatalog` is the generated/static catalog contract. This project does not implement a source generator; its committed tests use an ordinary fixture implementation and do not label handwritten source as generated output. Product composition must supply its own generated or otherwise statically declared catalog.
 
 `IContributionRegistrationStore` is the application-owned persistence seam. A production adapter must partition records by the exact product installation and atomically treat an identical record as idempotent while refusing a conflicting record with the same key. The offline tests exercise the seam through the existing PLT.01 `IStore`; SQLite is not a dependency of this package.
 
