@@ -250,7 +250,10 @@ public sealed class InProcessStateHintFeed
     private void RemoveFirst()
     {
         var first = _hints.First;
-        if (first is null) return;
+        if (first is null)
+        {
+            return;
+        }
         _hints.RemoveFirst();
         _byTarget.Remove(new HintKey(first.Value.Kind, first.Value.TargetId));
     }
