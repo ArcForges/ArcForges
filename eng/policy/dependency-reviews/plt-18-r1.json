@@ -3,7 +3,7 @@
     "owner": "af-20260928-p03",
     "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "357e8a56004ff08776767ff6a9e43e138071685e",
+    "baselineCommit": "497263e3f2cea3056a502e8f956b099f13a173f7",
     "maintenanceAssessment": "PLT.18 adds the first-party Contributions runtime project and offline test project over the existing Capabilities and Persistence.Sqlite projects. The runtime project references Capabilities only; SQLite is test-only. No NuGet coordinate, version, or aggregate external closure changes; the existing NuGet, Python, native and framework closures remain byte-identical. Child/extension wire registration is explicitly refused and deferred because DesktopPlatform has no admitted ArcForges.Sdk.Contracts dependency edge; no wire DTO is copied and no extension-host integration is claimed.",
     "upgradeChecks": {
       "compilation": "Exact SDK10.0.400 locked restore and Release test pass with all seven focused MTP tests. The default system SDK remains10.0.401, so use C:\\Users\\J7Rdm\\.dotnet\\dotnet.exe for local validation. An initial10.0.401-generated lock was discarded after it exposed ILLink10.0.12 drift; the final locks were regenerated under10.0.400 and the admitted closure is unchanged.",
@@ -223,6 +223,10 @@
       "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
       "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "647aa9607d45928de253b7f96c4f185b7b6524db26eafdc936b800777537fe7d",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "7464a73d85bbaba7e8bd347643a3bd042aef4004fdacec87fcc08eda1eede7df",
+      "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c2ee803e0ea8307fff6edd13f351182ea743182bc24b35ff12bdbc1cc6e94e49",
+      "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
+      "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
+      "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
       "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
       "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "8feaa552bdf82d4fd957197f00da9481230cdbc123252bbc937e73cef36e6659",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
@@ -242,7 +246,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov-14-naming-r4.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-26-r2.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
