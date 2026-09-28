@@ -3,12 +3,12 @@
     "owner": "af-20260928-p02",
     "reviewer": "Independent exact-head dependency-admission review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "784f238c4c01590e8de6fe5e1472ed79b70ac222",
-    "maintenanceAssessment": "PLT.07 adds a task-scoped persistence-derived contracts library and its non-packable test host. The host reuses only the already-admitted .NET 10.0.400, analyzer, xUnit and test SDK coordinates; the library contributes no NuGet package reference. Regenerating both new lockfiles with the pinned 10.0.400 SDK changes Microsoft.NET.ILLink.Tasks from the incorrect 10.0.12 lock to the SDK-resolved 10.0.11 already present in the admitted closure. The complete aggregate remains the same 47 exact coordinates with no new version, package identity, central pin, transitive dependency or licence. All prior receipts remain immutable; this receipt is a successor to the active PLT.18 receipt and preserves its GOV.12/PRF.04/PLT.18 ancestry.",
+    "baselineCommit": "9e3cff458fbef1ce4326c5d8141e478ac9d11b6b",
+    "maintenanceAssessment": "PLT.07 adds a task-scoped persistence-derived contracts library and its non-packable test host. The host reuses only the already-admitted .NET 10.0.400, analyzer, xUnit and test SDK coordinates; the library contributes no NuGet package reference. Regenerating both new lockfiles with the pinned 10.0.400 SDK changes Microsoft.NET.ILLink.Tasks from the incorrect 10.0.12 lock to the SDK-resolved 10.0.11 already present in the admitted closure. The aggregate inherits the four build-only Avalonia coordinates admitted by PRF.09 and otherwise adds no package coordinate, version, central pin, transitive dependency or licence. This receipt succeeds immutable PRF.09 and preserves its PLT.18/GOV.12/PRF.04 ancestry.",
     "upgradeChecks": {
-      "compilation": "On the PLT.07 candidate diff based on DesktopPlatform 784f238c4c01590e8de6fe5e1472ed79b70ac222, both new lockfiles were regenerated with the explicit SDK C:/Users/J7Rdm/.dotnet/dotnet.exe 10.0.400. Full solution locked restore and dotnet format DesktopPlatform.slnx --verify-no-changes --no-restore passed; full Release solution build passed with 0 warnings and 0 errors; the focused ArcForges.Persistence.Derived.Tests suite passed 15/15.",
+      "compilation": "On the rebased PLT.07 candidate based on DesktopPlatform 9e3cff458fbef1ce4326c5d8141e478ac9d11b6b, explicit .NET SDK 10.0.400 locked solution restore passed, full-solution dotnet format verification passed, full Release solution build passed with 0 warnings/errors, and ArcForges.Persistence.Derived.Tests passed 15/15. Local ArchitectureTests reached 99/100 but the policy evaluator stopped before RP-10 assertions while reconstructing unchanged DesignSystem GeneratedRegex partial methods (CS8795); fresh hosted managed-pack/aggregate CI is required for the architecture gate.",
       "aot-trim": "The new production contract project declares IsAotCompatible and introduces no reflection, dynamic loading or external runtime dependency. Release build and the repository's package/AOT CI remain required; no Native AOT runtime proof is claimed for this abstraction.",
-      "compatibility": "No external package coordinate/version, Directory.Packages.props pin, runtime package, public wire contract or existing lockfile changes. The aggregate lock closure stays byte-identical in package identity/version/content hashes after SDK-correct lock regeneration.",
+      "compatibility": "No external package coordinate/version, Directory.Packages.props pin, runtime package, public wire contract or unrelated existing lockfile change. The aggregate lock closure inherits only the PRF.09 build-only Avalonia verification dependencies; PLT.07 adds no dependency coordinate.",
       "licence-provenance": "Both new projects declare the existing AGPL-3.0-only boundary. No new NuGet coordinate or licence evidence is admitted; test-only coordinates reuse the already reviewed exact closure. The immutable receipt itself receives first-party provenance classification.",
       "security-sbom": "No new third-party component or external package version enters the closure. Existing NuGet audit, dependency-policy, licence, provenance and secret checks remain applicable; no claim of absent current advisories is made.",
       "runtime-performance-migration": "This task defines rebuildable derived-store contracts and derived-only eviction, not a production store adapter, migration, performance optimization or benchmark. No runtime-performance claim is made.",
@@ -177,6 +177,9 @@
       "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
       "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
       "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+      "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
+      "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
+      "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
       "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
       "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
       "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
@@ -252,7 +255,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-18-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/prf-09-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -616,6 +619,34 @@
       "nuspecSha256": "c0407f2bfbba8b98dfc27d55a8707c47afffa3debf66b1b562aba818159f43e8",
       "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3/4.0.1/xunit.v3.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "avalonia.buildservices/11.3.2": {
+      "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
+      "licence": "MIT",
+      "nuspecSha256": "a8846537f7d074b8f9ed753c03678128c36bd046939ee245fad8c575a7cd3e9b",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.buildservices/11.3.2/avalonia.buildservices.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia.remote.protocol/12.1.3": {
+      "contentHash": "HcF69DKyihgg5coLOSp7GTqxQvWAy58LMKauwcHA28uSBJVwu0h5+gTNdJA8Sn/nqJVTRDU98zYsk6i1QSwDVQ==",
+      "licence": "MIT",
+      "nuspecSha256": "4c0cd5ec137d2a376bab20e62bb2cbbdc9b71ffcb044acf41adeaf25cf5025b1",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.remote.protocol/12.1.3/avalonia.remote.protocol.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia/12.1.3": {
+      "contentHash": "l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==",
+      "licence": "MIT",
+      "nuspecSha256": "8fd64a84c229548a71e61390f4a310219f50529af0ee53162ffd39e7874ff4dc",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia/12.1.3/avalonia.nuspec",
+      "classification": "Build-only verification dependency for the isolated PRF.09 Native AOT probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "microcom.runtime/0.11.6": {
+      "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ==",
+      "licence": "MIT",
+      "nuspecSha256": "c7aeab4b73acdba3bb8e66865c2bbe67566b8593d972be2089181344adef345f",
+      "source": "https://api.nuget.org/v3-flatcontainer/microcom.runtime/0.11.6/microcom.runtime.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
     }
   },
   "pythonClosure": {

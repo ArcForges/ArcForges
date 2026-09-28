@@ -903,5 +903,40 @@
     "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.Store(System.ReadOnlySpan<byte>, string?)",
     "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
     "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ContentIsAddressedByHashButResolvedOnlyThroughBlobId()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.ICanonicalSnapshot<TValue>.ReadAllAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EachDefinedLocalKindCanBeDeletedAndRebuiltFromItsCanonicalSnapshot(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.ICanonicalSnapshotSource<TValue>.OpenSnapshotAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EachDefinedLocalKindCanBeDeletedAndRebuiltFromItsCanonicalSnapshot(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.DerivedStore.DeleteAllAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EachDefinedLocalKindCanBeDeletedAndRebuiltFromItsCanonicalSnapshot(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.DerivedStore.RebuildAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EachDefinedLocalKindCanBeDeletedAndRebuiltFromItsCanonicalSnapshot(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.DerivedStore<TCanonical, TDerived>.RebuildAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EachDefinedLocalKindCanBeDeletedAndRebuiltFromItsCanonicalSnapshot(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.StoragePressureEvictionPolicy.CreatePlan(ArcForges.Persistence.Derived.StoragePressureState, System.Collections.Generic.IEnumerable<ArcForges.Persistence.Derived.DerivedStore>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EvictionUsesRebuildCostThenLastUseAndNeverChangesCanonicalData()"
+  },
+  {
+    "apiSymbol": "ArcForges.Persistence.Derived.StoragePressureEvictionPolicy.ExecuteAsync(ArcForges.Persistence.Derived.DerivedEvictionPlan, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+    "testMethod": "ArcForges.Persistence.Derived.Tests.DerivedStoreTests.EvictionLocksEveryPlannedStoreBeforeValidationAndSerializesUsageUpdates()"
   }
 ]
