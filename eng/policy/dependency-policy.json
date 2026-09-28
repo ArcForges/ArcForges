@@ -545,7 +545,7 @@
     "owner": "af-20260928-g02",
     "reviewer": "af-20260928-g02 (GOV.12 producer; dependency-input lineage only, not an independent PR review)",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "497263e3f2cea3056a502e8f956b099f13a173f7",
+    "baselineCommit": "0ba78d58cb31c1226d8e0b70f2879ecc42d00699",
     "maintenanceAssessment": "GOV.12 adds a first-party canonical banned API category catalog as static Build.Policy package content and embeds it for explicit opt-in consumers through ArchitecturePolicy.props. The only dependency inputs changed are the package inventory path, Build.Policy project file, and ArchitecturePolicy.props. The exact NuGet and Python closures, versions, licensing evidence, package identity, and framework selection remain unchanged; this receipt records input-hash lineage only.",
     "upgradeChecks": {
       "compilation": "GOV.12 adds the canonical static JSON as Build.Policy package content without changing dependency coordinates; the exact-head build, pack candidate, formatting, and registered tests remain required in CI.",
