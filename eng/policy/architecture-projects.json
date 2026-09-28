@@ -144,6 +144,14 @@
     "aot": true
   },
   {
+    "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
     "role": "Persistence",
     "owner": "DesktopPlatform",

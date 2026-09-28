@@ -135,7 +135,8 @@ jobs:
             @{ Name = 'foundation-tests'; Project = 'src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj'; Label = 'Foundation primitive tests' },
             @{ Name = 'persistence-resources-tests'; Project = 'src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj'; Label = 'Append store offline tests' },
             @{ Name = 'persistence-derived-tests'; Project = 'src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj'; Label = 'Derived-store rebuild and eviction tests' },
-            @{ Name = 'capabilities-tests'; Project = 'src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj'; Label = 'Application composition tests' }
+            @{ Name = 'capabilities-tests'; Project = 'src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj'; Label = 'Application composition tests' },
+            @{ Name = 'observability-tests'; Project = 'src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj'; Label = 'Observability dimension and emission tests' }
           )
           $lateAccountingSuites = @(
             @{ Name = 'security-tests'; Project = 'src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj'; Label = 'Security actor chain tests' },

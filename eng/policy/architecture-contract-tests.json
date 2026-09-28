@@ -998,5 +998,25 @@
     "apiSymbol": "ArcForges.Capabilities.ResourceResolutionRegistry<TAccess>.ResolvePinnedAsync(ArcForges.Contracts.Foundation.V1.ResourceVersionRef?, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.PinnedResolutionPreservesTheExactRevisionAndNeverFallsBackToFloating()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.ObservabilityContext.FromApplicationAssembly(string, ArcForges.Contracts.Foundation.Values.InstanceId, string, System.Reflection.Assembly?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.ApplicationBuildIdentityComesFromThePolicyStampedAssembly()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.ObservabilityScope.Push(ArcForges.Observability.ObservabilityContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.AmbientContextsFollowAsyncFlowAndRestoreNestedValues()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.SignalEmitter.Emit(string, ArcForges.Observability.SignalLevel, System.Collections.Generic.IReadOnlyDictionary<string, object?>?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.IStructuredEventSink.Write(ArcForges.Observability.StructuredSignal)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
   }
 ]
