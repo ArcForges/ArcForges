@@ -9,6 +9,7 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
     <LicenceBoundary>AGPL</LicenceBoundary>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ArcForges.Contracts.LocalRpc.Platform" />

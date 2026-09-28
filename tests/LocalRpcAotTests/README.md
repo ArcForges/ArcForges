@@ -20,13 +20,27 @@ dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r linu
 ./artifacts/prf-04/linux-x64/LocalRpcAotTests
 ```
 
-For macOS, publish and run the matching `osx-x64` or `osx-arm64` RID on a macOS
-host. The probe selects Windows Named Pipes or Unix-domain sockets from the
-current OS. It creates two fresh worker-process pairs, provisions each pair a
-one-use secret over redirected private stdin (never argv, environment, or a
-file), completes challenge/confirm/renew in both directions, then checks
-cancellation, same-user wrong-secret refusal, malformed protobuf refusal, a
-4 MiB receive bound, and process disconnect/re-attach with new identities.
+The runtime peer-PID proof currently supports Windows Named Pipes and Linux
+Unix-domain sockets; macOS AOT compilation is not part of this test's supported
+runtime matrix. The parent starts owner A and peer B, authenticates them in both
+directions, then stops B while A's process, owner-session ID, and server remain
+alive. It restarts B at the same endpoint with the same installation ID but a
+new PID, instance ID, and parent-issued one-use launch nonce. A must reject the
+old channel/lease, then reconnect and authenticate B's new identity without
+restarting or replacing A's owner session.
+
+Each peer's accepted connection checks the OS-observed process ID against the
+parent-provisioned PID, the caller manifest's process/installation/instance
+tuple, and a one-use launch nonce supplied only over redirected private stdin.
+The same-user spoof child is given the actual test bootstrap secret and expected
+tuple but runs under a different OS PID; it must be refused before confirmation.
+The executable also checks bidirectional challenge/confirm, eight overlapping
+same-epoch renewals (one linearized success, stale fences refused), an
+expiry-boundary race held behind a server barrier (all post-expiry renewals
+refused), cancellation, sanitized malformed-protobuf refusal, and the 4 MiB
+receive bound. The lease epoch/fence headers are private test-fixture state;
+they do not change the generated Contracts wire DTOs or claim production lease
+semantics.
 
 The runtime checks use the published Native AOT executable itself as the
 parent, client, server, and worker. The test does not substitute an in-memory
