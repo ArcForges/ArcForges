@@ -150,7 +150,7 @@ public abstract class DerivedStore
 {
     private static readonly AsyncLocal<MutationContext?> ActiveMutationContext = new();
 
-    private readonly SemaphoreSlim mutationGate = new(1, 1);
+    private readonly AsyncMutationGate mutationGate = new();
     private DerivedStoreDescriptor descriptor;
 
     protected DerivedStore(DerivedStoreDescriptor descriptor)
@@ -322,6 +322,99 @@ public abstract class DerivedStore
 
             context.Close();
             ActiveMutationContext.Value = previous;
+        }
+    }
+
+    private sealed class AsyncMutationGate
+    {
+        private const int Waiting = 0;
+        private const int Granted = 1;
+        private const int Cancelled = 2;
+
+        private readonly object syncRoot = new();
+        private readonly Queue<Waiter> waiters = new();
+        private bool held;
+
+        public ValueTask WaitAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (syncRoot)
+            {
+                if (!held)
+                {
+                    held = true;
+                    return ValueTask.CompletedTask;
+                }
+
+                var waiter = new Waiter();
+                waiters.Enqueue(waiter);
+                return new ValueTask(WaitForTurnAsync(waiter, cancellationToken));
+            }
+        }
+
+        public void Release()
+        {
+            lock (syncRoot)
+            {
+                if (!held)
+                {
+                    throw new SemaphoreFullException("The derived-store mutation gate was released without being acquired.");
+                }
+
+                while (waiters.TryDequeue(out var waiter))
+                {
+                    if (waiter.State != Waiting)
+                    {
+                        continue;
+                    }
+
+                    waiter.State = Granted;
+                    waiter.Completion.TrySetResult(true);
+                    return;
+                }
+
+                held = false;
+            }
+        }
+
+        private async Task WaitForTurnAsync(Waiter waiter, CancellationToken cancellationToken)
+        {
+            if (cancellationToken.CanBeCanceled)
+            {
+                using var registration = cancellationToken.Register(
+                    static state =>
+                    {
+                        var cancellation = ((AsyncMutationGate Gate, Waiter Waiter, CancellationToken Token))state!;
+                        cancellation.Gate.Cancel(cancellation.Waiter, cancellation.Token);
+                    },
+                    (this, waiter, cancellationToken));
+                await waiter.Completion.Task.ConfigureAwait(false);
+            }
+            else
+            {
+                await waiter.Completion.Task.ConfigureAwait(false);
+            }
+        }
+
+        private void Cancel(Waiter waiter, CancellationToken cancellationToken)
+        {
+            lock (syncRoot)
+            {
+                if (waiter.State != Waiting)
+                {
+                    return;
+                }
+
+                waiter.State = Cancelled;
+                waiter.Completion.TrySetCanceled(cancellationToken);
+            }
+        }
+
+        private sealed class Waiter
+        {
+            public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public int State { get; set; } = Waiting;
         }
     }
 }

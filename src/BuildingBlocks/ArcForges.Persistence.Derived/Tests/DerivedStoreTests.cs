@@ -6,6 +6,7 @@ using Xunit;
 
 public sealed class DerivedStoreTests
 {
+    private static readonly string[] ExpectedConcurrentEvictionOrder = ["a-first", "b-second"];
     private static readonly string[] ExpectedEvictionOrder = ["cheap-cold", "cheap-warm"];
 
     [Theory]
@@ -213,7 +214,7 @@ public sealed class DerivedStoreTests
         var result = await eviction.ConfigureAwait(true);
         await concurrentUsageUpdate.ConfigureAwait(true);
 
-        Assert.Equal(new[] { "a-first", "b-second" }, result.EvictedStoreIds);
+        Assert.Equal(ExpectedConcurrentEvictionOrder, result.EvictedStoreIds);
         Assert.Empty(first.Records);
         Assert.Empty(second.Records);
         Assert.Equal(100, second.EstimatedBytesObservedAtDelete);
