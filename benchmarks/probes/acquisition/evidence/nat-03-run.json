@@ -1,0 +1,50 @@
+{
+  "SustainedRun": {
+    "Scenario": "NAT.03 TCP loopback sustained scalar acquisition",
+    "Transport": "TCP over OS localhost sockets",
+    "OperatingSystem": "Microsoft Windows 10.0.26200",
+    "Runtime": ".NET 10.0.11",
+    "ProbeTargetSamplesPerSecond": 1000000,
+    "SustainedTargetSeconds": 10,
+    "SamplesReceived": 14400000,
+    "SamplesCommitted": 14400000,
+    "ElapsedSeconds": 11.983001,
+    "SamplesPerSecond": 1201702.311466051,
+    "RingCapacitySamples": 65536,
+    "RingCapacityBytes": 3670016,
+    "ReceiveBufferBytes": 262144,
+    "PeakWorkingSetBytes": 50003968,
+    "PeakManagedHeapBytes": 9384712,
+    "DroppedSamples": 0,
+    "LastDropObservedTimestampTicks": 0,
+    "CaptureChecksum": 1287160585473040394,
+    "DownsampleMaximumMilliseconds": 1,
+    "DownsamplerPreservedSpike": true,
+    "Command": "dotnet run --project benchmarks/probes/acquisition/AcquisitionProbe.csproj -c Release --no-build -- --self-test --evidence benchmarks/probes/acquisition/evidence/nat-03-run.json"
+  },
+  "InducedOverrun": {
+    "SamplesReceived": 12288,
+    "SamplesDropped": 8192,
+    "FirstDroppedSequence": 4096,
+    "EndExclusiveDroppedSequence": 12288,
+    "LastDropObservedTimestampTicks": 4645856269548,
+    "SamplesRetained": 4096,
+    "RingCapacityBytes": 229376
+  },
+  "InducedDisconnect": {
+    "SamplesReceived": 5000,
+    "FirstMissingSequence": 5000,
+    "GapObservedTimestampTicks": 4645856302893,
+    "GapIsOpen": true,
+    "RecordingSessionIsOpen": true,
+    "SamplesCommitted": 5000
+  },
+  "PauseWhileRecording": {
+    "SamplesReceived": 50000,
+    "SamplesCommittedAtPause": 50000,
+    "SamplesCommittedTotal": 50000,
+    "RenderCallsAfterPause": 7,
+    "ViewIsPaused": true
+  },
+  "RecordedAtUtc": "2026-09-28T11:59:37.7457038+00:00"
+}

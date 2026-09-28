@@ -29,13 +29,9 @@ internal sealed record SustainedRunEvidence(
     long CaptureChecksum,
     long DownsampleMaximumMilliseconds,
     bool DownsamplerPreservedSpike,
-    long PausedViewSamplesCommitted,
-    long DisconnectGapFirstMissingSequence,
-    bool DisconnectGapRemainedOpen,
-    bool RecordingRemainedOpenAfterDisconnect,
     string Command);
 
-internal sealed class PeakMemorySampler : IAsyncDisposable
+internal sealed class PeakMemorySampler : IDisposable
 {
     private readonly Process _process = Process.GetCurrentProcess();
     private readonly CancellationTokenSource _stop = new();
@@ -52,10 +48,10 @@ internal sealed class PeakMemorySampler : IAsyncDisposable
 
     public long PeakManagedHeapBytes => Interlocked.Read(ref _peakManagedHeapBytes);
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
-        _stop.Cancel();
-        await _samplingTask.ConfigureAwait(false);
+        _stop.CancelAsync().GetAwaiter().GetResult();
+        _samplingTask.GetAwaiter().GetResult();
         _stop.Dispose();
         _process.Dispose();
     }
@@ -99,9 +95,9 @@ internal static class TcpLoopbackScenarios
     private const int SustainedRingCapacity = 65_536;
     private const long ProbeTargetSamplesPerSecond = 1_000_000;
     private const int SustainedProducerSamplesPerSecond = 1_200_000;
-    private const int SustainedSamples = 12_000_000;
+    private const int SustainedSamples = 14_400_000;
     private const double SustainedTargetSeconds = 10;
-    private const int ProducerBatchSamples = 65_536;
+    private const int ProducerBatchSamples = 16_384;
 
     public static async Task<SustainedRunEvidence> RunAcceptanceAsync(CancellationToken cancellationToken)
     {
@@ -109,99 +105,105 @@ internal static class TcpLoopbackScenarios
         AcquisitionSession session = new(SustainedRingCapacity);
         CaptureSink sink = new();
         LiveAcquisitionView view = new();
-        TcpListener listener = StartListener();
-        PeakMemorySampler memory = new();
-        long started = Stopwatch.GetTimestamp();
+        TaskCompletionSource<IPEndPoint> endpointReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource captureCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenSource receiveCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using PeakMemorySampler memory = new();
 
-        Task<ReceiveEvidence> receiveTask = ReceiveAsync(
-            listener,
+        Task<ReceiveEvidence> receiveTask = RunReceiverAsync(
+            endpointReady,
+            captureCompleted,
             session,
             sink,
             expectedSamples: SustainedSamples,
             view,
             pauseAfterSamples: null,
-            drainAfterEachRead: true,
-            cancellationToken);
+            receiveCancellation.Token);
+        Task captureTask = DrainUntilCaptureCompletesAsync(session.Ring, sink, captureCompleted.Task, cancellationToken);
 
-        SendEvidence sent = await SendSamplesAsync(
-            (IPEndPoint)listener.LocalEndpoint,
-            firstSequence: 0,
-            sampleCount: SustainedSamples,
-            targetSamplesPerSecond: SustainedProducerSamplesPerSecond,
-            cancellationToken).ConfigureAwait(false);
-
-        ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
-        double elapsedSeconds = Stopwatch.GetElapsedTime(started).TotalSeconds;
-        listener.Stop();
-        await memory.DisposeAsync().ConfigureAwait(false);
-
-        if (sent.Samples != SustainedSamples || received.Samples != SustainedSamples)
+        try
         {
-            throw new InvalidOperationException($"TCP sustained run sent {sent.Samples} and received {received.Samples} of {SustainedSamples} samples.");
-        }
+            IPEndPoint endpoint = await WaitForEndpointAsync(endpointReady, receiveTask, cancellationToken).ConfigureAwait(false);
+            SendEvidence sent = await SendSamplesAsync(
+                endpoint,
+                firstSequence: 0,
+                sampleCount: SustainedSamples,
+                targetSamplesPerSecond: SustainedProducerSamplesPerSecond,
+                cancellationToken).ConfigureAwait(false);
 
-        if (elapsedSeconds < SustainedTargetSeconds)
+            ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
+            await captureTask.ConfigureAwait(false);
+            double elapsedSeconds = received.ElapsedSeconds;
+
+            if (sent.Samples != SustainedSamples || received.Samples != SustainedSamples)
+            {
+                throw new InvalidOperationException($"TCP sustained run sent {sent.Samples} and received {received.Samples} of {SustainedSamples} samples.");
+            }
+
+            if (elapsedSeconds < SustainedTargetSeconds)
+            {
+                throw new InvalidOperationException($"Sustained TCP traffic ran for only {elapsedSeconds:F4}s; required at least {SustainedTargetSeconds:F0}s.");
+            }
+
+            double samplesPerSecond = received.Samples / elapsedSeconds;
+            if (samplesPerSecond < ProbeTargetSamplesPerSecond)
+            {
+                throw new InvalidOperationException($"TCP throughput {samplesPerSecond:N0} samples/s is below the probe-local floor of {ProbeTargetSamplesPerSecond:N0}.");
+            }
+
+            if (received.DroppedSamples != 0 || sink.SamplesCommitted != SustainedSamples)
+            {
+                throw new InvalidOperationException($"Sustained capture lost data: dropped={received.DroppedSamples}, committed={sink.SamplesCommitted}.");
+            }
+
+            if (session.Gaps.Count != 0)
+            {
+                throw new InvalidOperationException("The sustained TCP run recorded an unexpected sequence or transport gap.");
+            }
+
+            if (received.MaximumBufferedSamples > session.Ring.Capacity)
+            {
+                throw new InvalidOperationException("The ring buffer exceeded its fixed capacity.");
+            }
+
+            if (view.RenderCount == 0)
+            {
+                throw new InvalidOperationException("The live view did not render any downsampled frames during acquisition.");
+            }
+
+            if (!downsampleEvidence.PreservedSpike)
+            {
+                throw new InvalidOperationException("The min/max downsampler did not preserve a narrow signal spike.");
+            }
+
+            return new SustainedRunEvidence(
+                "NAT.03 TCP loopback sustained scalar acquisition",
+                "TCP over OS localhost sockets",
+                RuntimeInformation.OSDescription,
+                RuntimeInformation.FrameworkDescription,
+                ProbeTargetSamplesPerSecond,
+                SustainedTargetSeconds,
+                received.Samples,
+                sink.SamplesCommitted,
+                elapsedSeconds,
+                samplesPerSecond,
+                session.Ring.Capacity,
+                session.Ring.CapacityBytes,
+                WireReadBufferBytes,
+                memory.PeakWorkingSetBytes,
+                memory.PeakManagedHeapBytes,
+                received.DroppedSamples,
+                received.LastDropObservedTimestampTicks,
+                sink.Checksum,
+                downsampleEvidence.MaximumMilliseconds,
+                downsampleEvidence.PreservedSpike,
+                "dotnet run --project benchmarks/probes/acquisition/AcquisitionProbe.csproj -c Release --no-build -- --self-test --evidence benchmarks/probes/acquisition/evidence/nat-03-run.json");
+        }
+        finally
         {
-            throw new InvalidOperationException($"Sustained TCP traffic ran for only {elapsedSeconds:F2}s; required at least {SustainedTargetSeconds:F0}s.");
+            await StopReceiverAsync(receiveTask, receiveCancellation).ConfigureAwait(false);
+            await captureTask.ConfigureAwait(false);
         }
-
-        double samplesPerSecond = received.Samples / elapsedSeconds;
-        if (samplesPerSecond < ProbeTargetSamplesPerSecond)
-        {
-            throw new InvalidOperationException($"TCP throughput {samplesPerSecond:N0} samples/s is below the probe-local floor of {ProbeTargetSamplesPerSecond:N0}.");
-        }
-
-        if (received.DroppedSamples != 0 || sink.SamplesCommitted != SustainedSamples)
-        {
-            throw new InvalidOperationException($"Sustained capture lost data: dropped={received.DroppedSamples}, committed={sink.SamplesCommitted}.");
-        }
-
-        if (session.Gaps.Count != 0)
-        {
-            throw new InvalidOperationException("The sustained TCP run recorded an unexpected sequence or transport gap.");
-        }
-
-        if (received.MaximumBufferedSamples > session.Ring.Capacity)
-        {
-            throw new InvalidOperationException("The ring buffer exceeded its fixed capacity.");
-        }
-
-        if (view.RenderCount == 0)
-        {
-            throw new InvalidOperationException("The live view did not render any downsampled frames during acquisition.");
-        }
-
-        if (!downsampleEvidence.PreservedSpike)
-        {
-            throw new InvalidOperationException("The min/max downsampler did not preserve a narrow signal spike.");
-        }
-
-        return new SustainedRunEvidence(
-            "NAT.03 TCP loopback sustained scalar acquisition",
-            "TCP over OS localhost sockets",
-            RuntimeInformation.OSDescription,
-            RuntimeInformation.FrameworkDescription,
-            ProbeTargetSamplesPerSecond,
-            SustainedTargetSeconds,
-            received.Samples,
-            sink.SamplesCommitted,
-            elapsedSeconds,
-            samplesPerSecond,
-            session.Ring.Capacity,
-            session.Ring.CapacityBytes,
-            WireReadBufferBytes,
-            memory.PeakWorkingSetBytes,
-            memory.PeakManagedHeapBytes,
-            received.DroppedSamples,
-            received.LastDropObservedTimestampTicks,
-            sink.Checksum,
-            downsampleEvidence.MaximumMilliseconds,
-            downsampleEvidence.PreservedSpike,
-            PausedViewSamplesCommitted: 0,
-            DisconnectGapFirstMissingSequence: 0,
-            DisconnectGapRemainedOpen: false,
-            RecordingRemainedOpenAfterDisconnect: false,
-            "dotnet run --project benchmarks/probes/acquisition/AcquisitionProbe.csproj -c Release -- --self-test");
     }
 
     public static async Task<OverrunEvidence> RunOverrunAsync(CancellationToken cancellationToken)
@@ -210,41 +212,49 @@ internal static class TcpLoopbackScenarios
         const int sampleCount = 12_288;
         AcquisitionSession session = new(ringCapacity);
         CaptureSink sink = new();
-        TcpListener listener = StartListener();
-        Task<ReceiveEvidence> receiveTask = ReceiveAsync(
-            listener,
+        TaskCompletionSource<IPEndPoint> endpointReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenSource receiveCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<ReceiveEvidence> receiveTask = RunReceiverAsync(
+            endpointReady,
+            null,
             session,
             sink,
             expectedSamples: sampleCount,
             view: null,
             pauseAfterSamples: null,
-            drainAfterEachRead: false,
-            cancellationToken);
+            receiveCancellation.Token);
 
-        await SendSamplesAsync(
-            (IPEndPoint)listener.LocalEndpoint,
-            firstSequence: 0,
-            sampleCount,
-            targetSamplesPerSecond: 10_000_000,
-            cancellationToken).ConfigureAwait(false);
-
-        ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
-        sink.Drain(session.Ring);
-        listener.Stop();
-
-        long expectedDrops = sampleCount - ringCapacity;
-        if (received.Samples != sampleCount || received.DroppedSamples != expectedDrops || sink.SamplesCommitted != ringCapacity)
+        try
         {
-            throw new InvalidOperationException($"Induced overrun did not account for every sample: received={received.Samples}, dropped={received.DroppedSamples}, retained={sink.SamplesCommitted}.");
-        }
+            IPEndPoint endpoint = await WaitForEndpointAsync(endpointReady, receiveTask, cancellationToken).ConfigureAwait(false);
+            await SendSamplesAsync(
+                endpoint,
+                firstSequence: 0,
+                sampleCount,
+                targetSamplesPerSecond: 10_000_000,
+                cancellationToken).ConfigureAwait(false);
 
-        AcquisitionGap? gap = session.GapSnapshot().SingleOrDefault(item => item.Reason == AcquisitionGapReason.RingOverrun);
-        if (gap is null || gap.MissingSamples != expectedDrops || gap.EndExclusiveSequence is null || received.LastDropObservedTimestampTicks <= 0)
+            ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
+            sink.Drain(session.Ring);
+
+            long expectedDrops = sampleCount - ringCapacity;
+            if (received.Samples != sampleCount || received.DroppedSamples != expectedDrops || sink.SamplesCommitted != ringCapacity)
+            {
+                throw new InvalidOperationException($"Induced overrun did not account for every sample: received={received.Samples}, dropped={received.DroppedSamples}, retained={sink.SamplesCommitted}.");
+            }
+
+            AcquisitionGap? gap = session.GapSnapshot().SingleOrDefault(item => item.Reason == AcquisitionGapReason.RingOverrun);
+            if (gap is null || gap.MissingSamples != expectedDrops || gap.EndExclusiveSequence is null || received.LastDropObservedTimestampTicks <= 0)
+            {
+                throw new InvalidOperationException("The ring overrun was not retained as an exact, timestamped sequence gap.");
+            }
+
+            return new OverrunEvidence(sampleCount, expectedDrops, gap.FirstMissingSequence, gap.EndExclusiveSequence.Value, received.LastDropObservedTimestampTicks, sink.SamplesCommitted, session.Ring.CapacityBytes);
+        }
+        finally
         {
-            throw new InvalidOperationException("The ring overrun was not retained as an exact, timestamped sequence gap.");
+            await StopReceiverAsync(receiveTask, receiveCancellation).ConfigureAwait(false);
         }
-
-        return new OverrunEvidence(sampleCount, expectedDrops, gap.FirstMissingSequence, gap.EndExclusiveSequence.Value, received.LastDropObservedTimestampTicks, sink.SamplesCommitted, session.Ring.CapacityBytes);
     }
 
     public static async Task<DisconnectEvidence> RunDisconnectAsync(CancellationToken cancellationToken)
@@ -253,70 +263,94 @@ internal static class TcpLoopbackScenarios
         const int transmittedSamples = 5_000;
         AcquisitionSession session = new(8_192);
         CaptureSink sink = new();
-        TcpListener listener = StartListener();
-        Task<ReceiveEvidence> receiveTask = ReceiveAsync(
-            listener,
+        TaskCompletionSource<IPEndPoint> endpointReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource captureCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenSource receiveCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<ReceiveEvidence> receiveTask = RunReceiverAsync(
+            endpointReady,
+            captureCompleted,
             session,
             sink,
             expectedSamples,
             view: null,
             pauseAfterSamples: null,
-            drainAfterEachRead: true,
-            cancellationToken);
+            receiveCancellation.Token);
+        Task captureTask = DrainUntilCaptureCompletesAsync(session.Ring, sink, captureCompleted.Task, cancellationToken);
 
-        await SendSamplesAsync(
-            (IPEndPoint)listener.LocalEndpoint,
-            firstSequence: 0,
-            sampleCount: transmittedSamples,
-            targetSamplesPerSecond: 10_000_000,
-            cancellationToken).ConfigureAwait(false);
-
-        ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
-        listener.Stop();
-
-        AcquisitionGap? gap = session.GapSnapshot().SingleOrDefault(item => item.Reason == AcquisitionGapReason.TransportDisconnect);
-        if (received.Samples != transmittedSamples || gap is null || !gap.IsOpen || gap.FirstMissingSequence != transmittedSamples || !session.IsOpen)
+        try
         {
-            throw new InvalidOperationException("An induced premature TCP disconnect did not leave an open, explicit recording gap.");
-        }
+            IPEndPoint endpoint = await WaitForEndpointAsync(endpointReady, receiveTask, cancellationToken).ConfigureAwait(false);
+            await SendSamplesAsync(
+                endpoint,
+                firstSequence: 0,
+                sampleCount: transmittedSamples,
+                targetSamplesPerSecond: 10_000_000,
+                cancellationToken).ConfigureAwait(false);
 
-        return new DisconnectEvidence(received.Samples, gap.FirstMissingSequence, gap.ObservedTimestampTicks, gap.IsOpen, session.IsOpen, sink.SamplesCommitted);
+            ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
+            await captureTask.ConfigureAwait(false);
+
+            AcquisitionGap? gap = session.GapSnapshot().SingleOrDefault(item => item.Reason == AcquisitionGapReason.TransportDisconnect);
+            if (received.Samples != transmittedSamples || gap is null || !gap.IsOpen || gap.FirstMissingSequence != transmittedSamples || !session.IsOpen)
+            {
+                throw new InvalidOperationException("An induced premature TCP disconnect did not leave an open, explicit recording gap.");
+            }
+
+            return new DisconnectEvidence(received.Samples, gap.FirstMissingSequence, gap.ObservedTimestampTicks, gap.IsOpen, session.IsOpen, sink.SamplesCommitted);
+        }
+        finally
+        {
+            await StopReceiverAsync(receiveTask, receiveCancellation).ConfigureAwait(false);
+            await captureTask.ConfigureAwait(false);
+        }
     }
 
     public static async Task<PauseEvidence> RunPauseAsync(CancellationToken cancellationToken)
     {
         const int sampleCount = 50_000;
-        AcquisitionSession session = new(8_192);
+        AcquisitionSession session = new(65_536);
         CaptureSink sink = new();
         LiveAcquisitionView view = new();
-        TcpListener listener = StartListener();
-        Task<ReceiveEvidence> receiveTask = ReceiveAsync(
-            listener,
+        TaskCompletionSource<IPEndPoint> endpointReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource captureCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenSource receiveCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<ReceiveEvidence> receiveTask = RunReceiverAsync(
+            endpointReady,
+            captureCompleted,
             session,
             sink,
             sampleCount,
             view,
             pauseAfterSamples: 1,
-            drainAfterEachRead: true,
-            cancellationToken);
+            receiveCancellation.Token);
+        Task captureTask = DrainUntilCaptureCompletesAsync(session.Ring, sink, captureCompleted.Task, cancellationToken);
 
-        await SendSamplesAsync(
-            (IPEndPoint)listener.LocalEndpoint,
-            firstSequence: 0,
-            sampleCount,
-            targetSamplesPerSecond: 10_000_000,
-            cancellationToken).ConfigureAwait(false);
-
-        ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
-        listener.Stop();
-
-        long committedWhilePaused = received.SamplesCommittedWhilePaused;
-        if (!view.IsPaused || received.Samples != sampleCount || committedWhilePaused <= 0 || sink.SamplesCommitted != sampleCount)
+        try
         {
-            throw new InvalidOperationException($"Pausing the view interrupted capture: paused={view.IsPaused}, received={received.Samples}, committed-while-paused={committedWhilePaused}, committed={sink.SamplesCommitted}.");
-        }
+            IPEndPoint endpoint = await WaitForEndpointAsync(endpointReady, receiveTask, cancellationToken).ConfigureAwait(false);
+            await SendSamplesAsync(
+                endpoint,
+                firstSequence: 0,
+                sampleCount,
+                targetSamplesPerSecond: 10_000_000,
+                cancellationToken).ConfigureAwait(false);
 
-        return new PauseEvidence(received.Samples, committedWhilePaused, sink.SamplesCommitted, received.RenderCallsAfterPause, view.IsPaused);
+            ReceiveEvidence received = await receiveTask.ConfigureAwait(false);
+            await captureTask.ConfigureAwait(false);
+
+            long committedWhilePaused = sink.SamplesCommitted - received.SamplesCommittedAtPause;
+            if (!view.IsPaused || received.Samples != sampleCount || committedWhilePaused <= 0 || sink.SamplesCommitted != sampleCount)
+            {
+                throw new InvalidOperationException($"Pausing the view interrupted capture: paused={view.IsPaused}, received={received.Samples}, committed-while-paused={committedWhilePaused}, committed={sink.SamplesCommitted}.");
+            }
+
+            return new PauseEvidence(received.Samples, committedWhilePaused, sink.SamplesCommitted, received.RenderCallsAfterPause, view.IsPaused);
+        }
+        finally
+        {
+            await StopReceiverAsync(receiveTask, receiveCancellation).ConfigureAwait(false);
+            await captureTask.ConfigureAwait(false);
+        }
     }
 
     private static DownsampleEvidence VerifyDownsampling()
@@ -346,6 +380,43 @@ internal static class TcpLoopbackScenarios
         return new DownsampleEvidence(timer.ElapsedMilliseconds, preserved);
     }
 
+    private static async Task<ReceiveEvidence> RunReceiverAsync(
+        TaskCompletionSource<IPEndPoint> endpointReady,
+        TaskCompletionSource? captureCompleted,
+        AcquisitionSession session,
+        CaptureSink sink,
+        int expectedSamples,
+        LiveAcquisitionView? view,
+        int? pauseAfterSamples,
+        CancellationToken cancellationToken)
+    {
+        using TcpListener listener = StartListener();
+        endpointReady.TrySetResult((IPEndPoint)listener.LocalEndpoint);
+        try
+        {
+            return await ReceiveAsync(listener, session, sink, expectedSamples, view, pauseAfterSamples, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            captureCompleted?.TrySetResult();
+        }
+    }
+
+    private static async Task<IPEndPoint> WaitForEndpointAsync(
+        TaskCompletionSource<IPEndPoint> endpointReady,
+        Task<ReceiveEvidence> receiver,
+        CancellationToken cancellationToken)
+    {
+        Task completed = await Task.WhenAny(endpointReady.Task, receiver).WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (completed == receiver)
+        {
+            await receiver.ConfigureAwait(false);
+            throw new InvalidOperationException("The TCP receiver completed before its loopback endpoint became available.");
+        }
+
+        return await endpointReady.Task.ConfigureAwait(false);
+    }
+
     private static async Task<ReceiveEvidence> ReceiveAsync(
         TcpListener listener,
         AcquisitionSession session,
@@ -353,7 +424,6 @@ internal static class TcpLoopbackScenarios
         int expectedSamples,
         LiveAcquisitionView? view,
         int? pauseAfterSamples,
-        bool drainAfterEachRead,
         CancellationToken cancellationToken)
     {
         using TcpClient client = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
@@ -363,8 +433,9 @@ internal static class TcpLoopbackScenarios
         int carry = 0;
         long receivedCount = 0;
         long maximumBuffered = 0;
-        long committedWhilePaused = 0;
+        long committedAtPause = 0;
         long renderCallsAfterPause = 0;
+        long receiveStarted = 0;
 
         while (receivedCount < expectedSamples)
         {
@@ -379,6 +450,11 @@ internal static class TcpLoopbackScenarios
                 break;
             }
 
+            if (receiveStarted == 0)
+            {
+                receiveStarted = Stopwatch.GetTimestamp();
+            }
+
             int available = carry + read;
             int completeBytes = available - (available % FrameSize);
             for (int offset = 0; offset < completeBytes; offset += FrameSize)
@@ -390,6 +466,7 @@ internal static class TcpLoopbackScenarios
                 if (pauseAfterSamples is int pauseThreshold && receivedCount >= pauseThreshold && view is not null && !view.IsPaused)
                 {
                     view.Pause();
+                    committedAtPause = sink.SamplesCommitted;
                 }
 
             }
@@ -414,15 +491,6 @@ internal static class TcpLoopbackScenarios
                 }
             }
 
-            if (drainAfterEachRead)
-            {
-                long before = sink.SamplesCommitted;
-                sink.Drain(session.Ring);
-                if (view?.IsPaused == true)
-                {
-                    committedWhilePaused += sink.SamplesCommitted - before;
-                }
-            }
         }
 
         if (receivedCount < expectedSamples)
@@ -430,7 +498,41 @@ internal static class TcpLoopbackScenarios
             session.MarkTransportDisconnected();
         }
 
-        return new ReceiveEvidence(receivedCount, session.DroppedSamples, session.LastDropObservedTimestampTicks, maximumBuffered, committedWhilePaused, renderCallsAfterPause);
+        double elapsedSeconds = receiveStarted == 0 ? 0 : Stopwatch.GetElapsedTime(receiveStarted).TotalSeconds;
+        return new ReceiveEvidence(receivedCount, session.DroppedSamples, session.LastDropObservedTimestampTicks, maximumBuffered, committedAtPause, renderCallsAfterPause, elapsedSeconds);
+    }
+
+    private static async Task DrainUntilCaptureCompletesAsync(
+        SingleProducerSingleConsumerRing ring,
+        CaptureSink sink,
+        Task captureCompleted,
+        CancellationToken cancellationToken)
+    {
+        while (!captureCompleted.IsCompleted)
+        {
+            if (!sink.DrainOne(ring))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        sink.Drain(ring);
+    }
+
+    private static async Task StopReceiverAsync(Task receiver, CancellationTokenSource cancellation)
+    {
+        if (!receiver.IsCompleted)
+        {
+            await cancellation.CancelAsync().ConfigureAwait(false);
+        }
+
+        try
+        {
+            await receiver.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
     }
 
     private static async Task<SendEvidence> SendSamplesAsync(
@@ -453,7 +555,7 @@ internal static class TcpLoopbackScenarios
             for (int index = 0; index < count; index++)
             {
                 long sequence = firstSequence + sent + index;
-                Encode(buffer.AsSpan(index * FrameSize, FrameSize), sequence, timestampTicks: sequence, value: (sequence % 100_003) / 100_003d);
+                Encode(buffer.AsSpan(index * FrameSize, FrameSize), sequence, Stopwatch.GetTimestamp(), value: (sequence % 100_003) / 100_003d);
             }
 
             int byteCount = count * FrameSize;
@@ -520,8 +622,9 @@ internal static class TcpLoopbackScenarios
         long DroppedSamples,
         long LastDropObservedTimestampTicks,
         long MaximumBufferedSamples,
-        long SamplesCommittedWhilePaused,
-        long RenderCallsAfterPause);
+        long SamplesCommittedAtPause,
+        long RenderCallsAfterPause,
+        double ElapsedSeconds);
 
     private readonly record struct SendEvidence(long Samples);
 
@@ -547,7 +650,7 @@ internal sealed record DisconnectEvidence(
 
 internal sealed record PauseEvidence(
     long SamplesReceived,
-    long SamplesCommittedWhilePaused,
+        long SamplesCommittedAtPause,
     long SamplesCommittedTotal,
     long RenderCallsAfterPause,
     bool ViewIsPaused);

@@ -104,10 +104,7 @@ internal sealed class SingleProducerSingleConsumerRing
 
     public SingleProducerSingleConsumerRing(int capacity)
     {
-        if (capacity <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(capacity));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
 
         _slots = new Slot[capacity];
         for (int index = 0; index < capacity; index++)
@@ -317,19 +314,34 @@ internal sealed class AcquisitionSession
 
 internal sealed class CaptureSink
 {
-    public long SamplesCommitted { get; private set; }
+    private long _samplesCommitted;
+    private long _checksum;
+    private long _lastSequence = -1;
 
-    public long Checksum { get; private set; }
+    public long SamplesCommitted => Interlocked.Read(ref _samplesCommitted);
 
-    public long LastSequence { get; private set; } = -1;
+    public long Checksum => Interlocked.Read(ref _checksum);
+
+    public long LastSequence => Interlocked.Read(ref _lastSequence);
+
+    public bool DrainOne(SingleProducerSingleConsumerRing ring)
+    {
+        if (!ring.TryRead(out AcquisitionSample sample))
+        {
+            return false;
+        }
+
+        Interlocked.Increment(ref _samplesCommitted);
+        Interlocked.Exchange(ref _lastSequence, sample.Sequence);
+        long previousChecksum = Interlocked.Read(ref _checksum);
+        Interlocked.Exchange(ref _checksum, unchecked((previousChecksum * 31) + sample.Sequence + BitConverter.DoubleToInt64Bits(sample.Value)));
+        return true;
+    }
 
     public void Drain(SingleProducerSingleConsumerRing ring)
     {
-        while (ring.TryRead(out AcquisitionSample sample))
+        while (DrainOne(ring))
         {
-            SamplesCommitted++;
-            LastSequence = sample.Sequence;
-            Checksum = unchecked((Checksum * 31) + sample.Sequence + BitConverter.DoubleToInt64Bits(sample.Value));
         }
     }
 }

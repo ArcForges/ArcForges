@@ -1,28 +1,44 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Net.Sockets;
 using System.Text.Json;
 
 namespace ArcForges.AcquisitionProbe;
 
 internal static class Program
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
+    private static readonly string UsageMessage = string.Concat("Usage: dotnet run --project benchmarks/probes/acquisition/AcquisitionProbe.csproj -c Release -- [--self-test] [--evidence <path>]");
+    private static readonly string PassMessage = string.Concat("PASS NAT.03: sustained localhost TCP acquisition, bounded ring, downsampling, overrun accounting, explicit disconnect gap, and recording while view paused.");
+
     public static async Task<int> Main(string[] args)
     {
         if (args.Contains("--help", StringComparer.Ordinal))
         {
-            Console.WriteLine("Usage: dotnet run --project benchmarks/probes/acquisition/AcquisitionProbe.csproj -c Release -- [--self-test] [--evidence <path>]");
+            Console.WriteLine(UsageMessage);
             return 0;
         }
 
-        string? evidencePath = ReadOption(args, "--evidence");
+        if (!args.Contains("--self-test", StringComparer.Ordinal))
+        {
+            Console.WriteLine(UsageMessage);
+            return args.Length == 0 ? 0 : 2;
+        }
+
         using CancellationTokenSource cancellation = new();
         Console.CancelKeyPress += (_, eventArgs) =>
         {
             eventArgs.Cancel = true;
-            cancellation.Cancel();
+            _ = cancellation.CancelAsync();
         };
 
         try
         {
+            string? evidencePath = ReadOption(args, "--evidence");
+            if (args.Any(argument => argument is not "--self-test" and not "--evidence" && argument != evidencePath))
+            {
+                throw new ArgumentException("Unknown acquisition probe option.", nameof(args));
+            }
+
             SustainedRunEvidence sustained = await TcpLoopbackScenarios.RunAcceptanceAsync(cancellation.Token).ConfigureAwait(false);
             OverrunEvidence overrun = await TcpLoopbackScenarios.RunOverrunAsync(cancellation.Token).ConfigureAwait(false);
             DisconnectEvidence disconnect = await TcpLoopbackScenarios.RunDisconnectAsync(cancellation.Token).ConfigureAwait(false);
@@ -34,7 +50,7 @@ internal static class Program
                 disconnect,
                 pause,
                 DateTimeOffset.UtcNow);
-            string json = JsonSerializer.Serialize(evidence, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(evidence, SerializerOptions);
             Console.WriteLine(json);
 
             if (!string.IsNullOrWhiteSpace(evidencePath))
@@ -45,7 +61,7 @@ internal static class Program
                 Console.WriteLine($"Evidence written: {fullPath}");
             }
 
-            Console.WriteLine("PASS NAT.03: sustained localhost TCP acquisition, bounded ring, downsampling, overrun accounting, explicit disconnect gap, and recording while view paused.");
+            Console.WriteLine(PassMessage);
             return 0;
         }
         catch (OperationCanceledException)
@@ -53,7 +69,13 @@ internal static class Program
             await Console.Error.WriteLineAsync("NAT.03 acceptance probe cancelled.").ConfigureAwait(false);
             return 130;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is ArgumentException
+            or InvalidOperationException
+            or IOException
+            or SocketException
+            or JsonException
+            or UnauthorizedAccessException
+            or OverflowException)
         {
             await Console.Error.WriteLineAsync($"NAT.03 acceptance probe failed: {exception}").ConfigureAwait(false);
             return 1;
