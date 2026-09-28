@@ -13,6 +13,16 @@ Windows additionally enforces deny-write file sharing; Unix callers must protect
 capture paths against unrelated filesystem writers. Checksums detect changed
 frames but do not make the file an access-control boundary.
 
+`ManagedResourceStore` keeps immutable content-addressed objects under SHA-256
+locations, with opaque `BlobId` mappings and a durable referrer table. The
+reference count is derived from that table. It flushes object bytes before
+publishing the identity mapping, and publishes references only after the mapping
+is durable. Reads return bytes only after checking the mapped length and full
+digest. Collection removes unreferenced identity mappings before sweeping
+unreachable object files, so an interrupted collection can leave reclaimable
+orphans but cannot delete a still-referenced object. A store root has one
+process owner at a time; reads within that owner may run concurrently.
+
 Every frame has a 64-byte little-endian header: `AFAPPEND`, version 1, kind,
 reserved zero bytes, monotonically increasing sequence, bounded payload length,
 and SHA-256 over its 32 metadata bytes and payload. Payloads are at most 4 MiB;
