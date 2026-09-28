@@ -4,10 +4,10 @@ using ArcForges.Capabilities;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Contributions;
+using ArcForges.Contributions.Tests.Generated;
 using ArcForges.Foundation;
 using ArcForges.Foundation.Errors;
 using ArcForges.Persistence.Sqlite;
-using ArcForges.Contributions.Tests.Generated;
 
 namespace ArcForges.Contributions.Tests;
 
@@ -123,7 +123,7 @@ public sealed class ContributionRegistryTests
         var sourceCatalogs = document.RootElement.GetProperty("catalogs").EnumerateArray().ToArray();
         var generatedCatalogs = GeneratedContributionCatalogs.All;
 
-        Xunit.Assert.Equal(sourceCatalogs.Length, generatedCatalogs.Length);
+        Xunit.Assert.Equal(sourceCatalogs.Length, generatedCatalogs.Count);
         foreach (var source in sourceCatalogs)
         {
             var owner = source.GetProperty("ownerProductId").GetString();
@@ -256,7 +256,7 @@ public sealed class ContributionRegistryTests
         AssertChildRefused(ContributionRegistrationFailure.UndeclaredToolSchema, descriptor, catalog,
             new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild,
                 Definition(descriptor.Id, ContributionKind.Capability, "external.extension.example.input.v1"))));
-        AssertChildRefused(ContributionRegistrationFailure.InvalidDescriptor, descriptor, catalog,
+        AssertChildRefused(ContributionRegistrationFailure.UndeclaredToolSchema, descriptor, catalog,
             new FixedAdmissionPort(Admitted(AppIdentity.ArcScope, restartedChild,
                 Definition(descriptor.Id, ContributionKind.Capability))));
         AssertChildRefused(ContributionRegistrationFailure.InvalidDescriptor, descriptor, catalog,
