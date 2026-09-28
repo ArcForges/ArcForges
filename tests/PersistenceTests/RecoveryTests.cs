@@ -125,7 +125,8 @@ public sealed class RecoveryTests
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or
                 InvalidDataException or InvalidOperationException)
             { snapshotFailure = exception; }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         snapshotThread.Start();
         try
         {
