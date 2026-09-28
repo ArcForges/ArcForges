@@ -7,6 +7,8 @@
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
     "Directory.Packages.props": "5ff72ff261c1b91e2351289a069d1a48be8c2a1e8000c7bae918d3c82718229f",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+    "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "36509372b96df3ee7eee32a64b48db4916eae8528680fd3b20d0d9ac98228ad4",
+    "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
     "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
     "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
     "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
@@ -637,19 +639,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-p02",
-    "reviewer": "Independent exact-head dependency-admission review required before merge",
+    "owner": "af-20260928-p01",
+    "reviewer": "Independent exact-head review required before merge",
     "reviewedOn": "2026-09-28",
-    "baselineCommit": "7cccfcc91f8014c7753e91bcfdef21278b21edda",
-    "maintenanceAssessment": "PLT.07 adds a task-scoped persistence-derived contracts library and its non-packable test host. The host reuses only the already-admitted .NET 10.0.400, analyzer, xUnit and test SDK coordinates; the library contributes no NuGet package reference. Regenerating both new lockfiles with the pinned 10.0.400 SDK changes Microsoft.NET.ILLink.Tasks from the incorrect 10.0.12 lock to the SDK-resolved 10.0.11 already present in the admitted closure. The aggregate inherits the four build-only Avalonia coordinates admitted by PRF.09 and otherwise adds no package coordinate, version, central pin, transitive dependency or licence. It succeeds immutable PRF.09, the active dependency receipt on the pre-PLT.07 main; GOV.13 changes only validation/accounting and provenance inputs, not dependency inputs or closure, and is not a dependency receipt predecessor.",
+    "baselineCommit": "a893dbc69c6c0dc8c6b5d85cef6eb39097c7a1b3",
+    "maintenanceAssessment": "NAT.03 adds an isolated standalone acquisition BuildTool under the task-authorized benchmarks/probes/acquisition path; it is excluded from DesktopPlatform.slnx, produces no product runtime, and declares AGPL-3.0-only. The project and lockfile are the only new dependency-policy inputs attributable to this task. This successor follows the active immutable PLT.07 receipt, which preserves PRF.09 -> PLT.18 and the earlier dependency-review history; GOV.13 changes validation/accounting and provenance inputs but not the package closure. The probe uses only already-admitted dependency coordinates and adds no package identity or version. The pinned .NET SDK 10.0.400 gate includes restore, locked restore, format verification, Release build and real localhost TCP acceptance; exact observed measurements are preserved in benchmarks/probes/acquisition/evidence/nat-03-run.json. The 1,000,000 scalar samples/s for at least 10 seconds floor is task-authorized probe-only evidence, not a product SLA, shipping requirement, or downstream target. Support binding is limited to the task project and file inventory rows; no package, ABI, framework, or solution membership change is introduced. Hosted CI and exact-head review remain required.",
     "upgradeChecks": {
-      "compilation": "On the PLT.07 candidate rebased onto DesktopPlatform main 7cccfcc91f8014c7753e91bcfdef21278b21edda, explicit .NET SDK 10.0.400 locked solution restore passed, full-solution dotnet format verification passed, full Release solution build passed with 0 warnings/errors, and ArcForges.Persistence.Derived.Tests passed 15/15. Local ArchitectureTests reached 99/100 but the policy evaluator stopped before RP-10 assertions while reconstructing unchanged DesignSystem GeneratedRegex partial methods (CS8795); fresh hosted managed-pack/aggregate CI is required for the architecture gate.",
-      "aot-trim": "The new production contract project declares IsAotCompatible and introduces no reflection, dynamic loading or external runtime dependency. Release build and the repository's package/AOT CI remain required; no Native AOT runtime proof is claimed for this abstraction.",
-      "compatibility": "No external package coordinate/version, Directory.Packages.props pin, runtime package, public wire contract or unrelated existing lockfile change. The aggregate lock closure inherits only the PRF.09 build-only Avalonia verification dependencies; PLT.07 adds no dependency coordinate.",
-      "licence-provenance": "Both new projects declare the existing AGPL-3.0-only boundary. No new NuGet coordinate or licence evidence is admitted; test-only coordinates reuse the already reviewed exact closure. The immutable receipt itself receives first-party provenance classification.",
-      "security-sbom": "No new third-party component or external package version enters the closure. Existing NuGet audit, dependency-policy, licence, provenance and secret checks remain applicable; no claim of absent current advisories is made.",
-      "runtime-performance-migration": "This task defines rebuildable derived-store contracts and derived-only eviction, not a production store adapter, migration, performance optimization or benchmark. No runtime-performance claim is made.",
-      "framework-runtime-posture": "The repository-pinned .NET SDK remains 10.0.400 and target remains net10.0. No framework major, native ABI, mobile runtime, compiler toolchain or central package pin changes."
+      "compilation": "Pinned .NET SDK 10.0.400 restore, locked restore, format verification, Release build and self-test passed on the exact task head; final TCP throughput, memory, drops, gap, and pause measurements are checked in at benchmarks/probes/acquisition/evidence/nat-03-run.json. This is a standalone non-solution BuildTool; no new package closure entry is introduced.",
+      "aot-trim": "No AOT publish claim or production artifact; the project is classified BuildTool and is excluded from the product solution. The task does not alter AOT or trimming settings.",
+      "compatibility": "No external package coordinate or version, public Contracts wire API, native ABI, project reference, or solution membership changed. The standalone probe uses only .NET sockets and BCL types.",
+      "licence-provenance": "The new AGPL-3.0-only project is within the DesktopPlatform boundary. Microsoft.CodeAnalysis.NetAnalyzers/10.0.401 is already in the approved 47-coordinate closure with the same lock content hash. No new external licence evidence is introduced.",
+      "security-sbom": "The locked closure and all package coordinates remain identical to the predecessor receipt; existing dependency, source, native, and hosted gates remain required. No current-advisory absence claim is made.",
+      "runtime-performance-migration": "This is a bounded early-risk localhost TCP probe, not shipped runtime, SLA, or marketing evidence. The NAT.03 task-authorized 1,000,000 scalar samples/s for at least 10 seconds floor is probe-only, not a shipping or downstream target.",
+      "framework-runtime-posture": "Target remains net10.0 with pinned SDK 10.0.400; no framework, native ABI, Android/Kotlin/ART/R8, or toolchain update."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -657,6 +659,8 @@
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
       "Directory.Packages.props": "5ff72ff261c1b91e2351289a069d1a48be8c2a1e8000c7bae918d3c82718229f",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+      "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "36509372b96df3ee7eee32a64b48db4916eae8528680fd3b20d0d9ac98228ad4",
+      "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
       "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
       "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
       "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
@@ -892,7 +896,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/prf-09-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-07-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -903,7 +907,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-07-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-03-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

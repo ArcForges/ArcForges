@@ -650,7 +650,7 @@ internal sealed record DisconnectEvidence(
 
 internal sealed record PauseEvidence(
     long SamplesReceived,
-        long SamplesCommittedAtPause,
+    long SamplesCommittedWhilePaused,
     long SamplesCommittedTotal,
     long RenderCallsAfterPause,
     bool ViewIsPaused);

@@ -9,6 +9,10 @@
       "kind": "cmake"
     },
     {
+      "path": "benchmarks/probes/acquisition/AcquisitionProbe.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
       "kind": "msbuild"
     },

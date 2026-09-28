@@ -1,5 +1,13 @@
 [
   {
+    "path": "benchmarks/probes/acquisition/AcquisitionProbe.csproj",
+    "role": "BuildTool",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "eng/acceptance/foundation/Foundation.Acceptance.csproj",
     "role": "BuildTool",
     "owner": "DesktopPlatform",
