@@ -234,7 +234,7 @@ internal sealed class SqliteJournal(IJournalSnapshotVerifier? snapshotVerifier =
         return new(result.AsReadOnly(), through, head, corrupt);
     }
 
-    private static bool HasRowsBeyondHead(SqliteReadContext context, long head)
+    internal static bool HasRowsBeyondHead(SqliteReadContext context, long head)
     {
         using var command = context.CreateCommand("SELECT 1 FROM journal WHERE store_id=$store AND sequence>$head LIMIT 1");
         command.Parameters.AddWithValue("$store", context.StoreId.ToString("D"));

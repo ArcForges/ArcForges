@@ -262,6 +262,9 @@ internal sealed class SqliteSnapshotCoordinator(string databasePath, Guid storeI
                 verifiedThrough = entries[^1].Sequence.Value;
                 after = entries[^1].Sequence;
             }
+            // A full final page stops at the head; probe beyond it so orphaned tail rows cannot hide at that boundary.
+            if (SqliteJournal.HasRowsBeyondHead(context, head))
+                return new(true, true, head, floor, "journal contains rows beyond the durable high watermark");
             return new(false, true, head, floor, "the owner database and retained journal are valid");
         }
         catch (InvalidDataException exception)

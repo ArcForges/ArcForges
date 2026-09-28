@@ -285,6 +285,73 @@ public sealed class RecoveryTests
     }
 
     [Fact]
+    public void JournalRowsBeyondDurableHighWatermarkAreDetectedAtPageBoundaries()
+    {
+        using var file = new SnapshotFixture();
+        const int pageSize = 4096;
+        const int totalEntries = pageSize + 2;
+        using (var database = new StoreDatabase(file.Path, file.Id))
+        {
+            database.WithTransaction(context =>
+            {
+                using (var identity = context.CreateCommand("CREATE TABLE store_identity(id TEXT PRIMARY KEY); INSERT INTO store_identity(id) VALUES($store)"))
+                {
+                    identity.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+                    identity.ExecuteNonQuery();
+                }
+                var journal = new SqliteJournal(snapshotPolicy: new JournalSnapshotPolicy(5000, 64 * 1024 * 1024, 3600));
+                journal.Initialize(context);
+                var actor = new UserId(Guid.Parse("00000000-0000-4000-8000-000000000001"));
+                var committedAt = ArcForges.Foundation.Instant.FromDateTimeOffset(DateTimeOffset.UtcNow);
+                var payload = "page-boundary"u8.ToArray();
+                for (var sequence = 1; sequence <= totalEntries; sequence++)
+                {
+                    journal.Append(context, JournalEntry.Create(new(file.Id, sequence), "recovery-test", Guid.NewGuid(),
+                        StoreVersion.NewRoot, StoreVersion.Native(new(1)), new(Guid.NewGuid()), "recovery.replace", 1,
+                        payload, null, actor, Guid.NewGuid(), null, committedAt));
+                }
+                return 0;
+            });
+        }
+
+        foreach (var head in new long[] { pageSize, pageSize + 1 })
+        {
+            using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = file.Path,
+                Pooling = false
+            }.ToString()))
+            {
+                connection.Open();
+                using var lowerHead = connection.CreateCommand();
+                lowerHead.CommandText = "UPDATE journal_state SET last_sequence=$head WHERE store_id=$store";
+                lowerHead.Parameters.AddWithValue("$head", head);
+                lowerHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+                Assert.Equal(1, lowerHead.ExecuteNonQuery());
+            }
+
+            var exception = Assert.Throws<StoreRecoveryException>(() => new SqliteStore(file.Path, file.Id, new Allow()));
+            Assert.Equal(StoreRecoveryOutcome.UnrecoverableWithPreservedEvidence, exception.Report.Outcome);
+            Assert.Equal(file.Path, exception.Report.EvidencePath);
+            if (head == pageSize)
+                Assert.Contains("journal contains rows beyond the durable high watermark", exception.Report.Detail, StringComparison.Ordinal);
+
+            using var evidence = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = file.Path,
+                Pooling = false,
+                Mode = SqliteOpenMode.ReadOnly
+            }.ToString());
+            evidence.Open();
+            using var beyondHead = evidence.CreateCommand();
+            beyondHead.CommandText = "SELECT COUNT(*) FROM journal WHERE store_id=$store AND sequence>$head";
+            beyondHead.Parameters.AddWithValue("$head", head);
+            beyondHead.Parameters.AddWithValue("$store", file.Id.ToString("D"));
+            Assert.Equal((long)totalEntries - head, (long)beyondHead.ExecuteScalar()!);
+        }
+    }
+
+    [Fact]
     public void NoVerifiedSnapshotLeavesCorruptDatabaseUntouchedAndReportsEvidence()
     {
         using var file = new SnapshotFixture();
