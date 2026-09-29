@@ -1113,5 +1113,30 @@
     "apiSymbol": "ArcForges.Capabilities.OwnAppNavigationRouter<TAccess>.HandleDeepLinkAsync(string?, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.OwnNavigationTests.HostileForeignAndMissingContentLinksFailClosedWithoutProductLaunch()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.RiskModel.Assess(ArcForges.Contracts.Foundation.V1.CapabilityDescriptor, ArcForges.Security.RiskContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.RiskModelTests.ClassifiesEveryRuntimeModifierCombinationAndExplainsItsRaises()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.RiskModel.Assess(ArcForges.Contracts.Foundation.V1.CapabilityDescriptor, ArcForges.Security.RiskContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.RiskModelTests.AddingAnyRuntimeModifierNeverLowersEffectiveRisk()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.RiskModel.Assess(ArcForges.Contracts.Foundation.V1.CapabilityDescriptor, ArcForges.Security.RiskContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.RiskModelTests.AutomationWithExternalEgressExceedsEitherModifierAlone()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.RiskModel.Assess(ArcForges.Contracts.Foundation.V1.CapabilityDescriptor, ArcForges.Security.RiskContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.RiskModelTests.RejectsUnknownCapabilityRiskAndRuntimeClassifications()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.RiskModel.Assess(ArcForges.Contracts.Foundation.V1.CapabilityDescriptor, ArcForges.Security.RiskContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.RiskModelTests.SensitiveExternalTransferAndUnverifiedExtensionRequireR4()"
   }
 ]
