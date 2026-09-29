@@ -183,7 +183,7 @@
       "arcforges.foundation": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.113.1, )"
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1, )"
         }
       },
       "arcforges.observability": {
@@ -194,9 +194,9 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.113.1, )",
-        "resolved": "1.0.0-ci.113.1",
-        "contentHash": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA==",
+        "requested": "[1.0.0-ci.216.1, )",
+        "resolved": "1.0.0-ci.216.1",
+        "contentHash": "+RGxNiaoOBt+j2IOSpUa2WWD4Bnkk8Ten7jbOVFwdUVF8jUQRCCvAGhrPTzZpnr6Sk5MSoA95+pJYgN8T+jEtg==",
         "dependencies": {
           "Google.Protobuf": "3.36.1"
         }

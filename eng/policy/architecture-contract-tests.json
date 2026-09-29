@@ -1058,5 +1058,35 @@
     "apiSymbol": "ArcForges.Observability.IStructuredEventSink.Write(ArcForges.Observability.StructuredSignal)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityOwner.CloudService(ArcForges.Capabilities.SearchService)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.InitialMatrixMatchesIndependentHardCodedProductAndCloudCatalogueOracle()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityOwner.Product(ArcForges.Capabilities.AppIdentity)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.ProductOwnerFactoryBindsTheExactProductAndRejectsNull()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityRegistry.CreateInitial()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.InitialMatrixMatchesIndependentHardCodedProductAndCloudCatalogueOracle()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityRegistry.Find(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.InitialMatrixMatchesIndependentHardCodedProductAndCloudCatalogueOracle()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityRegistry.ValidateInitial(System.Collections.Generic.IEnumerable<ArcForges.Capabilities.CapabilityRegistration>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.MissingDuplicateExtraUnsupportedAndMisclassifiedBindingsRefuse()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilitySelector.Select(ArcForges.Capabilities.CapabilityRegistry, string, System.Collections.Generic.IEnumerable<ArcForges.Capabilities.CapabilityTarget>, ArcForges.Capabilities.InstanceIdentity?, ArcForges.Capabilities.InstanceIdentity?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.OneReadyTargetIsSelectedAndUnavailableTargetReturnsTypedReason()"
   }
 ]

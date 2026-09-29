@@ -94,7 +94,7 @@
         "build-identity.json"
       ],
       "externalDependencies": {
-        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
       }
     },
     {
@@ -105,7 +105,7 @@
         "ArcForges.Foundation"
       ],
       "externalDependencies": {
-        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
       },
       "requiredFiles": [
         "lib/net10.0/ArcForges.Application.Abstractions.dll",
@@ -123,7 +123,7 @@
         "ArcForges.Foundation"
       ],
       "externalDependencies": {
-        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
       },
       "requiredFiles": [
         "lib/net10.0/ArcForges.Capabilities.dll",
@@ -142,7 +142,7 @@
       ],
       "externalDependencies": {
         "Microsoft.Data.Sqlite": "10.0.12",
-        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
       },
       "requiredFiles": [
         "lib/net10.0/ArcForges.Persistence.Sqlite.dll",
@@ -160,7 +160,7 @@
         "ArcForges.Foundation"
       ],
       "externalDependencies": {
-        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
       },
       "requiredFiles": [
         "lib/net10.0/ArcForges.Persistence.Resources.dll",
