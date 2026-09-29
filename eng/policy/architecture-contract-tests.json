@@ -1000,6 +1000,21 @@
     "testMethod": "ArcForges.Capabilities.Tests.ResourceResolutionTests.PinnedResolutionPreservesTheExactRevisionAndNeverFallsBackToFloating()"
   },
   {
+    "apiSymbol": "ArcForges.Observability.CorrelationPropagation.BeginLocalHop(ArcForges.Observability.CorrelationTraceContext, ArcForges.Observability.ObservabilityContext, ArcForges.Observability.ObservabilityHopKind)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.OriginAndAvailableLocalHopsShareOneTraceAndResolveTaskAndRun()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.CorrelationPropagation.BeginOrigin(ArcForges.Observability.ObservabilityContext, ArcForges.Contracts.Foundation.V1.Id?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.OriginAcceptsOnlyValidatedTypedWireCorrelation()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.CorrelationPropagationScope.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.OriginAndAvailableLocalHopsShareOneTraceAndResolveTaskAndRun()"
+  },
+  {
     "apiSymbol": "ArcForges.Observability.ObservabilityContext.FromApplicationAssembly(ArcForges.Observability.SignalApplicationDimension, ArcForges.Contracts.Foundation.Values.InstanceId, ArcForges.Observability.SignalEnvironment, System.Reflection.Assembly?)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.ApplicationBuildIdentityComesFromThePolicyStampedAssembly()"
@@ -1023,6 +1038,21 @@
     "apiSymbol": "ArcForges.Observability.NativeAbiVersion.ToString()",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.OneEmissionCarriesEveryPresentDimensionToTraceAndStructuredEvent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TaskTraceIndex.TryRecord(ArcForges.Foundation.Execution.TaskId?, ArcForges.Foundation.Execution.RunId?, System.Diagnostics.ActivityTraceId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.TaskTraceIndexIsBoundedTypedIdempotentAndConflictSafe()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TaskTraceIndex.TryResolve(ArcForges.Foundation.Execution.RunId, out System.Diagnostics.ActivityTraceId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.TaskTraceIndexIsBoundedTypedIdempotentAndConflictSafe()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TaskTraceIndex.TryResolve(ArcForges.Foundation.Execution.TaskId, out System.Diagnostics.ActivityTraceId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.TaskTraceIndexIsBoundedTypedIdempotentAndConflictSafe()"
   },
   {
     "apiSymbol": "ArcForges.Observability.IStructuredEventSink.Write(ArcForges.Observability.StructuredSignal)",
