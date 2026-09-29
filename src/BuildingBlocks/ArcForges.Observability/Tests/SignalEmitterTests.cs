@@ -285,7 +285,7 @@ public sealed class SignalEmitterTests
         ]);
         Assert.Equal(HealthProbeKind.Readiness, missing.Kind);
         Assert.Equal(HealthProbeStatus.Unavailable, missing.Status);
-        Assert.Equal(new[] { "capabilities" }, missing.NotReadyDependencies);
+        Assert.Equal("capabilities", Assert.Single(missing.NotReadyDependencies));
 
         HealthProbeResult unavailable = HealthProbe.CheckReadiness(required,
         [
@@ -293,7 +293,7 @@ public sealed class SignalEmitterTests
             new RequiredDependencyObservation("storage", DependencyReadinessStatus.Unavailable),
         ]);
         Assert.Equal(HealthProbeStatus.Unavailable, unavailable.Status);
-        Assert.Equal(new[] { "storage" }, unavailable.NotReadyDependencies);
+        Assert.Equal("storage", Assert.Single(unavailable.NotReadyDependencies));
 
         HealthProbeResult unknown = HealthProbe.CheckReadiness(required,
         [
@@ -301,7 +301,7 @@ public sealed class SignalEmitterTests
             new RequiredDependencyObservation("storage", DependencyReadinessStatus.Unknown),
         ]);
         Assert.Equal(HealthProbeStatus.Unavailable, unknown.Status);
-        Assert.Equal(new[] { "storage" }, unknown.NotReadyDependencies);
+        Assert.Equal("storage", Assert.Single(unknown.NotReadyDependencies));
 
         HealthProbeResult available = HealthProbe.CheckReadiness(required,
         [

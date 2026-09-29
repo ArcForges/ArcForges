@@ -166,11 +166,11 @@ public static class HealthProbe
                 : HealthProbeStatus.Unknown);
         }
 
-        HealthProbeStatus overall = dimensionStatuses.Values.Contains(HealthProbeStatus.Unavailable)
+        HealthProbeStatus overall = dimensionStatuses.ContainsValue(HealthProbeStatus.Unavailable)
             ? HealthProbeStatus.Unavailable
-            : dimensionStatuses.Values.Contains(HealthProbeStatus.Unknown)
+            : dimensionStatuses.ContainsValue(HealthProbeStatus.Unknown)
                 ? HealthProbeStatus.Unknown
-                : dimensionStatuses.Values.Contains(HealthProbeStatus.Degraded)
+                : dimensionStatuses.ContainsValue(HealthProbeStatus.Degraded)
                     ? HealthProbeStatus.Degraded
                     : HealthProbeStatus.Healthy;
 

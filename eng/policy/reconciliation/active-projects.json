@@ -88,7 +88,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
-      "blob": "4e572fd06fc3e9da79263ffd2a9160a998f75bcd"
+      "blob": "159619187ecadb16055b46e02b6b57540bbe56a6"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",

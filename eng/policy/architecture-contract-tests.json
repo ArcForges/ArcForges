@@ -1130,6 +1130,21 @@
     "testMethod": "ArcForges.Observability.Tests.CorrelationPropagationTests.OriginAndAvailableLocalHopsShareOneTraceAndResolveTaskAndRun()"
   },
   {
+    "apiSymbol": "ArcForges.Observability.HealthProbe.CheckLiveness()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.LivenessProbeDoesNotClaimReadinessOrCapabilityHealth()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.HealthProbe.CheckReadiness(System.Collections.Generic.IEnumerable<string>, System.Collections.Generic.IEnumerable<ArcForges.Observability.RequiredDependencyObservation>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.ReadinessFailsClosedForEveryMissingRequiredDependency()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.HealthProbe.EvaluateCapabilityHealth(System.Collections.Generic.IEnumerable<ArcForges.Observability.HealthDimensionObservation>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.CapabilityHealthUsesAllFiveSharedDimensionsAndReflectsSimulatedDegradation()"
+  },
+  {
     "apiSymbol": "ArcForges.Observability.ObservabilityContext.FromApplicationAssembly(ArcForges.Observability.SignalApplicationDimension, ArcForges.Contracts.Foundation.Values.InstanceId, ArcForges.Observability.SignalEnvironment, System.Reflection.Assembly?)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.SignalEmitterTests.ApplicationBuildIdentityComesFromThePolicyStampedAssembly()"
