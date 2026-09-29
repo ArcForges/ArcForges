@@ -850,7 +850,7 @@ public sealed class AuditStore : IDisposable
         var occurredAt = new Instant(reader.GetInt64(2), checked((uint)reader.GetInt64(3)));
         var actor = ActorChainSnapshot.Decode((byte[])reader[5]).Chain;
         var software = new AuditSoftwareIdentity(reader.GetString(6));
-        var event = new AuditEvent((AuditEventType)reader.GetInt32(4), actor, software,
+        var auditEvent = new AuditEvent((AuditEventType)reader.GetInt32(4), actor, software,
             new AuditCapabilityId(reader.GetString(7)),
             new AuditResourceReference((AuditResourceKind)reader.GetInt32(9), ParseGuid(reader.GetString(10))),
             (AuditRisk)reader.GetInt32(11), (AuditDecision)reader.GetInt32(12),
@@ -865,14 +865,14 @@ public sealed class AuditStore : IDisposable
             throw new InvalidDataException("Stored event is outside its owner partition.");
         }
 
-        if (GuidText(event.Executor.Value) != reader.GetString(8)) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
+        if (GuidText(auditEvent.Executor.Value) != reader.GetString(8)) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
         var policyId = reader.GetString(19);
         if (policyId != GuidText(expectedPolicyId)) throw new InvalidDataException("Stored event names an unexpected retention policy.");
         if (reader.GetInt32(20) != actualPartition.Year || reader.GetInt32(21) != actualPartition.Month)
             throw new InvalidDataException("Stored partition does not match the event timestamp.");
-        var digest = ComputeEventHash(event, occurredAt, expectedPolicyId, eventId);
+        var digest = ComputeEventHash(auditEvent, occurredAt, expectedPolicyId, eventId);
         if (!StringComparer.Ordinal.Equals(digest, reader.GetString(18))) throw new InvalidDataException("Audit event integrity digest does not match its stored fields.");
-        return new AuditEventRecord(sequence, eventId, occurredAt, event, digest);
+        return new AuditEventRecord(sequence, eventId, occurredAt, auditEvent, digest);
     }
 
     private static string ComputeEventHash(AuditEvent auditEvent, Instant occurredAt, Guid policyId, Guid eventId)

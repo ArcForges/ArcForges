@@ -12,6 +12,7 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
     <InternalsVisibleTo Include="ArcForges.Security.Audit.Tests" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
