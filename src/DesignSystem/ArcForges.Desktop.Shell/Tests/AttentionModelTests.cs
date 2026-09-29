@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
+using System.Resources;
 using Xunit;
 
 namespace ArcForges.Desktop.Shell.Tests;
@@ -67,8 +69,15 @@ public sealed class AttentionModelTests
 
         var safeDefault = AttentionModel.CreateSystemNotificationContent(sensitive);
 
-        Assert.Equal("ArcForges", safeDefault.Title);
-        Assert.Equal("An item needs your attention.", safeDefault.Body);
+        var resources = new ResourceManager(
+            "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
+            typeof(AttentionModel).Assembly);
+        string expectedTitle = resources.GetString("attention.notification.generic_title", CultureInfo.CurrentUICulture)
+            ?? throw new InvalidOperationException("The generic attention title resource is missing.");
+        string expectedBody = resources.GetString("attention.notification.generic_body", CultureInfo.CurrentUICulture)
+            ?? throw new InvalidOperationException("The generic attention body resource is missing.");
+        Assert.Equal(expectedTitle, safeDefault.Title);
+        Assert.Equal(expectedBody, safeDefault.Body);
         Assert.DoesNotContain("Phoenix", safeDefault.Title + safeDefault.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Private project", safeDefault.Title + safeDefault.Body, StringComparison.OrdinalIgnoreCase);
 

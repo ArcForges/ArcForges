@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
+using System.Resources;
+
 namespace ArcForges.Desktop.Shell;
 
 public enum AttentionDurability
@@ -68,8 +71,12 @@ public sealed record SystemNotificationContent(string Title, string Body);
 /// </summary>
 public sealed class AttentionModel
 {
-    private const string GenericNotificationTitle = "ArcForges";
-    private const string GenericNotificationBody = "An item needs your attention.";
+    private const string GenericNotificationTitleKey = "attention.notification.generic_title";
+    private const string GenericNotificationBodyKey = "attention.notification.generic_body";
+
+    private static readonly ResourceManager NotificationStrings = new(
+        "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
+        typeof(AttentionModel).Assembly);
 
     private readonly object _gate = new();
     private readonly Dictionary<string, AttentionItem> _durableItems = new(StringComparer.Ordinal);
@@ -136,9 +143,15 @@ public sealed class AttentionModel
 
         if (item.Sensitivity == AttentionSensitivity.Sensitive && previewConsent != NotificationPreviewConsent.Granted)
         {
-            return new SystemNotificationContent(GenericNotificationTitle, GenericNotificationBody);
+            return new SystemNotificationContent(
+                GetRequiredResource(GenericNotificationTitleKey),
+                GetRequiredResource(GenericNotificationBodyKey));
         }
 
         return new SystemNotificationContent(item.Title, item.Body);
     }
+
+    private static string GetRequiredResource(string key) =>
+        NotificationStrings.GetString(key, CultureInfo.CurrentUICulture)
+        ?? throw new InvalidOperationException("The safe attention notification resources are unavailable.");
 }
