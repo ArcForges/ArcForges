@@ -5,6 +5,8 @@
   <resheader name="version"><value>2.0</value></resheader>
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="attention.notification.generic_title" xml:space="preserve"><value>ArcForges</value></data>
+  <data name="attention.notification.generic_body" xml:space="preserve"><value>An item needs your attention.</value></data>
   <data name="error.presentation.title" xml:space="preserve"><value>This action could not be completed.</value></data>
   <data name="error.generic" xml:space="preserve"><value>An unexpected error prevented the action from completing.</value></data>
   <data name="error.retry.never" xml:space="preserve"><value>Retry is not available for this error. Follow the next step above.</value></data>

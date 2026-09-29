@@ -1303,5 +1303,25 @@
     "apiSymbol": "ArcForges.Capabilities.ICapabilityProvider.EvaluateAvailabilityAsync(ArcForges.Capabilities.ActionKey, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.EvaluateAvailabilityAsyncReturnsEachOfTheNineAuthorizedFacts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.AttentionModel.Publish(ArcForges.Desktop.Shell.AttentionItem, System.Func<ArcForges.Desktop.Shell.SystemNotificationContent, bool>?, ArcForges.Desktop.Shell.NotificationPreviewConsent)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.AttentionModelTests.MissedNotificationLeavesDurableAttentionUntilOwnerResolvesIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.AttentionModel.Snapshot()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.AttentionModelTests.MissedNotificationLeavesDurableAttentionUntilOwnerResolvesIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.AttentionModel.RemoveResolved(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.AttentionModelTests.MissedNotificationLeavesDurableAttentionUntilOwnerResolvesIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.AttentionModel.CreateSystemNotificationContent(ArcForges.Desktop.Shell.AttentionItem, ArcForges.Desktop.Shell.NotificationPreviewConsent)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.AttentionModelTests.SensitiveSystemNotificationUsesGenericContentUnlessPreviewConsentIsExplicit()"
   }
 ]
