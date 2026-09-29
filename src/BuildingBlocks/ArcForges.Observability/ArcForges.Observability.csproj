@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Tests/**/*.cs" />
+    <ProjectReference Include="../ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
   </ItemGroup>
 </Project>
