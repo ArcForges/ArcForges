@@ -643,6 +643,9 @@ public sealed class ActionAvailabilityRegistration
 /// <summary>Computes action availability from its static capability bindings and a frozen context snapshot.</summary>
 public interface ICapabilityProvider
 {
+    /// <summary>Returns true only when the exact action catalogue row declares this capability.</summary>
+    bool IsBoundToCapability(ActionKey actionKey, string capabilityKey);
+
     ValueTask<Outcome<AvailabilityResult>> EvaluateAvailabilityAsync(
         ActionKey actionKey,
         FrozenContextSnapshot context,
@@ -712,6 +715,14 @@ public sealed class CapabilityAvailabilityProvider : ICapabilityProvider
         }
 
         _actions = registered;
+    }
+
+    public bool IsBoundToCapability(ActionKey actionKey, string capabilityKey)
+    {
+        ArgumentNullException.ThrowIfNull(actionKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(capabilityKey);
+        return _actions.TryGetValue(actionKey, out var registration) &&
+            registration.Registration.CapabilityKeys.Contains(capabilityKey, StringComparer.Ordinal);
     }
 
     ValueTask<Outcome<AvailabilityResult>> ICapabilityProvider.EvaluateAvailabilityAsync(

@@ -150,6 +150,22 @@ public sealed class ActionAvailabilityTests
     }
 
     [Xunit.Fact]
+    public void AvailabilityProviderReportsOnlyExactActionCapabilityBindings()
+    {
+        var scope = ProviderScope();
+        var action = Action("test.action.single-capability", [StringValue.Descriptor.FullName]);
+        var provider = CreateProvider(scope, [action]);
+
+        Xunit.Assert.True(provider.IsBoundToCapability(action.Key, "IScopeOperations.GetSession"));
+        Xunit.Assert.True(((ICapabilityProvider)provider).IsBoundToCapability(action.Key, "IScopeOperations.GetSession"));
+        Xunit.Assert.False(provider.IsBoundToCapability(action.Key, "IScopeOperations.CreateAnnotation"));
+        Xunit.Assert.False(((ICapabilityProvider)provider).IsBoundToCapability(action.Key, "IScopeOperations.CreateAnnotation"));
+        Xunit.Assert.False(provider.IsBoundToCapability(new ActionKey("test.action.unknown"), "IScopeOperations.GetSession"));
+        Xunit.Assert.Throws<ArgumentNullException>(() => provider.IsBoundToCapability(null!, "IScopeOperations.GetSession"));
+        Xunit.Assert.Throws<ArgumentException>(() => provider.IsBoundToCapability(action.Key, " "));
+    }
+
+    [Xunit.Fact]
     public async Task RepeatedEvaluationDoesNotMutateFrozenContextRegistryOrEvidence()
     {
         var source = new StringValue { Value = "captured" };
