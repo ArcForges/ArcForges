@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Capabilities;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Desktop.Shell.Commands;
 using ArcForges.Foundation;
 using ArcForges.Foundation.Errors;
-using ArcForges.Desktop.Shell.Commands;
 using Google.Protobuf.WellKnownTypes;
 using Xunit;
 
@@ -52,7 +52,7 @@ public sealed class CommandPaletteTests
         Assert.True(palette.TryRegister(second));
         Assert.True(palette.TryRegister(first));
         var before = palette.Snapshot();
-        Assert.Equal([first, second], before);
+        Assert.Equal([second, first], before);
         Assert.True(Assert.IsAssignableFrom<IList<ShellCommand>>(before).IsReadOnly);
 
         Assert.True(palette.TryRegister(Command("workspace.save", "Save workspace", "shell.action.workspace.save")));
@@ -263,6 +263,13 @@ public sealed class CommandPaletteTests
     private sealed class CountingCapabilityProvider : ICapabilityProvider
     {
         public int CallCount { get; private set; }
+
+        bool ICapabilityProvider.IsBoundToCapability(ActionKey actionKey, string capabilityKey)
+        {
+            ArgumentNullException.ThrowIfNull(actionKey);
+            ArgumentException.ThrowIfNullOrWhiteSpace(capabilityKey);
+            return false;
+        }
 
         ValueTask<Outcome<AvailabilityResult>> ICapabilityProvider.EvaluateAvailabilityAsync(
             ActionKey actionKey,

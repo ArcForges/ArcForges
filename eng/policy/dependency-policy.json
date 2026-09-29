@@ -225,10 +225,10 @@
     "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
     "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
-    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a883566126a79577fdc16186aae0da5b47e19102dbc910fd293670c21d32d45f",
+    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a7dfaa568b5ab071f62edd9ab67cace16cd0f381bb1c13afd7a8a2b1393d1509",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
-    "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "9dcc17f7e35d6d94e9ac8bc483ddf399d257afbd06b77952af44921e31cb6a00",
-    "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "d03bee75a10ad3d81c9b0bdc39302be537e45b384a9171a466916232813fba5c",
+    "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
+    "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
     "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
     "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
     "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
@@ -671,19 +671,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-g02",
+    "owner": "af-20260928-a01",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-09-29",
-    "baselineCommit": "98c552c2d459ab5b2a7814198fa99169b900f9ee",
-    "maintenanceAssessment": "PLT.51 adds a direct project reference from the non-packable Observability library to the already-delivered Capabilities HealthDimension owner, so the public HealthProbe API reuses the existing closed five-dimension type rather than defining a second enum or wire contract. The two task-authorized Observability lockfiles record only this project edge and the already-admitted transitive package graph. The repository NuGet closure remains unchanged at 53 exact coordinates and the Python closure at 10; package IDs, package manifest, version selection, runtime dependency set, target framework, solution, workflow, licence policy and dependency algorithms are unchanged. PLT.53 retains package inventory and publication admission ownership.",
+    "baselineCommit": "f84180e89d40081db127c145d83ab18c129af1b1",
+    "maintenanceAssessment": "PLT.28 adds only the already-authorized in-repository ArcForges.Capabilities project edge to Desktop.Shell, so the Shell command palette delegates availability to the canonical ICapabilityProvider rather than copying or approximating capability rules. The locked Shell production and test project graphs now reflect this edge and its transitive project graph. The aggregate 53-coordinate NuGet closure and every resolved version and content hash are unchanged; there is no new package coordinate, PackageVersion, external dependency, central pin, package ID, or release activation. Only the two Shell lockfiles change semantically; all other locks, the solution, package manifest and shared build configuration remain untouched. Shell stays non-packable. This immutable successor chains from the active PLT.51 receipt and preserves all prior dependency-review receipts.",
     "upgradeChecks": {
-      "compilation": "Pinned .NET SDK 10.0.400 locked restore and Release compilation of Foundation, Capabilities, Observability and Observability.Tests passed with zero warnings/errors. The exact repository package-validation command dotnet test --project src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj -c Release --no-build executed 18/18 focused tests; exact-head hosted checks remain required.",
-      "aot-trim": "No SDK, framework, AOT, trimming, or native toolchain configuration changes; the exact-head hosted AOT/package gates remain required before integration.",
-      "compatibility": "HealthProbe consumes only the already-delivered Capabilities.HealthDimension closed enum; no duplicate dimension type, protobuf field, wire schema, or package API version is introduced. The existing Foundation/Capabilities package versions remain exact.",
-      "licence-provenance": "No NuGet or Python dependency coordinate/version is added or removed; aggregate lock closure remains 53 NuGet coordinates and 10 Python tools. The project edge uses existing first-party code; hosted licence, provenance and secret-scan gates remain required.",
-      "security-sbom": "The two Observability locks record a first-party project reference and already-admitted package coordinates only; no runtime package, package identity, manifest admission or dependency-policy algorithm changes. Hosted SBOM/security checks remain required.",
-      "runtime-performance-migration": "The change adds pure, caller-observation-based health projection without framework migration or performance claims; focused behavioral tests pass 18/18 and no performance claim is made.",
-      "framework-runtime-posture": "The pinned .NET SDK and target framework remain unchanged at .NET 10 / SDK 10.0.400; no runtime, Android or native ABI version changes."
+      "compilation": "Pinned SDK 10.0.400 restore of the Shell test project regenerated only the two authorized Shell lockfiles. Locked restore, Release build, focused and applicable full tests, architecture and exact-head hosted gates remain required before integration.",
+      "aot-trim": "No AOT/trim setting, SDK, framework or native toolchain changed; Shell remains non-packable and no new runtime/AOT claim is made. Existing AOT/trim gates remain required.",
+      "compatibility": "The new internal project edge uses the existing Capabilities owner and public ICapabilityProvider contract. Availability remains delegated to that canonical evaluator; no copied rule, API owner, public package identity or external dependency is introduced.",
+      "licence-provenance": "No external source or package is introduced. The existing Shell project classification is preserved; only the two exact PLT.28 C# paths and immutable receipt receive firstParty rows, and the existing Shell active-project row is bound to the exact project blob.",
+      "security-sbom": "The locked aggregate remains exactly 53 existing NuGet coordinates with identical content hashes and versions; no package closure expansion occurs. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
+      "runtime-performance-migration": "No runtime, persistence, migration, framework, native ABI or performance claim is introduced; this task supplies an in-process command registry/palette and canonical availability delegation only.",
+      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400; no framework major, runtime, Android, native ABI or toolchain version changed."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -909,10 +909,10 @@
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
       "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
-      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a883566126a79577fdc16186aae0da5b47e19102dbc910fd293670c21d32d45f",
+      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a7dfaa568b5ab071f62edd9ab67cace16cd0f381bb1c13afd7a8a2b1393d1509",
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
-      "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "9dcc17f7e35d6d94e9ac8bc483ddf399d257afbd06b77952af44921e31cb6a00",
-      "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "d03bee75a10ad3d81c9b0bdc39302be537e45b384a9171a466916232813fba5c",
+      "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
+      "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
       "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
       "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
@@ -934,7 +934,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-24-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-51-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -945,7 +945,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-51-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-28-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

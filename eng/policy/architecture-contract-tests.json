@@ -1418,5 +1418,30 @@
     "apiSymbol": "ArcForges.Capabilities.InvocationFailureMap.FromAvailability(ArcForges.Capabilities.AvailabilityResult)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.FailureMappingsCoverEveryDefinedSelectionAndAvailabilityValue()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.TryRegister(ArcForges.Desktop.Shell.Commands.ShellCommand)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.TryRegisterRejectsDuplicateIdsAndNormalizedShortcutConflictsAtomically()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.Snapshot()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.SnapshotIsStableReadOnlyAndOrderedByCommandId()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.SearchPalette(string, int)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.SearchPaletteRanksRelevantMatchesDeterministicallyWithoutAvailabilityEvaluation()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.EvaluateAvailabilityAsync(string, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.AvailabilityEvaluationAgreesWithTheCanonicalCapabilityProvider()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.TryResolveShortcut(ArcForges.Desktop.Shell.Commands.CommandShortcut, out ArcForges.Desktop.Shell.Commands.ShellCommand?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.TryResolveShortcutUsesNormalizedBindingsAndRefusesUnknownGestures()"
   }
 ]

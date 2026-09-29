@@ -119,6 +119,7 @@ public sealed class ShellCommand
             throw new ArgumentException("Command IDs must be bounded lowercase dotted keys.", nameof(id));
         }
 
+        ArgumentNullException.ThrowIfNull(title);
         ValidateDisplayText(title, nameof(title), 128, allowEmpty: false);
         string safeDescription = description ?? string.Empty;
         ValidateDisplayText(safeDescription, nameof(description), 512, allowEmpty: true);
@@ -262,7 +263,8 @@ public sealed class ShellCommandPalette
         ArgumentNullException.ThrowIfNull(shortcut);
         lock (_gate)
         {
-            if (_shortcuts.TryGetValue(shortcut, out string commandId) &&
+            if (_shortcuts.TryGetValue(shortcut, out string? commandId) &&
+                commandId is not null &&
                 _commands.TryGetValue(commandId, out ShellCommand? registered) &&
                 registered is not null)
             {
