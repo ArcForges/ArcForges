@@ -49,7 +49,13 @@ public sealed class SignalEmitterTests
         {
             ShouldListenTo = source => source.Name == SignalEmitter.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => stopped = activity,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "storage.commit")
+                {
+                    stopped = activity;
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
 
