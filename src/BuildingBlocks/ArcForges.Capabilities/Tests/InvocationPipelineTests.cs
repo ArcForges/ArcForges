@@ -78,6 +78,32 @@ public sealed class InvocationPipelineTests
     }
 
     [Xunit.Fact]
+    public async Task UnregisteredCapabilityCanaryIsNeverCopiedToTrace()
+    {
+        const string canary = "secret-canary\u0001unregistered";
+        var fixture = Fixture.Create();
+        var ownerCalls = 0;
+        var pipeline = fixture.Pipeline(Fixture.RevisionBinding((_, _, arguments, _, _) =>
+        {
+            ownerCalls++;
+            return ValueTask.FromResult(Outcome.Success(new OwnerResult(arguments, new WireRevision { Value = 12 })));
+        }));
+        var request = fixture.Request();
+        request.Capability = canary;
+
+        var result = await pipeline.InvokeAsync(request, new ActionKey(ActionKeyValue), fixture.AvailabilityContext,
+            [fixture.Target], [fixture.ContextProvider], capturedTarget: fixture.Target.Identity,
+            cancellationToken: Xunit.TestContext.Current.CancellationToken);
+
+        Xunit.Assert.Equal(OutcomeKind.Failure, result.Kind);
+        Xunit.Assert.Equal("validation.invalid_request", result.Failure!.Code);
+        Xunit.Assert.Equal(0, ownerCalls);
+        Xunit.Assert.Equal(2, fixture.Trace.Records.Count);
+        Xunit.Assert.All(fixture.Trace.Records, record => Xunit.Assert.Null(record.CapabilityKey));
+        Xunit.Assert.DoesNotContain(canary, fixture.Trace.Records.Select(record => record.CapabilityKey ?? string.Empty));
+    }
+
+    [Xunit.Fact]
     public async Task SameCommandReplayRechecksAvailabilityContextAndAuthorizationButDoesNotInvokeAgain()
     {
         var fixture = Fixture.Create();

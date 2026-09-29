@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.PublicApi.V1;
@@ -308,13 +308,17 @@ public sealed class InvocationTraceRecord
     private readonly Id? _invocationId;
     private readonly Id? _commandId;
 
-    internal InvocationTraceRecord(InvocationTracePhase phase, Invocation? invocation, InstanceIdentity? target, InvocationOutcome? outcome)
+    internal InvocationTraceRecord(
+        InvocationTracePhase phase,
+        Invocation? invocation,
+        InstanceIdentity? target,
+        InvocationOutcome? outcome,
+        string? canonicalCapabilityKey)
     {
         Phase = phase;
         _invocationId = CopyTraceId(invocation?.InvocationId);
         _commandId = CopyTraceId(invocation?.CommandId);
-        CapabilityKey = invocation is { HasCapability: true } && invocation.Capability.Length <= 256
-            ? invocation.Capability : null;
+        CapabilityKey = canonicalCapabilityKey is { Length: > 0 and <= 256 } ? canonicalCapabilityKey : null;
         Target = target;
         OutcomeKind = outcome?.Kind;
         FailureCode = outcome?.Failure?.Code;
@@ -436,7 +440,8 @@ public sealed class CapabilityInvocationPipeline
             }
         }
 
-        var started = await WriteTraceAsync(new(InvocationTracePhase.Started, request, null, null)).ConfigureAwait(false);
+        var traceCapabilityKey = request is null ? null : CanonicalTraceCapabilityKey(request);
+        var started = await WriteTraceAsync(new(InvocationTracePhase.Started, request, null, null, traceCapabilityKey)).ConfigureAwait(false);
         if (!started)
         {
             return InvocationOutcome.FailureResult(TypedFailure.Create("internal.unexpected"));
@@ -458,8 +463,19 @@ public sealed class CapabilityInvocationPipeline
             outcome = InvocationOutcome.FailureResult(TypedFailure.Create("internal.unexpected"));
         }
 
-        _ = await WriteTraceAsync(new(InvocationTracePhase.Completed, request, selectedTarget?.Identity, outcome)).ConfigureAwait(false);
+        _ = await WriteTraceAsync(new(InvocationTracePhase.Completed, request, selectedTarget?.Identity, outcome, traceCapabilityKey)).ConfigureAwait(false);
         return outcome;
+    }
+
+    private string? CanonicalTraceCapabilityKey(Invocation invocation)
+    {
+        if (!invocation.HasCapability || invocation.Capability.Length is 0 or > 256 ||
+            string.IsNullOrWhiteSpace(invocation.Capability))
+        {
+            return null;
+        }
+
+        return _registry.Find(invocation.Capability)?.Key;
     }
 
     [SuppressMessage("Usage", "CA1031:Do not catch general exception types", Justification = "No owner or infrastructure exception may escape the capability boundary; owner dispatch failures map to the registered closed internal error.")]
