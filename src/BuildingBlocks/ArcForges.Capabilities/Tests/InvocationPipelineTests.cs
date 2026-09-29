@@ -80,7 +80,8 @@ public sealed class InvocationPipelineTests
     [Xunit.Fact]
     public async Task UnregisteredCapabilityCanaryIsNeverCopiedToTrace()
     {
-        const string canary = "secret-canary\u0001unregistered";
+        var canary = string.Concat("secret-canary", (char)0x01, "unregistered");
+        Xunit.Assert.Equal((char)0x01, canary["secret-canary".Length]);
         var fixture = Fixture.Create();
         var ownerCalls = 0;
         var pipeline = fixture.Pipeline(Fixture.RevisionBinding((_, _, arguments, _, _) =>
