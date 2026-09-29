@@ -561,7 +561,12 @@
     "win.slnx",
     "src/BuildingBlocks/ArcForges.Capabilities/CapabilityRegistry.cs",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/CapabilityRegistryTests.cs",
-    "eng/policy/dependency-reviews/plt-19-r1.json"
+    "eng/policy/dependency-reviews/plt-19-r1.json",
+    "src/BuildingBlocks/ArcForges.Capabilities/HealthDimension.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/InProcessStateHints.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/OwnAppNavigation.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/InProcessStateHintTests.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/OwnNavigationTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

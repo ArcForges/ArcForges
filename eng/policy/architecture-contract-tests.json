@@ -1088,5 +1088,30 @@
     "apiSymbol": "ArcForges.Capabilities.CapabilitySelector.Select(ArcForges.Capabilities.CapabilityRegistry, string, System.Collections.Generic.IEnumerable<ArcForges.Capabilities.CapabilityTarget>, ArcForges.Capabilities.InstanceIdentity?, ArcForges.Capabilities.InstanceIdentity?)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.CapabilityRegistryTests.OneReadyTargetIsSelectedAndUnavailableTargetReturnsTypedReason()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InProcessStateHintFeed.Publish(ArcForges.Capabilities.StateHintKind, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InProcessStateHintTests.DuplicateHintsCoalesceAndEveryHintPageRequiresAnAuthoritativeRead()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InProcessStateHintFeed.PollAndReadAsync<TState>(ArcForges.Capabilities.StateHintCursor?, ArcForges.Capabilities.AuthoritativeStateRead<TState>, int, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InProcessStateHintTests.SmallPagesAdvanceWithoutSkippingHintsOrOwnerReads()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.OwnAppNavigationRouter<TAccess>.RegisterRoute(string, ArcForges.Capabilities.OwnAppDeepLinkHandler<TAccess>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.OwnNavigationTests.RouteRegistrationRejectsMalformedAndDuplicateRoutes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.OwnAppNavigationRouter<TAccess>.OpenArtifactAsync(ArcForges.Contracts.Foundation.V1.ArtifactRef?, ArcForges.Capabilities.ArtifactAction, string?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.OwnNavigationTests.OwnedArtifactAndDeepLinkReachOnlyTheRegisteredApplicationHandlers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.OwnAppNavigationRouter<TAccess>.HandleDeepLinkAsync(string?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.OwnNavigationTests.HostileForeignAndMissingContentLinksFailClosedWithoutProductLaunch()"
   }
 ]
