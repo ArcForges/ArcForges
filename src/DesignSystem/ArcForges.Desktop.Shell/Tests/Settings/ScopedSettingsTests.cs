@@ -59,6 +59,7 @@ public sealed class ScopedSettingsTests
         store.Save([oldValue]);
 
         var versionTwo = Definition("editor.theme", [SettingScope.Application], version: 2,
+            migrations:
         [
             new SettingMigrationStep(new StorageSchemaVersion(1), "editor-theme-r1", static value =>
                 JsonSerializer.SerializeToElement(value.GetString() + "-migrated", SettingsJsonContext.Default.String))
@@ -112,12 +113,12 @@ public sealed class ScopedSettingsTests
 
         store.Save(values);
         var loaded = new SettingsSnapshot(values);
-        var sync = store.CreateSyncSnapshot(loaded, [versionTwo]);
+        var sync = DeviceLocalSettingsStore.CreateSyncSnapshot(loaded, [versionTwo]);
 
         Assert.Equal([SettingScope.Application, SettingScope.Workspace], sync.Entries.Select(value => value.Scope).ToArray());
         Assert.DoesNotContain(sync.Entries, value => value.Scope is SettingScope.Device or SettingScope.Instance);
         Assert.All(sync.Entries, value => Assert.Equal(2u, value.SchemaVersion.Number));
-        Assert.All(sync.Entries, value => Assert.EndsWith("-migrated", value.Value.GetString() ?? string.Empty));
+        Assert.All(sync.Entries, value => Assert.EndsWith("-migrated", value.Value.GetString() ?? string.Empty, StringComparison.Ordinal));
     }
 
     private static SettingDefinition<string> Definition(
@@ -181,6 +182,6 @@ public sealed class ScopedSettingsTests
 }
 
 [JsonSerializable(typeof(string))]
-internal partial class SettingsJsonContext : JsonSerializerContext
+internal sealed partial class SettingsJsonContext : JsonSerializerContext
 {
 }

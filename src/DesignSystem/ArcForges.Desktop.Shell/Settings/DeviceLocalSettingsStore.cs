@@ -187,7 +187,7 @@ public sealed class DeviceLocalSettingsStore
     }
 
     /// <summary>Creates an explicit network-facing view containing only scopes opted in by each setting schema.</summary>
-    public SettingsSnapshot CreateSyncSnapshot(SettingsSnapshot local, IEnumerable<ISettingSchema> schemas)
+    public static SettingsSnapshot CreateSyncSnapshot(SettingsSnapshot local, IEnumerable<ISettingSchema> schemas)
     {
         ArgumentNullException.ThrowIfNull(local);
         ArgumentNullException.ThrowIfNull(schemas);
@@ -226,9 +226,9 @@ public sealed class DeviceLocalSettingsStore
         foreach (var item in rootFields["settings"].EnumerateArray())
         {
             if (!TryReadFields(item, ["key", "scope", "scopeIdHash", "schemaVersion", "value"], out var fields)
-                || !fields["key"].TryGetString(out var key) || !SettingKey.IsValid(key)
-                || !fields["scope"].TryGetString(out var scopeText) || !TryParseScope(scopeText, out var scope)
-                || !fields["scopeIdHash"].TryGetString(out var scopeIdHash) || !IsHash(scopeIdHash)
+                || !TryGetString(fields["key"], out var key) || !SettingKey.IsValid(key)
+                || !TryGetString(fields["scope"], out var scopeText) || !TryParseScope(scopeText, out var scope)
+                || !TryGetString(fields["scopeIdHash"], out var scopeIdHash) || !IsHash(scopeIdHash)
                 || !fields["schemaVersion"].TryGetUInt32(out var schemaVersion) || schemaVersion == 0
                 || fields["value"].ValueKind == JsonValueKind.Undefined)
             {
@@ -266,6 +266,18 @@ public sealed class DeviceLocalSettingsStore
         }
 
         return fields.Count == expected.Length;
+    }
+
+    private static bool TryGetString(JsonElement element, out string value)
+    {
+        value = string.Empty;
+        if (element.ValueKind != JsonValueKind.String || element.GetString() is not { } text)
+        {
+            return false;
+        }
+
+        value = text;
+        return true;
     }
 
     private static Dictionary<string, ISettingSchema> SchemaMap(IEnumerable<ISettingSchema> schemas)

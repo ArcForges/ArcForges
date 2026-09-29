@@ -19,7 +19,7 @@ public enum SettingScope
 /// <summary>Scope identities for one resolution request. Identities are hashed before storage or comparison.</summary>
 public sealed class SettingScopeContext
 {
-    private readonly IReadOnlyDictionary<SettingScope, string> _identities;
+    private readonly ReadOnlyDictionary<SettingScope, string> _identities;
 
     public string? this[SettingScope scope]
         => _identities.TryGetValue(scope, out var value) ? value : null;
@@ -41,7 +41,7 @@ public sealed class SettingScopeContext
         _identities = new ReadOnlyDictionary<SettingScope, string>(identities);
     }
 
-    private static void Add(IDictionary<SettingScope, string> identities, SettingScope scope, string? identity)
+    private static void Add(Dictionary<SettingScope, string> identities, SettingScope scope, string? identity)
     {
         if (identity is null)
         {

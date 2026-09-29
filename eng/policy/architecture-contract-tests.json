@@ -1258,5 +1258,35 @@
     "apiSymbol": "ArcForges.Desktop.Shell.Errors.ErrorPresenter.Present(ArcForges.Foundation.Errors.TypedFailure)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.ErrorPresentationTests.PresentationUsesOnlyRegisteredTextAndNeverEchoesExceptionDetailsOrPaths()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DeviceLocalSettingsStore.CreateSyncSnapshot(ArcForges.Desktop.Shell.SettingsSnapshot, System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.ISettingSchema>)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.SynchronizationProjectionNeverIncludesDeviceOrInstanceSettings()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DeviceLocalSettingsStore.Load(System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.ISettingSchema>)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.StoreMigratesOlderValuesAtomicallyAndRefusesDowngradeWithoutChangingTheFile()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DeviceLocalSettingsStore.Save(System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.ScopedSettingValue>)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.StoreMigratesOlderValuesAtomicallyAndRefusesDowngradeWithoutChangingTheFile()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ISettingSchema.Migrate(ArcForges.Desktop.Shell.ScopedSettingValue)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.StoreMigratesOlderValuesAtomicallyAndRefusesDowngradeWithoutChangingTheFile()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ScopedSettingsResolver.Resolve<T>(ArcForges.Desktop.Shell.SettingDefinition<T>, ArcForges.Desktop.Shell.SettingsSnapshot, ArcForges.Desktop.Shell.SettingScopeContext)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.ResolutionCoversEveryScopeCombinationAndExplainsTheWinningSource()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.SettingDefinition<T>.ToStoredValue(ArcForges.Desktop.Shell.SettingScope, string, T)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.ResolutionCoversEveryScopeCombinationAndExplainsTheWinningSource()"
   }
 ]
