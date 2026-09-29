@@ -29,7 +29,8 @@ public sealed class AuditRetentionPolicy
 
 /// <summary>
 /// Non-authorizing, immutable record of an in-process maintenance capability that was consumed.
-/// This receipt is audit evidence, not a cryptographic signature or portable authorization token.
+/// Its wall-clock fields are audit evidence only; capability validity uses the in-process monotonic
+/// timestamp. This receipt is not a cryptographic signature or portable authorization token.
 /// </summary>
 public sealed class AuditMaintenanceReceipt
 {
@@ -101,6 +102,7 @@ public sealed class AuditMaintenanceReceipt
 /// <summary>
 /// In-process authority object. Only this assembly can mint a capability; each instance has a private
 /// reference identity, so a capability cannot be serialized, reconstructed, or replayed at another store.
+/// Expiry is enforced against the issuing clock's monotonic timestamp, never the wall-clock receipt fields.
 /// </summary>
 internal sealed class AuditMaintenanceAuthority
 {

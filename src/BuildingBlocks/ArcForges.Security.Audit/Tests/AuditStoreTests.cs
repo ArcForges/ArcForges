@@ -337,8 +337,6 @@ public sealed class AuditStoreTests
         public override DateTimeOffset GetUtcNow() => wallClock;
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override long GetTimestamp() => monotonicTicks;
-        public override TimeSpan GetElapsedTime(long startingTimestamp, long endingTimestamp) =>
-            TimeSpan.FromTicks(endingTimestamp - startingTimestamp);
 
         public void SetWallClock(DateTimeOffset value) => wallClock = value.ToUniversalTime();
         public void AdvanceMonotonic(TimeSpan value) => monotonicTicks = checked(monotonicTicks + value.Ticks);

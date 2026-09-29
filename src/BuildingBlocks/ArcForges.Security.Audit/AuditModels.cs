@@ -291,6 +291,7 @@ public readonly record struct AuditPartition
     }
 }
 
+/// <summary>A persisted fact with its store-observed occurrence instant and integrity digest.</summary>
 public sealed class AuditEventRecord(long sequence, Guid eventId, Instant occurredAt, AuditEvent auditEvent, string integritySha256)
 {
     public long Sequence { get; } = sequence > 0 ? sequence : throw new ArgumentOutOfRangeException(nameof(sequence));
