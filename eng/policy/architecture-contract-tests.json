@@ -1288,5 +1288,10 @@
     "apiSymbol": "ArcForges.Desktop.Shell.SettingDefinition<T>.ToStoredValue(ArcForges.Desktop.Shell.SettingScope, string, T)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.ResolutionCoversEveryScopeCombinationAndExplainsTheWinningSource()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ICapabilityProvider.EvaluateAvailabilityAsync(ArcForges.Capabilities.ActionKey, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.EvaluateAvailabilityAsyncReturnsEachOfTheNineAuthorizedFacts()"
   }
 ]
