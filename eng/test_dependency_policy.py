@@ -4,15 +4,121 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
 from dependency_policy import ROOT, POLICY, audit, check_admission, check_history, check_python, closure, exact, framework_upgrade, hashes, python_closure
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'packaging'))
 from release_channels import authorized, bound_candidate, publication, selected, verified_tag
+
+
+class SecretScanAllowlistTests(unittest.TestCase):
+    POLICY_PATH = 'eng/policy/dependency-policy.json'
+    RECEIPT_PATH = 'eng/policy/dependency-reviews/plt-40-r1.json'
+    PROJECT_PATHS = (
+        'src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj',
+        'src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj',
+    )
+    PROJECT_HASHES = (
+        '8ff03fdcaf23b09386fac47dd5e3e4f9689a665a569137f726456c9e59a9ecef',
+        'd6798bbbcf980fab4467c6d831871b075e55aeef6e09c7df67c4d72cd2334120',
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = tomllib.loads((ROOT / '.gitleaks.toml').read_text(encoding='utf-8'))
+        cls.groups = cls.config['allowlists']
+
+    @staticmethod
+    def _matches(group, path, line, rule='generic-api-key'):
+        return (
+            rule in group.get('targetRules', ())
+            and any(re.fullmatch(pattern, path) is not None for pattern in group.get('paths', ()))
+            and any(re.fullmatch(pattern, line) is not None for pattern in group.get('regexes', ()))
+        )
+
+    def _allowed(self, path, line, rule='generic-api-key'):
+        return any(self._matches(group, path, line, rule) for group in self.groups)
+
+    @staticmethod
+    def _line(path, digest, indent):
+        return f'{" " * indent}"{path}": "{digest}",'
+
+    @staticmethod
+    def _exact_regex(line):
+        return '^' + re.escape(line).replace(r'\ ', ' ').replace(r'\.', '[.]') + '$'
+
+    def test_allowlist_has_only_the_two_exact_path_bound_groups(self):
+        self.assertTrue(self.config['extend']['useDefault'])
+        self.assertNotIn('allowlist', self.config)
+        self.assertEqual(len(self.groups), 3)
+        baseline, *task_groups = self.groups
+        self.assertEqual(baseline['description'], 'Generated outputs and public test fixtures')
+        self.assertEqual(baseline['paths'], [
+            '(^|/)artifacts/',
+            '(^|/)(bin|obj)/',
+            '(^|/)tests/.*/Fixtures/',
+        ])
+        expected = (
+            (self.POLICY_PATH, 4),
+            (self.RECEIPT_PATH, 2),
+        )
+        for group, (path, count) in zip(task_groups, expected):
+            with self.subTest(path=path):
+                self.assertEqual(group['paths'], ['^' + path.replace('.', '[.]') + '$'])
+                self.assertEqual(group['targetRules'], ['generic-api-key'])
+                self.assertEqual(group['condition'], 'AND')
+                self.assertEqual(group['regexTarget'], 'line')
+                self.assertEqual(len(group['regexes']), count)
+                indentations = (4, 6) if path == self.POLICY_PATH else (6,)
+                expected_regexes = {
+                    self._exact_regex(self._line(project_path, digest, indent))
+                    for indent in indentations
+                    for project_path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+                }
+                self.assertEqual(set(group['regexes']), expected_regexes)
+
+    def test_exact_six_observed_lines_match_only_the_generic_api_key_rule(self):
+        policy_lines = [
+            self._line(path, digest, 4)
+            for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+        ] + [
+            self._line(path, digest, 6)
+            for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+        ]
+        receipt_lines = [
+            self._line(path, digest, 6)
+            for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+        ]
+        self.assertEqual(sum(self._allowed(self.POLICY_PATH, line) for line in policy_lines), 4)
+        self.assertEqual(sum(self._allowed(self.RECEIPT_PATH, line) for line in receipt_lines), 2)
+        for line in policy_lines:
+            self.assertTrue(self._allowed(self.POLICY_PATH, line))
+            self.assertFalse(self._allowed(self.POLICY_PATH, line, 'another-rule'))
+        for line in receipt_lines:
+            self.assertTrue(self._allowed(self.RECEIPT_PATH, line))
+            self.assertFalse(self._allowed(self.RECEIPT_PATH, line, 'another-rule'))
+
+    def test_wrong_key_digest_path_swaps_suffix_and_unrelated_hash_are_rejected(self):
+        project_path, tests_path = self.PROJECT_PATHS
+        project_hash, tests_hash = self.PROJECT_HASHES
+        valid_project = self._line(project_path, project_hash, 4)
+        candidates = (
+            (self.POLICY_PATH, valid_project.replace(project_path, project_path.replace('.csproj', '.other'))),
+            (self.POLICY_PATH, self._line(project_path, tests_hash, 4)),
+            (self.POLICY_PATH, self._line(tests_path, project_hash, 4)),
+            ('eng/policy/other.json', valid_project),
+            (self.POLICY_PATH, valid_project + ' credential=example-not-a-secret'),
+            (self.POLICY_PATH, self._line(project_path, 'a' * 64, 4)),
+        )
+        for path, line in candidates:
+            with self.subTest(path=path, line=line):
+                self.assertFalse(self._allowed(path, line))
 
 
 class AdmissionTests(unittest.TestCase):
