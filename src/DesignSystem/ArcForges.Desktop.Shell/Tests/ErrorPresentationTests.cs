@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Desktop.Shell.Errors;
 using ArcForges.Foundation.Errors;
 using Google.Protobuf;
+using Xunit;
 
 namespace ArcForges.Desktop.Shell.Tests;
 
