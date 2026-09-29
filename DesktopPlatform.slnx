@@ -29,6 +29,8 @@
   <Folder Name="/src/DesignSystem/">
     <Project Path="src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj" />
     <Project Path="src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj" />
+    <Project Path="src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj" />
+    <Project Path="src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj" />
   </Folder>
   <Folder Name="/src/DesktopHelpers/">
     <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj" />

@@ -865,6 +865,121 @@
     "testMethod": "ArcForges.DesignSystem.Tests.DesignTokenTests.SemanticScalesIncludeTabularNumbersAndRestrainedMotion()"
   },
   {
+    "apiSymbol": "ArcForges.Desktop.Shell.ApplicationKey.Parse(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ApplicationKey.TryParse(string?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DeviceLocalLayoutStore.ForCurrentUser(ArcForges.Desktop.Shell.ApplicationKey, ArcForges.Desktop.Shell.LayoutKey)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DeviceLocalLayoutStore.Load()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.DeviceLocalStoreRestoresAcrossLaunchesAndIsolatesApplicationsAndLayouts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DeviceLocalLayoutStore.Save(ArcForges.Desktop.Shell.LayoutSnapshot)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.DeviceLocalStoreRestoresAcrossLaunchesAndIsolatesApplicationsAndLayouts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DisplayId.Parse(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DisplayId.TryParse(string?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.DisplayTopology.TryGet(ArcForges.Desktop.Shell.DisplayId, out ArcForges.Desktop.Shell.DisplayWorkArea?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.RestoreDropsMissingOrRenamedPanelsAndAdaptsDisplayTopologyChanges()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.LayoutKey.Parse(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.LayoutKey.TryParse(string?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.LayoutRestorer.Restore(ArcForges.Desktop.Shell.LayoutSnapshot, ArcForges.Desktop.Shell.WindowRegistry, ArcForges.Desktop.Shell.PanelHost, ArcForges.Desktop.Shell.DisplayTopology)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.RestoreDropsMissingOrRenamedPanelsAndAdaptsDisplayTopologyChanges()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.LayoutSnapshot.Create(ArcForges.Desktop.Shell.ApplicationKey, ArcForges.Desktop.Shell.LayoutKey, System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.WindowPlacement>, System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.PanelPlacement>)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.PanelHost.Dock(ArcForges.Desktop.Shell.PanelKey, ArcForges.Desktop.Shell.DockRegion, int)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.PanelHostSupportsDockingCollapsingAndSemanticDensityMetrics()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.PanelHost.Restore(System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.PanelPlacement>)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.PanelHostSupportsDockingCollapsingAndSemanticDensityMetrics()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.PanelHost.SetCollapsed(ArcForges.Desktop.Shell.PanelKey, bool)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.PanelHostSupportsDockingCollapsingAndSemanticDensityMetrics()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.PanelHost.Snapshot()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.PanelHostSupportsDockingCollapsingAndSemanticDensityMetrics()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.PanelKey.Parse(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.PanelKey.TryParse(string?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.WindowId.Parse(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.WindowId.TryParse(string?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ApplicationAndLayoutKeysAreClosedAndCannotBecomePathSegments()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.WindowRegistry.Snapshot()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.OneLaunchInstanceOwnsMultipleDistinctWindowsAndRejectsDuplicateIds()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.WindowRegistry.TryClose(ArcForges.Desktop.Shell.WindowId)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.OneLaunchInstanceOwnsMultipleDistinctWindowsAndRejectsDuplicateIds()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.WindowRegistry.TryOpen(ArcForges.Desktop.Shell.WindowPlacement)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.OneLaunchInstanceOwnsMultipleDistinctWindowsAndRejectsDuplicateIds()"
+  },
+  {
     "apiSymbol": "ArcForges.Persistence.Resources.ManagedResourceStore.AddReference(string, ArcForges.Contracts.Foundation.Values.BlobId)",
     "testProject": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj",
     "testMethod": "ArcForges.Persistence.Resources.Tests.ManagedResourceStoreTests.ReferenceCountComesFromReferrerRowsAndGcPreservesSharedLiveObjects()"

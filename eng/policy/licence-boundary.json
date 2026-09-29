@@ -167,6 +167,14 @@
     {
       "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+      "kind": "msbuild"
     }
   ]
 }

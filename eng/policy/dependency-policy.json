@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "4a51f8bfa31e4ad0c8329826ff83930148f071c88ae343b60f0b1f10416d1cee",
+    "Directory.Packages.props": "3779124a049d321fcffebd4d606f2b30dfb251f0d7d91b15e3aa8a83ba43f177",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
     "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -225,6 +225,10 @@
     "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
     "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
+    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a883566126a79577fdc16186aae0da5b47e19102dbc910fd293670c21d32d45f",
+    "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
+    "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "9dcc17f7e35d6d94e9ac8bc483ddf399d257afbd06b77952af44921e31cb6a00",
+    "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "d03bee75a10ad3d81c9b0bdc39302be537e45b384a9171a466916232813fba5c",
     "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
     "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
     "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
@@ -641,25 +645,25 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-p03",
-    "reviewer": "Independent exact-head dependency-admission review required before merge",
+    "owner": "af-20260928-p04",
+    "reviewer": "Pending independent exact-head dependency-admission review after the PLT.19/PLT.23/PLT.37/PLT.40 rebase.",
     "reviewedOn": "2026-09-29",
-    "baselineCommit": "3cee8ae0ac9aedbe202b78753e9b2074edccbbb2",
-    "maintenanceAssessment": "PLT.19 adds a fixed first-party capability catalogue and selector. It keeps the repository-wide ArcForges.Contracts.Foundation default at 1.0.0-ci.113.1 and selects the already-admitted 1.0.0-ci.216.1 only for the exact 17 authorized MSBuildProjectName consumers: LocalRpcAotTests, ArcForges.Application.Abstractions, ArcForges.Capabilities, ArcForges.Capabilities.Tests, ArcForges.ContentSandbox, ArcForges.Contributions, ArcForges.Contributions.Tests, ArcForges.Foundation, ArcForges.Foundation.Tests, ArcForges.Observability, ArcForges.Observability.Tests, ArcForges.Persistence.Resources, ArcForges.Persistence.Resources.Tests, ArcForges.Persistence.Sqlite, ArcForges.Security, ArcForges.Security.Tests, and ArcForges.Tests.PersistenceTests. The five existing package-manifest rows update only their Contracts.Foundation external dependency. Only the 16 authorized semantic lock paths are regenerated; LocalRpcAotTests, Foundation.Acceptance and all unrelated lockfiles remain unchanged, while Capabilities and Capabilities.Tests locks change only for the Foundation project-reference edge. The NuGet and Python closures remain unchanged at 51 and 10 coordinates, with no package identity, framework, solution, workflow, or licence-boundary change. This successor chains from the active PLT.08 receipt and preserves the complete immutable predecessor history.",
+    "baselineCommit": "d0f6665f929019326d0b8555ae129bfdc35cb63c",
+    "maintenanceAssessment": "PLT.27 adds a framework-neutral, non-packable Desktop.Shell project for per-launch window ownership, panel state, display-aware layout restoration, and device-local atomic persistence. Its only project references are the existing DesignSystem and Foundation owners. Only ArcForges.Desktop.Shell and ArcForges.Desktop.Shell.Tests select the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1 coordinate instead of the repository-wide 1.0.0-ci.113.1 default; the package identity, available coordinate/version set, and aggregate dependency closure remain unchanged. Exactly 19 projects select 1.0.0-ci.216.1: LocalRpcAotTests, ArcForges.Application.Abstractions, ArcForges.Capabilities, ArcForges.Capabilities.Tests, ArcForges.ContentSandbox, ArcForges.Contributions, ArcForges.Contributions.Tests, ArcForges.Foundation, ArcForges.Foundation.Tests, ArcForges.Observability, ArcForges.Observability.Tests, ArcForges.Persistence.Resources, ArcForges.Persistence.Resources.Tests, ArcForges.Persistence.Sqlite, ArcForges.Security, ArcForges.Security.Tests, ArcForges.Tests.PersistenceTests, ArcForges.Desktop.Shell and ArcForges.Desktop.Shell.Tests. Only the Shell production and test packages.lock.json files may reflect this existing Foundation project edge; no other lockfile may change semantically. The package release manifest remains untouched (PLT.35 owns activation). Project, test, source, and lock bindings are added to current inventories without rewriting historical receipts. This immutable successor chains directly from the active PLT.19 receipt and preserves the full PLT.19/PLT.08 predecessor history; PLT.40 changes only exact public-hash scan support and does not alter the dependency closure.",
     "upgradeChecks": {
-      "compilation": "The rebased PLT.19 candidate at a17387c03d1b7babbff94c61502d01ec9d2c3f7a, based on DesktopPlatform main 3cee8ae0ac9aedbe202b78753e9b2074edccbbb2, was validated with pinned .NET SDK 10.0.400. Force-evaluation resolved all 18 locked Contracts.Foundation consumers with exactly the authorized 17 at 1.0.0-ci.216.1 and every other consumer, including Foundation.Acceptance, at 1.0.0-ci.113.1. Locked solution restore and full format verification passed; Release solution build passed with 0 warnings/errors. Capabilities.Tests 35/35, Foundation 65/65, Persistence.Resources 19 passed plus 2 explicitly skipped local process-kill diagnostics, Persistence.Derived 15/15, DesignSystem 7/7, Contributions 16/16, Observability 14/14, Security 28/28, and Persistence 81/81 passed. ArchitectureTests returned 99/100; the only failure was the local shared-policy evidence evaluator, which requires same-source imported naming/secret receipts and the native-architecture receipt (RP-01/08/09, AT-09). After that suite, the pinned vcpkg baseline installed the four authorized ports into the isolated task root; MSVC 14.51.36231 native configure/build/install succeeded and ABI CTest passed 2/2. The native stage validator refused the available CMake 4.4.3 and Ninja 1.13.2 because the admitted profile requires CMake 4.3.3 and Ninja 1.13.1. The repository-pinned action source has no archive digest parameter/check in this commit, so no alternate local tool download was made. Local native stage and managed candidate pack are therefore not claimed; fresh hosted native/package/AOT and evidence-importing architecture jobs are mandatory. After independent contract review, the source matrix and independent oracle were corrected so AppendUserMessage and StartAgentTurn both declare ownedContent, matching merged CON.06. On the corrected working tree, pinned SDK Capabilities.Tests passed 35/35 and full-solution format verification passed; fresh exact-head hosted checks remain required.",
-      "aot-trim": "No trimming, AOT, runtime identifier, executable entry point, or packaging setting is changed. The local locked Release build passed, but local native stage/managed pack could not produce an admitted candidate because the required exact CMake/Ninja tools are unavailable; hosted exact-head package and AOT checks remain mandatory.",
-      "compatibility": "The Foundation package override is limited to the exact 17 authorized MSBuildProjectName values; the repository-wide 1.0.0-ci.113.1 default and existing LocalRpcAotTests override remain unchanged. Five existing package-manifest rows select the already-admitted 1.0.0-ci.216.1 coordinate; only the 16 authorized semantic locks are refreshed. The 51-coordinate NuGet and 10-coordinate Python closures, package identities, project references, frameworks and wire contracts are unchanged.",
-      "licence-provenance": "After committing the rebased candidate, clean-source provenance passed for 570 files, 10 reused files and 140 records against base 3cee8ae0ac9aedbe202b78753e9b2074edccbbb2; native provenance passed for 21 components and licence-boundary IDE evaluation passed for 41 projects. The isolated vcpkg install and native CMake configure/build/install plus ABI CTest 2/2 used MSVC 14.51.36231; the producer stage was not accepted because available CMake/Ninja versions do not match the pinned profile. Fresh hosted source/licence/native gates remain required.",
-      "security-sbom": "The dependency audit passed with the NuGet closure unchanged at 51 coordinates, Python closure unchanged at 10 coordinates, and 240 bound inputs; dependency-policy tests passed 16/16. The exact 17 authorized Foundation consumers resolved to 1.0.0-ci.216.1, while the repo default and Foundation.Acceptance remained at 1.0.0-ci.113.1. Five package-manifest rows and 16 authorized semantic lock paths changed as permitted; all receipt/policy input hashes bind the current candidate. Fresh hosted policy, package and secret-scan checks remain required.",
-      "runtime-performance-migration": "The change introduces fixed descriptor validation and target selection metadata only; it adds no migration, runtime dependency, benchmark claim, or performance threshold.",
-      "framework-runtime-posture": "The target remains net10.0 with pinned SDK 10.0.400; no framework, runtime, native ABI, Android/Kotlin/ART/R8, or toolchain update is made."
+      "compilation": "The framework-neutral Shell library and offline tests use the repository-pinned .NET 10.0.400 SDK and current central pins. Full locked restore, format, Release build, Shell tests, architecture, package, and latest-head hosted gates are required before integration.",
+      "aot-trim": "The production project inherits existing unconditional AOT/trimming analysis settings and uses bounded JsonDocument parsing plus Utf8JsonWriter for persistence, avoiding generated reflection metadata; no runtime package or native ABI change is introduced.",
+      "compatibility": "Existing project and package identities and the available package coordinate/version set are unchanged. Only Desktop.Shell and Desktop.Shell.Tests select the already-admitted Foundation 1.0.0-ci.216.1 coordinate instead of the repository-wide 1.0.0-ci.113.1 default, with semantic changes limited to their two lockfiles. Desktop.Shell stays non-packable and outside the release manifest until PLT.35.",
+      "licence-provenance": "The new production and test projects remain first-party AGPL-3.0-only within the existing boundary and reference only classified in-repository projects; their source and lock paths are bound in the current inventories while prior receipts remain immutable. Latest-base provenance and licence checks remain required.",
+      "security-sbom": "PLT.27 adds no new NuGet coordinate or Python dependency and no shipped package closure; the only Foundation selection change is to the already-admitted 1.0.0-ci.216.1 coordinate for the two Shell projects. Closed application/layout keys are hashed before filesystem use and writes are atomic. The PLT.19/PLT.23/PLT.40 base closures are preserved and the current exact dependency-input hashes are bound in this successor.",
+      "runtime-performance-migration": "The model is framework-neutral and device-local, with launch InstanceId used only for live window ownership; no UI framework, stable installation identity, product/runtime support, performance, migration, or acceptance claim is made.",
+      "framework-runtime-posture": "The repository-pinned .NET SDK remains 10.0.400; no framework major, runtime version, native toolchain, Android or other owner framework changes."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "4a51f8bfa31e4ad0c8329826ff83930148f071c88ae343b60f0b1f10416d1cee",
+      "Directory.Packages.props": "3779124a049d321fcffebd4d606f2b30dfb251f0d7d91b15e3aa8a83ba43f177",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
       "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -879,6 +883,10 @@
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
       "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
+      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a883566126a79577fdc16186aae0da5b47e19102dbc910fd293670c21d32d45f",
+      "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
+      "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "9dcc17f7e35d6d94e9ac8bc483ddf399d257afbd06b77952af44921e31cb6a00",
+      "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "d03bee75a10ad3d81c9b0bdc39302be537e45b384a9171a466916232813fba5c",
       "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
       "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
@@ -900,7 +908,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-08-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-19-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -911,7 +919,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-19-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-27-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
