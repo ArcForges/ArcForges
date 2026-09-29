@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Text;
 using ArcForges.Contracts.Foundation.Values;
+using ArcForges.Foundation;
 using ArcForges.Foundation.Execution;
 using ArcForges.Security;
 
@@ -48,6 +49,10 @@ public enum AuditEventType
     ExportRequested = 38,
     DeletionRequested = 39,
     LocalPresenceProved = 40,
+    CapabilityLeaseIssued = 41,
+    CapabilityLeaseRevoked = 42,
+    CapabilityLeaseExpired = 43,
+    CapabilityLeaseTaskEnded = 44,
 }
 
 public enum AuditRisk
@@ -108,6 +113,7 @@ public enum AuditResourceKind
     Payment = 13,
     Policy = 14,
     Task = 15,
+    CapabilityLease = 16,
 }
 
 public enum AuditHoldReason
@@ -196,7 +202,7 @@ public readonly record struct AuditResourceReference
 /// <summary>Immutable security decision fact; intentionally has no payload or arbitrary property bag.</summary>
 public sealed class AuditEvent
 {
-    public AuditEvent(AuditEventType eventType, DateTimeOffset occurredAt, ActorChain actorChain,
+    public AuditEvent(AuditEventType eventType, ActorChain actorChain,
         AuditSoftwareIdentity softwareIdentity, AuditCapabilityId capability, AuditResourceReference resource,
         AuditRisk risk, AuditDecision decision, AuditDecisionReason reason, AuditOrigin origin,
         WorkspaceId? workspace = null, TaskId? task = null, CorrelationId? correlation = null)
@@ -220,7 +226,6 @@ public sealed class AuditEvent
         if (correlation is { } correlationValue) _ = correlationValue.ToWire();
 
         EventType = eventType;
-        OccurredAt = occurredAt.ToUniversalTime();
         ActorChain = actorChain;
         SoftwareIdentity = softwareIdentity;
         Capability = capability;
@@ -235,7 +240,6 @@ public sealed class AuditEvent
     }
 
     public AuditEventType EventType { get; }
-    public DateTimeOffset OccurredAt { get; }
     public ActorChain ActorChain { get; }
     /// <summary>Explicit executor: final delegated actor executor, otherwise the entry-point instance.</summary>
     public InstanceId Executor => ActorChain.Actors.Count > 0 ? ActorChain.Actors[^1].Executor : ActorChain.CallerInstance;
@@ -278,12 +282,20 @@ public readonly record struct AuditPartition
         var utc = occurredAt.ToUniversalTime();
         return new(owner.Realm, owner.Id, utc.Year, utc.Month);
     }
+
+    internal static AuditPartition For(HumanPrincipal owner, Instant occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        var utc = DateTimeOffset.FromUnixTimeSeconds(occurredAt.UnixSeconds);
+        return new(owner.Realm, owner.Id, utc.Year, utc.Month);
+    }
 }
 
-public sealed class AuditEventRecord(long sequence, Guid eventId, AuditEvent auditEvent, string integritySha256)
+public sealed class AuditEventRecord(long sequence, Guid eventId, Instant occurredAt, AuditEvent auditEvent, string integritySha256)
 {
     public long Sequence { get; } = sequence > 0 ? sequence : throw new ArgumentOutOfRangeException(nameof(sequence));
     public Guid EventId { get; } = eventId != Guid.Empty ? eventId : throw new ArgumentException("An event identity is required.", nameof(eventId));
+    public Instant OccurredAt { get; } = occurredAt;
     public AuditEvent Event { get; } = auditEvent ?? throw new ArgumentNullException(nameof(auditEvent));
     public string IntegritySha256 { get; } = integritySha256 ?? throw new ArgumentNullException(nameof(integritySha256));
 }
@@ -314,14 +326,14 @@ public sealed class AuditQuery
 }
 
 public sealed class AuditHoldRecord(long sequence, Guid holdId, AuditPartition partition, AuditHoldReason reason,
-    DateTimeOffset occurredAt, bool released, ActorChain actorChain, AuditSoftwareIdentity softwareIdentity,
+    Instant occurredAt, bool released, ActorChain actorChain, AuditSoftwareIdentity softwareIdentity,
     AuditOrigin origin)
 {
     public long Sequence { get; } = sequence > 0 ? sequence : throw new ArgumentOutOfRangeException(nameof(sequence));
     public Guid HoldId { get; } = holdId != Guid.Empty ? holdId : throw new ArgumentException("A hold identity is required.", nameof(holdId));
     public AuditPartition Partition { get; } = partition;
     public AuditHoldReason Reason { get; } = Enum.IsDefined(reason) ? reason : throw new ArgumentOutOfRangeException(nameof(reason));
-    public DateTimeOffset OccurredAt { get; } = occurredAt.ToUniversalTime();
+    public Instant OccurredAt { get; } = occurredAt;
     public bool Released { get; } = released;
     public ActorChain ActorChain { get; } = actorChain ?? throw new ArgumentNullException(nameof(actorChain));
     public AuditSoftwareIdentity SoftwareIdentity { get; } = softwareIdentity ?? throw new ArgumentNullException(nameof(softwareIdentity));
@@ -330,12 +342,12 @@ public sealed class AuditHoldRecord(long sequence, Guid holdId, AuditPartition p
 
 /// <summary>Append-only evidence for one maintenance-authorized, owner-partition retention purge.</summary>
 public sealed class AuditPurgeReceipt(long sequence, AuditMaintenanceReceipt authority, AuditPartition partition,
-    DateTimeOffset purgedAt, long eventCount, long firstEventSequence, long lastEventSequence, string eventsSha256)
+    Instant purgedAt, long eventCount, long firstEventSequence, long lastEventSequence, string eventsSha256)
 {
     public long Sequence { get; } = sequence > 0 ? sequence : throw new ArgumentOutOfRangeException(nameof(sequence));
     public AuditMaintenanceReceipt Authority { get; } = authority ?? throw new ArgumentNullException(nameof(authority));
     public AuditPartition Partition { get; } = partition;
-    public DateTimeOffset PurgedAt { get; } = purgedAt.ToUniversalTime();
+    public Instant PurgedAt { get; } = purgedAt;
     public long EventCount { get; } = eventCount > 0 ? eventCount : throw new ArgumentOutOfRangeException(nameof(eventCount));
     public long FirstEventSequence { get; } = firstEventSequence > 0 ? firstEventSequence : throw new ArgumentOutOfRangeException(nameof(firstEventSequence));
     public long LastEventSequence { get; } = lastEventSequence >= firstEventSequence ? lastEventSequence : throw new ArgumentOutOfRangeException(nameof(lastEventSequence));

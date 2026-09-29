@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Reflection;
 using ArcForges.Contracts.Foundation.Values;
+using ArcForges.Foundation;
 using ArcForges.Foundation.Execution;
 using ArcForges.Security;
 using ArcForges.Security.Audit;
@@ -15,15 +16,21 @@ public sealed class AuditStoreTests
     public void AppendQueryPreservesEveryRequiredSecurityFactAndSeparatesTelemetry()
     {
         using var fixture = new AuditFixture();
-        var occurredAt = DateTimeOffset.UtcNow;
-        var eventValue = fixture.CreateEvent(occurredAt, delegated: true);
+        var eventValue = fixture.CreateEvent(delegated: true);
 
         var appended = fixture.Store.Append(eventValue);
+        var occurredAt = appended.OccurredAt.ToDateTimeOffset();
         var page = fixture.Store.Query(new AuditQuery(occurredAt.AddMinutes(-1), occurredAt.AddMinutes(1), 10));
 
         var read = Assert.Single(page);
         Assert.Equal(appended.Sequence, read.Sequence);
         Assert.Equal(appended.EventId, read.EventId);
+        Assert.Equal(fixture.NowInstant, appended.OccurredAt);
+        Assert.Equal(appended.OccurredAt, read.OccurredAt);
+        Assert.DoesNotContain(typeof(AuditStore).GetMethod(nameof(AuditStore.PlaceLegalHold))!.GetParameters(),
+            parameter => parameter.ParameterType == typeof(DateTimeOffset));
+        Assert.DoesNotContain(typeof(AuditEvent).GetConstructors().SelectMany(constructor => constructor.GetParameters()),
+            parameter => parameter.ParameterType == typeof(DateTimeOffset));
         Assert.Equal(eventValue.EventType, read.Event.EventType);
         Assert.Equal(eventValue.ActorChain.Owner, read.Event.ActorChain.Owner);
         Assert.Equal(eventValue.ActorChain.Device, read.Event.ActorChain.Device);
@@ -59,7 +66,7 @@ public sealed class AuditStoreTests
     public void OrdinarySqlConnectionsCannotUpdateDeleteOrEnableMaintenanceGate()
     {
         using var fixture = new AuditFixture();
-        fixture.Store.Append(fixture.CreateEvent(DateTimeOffset.UtcNow));
+        fixture.Store.Append(fixture.CreateEvent());
 
         using var connection = fixture.OpenRawConnection();
         using var command = connection.CreateCommand();
@@ -88,11 +95,14 @@ public sealed class AuditStoreTests
     public void WrongStorePolicyOwnerActionAndExpiredCapabilitiesFailClosed()
     {
         using var fixture = new AuditFixture();
-        var recent = DateTimeOffset.UtcNow.AddHours(-1);
-        fixture.Store.Append(fixture.CreateEvent(recent));
+        var recent = fixture.Now.AddHours(-1);
+        var oldTime = recent.AddYears(-2);
+        fixture.SetWallClock(oldTime);
+        fixture.Store.Append(fixture.CreateEvent());
+        var oldPartition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         var partition = AuditPartition.For(fixture.Actor.Owner, recent);
-        var oldPartition = AuditPartition.For(fixture.Actor.Owner, DateTimeOffset.UtcNow.AddYears(-2));
-        fixture.Store.Append(fixture.CreateEvent(oldPartition.StartUtc.AddDays(1)));
+        fixture.SetWallClock(recent);
+        fixture.Store.Append(fixture.CreateEvent());
         var notExpired = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, partition);
         Assert.Throws<InvalidOperationException>(() => fixture.Store.PurgeExpiredPartition(notExpired));
 
@@ -114,7 +124,8 @@ public sealed class AuditStoreTests
 
         var expired = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, oldPartition,
             lifetime: TimeSpan.FromMilliseconds(1));
-        Thread.Sleep(20);
+        fixture.AdvanceMonotonic(TimeSpan.FromMilliseconds(20));
+        fixture.SetWallClock(new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero));
         Assert.Throws<UnauthorizedAccessException>(() => fixture.Store.PurgeExpiredPartition(expired));
         Assert.Single(fixture.Store.Query(new AuditQuery(recent.AddMinutes(-1), recent.AddMinutes(1), 10)));
     }
@@ -124,9 +135,11 @@ public sealed class AuditStoreTests
     {
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 1, 12, 13, 14, 15, TimeSpan.Zero);
-        var first = fixture.Store.Append(fixture.CreateEvent(oldTime));
-        var second = fixture.Store.Append(fixture.CreateEvent(oldTime.AddDays(2)));
+        fixture.SetWallClock(oldTime);
+        var first = fixture.Store.Append(fixture.CreateEvent());
+        var second = fixture.Store.Append(fixture.CreateEvent());
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
+        fixture.SetWallClock(oldTime.AddYears(2));
         var capability = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, partition);
 
         var receipt = fixture.Store.PurgeExpiredPartition(capability);
@@ -145,7 +158,8 @@ public sealed class AuditStoreTests
         Assert.Equal(fixture.MaintenanceActor.Owner, persistedReceipt.Authority.AuthorityActor.Owner);
         Assert.Equal(fixture.MaintenanceSoftware, persistedReceipt.Authority.SoftwareIdentity);
         Assert.Throws<InvalidOperationException>(() => fixture.Store.PurgeExpiredPartition(capability));
-        Assert.Throws<InvalidOperationException>(() => fixture.Store.Append(fixture.CreateEvent(oldTime.AddDays(4))));
+        fixture.SetWallClock(oldTime.AddDays(4));
+        Assert.Throws<InvalidOperationException>(() => fixture.Store.Append(fixture.CreateEvent()));
     }
 
     [Fact]
@@ -153,12 +167,16 @@ public sealed class AuditStoreTests
     {
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 3, 4, 5, 6, 7, TimeSpan.Zero);
-        fixture.Store.Append(fixture.CreateEvent(oldTime));
+        fixture.SetWallClock(oldTime);
+        fixture.Store.Append(fixture.CreateEvent());
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
+        fixture.SetWallClock(oldTime.AddYears(2));
         var holdId = Guid.NewGuid();
+        var placedAt = fixture.NowInstant;
         var placed = fixture.Store.PlaceLegalHold(holdId, partition, AuditHoldReason.LegalPreservation,
-            DateTimeOffset.UtcNow, fixture.Actor, fixture.OwnerSoftware, AuditOrigin.Local);
+            fixture.Actor, fixture.OwnerSoftware, AuditOrigin.Local);
         Assert.False(placed.Released);
+        Assert.Equal(placedAt, placed.OccurredAt);
         Assert.Single(fixture.Store.ReadActiveLegalHolds(partition));
 
         var purge = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, partition);
@@ -166,9 +184,21 @@ public sealed class AuditStoreTests
         Assert.Single(fixture.Store.Query(new AuditQuery(oldTime.AddDays(-1), oldTime.AddMonths(1), 10)));
 
         var release = fixture.Capability(AuditMaintenanceAction.ReleaseLegalHold, partition, holdId);
+        fixture.AdvanceWallOnly(TimeSpan.FromDays(3650));
+        var releasedAt = fixture.NowInstant;
         var releaseReceipt = fixture.Store.ReleaseLegalHold(release);
         Assert.Equal(release.Receipt.CapabilityId, releaseReceipt.CapabilityId);
         Assert.Empty(fixture.Store.ReadActiveLegalHolds(partition));
+        using (var connection = fixture.OpenRawConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT occurred_unix_seconds,occurred_nanoseconds FROM local_audit_holds WHERE hold_id=$hold AND action=2;";
+            command.Parameters.AddWithValue("$hold", holdId.ToString("N", System.Globalization.CultureInfo.InvariantCulture));
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(releasedAt, new Instant(reader.GetInt64(0), checked((uint)reader.GetInt64(1))));
+            Assert.False(reader.Read());
+        }
         Assert.Contains(fixture.Store.ReadMaintenanceReceipts(), item => item.CapabilityId == releaseReceipt.CapabilityId
             && item.Action == AuditMaintenanceAction.ReleaseLegalHold
             && item.AuthorityActor.Owner == fixture.MaintenanceActor.Owner
@@ -184,15 +214,15 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         using var secondStore = fixture.OpenSecondStore();
         var events = Enumerable.Range(0, 24)
-            .Select(index => fixture.CreateEvent(DateTimeOffset.UtcNow.AddTicks(index)))
+            .Select(_ => fixture.CreateEvent())
             .ToArray();
         var writes = events.Select((eventValue, index) => Task.Run(() =>
             (index % 2 == 0 ? fixture.Store : secondStore).Append(eventValue)));
         var records = await Task.WhenAll(writes);
 
         Assert.Equal(events.Length, records.Select(record => record.Sequence).Distinct().Count());
-        var from = events.Min(value => value.OccurredAt).AddSeconds(-1);
-        var to = events.Max(value => value.OccurredAt).AddSeconds(1);
+        var from = records.Min(value => value.OccurredAt.ToDateTimeOffset()).AddSeconds(-1);
+        var to = records.Max(value => value.OccurredAt.ToDateTimeOffset()).AddSeconds(1);
         var page = fixture.Store.Query(new AuditQuery(from, to, 100));
         Assert.Equal(events.Length, page.Count);
         Assert.Equal(page.Count, page.Select(record => record.EventId).Distinct().Count());
@@ -217,18 +247,21 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         fixture.Store.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => fixture.Store.Append(fixture.CreateEvent(DateTimeOffset.UtcNow)));
+        Assert.Throws<ObjectDisposedException>(() => fixture.Store.Append(fixture.CreateEvent()));
     }
 
     private sealed class AuditFixture : IDisposable
     {
         private readonly string directory = Path.Combine(Path.GetTempPath(), "ArcForges-Audit-" + Guid.NewGuid().ToString("N"));
         private readonly string databasePath;
+        private readonly ManualTimeProvider timeProvider = new(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        private readonly IClock clock;
 
         public AuditFixture()
         {
             Directory.CreateDirectory(directory);
             databasePath = Path.Combine(directory, "local_audit.db");
+            clock = new Clock(timeProvider);
             var realm = new RealmId(Guid.NewGuid());
             var owner = new UserId(Guid.NewGuid());
             Actor = new ActorChain(new HumanPrincipal(realm, owner, HumanIdentityKind.LocalHuman),
@@ -240,7 +273,7 @@ public sealed class AuditStoreTests
             OwnerSoftware = new AuditSoftwareIdentity("owned.audit/1");
             MaintenanceSoftware = new AuditSoftwareIdentity("policy.maintenance/1");
             Policy = new AuditRetentionPolicy(Guid.NewGuid(), 30);
-            Store = new AuditStore(databasePath, realm, owner, Policy);
+            Store = new AuditStore(databasePath, realm, owner, Policy, clock);
         }
 
         public ActorChain Actor { get; }
@@ -249,17 +282,23 @@ public sealed class AuditStoreTests
         public AuditSoftwareIdentity MaintenanceSoftware { get; }
         public AuditRetentionPolicy Policy { get; }
         public AuditStore Store { get; }
+        public DateTimeOffset Now => timeProvider.GetUtcNow();
+        public Instant NowInstant => clock.GetCurrentInstant();
 
-        public AuditEvent CreateEvent(DateTimeOffset at, bool delegated = false)
+        public AuditEvent CreateEvent(bool delegated = false)
         {
             var chain = delegated ? Actor : new ActorChain(Actor.Owner, Actor.Device, Actor.Installation,
                 Actor.Session, Actor.CallerInstance, []);
             var software = delegated ? OwnerSoftware : new AuditSoftwareIdentity("arcscope.desktop/1");
-            return new AuditEvent(AuditEventType.SecretUsed, at, chain, software,
+            return new AuditEvent(AuditEventType.SecretUsed, chain, software,
                 new AuditCapabilityId("secrets.use"), new AuditResourceReference(AuditResourceKind.Secret, Guid.NewGuid()),
                 AuditRisk.High, AuditDecision.Allowed, AuditDecisionReason.PolicyAllowed, AuditOrigin.Remote,
                 new WorkspaceId(Guid.NewGuid()), new TaskId(Guid.NewGuid()), new CorrelationId(Guid.NewGuid()));
         }
+
+        public void SetWallClock(DateTimeOffset value) => timeProvider.SetWallClock(value);
+        public void AdvanceMonotonic(TimeSpan value) => timeProvider.AdvanceMonotonic(value);
+        public void AdvanceWallOnly(TimeSpan value) => timeProvider.AdvanceWallOnly(value);
 
         public AuditMaintenanceCapability Capability(AuditMaintenanceAction action, AuditPartition partition,
             Guid? holdId = null, AuditStore? store = null, TimeSpan? lifetime = null) =>
@@ -278,15 +317,31 @@ public sealed class AuditStoreTests
             return connection;
         }
 
-        public AuditStore OpenSecondStore() => new(databasePath, Actor.Owner.Realm, Actor.Owner.Id, Policy);
+        public AuditStore OpenSecondStore() => new(databasePath, Actor.Owner.Realm, Actor.Owner.Id, Policy, clock);
 
         public AuditStore OpenAlternateStore(AuditRetentionPolicy policy) =>
-            new(Path.Combine(directory, "alternate-local-audit.db"), Actor.Owner.Realm, Actor.Owner.Id, policy);
+            new(Path.Combine(directory, "alternate-local-audit.db"), Actor.Owner.Realm, Actor.Owner.Id, policy, clock);
 
         public void Dispose()
         {
             Store.Dispose();
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initialWallClock) : TimeProvider
+    {
+        private DateTimeOffset wallClock = initialWallClock.ToUniversalTime();
+        private long monotonicTicks;
+
+        public override DateTimeOffset GetUtcNow() => wallClock;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => monotonicTicks;
+        public override TimeSpan GetElapsedTime(long startingTimestamp, long endingTimestamp) =>
+            TimeSpan.FromTicks(endingTimestamp - startingTimestamp);
+
+        public void SetWallClock(DateTimeOffset value) => wallClock = value.ToUniversalTime();
+        public void AdvanceMonotonic(TimeSpan value) => monotonicTicks = checked(monotonicTicks + value.Ticks);
+        public void AdvanceWallOnly(TimeSpan value) => wallClock = wallClock.Add(value);
     }
 }

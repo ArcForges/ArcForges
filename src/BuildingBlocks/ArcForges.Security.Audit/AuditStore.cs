@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.Values;
+using ArcForges.Foundation;
 using ArcForges.Foundation.Execution;
 using ArcForges.Security;
 using Microsoft.Data.Sqlite;
@@ -31,16 +32,24 @@ public sealed class AuditStore : IDisposable
     private readonly RealmId realm;
     private readonly UserId owner;
     private readonly AuditRetentionPolicy retentionPolicy;
+    private readonly IClock clock;
     private readonly AuditMaintenanceAuthority maintenanceAuthority;
     private readonly SemaphoreSlim writer;
     private bool disposed;
 
     public AuditStore(string databasePath, RealmId realm, UserId owner, AuditRetentionPolicy retentionPolicy)
+        : this(databasePath, realm, owner, retentionPolicy, Clock.System)
+    {
+    }
+
+    internal AuditStore(string databasePath, RealmId realm, UserId owner, AuditRetentionPolicy retentionPolicy,
+        IClock clock)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         _ = realm.ToWire();
         _ = owner.ToWire();
         ArgumentNullException.ThrowIfNull(retentionPolicy);
+        ArgumentNullException.ThrowIfNull(clock);
         var fullPath = Path.GetFullPath(databasePath);
         var parent = Path.GetDirectoryName(fullPath);
         if (string.IsNullOrWhiteSpace(parent)) throw new ArgumentException("Audit database path must have a parent directory.", nameof(databasePath));
@@ -48,6 +57,7 @@ public sealed class AuditStore : IDisposable
         this.realm = realm;
         this.owner = owner;
         this.retentionPolicy = retentionPolicy;
+        this.clock = clock;
         maintenanceAuthority = new AuditMaintenanceAuthority(retentionPolicy, realm, owner);
         writer = Writers.GetOrAdd(fullPath, static _ => new SemaphoreSlim(1, 1));
         connectionString = new SqliteConnectionStringBuilder
@@ -75,9 +85,10 @@ public sealed class AuditStore : IDisposable
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(auditEvent);
         EnsureOwner(auditEvent.ActorChain.Owner.Realm, auditEvent.ActorChain.Owner.Id);
-        var partition = AuditPartition.For(auditEvent.ActorChain.Owner, auditEvent.OccurredAt);
+        var occurredAt = clock.GetCurrentInstant();
+        var partition = AuditPartition.For(auditEvent.ActorChain.Owner, occurredAt);
         var eventId = Guid.NewGuid();
-        var fingerprint = ComputeEventHash(auditEvent, retentionPolicy.PolicyId, eventId);
+        var fingerprint = ComputeEventHash(auditEvent, occurredAt, retentionPolicy.PolicyId, eventId);
         return WithWriteTransaction(static (connection, transaction, state, input) =>
         {
             using (var purged = connection.CreateCommand())
@@ -94,10 +105,10 @@ public sealed class AuditStore : IDisposable
                 }
             }
 
-            InsertEvent(connection, transaction, input.EventId, input.Event, input.Hash, input.PolicyId);
+            InsertEvent(connection, transaction, input.EventId, input.Event, input.OccurredAt, input.Hash, input.PolicyId);
             var sequence = LastInsertSequence(connection, transaction);
-            return new AuditEventRecord(sequence, input.EventId, input.Event, input.Hash);
-        }, (EventId: eventId, Event: auditEvent, Hash: fingerprint, PolicyId: retentionPolicy.PolicyId, Partition: partition));
+            return new AuditEventRecord(sequence, input.EventId, input.OccurredAt, input.Event, input.Hash);
+        }, (EventId: eventId, Event: auditEvent, OccurredAt: occurredAt, Hash: fingerprint, PolicyId: retentionPolicy.PolicyId, Partition: partition));
     }
 
     /// <summary>Read a bounded page from this file's one configured realm/account owner.</summary>
@@ -113,9 +124,13 @@ public sealed class AuditStore : IDisposable
         {
             using var command = connection.CreateCommand();
         command.Transaction = transaction;
-            command.CommandText = $"SELECT sequence,event_id,occurred_utc_ticks,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month FROM {EventTable} WHERE occurred_utc_ticks >= $from AND occurred_utc_ticks < $to AND sequence > $after AND ($event_type IS NULL OR event_type=$event_type) ORDER BY sequence LIMIT $limit;";
-            command.Parameters.AddWithValue("$from", query.FromInclusive.UtcTicks);
-            command.Parameters.AddWithValue("$to", query.ToExclusive.UtcTicks);
+            command.CommandText = $"SELECT sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month FROM {EventTable} WHERE (occurred_unix_seconds > $fromSeconds OR (occurred_unix_seconds=$fromSeconds AND occurred_nanoseconds >= $fromNanoseconds)) AND (occurred_unix_seconds < $toSeconds OR (occurred_unix_seconds=$toSeconds AND occurred_nanoseconds < $toNanoseconds)) AND sequence > $after AND ($event_type IS NULL OR event_type=$event_type) ORDER BY sequence LIMIT $limit;";
+            var from = Instant.FromDateTimeOffset(query.FromInclusive);
+            var to = Instant.FromDateTimeOffset(query.ToExclusive);
+            command.Parameters.AddWithValue("$fromSeconds", from.UnixSeconds);
+            command.Parameters.AddWithValue("$fromNanoseconds", (long)from.Nanoseconds);
+            command.Parameters.AddWithValue("$toSeconds", to.UnixSeconds);
+            command.Parameters.AddWithValue("$toNanoseconds", (long)to.Nanoseconds);
             command.Parameters.AddWithValue("$after", query.AfterSequence);
             command.Parameters.AddWithValue("$event_type", query.EventType is { } eventType ? (int)eventType : DBNull.Value);
             command.Parameters.AddWithValue("$limit", query.Limit);
@@ -140,12 +155,12 @@ public sealed class AuditStore : IDisposable
     {
         ThrowIfDisposed();
         return maintenanceAuthority.Mint(action, partition, holdId, authorityActor, softwareIdentity,
-            DateTimeOffset.UtcNow, lifetime);
+            clock.GetCurrentInstant(), clock.GetTimestamp(), lifetime);
     }
 
     /// <summary>Append a legal hold over an existing month partition; ordinary holds cannot be edited.</summary>
     public AuditHoldRecord PlaceLegalHold(Guid holdId, AuditPartition partition, AuditHoldReason reason,
-        DateTimeOffset placedAt, ActorChain actorChain, AuditSoftwareIdentity softwareIdentity, AuditOrigin origin)
+        ActorChain actorChain, AuditSoftwareIdentity softwareIdentity, AuditOrigin origin)
     {
         ThrowIfDisposed();
         if (holdId == Guid.Empty) throw new ArgumentException("A hold identity is required.", nameof(holdId));
@@ -156,7 +171,7 @@ public sealed class AuditStore : IDisposable
         EnsureOwner(actorChain.Owner.Realm, actorChain.Owner.Id);
         EnsurePartition(partition);
         ValidateSoftwareIdentity(actorChain, softwareIdentity);
-        var at = placedAt.ToUniversalTime();
+        var at = clock.GetCurrentInstant();
 
         return WithWriteTransaction(static (connection, transaction, state, input) =>
         {
@@ -200,7 +215,7 @@ public sealed class AuditStore : IDisposable
         {
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = $"SELECT h.sequence,h.hold_id,h.partition_year,h.partition_month,h.reason,h.occurred_utc_ticks,h.action,h.actor_chain,h.software_identity,h.origin FROM {HoldTable} h WHERE h.partition_year=$year AND h.partition_month=$month AND h.action=1 AND NOT EXISTS(SELECT 1 FROM {HoldTable} r WHERE r.hold_id=h.hold_id AND r.action=2 AND r.sequence>h.sequence) ORDER BY h.sequence LIMIT $limit;";
+            command.CommandText = $"SELECT h.sequence,h.hold_id,h.partition_year,h.partition_month,h.reason,h.occurred_unix_seconds,h.occurred_nanoseconds,h.action,h.actor_chain,h.software_identity,h.origin FROM {HoldTable} h WHERE h.partition_year=$year AND h.partition_month=$month AND h.action=1 AND NOT EXISTS(SELECT 1 FROM {HoldTable} r WHERE r.hold_id=h.hold_id AND r.action=2 AND r.sequence>h.sequence) ORDER BY h.sequence LIMIT $limit;";
             command.Parameters.AddWithValue("$year", partition.Year);
             command.Parameters.AddWithValue("$month", partition.Month);
             command.Parameters.AddWithValue("$limit", limit);
@@ -228,7 +243,7 @@ public sealed class AuditStore : IDisposable
         {
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = $"SELECT capability_id,action,policy_id,partition_realm,partition_owner,partition_year,partition_month,issued_at_utc_ticks,expires_at_utc_ticks,hold_id,authority_actor_chain,software_identity FROM {AuthorityReceiptTable} WHERE partition_realm=$realm AND partition_owner=$owner ORDER BY sequence DESC LIMIT $limit;";
+            command.CommandText = $"SELECT capability_id,action,policy_id,partition_realm,partition_owner,partition_year,partition_month,issued_unix_seconds,issued_nanoseconds,expires_unix_seconds,expires_nanoseconds,hold_id,authority_actor_chain,software_identity FROM {AuthorityReceiptTable} WHERE partition_realm=$realm AND partition_owner=$owner ORDER BY sequence DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$realm", GuidText(realm.Value));
             command.Parameters.AddWithValue("$owner", GuidText(owner.Value));
             command.Parameters.AddWithValue("$limit", limit);
@@ -267,8 +282,9 @@ public sealed class AuditStore : IDisposable
             _ = ValidateCapability(input, AuditMaintenanceAction.ReleaseLegalHold);
             state.IsMaintenance = true;
             InsertAuthorityReceipt(connection, transaction, authority);
+            var releasedAt = clock.GetCurrentInstant();
             InsertHold(connection, transaction, authority.HoldId.Value, authority.Partition,
-                latest.Value.Reason, DateTimeOffset.UtcNow, released: true, actorChain: authority.AuthorityActor,
+                latest.Value.Reason, releasedAt, released: true, actorChain: authority.AuthorityActor,
                 softwareIdentity: authority.SoftwareIdentity, origin: AuditOrigin.Local,
                 capabilityId: authority.CapabilityId);
             return authority;
@@ -284,7 +300,7 @@ public sealed class AuditStore : IDisposable
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(capability);
         var initialAuthority = ValidateCapability(capability, AuditMaintenanceAction.PurgeExpiredPartition);
-        if (initialAuthority.Partition.EndExclusiveUtc.AddDays(retentionPolicy.RetentionDays) > DateTimeOffset.UtcNow)
+        if (!IsExpired(initialAuthority.Partition, retentionPolicy.RetentionDays, clock.GetCurrentInstant()))
         {
             throw new InvalidOperationException("The complete calendar-month partition has not expired under the declared policy.");
         }
@@ -292,8 +308,8 @@ public sealed class AuditStore : IDisposable
         return WithWriteTransaction((connection, transaction, state, input) =>
         {
             var checkedAuthority = ValidateCapability(input, AuditMaintenanceAction.PurgeExpiredPartition);
-            var now = DateTimeOffset.UtcNow;
-            if (checkedAuthority.Partition.EndExclusiveUtc.AddDays(retentionPolicy.RetentionDays) > now)
+            var now = clock.GetCurrentInstant();
+            if (!IsExpired(checkedAuthority.Partition, retentionPolicy.RetentionDays, now))
             {
                 throw new InvalidOperationException("The complete calendar-month partition has not expired under the declared policy.");
             }
@@ -312,8 +328,8 @@ public sealed class AuditStore : IDisposable
             if (evidence.Count == 0) throw new InvalidOperationException("An empty partition has no purge to approve.");
 
             checkedAuthority = ValidateCapability(input, AuditMaintenanceAction.PurgeExpiredPartition);
-            now = DateTimeOffset.UtcNow;
-            if (checkedAuthority.Partition.EndExclusiveUtc.AddDays(retentionPolicy.RetentionDays) > now)
+            now = clock.GetCurrentInstant();
+            if (!IsExpired(checkedAuthority.Partition, retentionPolicy.RetentionDays, now))
             {
                 throw new InvalidOperationException("The complete calendar-month partition has not expired under the declared policy.");
             }
@@ -358,7 +374,7 @@ public sealed class AuditStore : IDisposable
         {
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = $"SELECT p.sequence,p.capability_id,p.partition_realm,p.partition_owner,p.partition_year,p.partition_month,p.purged_at_utc_ticks,p.event_count,p.first_event_sequence,p.last_event_sequence,p.events_sha256,a.action,a.policy_id,a.issued_at_utc_ticks,a.expires_at_utc_ticks,a.hold_id,a.authority_actor_chain,a.software_identity FROM {PurgeReceiptTable} p JOIN {AuthorityReceiptTable} a ON a.capability_id=p.capability_id WHERE p.partition_realm=$realm AND p.partition_owner=$owner ORDER BY p.sequence DESC LIMIT $limit;";
+            command.CommandText = $"SELECT p.sequence,p.capability_id,p.partition_realm,p.partition_owner,p.partition_year,p.partition_month,p.purged_unix_seconds,p.purged_nanoseconds,p.event_count,p.first_event_sequence,p.last_event_sequence,p.events_sha256,a.action,a.policy_id,a.issued_unix_seconds,a.issued_nanoseconds,a.expires_unix_seconds,a.expires_nanoseconds,a.hold_id,a.authority_actor_chain,a.software_identity FROM {PurgeReceiptTable} p JOIN {AuthorityReceiptTable} a ON a.capability_id=p.capability_id WHERE p.partition_realm=$realm AND p.partition_owner=$owner ORDER BY p.sequence DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$realm", GuidText(realm.Value));
             command.Parameters.AddWithValue("$owner", GuidText(owner.Value));
             command.Parameters.AddWithValue("$limit", limit);
@@ -443,11 +459,11 @@ public sealed class AuditStore : IDisposable
     {
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1),schema_version INTEGER NOT NULL,realm_id TEXT NOT NULL,owner_id TEXT NOT NULL,policy_id TEXT NOT NULL,retention_days INTEGER NOT NULL);");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {GateTable}(singleton INTEGER PRIMARY KEY CHECK(singleton=1),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));");
-        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,occurred_utc_ticks INTEGER NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,event_type INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,capability_id TEXT NOT NULL,executor_id TEXT NOT NULL,resource_kind INTEGER NOT NULL,resource_id TEXT NOT NULL,risk INTEGER NOT NULL,decision INTEGER NOT NULL,reason INTEGER NOT NULL,origin INTEGER NOT NULL,workspace_id TEXT NULL,task_id TEXT NULL,correlation_id TEXT NULL,event_sha256 TEXT NOT NULL,policy_id TEXT NOT NULL,CHECK(partition_month BETWEEN 1 AND 12));");
-        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {HoldTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,hold_id TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,action INTEGER NOT NULL,reason INTEGER NOT NULL,occurred_utc_ticks INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,origin INTEGER NOT NULL,capability_id TEXT NULL REFERENCES {AuthorityReceiptTable}(capability_id),CHECK(action IN (1,2)),CHECK(partition_month BETWEEN 1 AND 12));");
-        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {AuthorityReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE,action INTEGER NOT NULL,policy_id TEXT NOT NULL,partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,issued_at_utc_ticks INTEGER NOT NULL,expires_at_utc_ticks INTEGER NOT NULL,hold_id TEXT NULL,authority_actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL);");
-        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {PurgeReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE REFERENCES {AuthorityReceiptTable}(capability_id),partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,purged_at_utc_ticks INTEGER NOT NULL,event_count INTEGER NOT NULL,first_event_sequence INTEGER NOT NULL,last_event_sequence INTEGER NOT NULL,events_sha256 TEXT NOT NULL,CHECK(event_count>0));");
-        Execute(connection, transaction, $"CREATE INDEX IF NOT EXISTS ix_{EventTable}_time_sequence ON {EventTable}(occurred_utc_ticks,sequence);");
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,event_type INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,capability_id TEXT NOT NULL,executor_id TEXT NOT NULL,resource_kind INTEGER NOT NULL,resource_id TEXT NOT NULL,risk INTEGER NOT NULL,decision INTEGER NOT NULL,reason INTEGER NOT NULL,origin INTEGER NOT NULL,workspace_id TEXT NULL,task_id TEXT NULL,correlation_id TEXT NULL,event_sha256 TEXT NOT NULL,policy_id TEXT NOT NULL,CHECK(partition_month BETWEEN 1 AND 12));");
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {HoldTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,hold_id TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,action INTEGER NOT NULL,reason INTEGER NOT NULL,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,origin INTEGER NOT NULL,capability_id TEXT NULL REFERENCES {AuthorityReceiptTable}(capability_id),CHECK(action IN (1,2)),CHECK(partition_month BETWEEN 1 AND 12));");
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {AuthorityReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE,action INTEGER NOT NULL,policy_id TEXT NOT NULL,partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,issued_unix_seconds INTEGER NOT NULL,issued_nanoseconds INTEGER NOT NULL CHECK(issued_nanoseconds BETWEEN 0 AND 999999999),expires_unix_seconds INTEGER NOT NULL,expires_nanoseconds INTEGER NOT NULL CHECK(expires_nanoseconds BETWEEN 0 AND 999999999),hold_id TEXT NULL,authority_actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL);");
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {PurgeReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE REFERENCES {AuthorityReceiptTable}(capability_id),partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,purged_unix_seconds INTEGER NOT NULL,purged_nanoseconds INTEGER NOT NULL CHECK(purged_nanoseconds BETWEEN 0 AND 999999999),event_count INTEGER NOT NULL,first_event_sequence INTEGER NOT NULL,last_event_sequence INTEGER NOT NULL,events_sha256 TEXT NOT NULL,CHECK(event_count>0));");
+        Execute(connection, transaction, $"CREATE INDEX IF NOT EXISTS ix_{EventTable}_time_sequence ON {EventTable}(occurred_unix_seconds,occurred_nanoseconds,sequence);");
         Execute(connection, transaction, $"CREATE INDEX IF NOT EXISTS ix_{EventTable}_partition_sequence ON {EventTable}(partition_year,partition_month,sequence);");
         Execute(connection, transaction, $"CREATE INDEX IF NOT EXISTS ix_{HoldTable}_partition_hold_sequence ON {HoldTable}(partition_year,partition_month,hold_id,sequence);");
         Execute(connection, transaction, $"CREATE INDEX IF NOT EXISTS ix_{HoldTable}_hold_sequence ON {HoldTable}(hold_id,sequence);");
@@ -540,7 +556,7 @@ public sealed class AuditStore : IDisposable
     private AuditMaintenanceReceipt ValidateCapability(AuditMaintenanceCapability capability,
         AuditMaintenanceAction expectedAction)
     {
-        var receipt = maintenanceAuthority.Validate(capability, expectedAction, DateTimeOffset.UtcNow);
+        var receipt = maintenanceAuthority.Validate(capability, expectedAction, clock, clock.GetTimestamp());
         EnsurePartition(receipt.Partition);
         EnsureOwner(receipt.AuthorityActor.Owner.Realm, receipt.AuthorityActor.Owner.Id);
         if (receipt.PolicyId != retentionPolicy.PolicyId)
@@ -558,6 +574,21 @@ public sealed class AuditStore : IDisposable
 
     private void EnsurePartition(AuditPartition partition) => EnsureOwner(partition.Realm, partition.Owner);
 
+    private static bool IsExpired(AuditPartition partition, int retentionDays, Instant now)
+    {
+        DateTimeOffset expiresAt;
+        try
+        {
+            expiresAt = partition.EndExclusiveUtc.AddDays(retentionDays);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+
+        return now >= Instant.FromDateTimeOffset(expiresAt);
+    }
+
     private static void ValidateSoftwareIdentity(ActorChain actor, AuditSoftwareIdentity softwareIdentity)
     {
         if (actor.Actors.Count > 0 && !StringComparer.Ordinal.Equals(actor.Actors[^1].SoftwareIdentity, softwareIdentity.Value))
@@ -567,15 +598,16 @@ public sealed class AuditStore : IDisposable
     }
 
     private static void InsertEvent(SqliteConnection connection, SqliteTransaction transaction, Guid eventId,
-        AuditEvent auditEvent, string hash, Guid policyId)
+        AuditEvent auditEvent, Instant occurredAt, string hash, Guid policyId)
     {
         var owner = auditEvent.ActorChain.Owner;
-        var partition = AuditPartition.For(owner, auditEvent.OccurredAt);
+        var partition = AuditPartition.For(owner, occurredAt);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT INTO {EventTable}(event_id,occurred_utc_ticks,partition_year,partition_month,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id) VALUES($event,$ticks,$year,$month,$type,$actor,$software,$capability,$executor,$resourceKind,$resourceId,$risk,$decision,$reason,$origin,$workspace,$task,$correlation,$hash,$policy);";
+        command.CommandText = $"INSERT INTO {EventTable}(event_id,occurred_unix_seconds,occurred_nanoseconds,partition_year,partition_month,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id) VALUES($event,$seconds,$nanoseconds,$year,$month,$type,$actor,$software,$capability,$executor,$resourceKind,$resourceId,$risk,$decision,$reason,$origin,$workspace,$task,$correlation,$hash,$policy);";
         command.Parameters.AddWithValue("$event", GuidText(eventId));
-        command.Parameters.AddWithValue("$ticks", auditEvent.OccurredAt.UtcTicks);
+        command.Parameters.AddWithValue("$seconds", occurredAt.UnixSeconds);
+        command.Parameters.AddWithValue("$nanoseconds", (long)occurredAt.Nanoseconds);
         command.Parameters.AddWithValue("$year", partition.Year);
         command.Parameters.AddWithValue("$month", partition.Month);
         command.Parameters.AddWithValue("$type", (int)auditEvent.EventType);
@@ -601,43 +633,44 @@ public sealed class AuditStore : IDisposable
     {
         var sequence = reader.GetInt64(0);
         var eventId = ParseGuid(reader.GetString(1));
-        var occurredAt = new DateTimeOffset(reader.GetInt64(2), TimeSpan.Zero);
-        var actorChain = ActorChainSnapshot.Decode((byte[])reader[4]).Chain;
+        var occurredAt = new Instant(reader.GetInt64(2), checked((uint)reader.GetInt64(3)));
+        var actorChain = ActorChainSnapshot.Decode((byte[])reader[5]).Chain;
         EnsureOwner(actorChain.Owner.Realm, actorChain.Owner.Id);
-        var software = new AuditSoftwareIdentity(reader.GetString(5));
-        var capability = new AuditCapabilityId(reader.GetString(6));
-        var executor = new InstanceId(ParseGuid(reader.GetString(7)));
-        var workspace = reader.IsDBNull(14) ? (WorkspaceId?)null : new WorkspaceId(ParseGuid(reader.GetString(14)));
-        var task = reader.IsDBNull(15) ? (TaskId?)null : new TaskId(ParseGuid(reader.GetString(15)));
-        var correlation = reader.IsDBNull(16) ? (CorrelationId?)null : new CorrelationId(ParseGuid(reader.GetString(16)));
-        var auditEvent = new AuditEvent((AuditEventType)reader.GetInt32(3), occurredAt, actorChain, software,
-            capability, new AuditResourceReference((AuditResourceKind)reader.GetInt32(8), ParseGuid(reader.GetString(9))),
-            (AuditRisk)reader.GetInt32(10), (AuditDecision)reader.GetInt32(11),
-            (AuditDecisionReason)reader.GetInt32(12), (AuditOrigin)reader.GetInt32(13), workspace, task, correlation);
+        var software = new AuditSoftwareIdentity(reader.GetString(6));
+        var capability = new AuditCapabilityId(reader.GetString(7));
+        var executor = new InstanceId(ParseGuid(reader.GetString(8)));
+        var workspace = reader.IsDBNull(15) ? (WorkspaceId?)null : new WorkspaceId(ParseGuid(reader.GetString(15)));
+        var task = reader.IsDBNull(16) ? (TaskId?)null : new TaskId(ParseGuid(reader.GetString(16)));
+        var correlation = reader.IsDBNull(17) ? (CorrelationId?)null : new CorrelationId(ParseGuid(reader.GetString(17)));
+        var auditEvent = new AuditEvent((AuditEventType)reader.GetInt32(4), actorChain, software,
+            capability, new AuditResourceReference((AuditResourceKind)reader.GetInt32(9), ParseGuid(reader.GetString(10))),
+            (AuditRisk)reader.GetInt32(11), (AuditDecision)reader.GetInt32(12),
+            (AuditDecisionReason)reader.GetInt32(13), (AuditOrigin)reader.GetInt32(14), workspace, task, correlation);
         if (executor != auditEvent.Executor) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
-        if (reader.GetString(18) != GuidText(retentionPolicy.PolicyId)) throw new InvalidDataException("Event names an unexpected retention policy.");
-        var expectedHash = ComputeEventHash(auditEvent, retentionPolicy.PolicyId, eventId);
-        var storedHash = reader.GetString(17);
+        if (reader.GetString(19) != GuidText(retentionPolicy.PolicyId)) throw new InvalidDataException("Event names an unexpected retention policy.");
+        var expectedHash = ComputeEventHash(auditEvent, occurredAt, retentionPolicy.PolicyId, eventId);
+        var storedHash = reader.GetString(18);
         if (!StringComparer.Ordinal.Equals(expectedHash, storedHash)) throw new InvalidDataException("Audit event integrity digest does not match its stored fields.");
         var partition = AuditPartition.For(actorChain.Owner, occurredAt);
-        if (partition.Year != reader.GetInt32(19) || partition.Month != reader.GetInt32(20))
+        if (partition.Year != reader.GetInt32(20) || partition.Month != reader.GetInt32(21))
             throw new InvalidDataException("Stored partition does not match the event timestamp.");
-        return new AuditEventRecord(sequence, eventId, auditEvent, storedHash);
+        return new AuditEventRecord(sequence, eventId, occurredAt, auditEvent, storedHash);
     }
 
     private static void InsertHold(SqliteConnection connection, SqliteTransaction transaction, Guid holdId,
-        AuditPartition partition, AuditHoldReason reason, DateTimeOffset occurredAt, bool released,
+        AuditPartition partition, AuditHoldReason reason, Instant occurredAt, bool released,
         ActorChain actorChain, AuditSoftwareIdentity softwareIdentity, AuditOrigin origin, Guid? capabilityId)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT INTO {HoldTable}(hold_id,partition_year,partition_month,action,reason,occurred_utc_ticks,actor_chain,software_identity,origin,capability_id) VALUES($hold,$year,$month,$action,$reason,$ticks,$actor,$software,$origin,$capability);";
+        command.CommandText = $"INSERT INTO {HoldTable}(hold_id,partition_year,partition_month,action,reason,occurred_unix_seconds,occurred_nanoseconds,actor_chain,software_identity,origin,capability_id) VALUES($hold,$year,$month,$action,$reason,$seconds,$nanoseconds,$actor,$software,$origin,$capability);";
         command.Parameters.AddWithValue("$hold", GuidText(holdId));
         command.Parameters.AddWithValue("$year", partition.Year);
         command.Parameters.AddWithValue("$month", partition.Month);
         command.Parameters.AddWithValue("$action", released ? 2 : 1);
         command.Parameters.AddWithValue("$reason", (int)reason);
-        command.Parameters.AddWithValue("$ticks", occurredAt.UtcTicks);
+        command.Parameters.AddWithValue("$seconds", occurredAt.UnixSeconds);
+        command.Parameters.AddWithValue("$nanoseconds", (long)occurredAt.Nanoseconds);
         command.Parameters.AddWithValue("$actor", ActorChainSnapshot.Encode(actorChain));
         command.Parameters.AddWithValue("$software", softwareIdentity.Value);
         command.Parameters.AddWithValue("$origin", (int)origin);
@@ -647,14 +680,14 @@ public sealed class AuditStore : IDisposable
 
     private static AuditHoldRecord ReadHold(SqliteDataReader reader, AuditPartition partition, bool released)
     {
-        var actor = ActorChainSnapshot.Decode((byte[])reader[7]).Chain;
+        var actor = ActorChainSnapshot.Decode((byte[])reader[8]).Chain;
         var rowPartition = new AuditPartition(actor.Owner.Realm, actor.Owner.Id, reader.GetInt32(2), reader.GetInt32(3));
         if (rowPartition != partition) throw new InvalidDataException("Stored legal hold escaped its owner/month partition.");
-        var software = new AuditSoftwareIdentity(reader.GetString(8));
+        var software = new AuditSoftwareIdentity(reader.GetString(9));
         ValidateSoftwareIdentity(actor, software);
         return new AuditHoldRecord(reader.GetInt64(0), ParseGuid(reader.GetString(1)), partition,
-            (AuditHoldReason)reader.GetInt32(4), new DateTimeOffset(reader.GetInt64(5), TimeSpan.Zero),
-            released, actor, software, (AuditOrigin)reader.GetInt32(9));
+            (AuditHoldReason)reader.GetInt32(4), new Instant(reader.GetInt64(5), checked((uint)reader.GetInt64(6))),
+            released, actor, software, (AuditOrigin)reader.GetInt32(10));
     }
 
     private static bool HasActiveHold(SqliteConnection connection, SqliteTransaction transaction, AuditPartition partition)
@@ -703,7 +736,7 @@ public sealed class AuditStore : IDisposable
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT INTO {AuthorityReceiptTable}(capability_id,action,policy_id,partition_realm,partition_owner,partition_year,partition_month,issued_at_utc_ticks,expires_at_utc_ticks,hold_id,authority_actor_chain,software_identity) VALUES($capability,$action,$policy,$realm,$owner,$year,$month,$issued,$expires,$hold,$actor,$software);";
+        command.CommandText = $"INSERT INTO {AuthorityReceiptTable}(capability_id,action,policy_id,partition_realm,partition_owner,partition_year,partition_month,issued_unix_seconds,issued_nanoseconds,expires_unix_seconds,expires_nanoseconds,hold_id,authority_actor_chain,software_identity) VALUES($capability,$action,$policy,$realm,$owner,$year,$month,$issuedSeconds,$issuedNanoseconds,$expiresSeconds,$expiresNanoseconds,$hold,$actor,$software);";
         command.Parameters.AddWithValue("$capability", GuidText(authority.CapabilityId));
         command.Parameters.AddWithValue("$action", (int)authority.Action);
         command.Parameters.AddWithValue("$policy", GuidText(authority.PolicyId));
@@ -711,8 +744,10 @@ public sealed class AuditStore : IDisposable
         command.Parameters.AddWithValue("$owner", GuidText(authority.Partition.Owner.Value));
         command.Parameters.AddWithValue("$year", authority.Partition.Year);
         command.Parameters.AddWithValue("$month", authority.Partition.Month);
-        command.Parameters.AddWithValue("$issued", authority.IssuedAt.UtcTicks);
-        command.Parameters.AddWithValue("$expires", authority.ExpiresAt.UtcTicks);
+        command.Parameters.AddWithValue("$issuedSeconds", authority.IssuedAt.UnixSeconds);
+        command.Parameters.AddWithValue("$issuedNanoseconds", (long)authority.IssuedAt.Nanoseconds);
+        command.Parameters.AddWithValue("$expiresSeconds", authority.ExpiresAt.UnixSeconds);
+        command.Parameters.AddWithValue("$expiresNanoseconds", (long)authority.ExpiresAt.Nanoseconds);
         command.Parameters.AddWithValue("$hold", authority.HoldId is { } hold ? GuidText(hold) : DBNull.Value);
         command.Parameters.AddWithValue("$actor", ActorChainSnapshot.Encode(authority.AuthorityActor));
         command.Parameters.AddWithValue("$software", authority.SoftwareIdentity.Value);
@@ -720,17 +755,18 @@ public sealed class AuditStore : IDisposable
     }
 
     private static void InsertPurgeReceipt(SqliteConnection connection, SqliteTransaction transaction,
-        AuditMaintenanceReceipt authority, DateTimeOffset purgedAt, PartitionDigest evidence)
+        AuditMaintenanceReceipt authority, Instant purgedAt, PartitionDigest evidence)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT INTO {PurgeReceiptTable}(capability_id,partition_realm,partition_owner,partition_year,partition_month,purged_at_utc_ticks,event_count,first_event_sequence,last_event_sequence,events_sha256) VALUES($capability,$realm,$owner,$year,$month,$purgedAt,$count,$first,$last,$hash);";
+        command.CommandText = $"INSERT INTO {PurgeReceiptTable}(capability_id,partition_realm,partition_owner,partition_year,partition_month,purged_unix_seconds,purged_nanoseconds,event_count,first_event_sequence,last_event_sequence,events_sha256) VALUES($capability,$realm,$owner,$year,$month,$purgedSeconds,$purgedNanoseconds,$count,$first,$last,$hash);";
         command.Parameters.AddWithValue("$capability", GuidText(authority.CapabilityId));
         command.Parameters.AddWithValue("$realm", GuidText(authority.Partition.Realm.Value));
         command.Parameters.AddWithValue("$owner", GuidText(authority.Partition.Owner.Value));
         command.Parameters.AddWithValue("$year", authority.Partition.Year);
         command.Parameters.AddWithValue("$month", authority.Partition.Month);
-        command.Parameters.AddWithValue("$purgedAt", purgedAt.UtcTicks);
+        command.Parameters.AddWithValue("$purgedSeconds", purgedAt.UnixSeconds);
+        command.Parameters.AddWithValue("$purgedNanoseconds", (long)purgedAt.Nanoseconds);
         command.Parameters.AddWithValue("$count", evidence.Count);
         command.Parameters.AddWithValue("$first", evidence.FirstSequence);
         command.Parameters.AddWithValue("$last", evidence.LastSequence);
@@ -744,17 +780,18 @@ public sealed class AuditStore : IDisposable
             new UserId(ParseGuid(reader.GetString(3))), reader.GetInt32(4), reader.GetInt32(5));
         EnsurePartition(partition);
         var authority = new AuditMaintenanceReceipt(ParseGuid(reader.GetString(1)),
-            (AuditMaintenanceAction)reader.GetInt32(11), ParseGuid(reader.GetString(12)), partition,
-            new DateTimeOffset(reader.GetInt64(13), TimeSpan.Zero), new DateTimeOffset(reader.GetInt64(14), TimeSpan.Zero),
-            reader.IsDBNull(15) ? null : ParseGuid(reader.GetString(15)),
-            ActorChainSnapshot.Decode((byte[])reader[16]).Chain, new AuditSoftwareIdentity(reader.GetString(17)));
+            (AuditMaintenanceAction)reader.GetInt32(12), ParseGuid(reader.GetString(13)), partition,
+            new Instant(reader.GetInt64(14), checked((uint)reader.GetInt64(15))),
+            new Instant(reader.GetInt64(16), checked((uint)reader.GetInt64(17))),
+            reader.IsDBNull(18) ? null : ParseGuid(reader.GetString(18)),
+            ActorChainSnapshot.Decode((byte[])reader[19]).Chain, new AuditSoftwareIdentity(reader.GetString(20)));
         EnsureOwner(authority.AuthorityActor.Owner.Realm, authority.AuthorityActor.Owner.Id);
         ValidateSoftwareIdentity(authority.AuthorityActor, authority.SoftwareIdentity);
         if (authority.Action != AuditMaintenanceAction.PurgeExpiredPartition || authority.PolicyId != retentionPolicy.PolicyId)
             throw new InvalidDataException("A purge receipt references a non-purge authority action.");
         return new AuditPurgeReceipt(reader.GetInt64(0), authority, partition,
-            new DateTimeOffset(reader.GetInt64(6), TimeSpan.Zero), reader.GetInt64(7), reader.GetInt64(8),
-            reader.GetInt64(9), reader.GetString(10));
+            new Instant(reader.GetInt64(6), checked((uint)reader.GetInt64(7))), reader.GetInt64(8), reader.GetInt64(9),
+            reader.GetInt64(10), reader.GetString(11));
     }
 
     private AuditMaintenanceReceipt ReadMaintenanceReceipt(SqliteDataReader reader)
@@ -762,14 +799,15 @@ public sealed class AuditStore : IDisposable
         var partition = new AuditPartition(new RealmId(ParseGuid(reader.GetString(3))),
             new UserId(ParseGuid(reader.GetString(4))), reader.GetInt32(5), reader.GetInt32(6));
         EnsurePartition(partition);
-        var actor = ActorChainSnapshot.Decode((byte[])reader[10]).Chain;
+        var actor = ActorChainSnapshot.Decode((byte[])reader[12]).Chain;
         EnsureOwner(actor.Owner.Realm, actor.Owner.Id);
-        var software = new AuditSoftwareIdentity(reader.GetString(11));
+        var software = new AuditSoftwareIdentity(reader.GetString(13));
         ValidateSoftwareIdentity(actor, software);
         var receipt = new AuditMaintenanceReceipt(ParseGuid(reader.GetString(0)),
             (AuditMaintenanceAction)reader.GetInt32(1), ParseGuid(reader.GetString(2)), partition,
-            new DateTimeOffset(reader.GetInt64(7), TimeSpan.Zero), new DateTimeOffset(reader.GetInt64(8), TimeSpan.Zero),
-            reader.IsDBNull(9) ? null : ParseGuid(reader.GetString(9)), actor, software);
+            new Instant(reader.GetInt64(7), checked((uint)reader.GetInt64(8))),
+            new Instant(reader.GetInt64(9), checked((uint)reader.GetInt64(10))),
+            reader.IsDBNull(11) ? null : ParseGuid(reader.GetString(11)), actor, software);
         if (receipt.PolicyId != retentionPolicy.PolicyId)
             throw new InvalidDataException("Stored maintenance receipt names an unexpected retention policy.");
         return receipt;
@@ -779,7 +817,7 @@ public sealed class AuditStore : IDisposable
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"SELECT sequence,event_id,occurred_utc_ticks,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month FROM {EventTable} WHERE partition_year=$year AND partition_month=$month ORDER BY sequence;";
+        command.CommandText = $"SELECT sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month FROM {EventTable} WHERE partition_year=$year AND partition_month=$month ORDER BY sequence;";
         command.Parameters.AddWithValue("$year", partition.Year);
         command.Parameters.AddWithValue("$month", partition.Month);
         using var reader = command.ExecuteReader();
@@ -809,44 +847,45 @@ public sealed class AuditStore : IDisposable
         // All owner checks are repeated by the event decoder; this method also binds each row to the approved month.
         var sequence = reader.GetInt64(0);
         var eventId = ParseGuid(reader.GetString(1));
-        var actor = ActorChainSnapshot.Decode((byte[])reader[4]).Chain;
-        var software = new AuditSoftwareIdentity(reader.GetString(5));
-        var event = new AuditEvent((AuditEventType)reader.GetInt32(3),
-            new DateTimeOffset(reader.GetInt64(2), TimeSpan.Zero), actor, software,
-            new AuditCapabilityId(reader.GetString(6)),
-            new AuditResourceReference((AuditResourceKind)reader.GetInt32(8), ParseGuid(reader.GetString(9))),
-            (AuditRisk)reader.GetInt32(10), (AuditDecision)reader.GetInt32(11),
-            (AuditDecisionReason)reader.GetInt32(12), (AuditOrigin)reader.GetInt32(13),
-            reader.IsDBNull(14) ? null : new WorkspaceId(ParseGuid(reader.GetString(14))),
-            reader.IsDBNull(15) ? null : new TaskId(ParseGuid(reader.GetString(15))),
-            reader.IsDBNull(16) ? null : new CorrelationId(ParseGuid(reader.GetString(16))));
-        var actualPartition = AuditPartition.For(actor.Owner, event.OccurredAt);
+        var occurredAt = new Instant(reader.GetInt64(2), checked((uint)reader.GetInt64(3)));
+        var actor = ActorChainSnapshot.Decode((byte[])reader[5]).Chain;
+        var software = new AuditSoftwareIdentity(reader.GetString(6));
+        var event = new AuditEvent((AuditEventType)reader.GetInt32(4), actor, software,
+            new AuditCapabilityId(reader.GetString(7)),
+            new AuditResourceReference((AuditResourceKind)reader.GetInt32(9), ParseGuid(reader.GetString(10))),
+            (AuditRisk)reader.GetInt32(11), (AuditDecision)reader.GetInt32(12),
+            (AuditDecisionReason)reader.GetInt32(13), (AuditOrigin)reader.GetInt32(14),
+            reader.IsDBNull(15) ? null : new WorkspaceId(ParseGuid(reader.GetString(15))),
+            reader.IsDBNull(16) ? null : new TaskId(ParseGuid(reader.GetString(16))),
+            reader.IsDBNull(17) ? null : new CorrelationId(ParseGuid(reader.GetString(17))));
+        var actualPartition = AuditPartition.For(actor.Owner, occurredAt);
         if (actualPartition != expectedPartition || GuidText(expectedPartition.Realm.Value) != GuidText(actor.Owner.Realm.Value)
             || GuidText(expectedPartition.Owner.Value) != GuidText(actor.Owner.Id.Value))
         {
             throw new InvalidDataException("Stored event is outside its owner partition.");
         }
 
-        if (GuidText(event.Executor.Value) != reader.GetString(7)) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
-        var policyId = reader.GetString(18);
+        if (GuidText(event.Executor.Value) != reader.GetString(8)) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
+        var policyId = reader.GetString(19);
         if (policyId != GuidText(expectedPolicyId)) throw new InvalidDataException("Stored event names an unexpected retention policy.");
-        if (reader.GetInt32(19) != actualPartition.Year || reader.GetInt32(20) != actualPartition.Month)
+        if (reader.GetInt32(20) != actualPartition.Year || reader.GetInt32(21) != actualPartition.Month)
             throw new InvalidDataException("Stored partition does not match the event timestamp.");
-        var digest = ComputeEventHash(event, expectedPolicyId, eventId);
-        if (!StringComparer.Ordinal.Equals(digest, reader.GetString(17))) throw new InvalidDataException("Audit event integrity digest does not match its stored fields.");
-        return new AuditEventRecord(sequence, eventId, event, digest);
+        var digest = ComputeEventHash(event, occurredAt, expectedPolicyId, eventId);
+        if (!StringComparer.Ordinal.Equals(digest, reader.GetString(18))) throw new InvalidDataException("Audit event integrity digest does not match its stored fields.");
+        return new AuditEventRecord(sequence, eventId, occurredAt, event, digest);
     }
 
-    private static string ComputeEventHash(AuditEvent auditEvent, Guid policyId, Guid eventId)
+    private static string ComputeEventHash(AuditEvent auditEvent, Instant occurredAt, Guid policyId, Guid eventId)
     {
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("ArcForges.local_audit.event.v1");
+            writer.Write("ArcForges.local_audit.event.v2");
             writer.Write(GuidText(policyId));
             writer.Write(eventId.ToByteArray());
             writer.Write((int)auditEvent.EventType);
-            writer.Write(auditEvent.OccurredAt.UtcTicks);
+            writer.Write(occurredAt.UnixSeconds);
+            writer.Write(occurredAt.Nanoseconds);
             var actor = ActorChainSnapshot.Encode(auditEvent.ActorChain);
             writer.Write(actor.Length);
             writer.Write(actor);

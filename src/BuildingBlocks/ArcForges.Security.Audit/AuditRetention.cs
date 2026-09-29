@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.Values;
+using ArcForges.Foundation;
 using ArcForges.Foundation.Execution;
 using ArcForges.Security;
 
@@ -33,7 +34,7 @@ public sealed class AuditRetentionPolicy
 public sealed class AuditMaintenanceReceipt
 {
     internal AuditMaintenanceReceipt(Guid capabilityId, AuditMaintenanceAction action, Guid policyId,
-        AuditPartition partition, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid? holdId,
+        AuditPartition partition, Instant issuedAt, Instant expiresAt, Guid? holdId,
         ActorChain authorityActor, AuditSoftwareIdentity softwareIdentity)
     {
         if (capabilityId == Guid.Empty) throw new ArgumentException("A maintenance capability identity is required.", nameof(capabilityId));
@@ -51,9 +52,7 @@ public sealed class AuditMaintenanceReceipt
             throw new ArgumentException("Only a hold release may name a hold identity.", nameof(holdId));
         }
 
-        var issued = issuedAt.ToUniversalTime();
-        var expires = expiresAt.ToUniversalTime();
-        if (expires <= issued || expires - issued > AuditMaintenanceAuthority.MaximumCapabilityLifetime)
+        if (expiresAt <= issuedAt || ExceedsMaximumLifetime(issuedAt, expiresAt))
         {
             throw new ArgumentException("Maintenance capability lifetime is invalid.");
         }
@@ -67,8 +66,8 @@ public sealed class AuditMaintenanceReceipt
         Action = action;
         PolicyId = policyId;
         Partition = partition;
-        IssuedAt = issued;
-        ExpiresAt = expires;
+        IssuedAt = issuedAt;
+        ExpiresAt = expiresAt;
         HoldId = holdId;
         AuthorityActor = authorityActor;
         SoftwareIdentity = softwareIdentity;
@@ -78,11 +77,25 @@ public sealed class AuditMaintenanceReceipt
     public AuditMaintenanceAction Action { get; }
     public Guid PolicyId { get; }
     public AuditPartition Partition { get; }
-    public DateTimeOffset IssuedAt { get; }
-    public DateTimeOffset ExpiresAt { get; }
+    public Instant IssuedAt { get; }
+    public Instant ExpiresAt { get; }
     public Guid? HoldId { get; }
     public ActorChain AuthorityActor { get; }
     public AuditSoftwareIdentity SoftwareIdentity { get; }
+
+    private static bool ExceedsMaximumLifetime(Instant issuedAt, Instant expiresAt)
+    {
+        var seconds = expiresAt.UnixSeconds - issuedAt.UnixSeconds;
+        var nanoseconds = (long)expiresAt.Nanoseconds - issuedAt.Nanoseconds;
+        if (nanoseconds < 0)
+        {
+            seconds--;
+            nanoseconds += 1_000_000_000;
+        }
+
+        return seconds > (long)AuditMaintenanceAuthority.MaximumCapabilityLifetime.TotalSeconds
+            || (seconds == (long)AuditMaintenanceAuthority.MaximumCapabilityLifetime.TotalSeconds && nanoseconds > 0);
+    }
 }
 
 /// <summary>
@@ -110,7 +123,7 @@ internal sealed class AuditMaintenanceAuthority
 
     internal AuditMaintenanceCapability Mint(AuditMaintenanceAction action, AuditPartition partition,
         Guid? holdId, ActorChain authorityActor, AuditSoftwareIdentity softwareIdentity,
-        DateTimeOffset issuedAt, TimeSpan lifetime)
+        Instant issuedAt, MonotonicTimestamp mintedAt, TimeSpan lifetime)
     {
         if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
         EnsureOwner(partition);
@@ -118,30 +131,50 @@ internal sealed class AuditMaintenanceAuthority
         ArgumentNullException.ThrowIfNull(softwareIdentity);
         if (authorityActor.Owner.Realm != realm || authorityActor.Owner.Id != owner)
             throw new UnauthorizedAccessException("The maintenance actor belongs to another realm/account owner.");
-        if (issuedAt.Offset != TimeSpan.Zero) throw new ArgumentException("Capability issue time must be UTC.", nameof(issuedAt));
         if (lifetime <= TimeSpan.Zero || lifetime > MaximumCapabilityLifetime)
             throw new ArgumentOutOfRangeException(nameof(lifetime), "Maintenance capability lifetime must be positive and no longer than five minutes.");
 
         var id = Guid.NewGuid();
-        var expiresAt = issuedAt.Add(lifetime);
+        var expiresAt = Add(issuedAt, lifetime);
         var receipt = new AuditMaintenanceReceipt(id, action, policyId, partition, issuedAt, expiresAt,
             holdId, authorityActor, softwareIdentity);
-        return new AuditMaintenanceCapability(identity, receipt);
+        return new AuditMaintenanceCapability(identity, receipt, mintedAt, lifetime);
     }
 
     internal AuditMaintenanceReceipt Validate(AuditMaintenanceCapability capability,
-        AuditMaintenanceAction expectedAction, DateTimeOffset now)
+        AuditMaintenanceAction expectedAction, IClock clock, MonotonicTimestamp now)
     {
         ArgumentNullException.ThrowIfNull(capability);
+        ArgumentNullException.ThrowIfNull(clock);
         var receipt = capability.Receipt;
-        if (!capability.IsIssuedBy(identity) || receipt.PolicyId != policyId
+        if (!capability.IsIssuedBy(identity))
+        {
+            throw new UnauthorizedAccessException("The in-process maintenance capability was not issued by this store.");
+        }
+
+        var elapsed = clock.GetElapsedTime(capability.MintedAt, now);
+        if (elapsed < TimeSpan.Zero || receipt.PolicyId != policyId
             || receipt.Partition.Realm != realm || receipt.Partition.Owner != owner
-            || receipt.Action != expectedAction || now < receipt.IssuedAt || now >= receipt.ExpiresAt)
+            || receipt.Action != expectedAction || elapsed >= capability.Lifetime)
         {
             throw new UnauthorizedAccessException("The in-process maintenance capability is invalid, expired, or outside its exact policy/owner/action scope.");
         }
 
         return receipt;
+    }
+
+    private static Instant Add(Instant value, TimeSpan duration)
+    {
+        var additionalNanoseconds = checked(duration.Ticks * 100L);
+        var seconds = checked(value.UnixSeconds + additionalNanoseconds / 1_000_000_000L);
+        var nanoseconds = checked((long)value.Nanoseconds + additionalNanoseconds % 1_000_000_000L);
+        if (nanoseconds >= 1_000_000_000L)
+        {
+            seconds = checked(seconds + 1);
+            nanoseconds -= 1_000_000_000L;
+        }
+
+        return new Instant(seconds, checked((uint)nanoseconds));
     }
 
     private void EnsureOwner(AuditPartition partition)
@@ -157,12 +190,17 @@ internal sealed class AuditMaintenanceCapability
 {
     private readonly object issuerIdentity;
 
-    internal AuditMaintenanceCapability(object issuerIdentity, AuditMaintenanceReceipt receipt)
+    internal AuditMaintenanceCapability(object issuerIdentity, AuditMaintenanceReceipt receipt,
+        MonotonicTimestamp mintedAt, TimeSpan lifetime)
     {
         this.issuerIdentity = issuerIdentity ?? throw new ArgumentNullException(nameof(issuerIdentity));
         Receipt = receipt ?? throw new ArgumentNullException(nameof(receipt));
+        MintedAt = mintedAt;
+        Lifetime = lifetime;
     }
 
     internal AuditMaintenanceReceipt Receipt { get; }
+    internal MonotonicTimestamp MintedAt { get; }
+    internal TimeSpan Lifetime { get; }
     internal bool IsIssuedBy(object authorityIdentity) => ReferenceEquals(issuerIdentity, authorityIdentity);
 }
