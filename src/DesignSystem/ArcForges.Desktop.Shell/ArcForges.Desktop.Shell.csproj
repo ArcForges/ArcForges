@@ -15,6 +15,7 @@
     <Compile Remove="Tests/**/*.cs" />
     <None Remove="Tests/**" />
     <ProjectReference Include="../ArcForges.DesignSystem/ArcForges.DesignSystem.csproj" />
+    <ProjectReference Include="../../BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
     <ProjectReference Include="../../BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj" />
   </ItemGroup>
 </Project>
