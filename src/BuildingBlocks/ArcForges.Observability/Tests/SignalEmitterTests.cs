@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
+using ArcForges.Capabilities;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation;
 using ArcForges.Foundation.Errors;
@@ -262,6 +263,100 @@ public sealed class SignalEmitterTests
         Assert.Throws<ArgumentOutOfRangeException>(() => Validate(Context() with { SequenceGapCount = -1 }));
         Assert.Throws<ArgumentException>(() => Validate(Context() with { Correlation = new CorrelationId(Guid.Empty) }));
         Assert.Throws<ArgumentException>(() => Validate(Context() with { NativeAbiBuildId = "build prompt has secret" }));
+    }
+
+    [Fact]
+    public void LivenessProbeDoesNotClaimReadinessOrCapabilityHealth()
+    {
+        HealthProbeResult liveness = HealthProbe.CheckLiveness();
+        Assert.Equal(HealthProbeKind.Liveness, liveness.Kind);
+        Assert.Equal(HealthProbeStatus.Healthy, liveness.Status);
+        Assert.Empty(liveness.NotReadyDependencies);
+        Assert.Empty(liveness.DimensionStatuses);
+    }
+
+    [Fact]
+    public void ReadinessFailsClosedForEveryMissingRequiredDependency()
+    {
+        string[] required = ["capabilities", "storage"];
+        HealthProbeResult missing = HealthProbe.CheckReadiness(required,
+        [
+            new RequiredDependencyObservation("storage", DependencyReadinessStatus.Available),
+        ]);
+        Assert.Equal(HealthProbeKind.Readiness, missing.Kind);
+        Assert.Equal(HealthProbeStatus.Unavailable, missing.Status);
+        Assert.Equal(new[] { "capabilities" }, missing.NotReadyDependencies);
+
+        HealthProbeResult unavailable = HealthProbe.CheckReadiness(required,
+        [
+            new RequiredDependencyObservation("capabilities", DependencyReadinessStatus.Available),
+            new RequiredDependencyObservation("storage", DependencyReadinessStatus.Unavailable),
+        ]);
+        Assert.Equal(HealthProbeStatus.Unavailable, unavailable.Status);
+        Assert.Equal(new[] { "storage" }, unavailable.NotReadyDependencies);
+
+        HealthProbeResult available = HealthProbe.CheckReadiness(required,
+        [
+            new RequiredDependencyObservation("storage", DependencyReadinessStatus.Available),
+            new RequiredDependencyObservation("capabilities", DependencyReadinessStatus.Available),
+        ]);
+        Assert.Equal(HealthProbeStatus.Healthy, available.Status);
+        Assert.Empty(available.NotReadyDependencies);
+    }
+
+    [Fact]
+    public void ReadinessRejectsDuplicateAndUnownedDependencyObservations()
+    {
+        string[] required = ["storage"];
+        Assert.Throws<ArgumentException>(() => HealthProbe.CheckReadiness(required,
+        [
+            new RequiredDependencyObservation("storage", DependencyReadinessStatus.Available),
+            new RequiredDependencyObservation("storage", DependencyReadinessStatus.Available),
+        ]));
+
+        Assert.Throws<ArgumentException>(() => HealthProbe.CheckReadiness(required,
+        [
+            new RequiredDependencyObservation("unowned", DependencyReadinessStatus.Available),
+        ]));
+    }
+
+    [Fact]
+    public void CapabilityHealthUsesAllFiveSharedDimensionsAndReflectsSimulatedDegradation()
+    {
+        HealthDimension[] expectedDimensions =
+        [
+            HealthDimension.Reachable,
+            HealthDimension.Ready,
+            HealthDimension.Healthy,
+            HealthDimension.Degraded,
+            HealthDimension.Capacity,
+        ];
+        HealthDimensionObservation[] observations = expectedDimensions
+            .Select(dimension => new HealthDimensionObservation(dimension,
+                dimension == HealthDimension.Capacity ? HealthProbeStatus.Degraded : HealthProbeStatus.Healthy))
+            .ToArray();
+
+        HealthProbeResult degraded = HealthProbe.EvaluateCapabilityHealth(observations);
+        Assert.Equal(HealthProbeKind.CapabilityHealth, degraded.Kind);
+        Assert.Equal(HealthProbeStatus.Degraded, degraded.Status);
+        Assert.Equal(expectedDimensions, degraded.DimensionStatuses.Keys);
+        Assert.Equal(HealthProbeStatus.Degraded, degraded.DimensionStatuses[HealthDimension.Capacity]);
+
+        HealthProbeResult incomplete = HealthProbe.EvaluateCapabilityHealth(
+            observations.Where(observation => observation.Dimension != HealthDimension.Ready));
+        Assert.Equal(HealthProbeStatus.Unknown, incomplete.Status);
+        Assert.Equal(HealthProbeStatus.Unknown, incomplete.DimensionStatuses[HealthDimension.Ready]);
+
+        Assert.Throws<ArgumentException>(() => HealthProbe.EvaluateCapabilityHealth(
+        [
+            new HealthDimensionObservation(HealthDimension.Reachable, HealthProbeStatus.Healthy),
+            new HealthDimensionObservation(HealthDimension.Reachable, HealthProbeStatus.Degraded),
+        ]));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => HealthProbe.EvaluateCapabilityHealth(
+        [
+            new HealthDimensionObservation((HealthDimension)int.MaxValue, HealthProbeStatus.Healthy),
+        ]));
     }
 
     private static ObservabilityContext Context() => new(SignalApplicationDimension.ArcScope,
