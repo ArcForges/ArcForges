@@ -295,6 +295,14 @@ public sealed class SignalEmitterTests
         Assert.Equal(HealthProbeStatus.Unavailable, unavailable.Status);
         Assert.Equal(new[] { "storage" }, unavailable.NotReadyDependencies);
 
+        HealthProbeResult unknown = HealthProbe.CheckReadiness(required,
+        [
+            new RequiredDependencyObservation("capabilities", DependencyReadinessStatus.Available),
+            new RequiredDependencyObservation("storage", DependencyReadinessStatus.Unknown),
+        ]);
+        Assert.Equal(HealthProbeStatus.Unavailable, unknown.Status);
+        Assert.Equal(new[] { "storage" }, unknown.NotReadyDependencies);
+
         HealthProbeResult available = HealthProbe.CheckReadiness(required,
         [
             new RequiredDependencyObservation("storage", DependencyReadinessStatus.Available),
@@ -341,6 +349,12 @@ public sealed class SignalEmitterTests
         Assert.Equal(HealthProbeStatus.Degraded, degraded.Status);
         Assert.Equal(expectedDimensions, degraded.DimensionStatuses.Keys);
         Assert.Equal(HealthProbeStatus.Degraded, degraded.DimensionStatuses[HealthDimension.Capacity]);
+
+        HealthProbeResult unavailable = HealthProbe.EvaluateCapabilityHealth(expectedDimensions
+            .Select(dimension => new HealthDimensionObservation(dimension,
+                dimension == HealthDimension.Reachable ? HealthProbeStatus.Unavailable : HealthProbeStatus.Healthy)));
+        Assert.Equal(HealthProbeStatus.Unavailable, unavailable.Status);
+        Assert.Equal(HealthProbeStatus.Unavailable, unavailable.DimensionStatuses[HealthDimension.Reachable]);
 
         HealthProbeResult incomplete = HealthProbe.EvaluateCapabilityHealth(
             observations.Where(observation => observation.Dimension != HealthDimension.Ready));
