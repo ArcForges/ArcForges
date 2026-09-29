@@ -37,9 +37,9 @@ class SecretScanAllowlistTests(unittest.TestCase):
     @staticmethod
     def _matches(group, path, line, rule='generic-api-key'):
         return (
-            rule in group['targetRules']
-            and any(re.fullmatch(pattern, path) is not None for pattern in group['paths'])
-            and any(re.fullmatch(pattern, line) is not None for pattern in group['regexes'])
+            rule in group.get('targetRules', ())
+            and any(re.fullmatch(pattern, path) is not None for pattern in group.get('paths', ()))
+            and any(re.fullmatch(pattern, line) is not None for pattern in group.get('regexes', ()))
         )
 
     def _allowed(self, path, line, rule='generic-api-key'):
@@ -55,12 +55,20 @@ class SecretScanAllowlistTests(unittest.TestCase):
 
     def test_allowlist_has_only_the_two_exact_path_bound_groups(self):
         self.assertTrue(self.config['extend']['useDefault'])
-        self.assertEqual(len(self.groups), 2)
+        self.assertNotIn('allowlist', self.config)
+        self.assertEqual(len(self.groups), 3)
+        baseline, *task_groups = self.groups
+        self.assertEqual(baseline['description'], 'Generated outputs and public test fixtures')
+        self.assertEqual(baseline['paths'], [
+            '(^|/)artifacts/',
+            '(^|/)(bin|obj)/',
+            '(^|/)tests/.*/Fixtures/',
+        ])
         expected = (
             (self.POLICY_PATH, 4),
             (self.RECEIPT_PATH, 2),
         )
-        for group, (path, count) in zip(self.groups, expected):
+        for group, (path, count) in zip(task_groups, expected):
             with self.subTest(path=path):
                 self.assertEqual(group['paths'], ['^' + path.replace('.', '[.]') + '$'])
                 self.assertEqual(group['targetRules'], ['generic-api-key'])
@@ -74,11 +82,6 @@ class SecretScanAllowlistTests(unittest.TestCase):
                     for project_path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
                 }
                 self.assertEqual(set(group['regexes']), expected_regexes)
-        self.assertEqual(self.config['allowlist']['paths'], [
-            '(^|/)artifacts/',
-            '(^|/)(bin|obj)/',
-            '(^|/)tests/.*/Fixtures/',
-        ])
 
     def test_exact_six_observed_lines_match_only_the_generic_api_key_rule(self):
         policy_lines = [

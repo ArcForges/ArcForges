@@ -3,7 +3,7 @@ title = "ArcForges gitleaks configuration"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Generated outputs and public test fixtures"
 paths = [
   '''(^|/)artifacts/''',
