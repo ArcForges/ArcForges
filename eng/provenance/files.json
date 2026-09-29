@@ -589,7 +589,9 @@
     "src/BuildingBlocks/ArcForges.Capabilities/InProcessStateHints.cs",
     "src/BuildingBlocks/ArcForges.Capabilities/OwnAppNavigation.cs",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/InProcessStateHintTests.cs",
-    "src/BuildingBlocks/ArcForges.Capabilities/Tests/OwnNavigationTests.cs"
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/OwnNavigationTests.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/ActionAvailability.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/ActionAvailabilityTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
