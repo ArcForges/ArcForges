@@ -9,6 +9,7 @@ namespace ArcForges.Security.Audit;
 
 public enum AuditEventType
 {
+    None = 0,
     AuthenticationSucceeded = 1,
     AuthenticationFailed = 2,
     StepUpPerformed = 3,
@@ -57,6 +58,7 @@ public enum AuditEventType
 
 public enum AuditRisk
 {
+    None = 0,
     Low = 1,
     Medium = 2,
     High = 3,
@@ -65,6 +67,7 @@ public enum AuditRisk
 
 public enum AuditDecision
 {
+    None = 0,
     Allowed = 1,
     Denied = 2,
     Requested = 3,
@@ -75,6 +78,7 @@ public enum AuditDecision
 
 public enum AuditDecisionReason
 {
+    None = 0,
     PolicyAllowed = 1,
     PolicyDenied = 2,
     UserApproved = 3,
@@ -92,12 +96,14 @@ public enum AuditDecisionReason
 
 public enum AuditOrigin
 {
+    None = 0,
     Local = 1,
     Remote = 2,
 }
 
 public enum AuditResourceKind
 {
+    None = 0,
     Account = 1,
     Device = 2,
     Installation = 3,
@@ -118,10 +124,17 @@ public enum AuditResourceKind
 
 public enum AuditHoldReason
 {
+    None = 0,
     LegalPreservation = 1,
     FinancialRecord = 2,
     AccountDeletionReview = 3,
     SecurityIncident = 4,
+}
+
+internal static class AuditEnumValidation
+{
+    internal static bool IsWireValue<TEnum>(TEnum value) where TEnum : struct, Enum =>
+        !EqualityComparer<TEnum>.Default.Equals(value, default) && Enum.IsDefined(value);
 }
 
 /// <summary>A bounded software identifier; it is not an event message or a user-content field.</summary>
@@ -181,7 +194,7 @@ public readonly record struct AuditResourceReference
 {
     public AuditResourceReference(AuditResourceKind kind, Guid id)
     {
-        if (!Enum.IsDefined(kind))
+        if (!AuditEnumValidation.IsWireValue(kind))
         {
             throw new ArgumentOutOfRangeException(nameof(kind));
         }
@@ -207,11 +220,11 @@ public sealed class AuditEvent
         AuditRisk risk, AuditDecision decision, AuditDecisionReason reason, AuditOrigin origin,
         WorkspaceId? workspace = null, TaskId? task = null, CorrelationId? correlation = null)
     {
-        if (!Enum.IsDefined(eventType)) throw new ArgumentOutOfRangeException(nameof(eventType));
-        if (!Enum.IsDefined(risk)) throw new ArgumentOutOfRangeException(nameof(risk));
-        if (!Enum.IsDefined(decision)) throw new ArgumentOutOfRangeException(nameof(decision));
-        if (!Enum.IsDefined(reason)) throw new ArgumentOutOfRangeException(nameof(reason));
-        if (!Enum.IsDefined(origin)) throw new ArgumentOutOfRangeException(nameof(origin));
+        if (!AuditEnumValidation.IsWireValue(eventType)) throw new ArgumentOutOfRangeException(nameof(eventType));
+        if (!AuditEnumValidation.IsWireValue(risk)) throw new ArgumentOutOfRangeException(nameof(risk));
+        if (!AuditEnumValidation.IsWireValue(decision)) throw new ArgumentOutOfRangeException(nameof(decision));
+        if (!AuditEnumValidation.IsWireValue(reason)) throw new ArgumentOutOfRangeException(nameof(reason));
+        if (!AuditEnumValidation.IsWireValue(origin)) throw new ArgumentOutOfRangeException(nameof(origin));
         ArgumentNullException.ThrowIfNull(actorChain);
         ArgumentNullException.ThrowIfNull(softwareIdentity);
         ArgumentNullException.ThrowIfNull(capability);
@@ -310,8 +323,8 @@ public sealed class AuditQuery
     {
         if (fromInclusive >= toExclusive) throw new ArgumentException("Query interval must be nonempty.");
         if (limit is < 1 or > MaximumPageSize) throw new ArgumentOutOfRangeException(nameof(limit));
-        if (eventType is { } type && !Enum.IsDefined(type)) throw new ArgumentOutOfRangeException(nameof(eventType));
-        if (afterSequence < 0) throw new ArgumentOutOfRangeException(nameof(afterSequence));
+        if (eventType is { } type && !AuditEnumValidation.IsWireValue(type)) throw new ArgumentOutOfRangeException(nameof(eventType));
+        ArgumentOutOfRangeException.ThrowIfNegative(afterSequence);
         FromInclusive = fromInclusive.ToUniversalTime();
         ToExclusive = toExclusive.ToUniversalTime();
         Limit = limit;
@@ -333,12 +346,12 @@ public sealed class AuditHoldRecord(long sequence, Guid holdId, AuditPartition p
     public long Sequence { get; } = sequence > 0 ? sequence : throw new ArgumentOutOfRangeException(nameof(sequence));
     public Guid HoldId { get; } = holdId != Guid.Empty ? holdId : throw new ArgumentException("A hold identity is required.", nameof(holdId));
     public AuditPartition Partition { get; } = partition;
-    public AuditHoldReason Reason { get; } = Enum.IsDefined(reason) ? reason : throw new ArgumentOutOfRangeException(nameof(reason));
+    public AuditHoldReason Reason { get; } = AuditEnumValidation.IsWireValue(reason) ? reason : throw new ArgumentOutOfRangeException(nameof(reason));
     public Instant OccurredAt { get; } = occurredAt;
     public bool Released { get; } = released;
     public ActorChain ActorChain { get; } = actorChain ?? throw new ArgumentNullException(nameof(actorChain));
     public AuditSoftwareIdentity SoftwareIdentity { get; } = softwareIdentity ?? throw new ArgumentNullException(nameof(softwareIdentity));
-    public AuditOrigin Origin { get; } = Enum.IsDefined(origin) ? origin : throw new ArgumentOutOfRangeException(nameof(origin));
+    public AuditOrigin Origin { get; } = AuditEnumValidation.IsWireValue(origin) ? origin : throw new ArgumentOutOfRangeException(nameof(origin));
 }
 
 /// <summary>Append-only evidence for one maintenance-authorized, owner-partition retention purge.</summary>
@@ -362,6 +375,6 @@ public sealed class AuditPurgeReceipt(long sequence, AuditMaintenanceReceipt aut
             throw new ArgumentException("A SHA-256 hex digest is required.", nameof(value));
         }
 
-        return value.ToLowerInvariant();
+        return value.ToUpperInvariant();
     }
 }

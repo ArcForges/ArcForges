@@ -29,12 +29,12 @@ public sealed class AuditStore : IDisposable
     private static readonly strdelegate_authorizer DatabaseAuthorizer = AuthorizeDatabase;
 
     private readonly string connectionString;
+    private readonly string writerKey;
     private readonly RealmId realm;
     private readonly UserId owner;
     private readonly AuditRetentionPolicy retentionPolicy;
     private readonly IClock clock;
     private readonly AuditMaintenanceAuthority maintenanceAuthority;
-    private readonly SemaphoreSlim writer;
     private bool disposed;
 
     public AuditStore(string databasePath, RealmId realm, UserId owner, AuditRetentionPolicy retentionPolicy)
@@ -59,7 +59,8 @@ public sealed class AuditStore : IDisposable
         this.retentionPolicy = retentionPolicy;
         this.clock = clock;
         maintenanceAuthority = new AuditMaintenanceAuthority(retentionPolicy, realm, owner);
-        writer = Writers.GetOrAdd(fullPath, static _ => new SemaphoreSlim(1, 1));
+        writerKey = fullPath;
+        var writer = Writers.GetOrAdd(fullPath, static _ => new SemaphoreSlim(1, 1));
         connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = fullPath,
@@ -164,8 +165,8 @@ public sealed class AuditStore : IDisposable
     {
         ThrowIfDisposed();
         if (holdId == Guid.Empty) throw new ArgumentException("A hold identity is required.", nameof(holdId));
-        if (!Enum.IsDefined(reason)) throw new ArgumentOutOfRangeException(nameof(reason));
-        if (!Enum.IsDefined(origin)) throw new ArgumentOutOfRangeException(nameof(origin));
+        if (!AuditEnumValidation.IsWireValue(reason)) throw new ArgumentOutOfRangeException(nameof(reason));
+        if (!AuditEnumValidation.IsWireValue(origin)) throw new ArgumentOutOfRangeException(nameof(origin));
         ArgumentNullException.ThrowIfNull(actorChain);
         ArgumentNullException.ThrowIfNull(softwareIdentity);
         EnsureOwner(actorChain.Owner.Realm, actorChain.Owner.Id);
@@ -455,7 +456,7 @@ public sealed class AuditStore : IDisposable
         }
     }
 
-    private void CreateSchema(SqliteConnection connection, SqliteTransaction transaction)
+    private static void CreateSchema(SqliteConnection connection, SqliteTransaction transaction)
     {
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1),schema_version INTEGER NOT NULL,realm_id TEXT NOT NULL,owner_id TEXT NOT NULL,policy_id TEXT NOT NULL,retention_days INTEGER NOT NULL);");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {GateTable}(singleton INTEGER PRIMARY KEY CHECK(singleton=1),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));");
@@ -529,6 +530,7 @@ public sealed class AuditStore : IDisposable
     private T WithWriteTransaction<T, TInput>(Func<SqliteConnection, SqliteTransaction, AuthorizerState, TInput, T> action, TInput input)
     {
         ThrowIfDisposed();
+        var writer = Writers.GetOrAdd(writerKey, static _ => new SemaphoreSlim(1, 1));
         writer.Wait();
         try
         {
@@ -929,6 +931,8 @@ public sealed class AuditStore : IDisposable
         return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "Every call site supplies a fixed schema query; all external values use SQLite parameters.")]
     private static long ScalarLong(SqliteConnection connection, SqliteTransaction transaction, string sql)
     {
         using var command = connection.CreateCommand();
@@ -952,7 +956,7 @@ public sealed class AuditStore : IDisposable
 
     private void ThrowIfDisposed()
     {
-        if (disposed) throw new ObjectDisposedException(nameof(AuditStore));
+        ObjectDisposedException.ThrowIf(disposed, this);
     }
 
     private static void SetAuthorizer(SqliteConnection connection, AuthorizerState state) =>

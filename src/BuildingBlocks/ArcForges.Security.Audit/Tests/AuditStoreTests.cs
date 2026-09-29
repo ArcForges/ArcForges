@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation;
@@ -12,11 +13,37 @@ namespace ArcForges.Security.Audit.Tests;
 
 public sealed class AuditStoreTests
 {
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "This untrimmed test inspects the compiled audit assembly references to guard its no-telemetry dependency boundary.")]
     [Fact]
     public void AppendQueryPreservesEveryRequiredSecurityFactAndSeparatesTelemetry()
     {
         using var fixture = new AuditFixture();
         var eventValue = fixture.CreateEvent(delegated: true);
+        AuditEvent WithEnums(AuditEventType eventType = AuditEventType.SecretUsed,
+            AuditRisk risk = AuditRisk.High, AuditDecision decision = AuditDecision.Allowed,
+            AuditDecisionReason reason = AuditDecisionReason.PolicyAllowed,
+            AuditOrigin origin = AuditOrigin.Remote) => new(eventType, eventValue.ActorChain,
+            eventValue.SoftwareIdentity, eventValue.Capability, eventValue.Resource, risk, decision, reason, origin);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => WithEnums(eventType: AuditEventType.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => WithEnums(risk: AuditRisk.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => WithEnums(decision: AuditDecision.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => WithEnums(reason: AuditDecisionReason.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => WithEnums(origin: AuditOrigin.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AuditResourceReference(AuditResourceKind.None, Guid.NewGuid()));
+        var partition = AuditPartition.For(eventValue.ActorChain.Owner, fixture.NowInstant);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AuditHoldRecord(1, Guid.NewGuid(), partition,
+            AuditHoldReason.None, fixture.NowInstant, false, eventValue.ActorChain, eventValue.SoftwareIdentity,
+            AuditOrigin.Remote));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AuditHoldRecord(1, Guid.NewGuid(), partition,
+            AuditHoldReason.LegalPreservation, fixture.NowInstant, false, eventValue.ActorChain,
+            eventValue.SoftwareIdentity, AuditOrigin.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.Store.CreateMaintenanceCapability(
+            AuditMaintenanceAction.None, partition, fixture.MaintenanceActor, fixture.MaintenanceSoftware,
+            TimeSpan.FromMinutes(1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AuditQuery(fixture.Now.AddMinutes(-1),
+            fixture.Now.AddMinutes(1), 10, AuditEventType.None));
 
         var appended = fixture.Store.Append(eventValue);
         var occurredAt = appended.OccurredAt.ToDateTimeOffset();
@@ -255,7 +282,7 @@ public sealed class AuditStoreTests
         private readonly string directory = Path.Combine(Path.GetTempPath(), "ArcForges-Audit-" + Guid.NewGuid().ToString("N"));
         private readonly string databasePath;
         private readonly ManualTimeProvider timeProvider = new(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        private readonly IClock clock;
+        private readonly Clock clock;
 
         public AuditFixture()
         {

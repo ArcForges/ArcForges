@@ -8,6 +8,7 @@ namespace ArcForges.Security.Audit;
 
 public enum AuditMaintenanceAction
 {
+    None = 0,
     PurgeExpiredPartition = 1,
     ReleaseLegalHold = 2,
 }
@@ -39,7 +40,7 @@ public sealed class AuditMaintenanceReceipt
         ActorChain authorityActor, AuditSoftwareIdentity softwareIdentity)
     {
         if (capabilityId == Guid.Empty) throw new ArgumentException("A maintenance capability identity is required.", nameof(capabilityId));
-        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        if (!AuditEnumValidation.IsWireValue(action)) throw new ArgumentOutOfRangeException(nameof(action));
         if (policyId == Guid.Empty) throw new ArgumentException("A retention policy identity is required.", nameof(policyId));
         _ = new AuditPartition(partition.Realm, partition.Owner, partition.Year, partition.Month);
         ArgumentNullException.ThrowIfNull(authorityActor);
@@ -127,7 +128,7 @@ internal sealed class AuditMaintenanceAuthority
         Guid? holdId, ActorChain authorityActor, AuditSoftwareIdentity softwareIdentity,
         Instant issuedAt, MonotonicTimestamp mintedAt, TimeSpan lifetime)
     {
-        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        if (!AuditEnumValidation.IsWireValue(action)) throw new ArgumentOutOfRangeException(nameof(action));
         EnsureOwner(partition);
         ArgumentNullException.ThrowIfNull(authorityActor);
         ArgumentNullException.ThrowIfNull(softwareIdentity);
