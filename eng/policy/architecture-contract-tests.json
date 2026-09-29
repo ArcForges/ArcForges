@@ -1323,5 +1323,85 @@
     "apiSymbol": "ArcForges.Desktop.Shell.AttentionModel.CreateSystemNotificationContent(ArcForges.Desktop.Shell.AttentionItem, ArcForges.Desktop.Shell.NotificationPreviewConsent)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.AttentionModelTests.SensitiveSystemNotificationUsesGenericContentUnlessPreviewConsentIsExplicit()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityAvailabilityProvider.IsBoundToCapability(ArcForges.Capabilities.ActionKey, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.AvailabilityProviderReportsOnlyExactActionCapabilityBindings()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.ICapabilityProvider.IsBoundToCapability(ArcForges.Capabilities.ActionKey, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.AvailabilityProviderReportsOnlyExactActionCapabilityBindings()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationResultVersion.FromRevision(ArcForges.Contracts.Foundation.V1.Revision)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.VersionedOwnerSuccessCannotClaimNonVersionedOrMissingRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationResultVersion.FromNativeContentRev(ArcForges.Contracts.Foundation.V1.NativeContentRev)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.NonVersionedHandleSuccessHasNoRevisionPayloadAndNativeRevisionStaysNative()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationResultVersion.NonVersioned()",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.NonVersionedHandleSuccessHasNoRevisionPayloadAndNativeRevisionStaysNative()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationOutcome.Success(ArcForges.Capabilities.CapabilityInvocationValue)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.InvocationOutcomeFactoriesPreserveTheirDistinctTypedArms()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationOutcome.FailureResult(ArcForges.Foundation.Errors.TypedFailure)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.InvocationOutcomeFactoriesPreserveTheirDistinctTypedArms()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationOutcome.Cancelled(ArcForges.Contracts.Foundation.V1.EffectCertainty)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.InvocationOutcomeFactoriesPreserveTheirDistinctTypedArms()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationRecordClaim.ForExecution(System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.RecordClaimFactoriesRequireAnExecutionReservationOrRecordedOutcome()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationRecordClaim.ForReplay(ArcForges.Capabilities.InvocationOutcome)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.RecordClaimFactoriesRequireAnExecutionReservationOrRecordedOutcome()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.IInvocationRecordStore.BeginAsync(ArcForges.Contracts.Foundation.V1.Id, Google.Protobuf.ByteString, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.SameCommandReplayRechecksAvailabilityContextAndAuthorizationButDoesNotInvokeAgain()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.IInvocationRecordStore.CompleteAsync(ArcForges.Capabilities.InvocationRecordClaim, ArcForges.Capabilities.InvocationOutcome, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.SameCommandReplayRechecksAvailabilityContextAndAuthorizationButDoesNotInvokeAgain()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.IInvocationTraceSink.WriteAsync(ArcForges.Capabilities.InvocationTraceRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.TraceStartFailureStopsAllSensitiveAndMutatingWork()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityInvocationPipeline.InvokeAsync(ArcForges.Sdk.Contracts.V1.Invocation?, ArcForges.Capabilities.ActionKey?, ArcForges.Capabilities.FrozenContextSnapshot?, System.Collections.Generic.IReadOnlyList<ArcForges.Capabilities.CapabilityTarget>, System.Collections.Generic.IReadOnlyList<ArcForges.Capabilities.IContextProvider>, ArcForges.Capabilities.InstanceIdentity?, ArcForges.Capabilities.InstanceIdentity?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.SuccessfulPipelinePreservesGeneratedRequestAndRunsInAuthorizedOrder()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationFailureMap.FromSelection(ArcForges.Capabilities.CapabilitySelectionReason)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.FailureMappingsCoverEveryDefinedSelectionAndAvailabilityValue()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.InvocationFailureMap.FromAvailability(ArcForges.Capabilities.AvailabilityResult)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationPipelineTests.FailureMappingsCoverEveryDefinedSelectionAndAvailabilityValue()"
   }
 ]

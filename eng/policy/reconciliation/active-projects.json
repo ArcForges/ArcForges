@@ -40,7 +40,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
-      "blob": "042868c4108d8df6fd0ad18138b198b96712fe38"
+      "blob": "2ec5aa4103a73bacdc8a4da3d510671a553f2a04"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",

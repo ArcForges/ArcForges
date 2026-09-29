@@ -12,6 +12,7 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="ArcForges.Sdk.Contracts" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <Compile Remove="Tests/**/*.cs" />
     <None Remove="Tests/**" />
