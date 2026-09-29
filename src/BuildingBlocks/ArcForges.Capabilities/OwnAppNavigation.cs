@@ -7,11 +7,14 @@ namespace ArcForges.Capabilities;
 /// <summary>A validated, still-untrusted intent addressed only to the owning application.</summary>
 public sealed class OwnAppDeepLinkIntent
 {
+    private readonly bool _isUntrusted;
+
     internal OwnAppDeepLinkIntent(AppIdentity owner, string routeId, string targetId)
     {
         Owner = owner;
         RouteId = routeId;
         TargetId = targetId;
+        _isUntrusted = true;
     }
 
     public AppIdentity Owner { get; }
@@ -19,7 +22,7 @@ public sealed class OwnAppDeepLinkIntent
     public string TargetId { get; }
 
     /// <summary>Deep-link input never carries authorization, even after structural validation.</summary>
-    public bool IsUntrusted => true;
+    public bool IsUntrusted => _isUntrusted;
 }
 
 /// <summary>In-process route handler. It may navigate to an intent but must use normal owner checks for access/effects.</summary>
@@ -114,9 +117,10 @@ public sealed class OwnAppNavigationRouter<TAccess>
         intent = null;
         foreignOwner = false;
         if (string.IsNullOrEmpty(address) || address.Length > MaximumLinkLength ||
-            address.Any(char.IsWhiteSpace) || address.Any(char.IsControl) || address.Contains('\\') ||
-            address.Contains('%') || address.Contains('@') ||
-            address.Contains('?') || address.Contains('#') ||
+            address.Any(char.IsWhiteSpace) || address.Any(char.IsControl) ||
+            address.Contains('\\', StringComparison.Ordinal) ||
+            address.Contains('%', StringComparison.Ordinal) || address.Contains('@', StringComparison.Ordinal) ||
+            address.Contains('?', StringComparison.Ordinal) || address.Contains('#', StringComparison.Ordinal) ||
             address.Contains("/../", StringComparison.Ordinal) || address.EndsWith("/..", StringComparison.Ordinal) ||
             address.Contains("/./", StringComparison.Ordinal) || address.EndsWith("/.", StringComparison.Ordinal) ||
             !Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
@@ -134,7 +138,7 @@ public sealed class OwnAppNavigationRouter<TAccess>
         }
 
         var path = uri.AbsolutePath;
-        var segments = path.StartsWith("/", StringComparison.Ordinal)
+        var segments = path.StartsWith('/')
             ? path[1..].Split('/', StringSplitOptions.None)
             : Array.Empty<string>();
         if (segments.Length != 2 || !IsRouteId(segments[0]) || !IsTargetId(segments[1]))

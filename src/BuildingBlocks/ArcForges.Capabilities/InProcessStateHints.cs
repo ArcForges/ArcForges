@@ -7,11 +7,11 @@ namespace ArcForges.Capabilities;
 /// <summary>Closed kinds of non-authoritative in-process state hints.</summary>
 public enum StateHintKind
 {
-    Resource = 1,
-    Capability = 2,
-    Health = 3,
-    Context = 4,
-    ProductJob = 5,
+    Resource = 0,
+    Capability = 1,
+    Health = 2,
+    Context = 3,
+    ProductJob = 4,
 }
 
 /// <summary>A hint contains only a kind and stable target ID; it never carries state or content.</summary>
@@ -91,6 +91,7 @@ public sealed class InProcessStateHintFeed
     private readonly InstanceIdentity _instance;
     private readonly TimeProvider _timeProvider;
     private long _sequence;
+    private long _evictedThroughSequence;
 
     /// <summary>Creates an in-process feed for one authorized subscriber and immutable application instance.</summary>
     public InProcessStateHintFeed(InstanceIdentity instance, TimeProvider? timeProvider = null)
@@ -127,7 +128,7 @@ public sealed class InProcessStateHintFeed
             _byTarget.Add(key, node);
             while (_hints.Count > MaximumBufferedHints)
             {
-                RemoveFirst();
+                RemoveFirst(capacityEviction: true);
             }
         }
 
@@ -155,17 +156,18 @@ public sealed class InProcessStateHintFeed
         {
             var now = _timeProvider.GetTimestamp();
             PruneExpired(now);
-            bool resetRequired = RequiresReset(cursor, now);
+            bool resetRequired = cursor is null || RequiresReset(cursor, now);
             StateHint[] hints;
             long nextSequence;
-            if (resetRequired)
+            if (cursor is null || resetRequired)
             {
+                resetRequired = true;
                 hints = [];
                 nextSequence = _sequence;
             }
             else
             {
-                var afterCursor = _hints.Where(item => item.Sequence > cursor!.Sequence).Take(limit).ToArray();
+                var afterCursor = _hints.Where(item => item.Sequence > cursor.Sequence).Take(limit).ToArray();
                 var accepted = new List<StateHint>(afterCursor.Length);
                 var responseBytes = 64;
                 foreach (var item in afterCursor)
@@ -181,7 +183,7 @@ public sealed class InProcessStateHintFeed
                 }
 
                 hints = accepted.ToArray();
-                nextSequence = accepted.Count == 0 ? cursor!.Sequence : afterCursor[accepted.Count - 1].Sequence;
+                nextSequence = accepted.Count == 0 ? cursor.Sequence : afterCursor[accepted.Count - 1].Sequence;
             }
 
             var readOnlyHints = Array.AsReadOnly(hints);
@@ -220,9 +222,9 @@ public sealed class InProcessStateHintFeed
             page.ResetRequired, hasAuthoritativeState: true, state));
     }
 
-    private bool RequiresReset(StateHintCursor? cursor, long now)
+    private bool RequiresReset(StateHintCursor cursor, long now)
     {
-        if (cursor is null || cursor.FeedId != _feedId || cursor.InstanceId != _instance.InstanceId.Value ||
+        if (cursor.FeedId != _feedId || cursor.InstanceId != _instance.InstanceId.Value ||
             cursor.InstanceEpoch != _instance.Epoch || cursor.Sequence > _sequence)
         {
             return true;
@@ -234,8 +236,7 @@ public sealed class InProcessStateHintFeed
             return true;
         }
 
-        long firstRetainedSequence = _hints.First?.Value.Sequence ?? _sequence + 1;
-        return cursor.Sequence < firstRetainedSequence - 1;
+        return cursor.Sequence < _evictedThroughSequence;
     }
 
     private void PruneExpired(long now)
@@ -243,17 +244,23 @@ public sealed class InProcessStateHintFeed
         while (_hints.First is { } first &&
                _timeProvider.GetElapsedTime(first.Value.PublishedTimestamp, now) > Retention)
         {
-            RemoveFirst();
+            RemoveFirst(capacityEviction: false);
         }
     }
 
-    private void RemoveFirst()
+    private void RemoveFirst(bool capacityEviction)
     {
         var first = _hints.First;
         if (first is null)
         {
             return;
         }
+
+        if (capacityEviction)
+        {
+            _evictedThroughSequence = first.Value.Sequence;
+        }
+
         _hints.RemoveFirst();
         _byTarget.Remove(new HintKey(first.Value.Kind, first.Value.TargetId));
     }

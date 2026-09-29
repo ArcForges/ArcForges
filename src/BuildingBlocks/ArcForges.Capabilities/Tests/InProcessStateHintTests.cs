@@ -6,6 +6,9 @@ namespace ArcForges.Capabilities.Tests;
 
 public sealed class InProcessStateHintTests
 {
+    private static readonly string[] FirstPageTargetIds = ["resource-1"];
+    private static readonly string[] RemainingPageTargetIds = ["resource-2", "resource-3"];
+
     [Xunit.Fact]
     public async Task DuplicateHintsCoalesceAndEveryHintPageRequiresAnAuthoritativeRead()
     {
@@ -28,7 +31,7 @@ public sealed class InProcessStateHintTests
         Xunit.Assert.True(feed.Publish(StateHintKind.Resource, "resource-1"));
         Xunit.Assert.True(feed.Publish(StateHintKind.Context, "context-1"));
         Xunit.Assert.True(feed.Publish(StateHintKind.ProductJob, "job-1"));
-        Xunit.Assert.False(feed.Publish((StateHintKind)0, "invalid-kind"));
+        Xunit.Assert.False(feed.Publish((StateHintKind)(-1), "invalid-kind"));
         Xunit.Assert.False(feed.Publish(StateHintKind.Health, "../secret"));
 
         var updated = await feed.PollAndReadAsync<string>(initialPage.Cursor, (hints, reset, _) =>
@@ -76,7 +79,7 @@ public sealed class InProcessStateHintTests
         var first = Value(await feed.PollAndReadAsync<string>(start.Cursor, (hints, reset, _) =>
         {
             Xunit.Assert.False(reset);
-            Xunit.Assert.Equal(new[] { "resource-1" }, hints.Select(hint => hint.TargetId));
+            Xunit.Assert.Equal(FirstPageTargetIds, hints.Select(hint => hint.TargetId));
             return ValueTask.FromResult(Outcome.Success("first-page-read"));
         }, limit: 1, cancellationToken: Xunit.TestContext.Current.CancellationToken));
         Xunit.Assert.True(first.HasAuthoritativeState);
@@ -84,10 +87,40 @@ public sealed class InProcessStateHintTests
         var second = Value(await feed.PollAndReadAsync<string>(first.Cursor, (hints, reset, _) =>
         {
             Xunit.Assert.False(reset);
-            Xunit.Assert.Equal(new[] { "resource-2", "resource-3" }, hints.Select(hint => hint.TargetId));
+            Xunit.Assert.Equal(RemainingPageTargetIds, hints.Select(hint => hint.TargetId));
             return ValueTask.FromResult(Outcome.Success("second-page-read"));
         }, limit: 2, cancellationToken: Xunit.TestContext.Current.CancellationToken));
         Xunit.Assert.True(second.HasAuthoritativeState);
+    }
+
+    [Xunit.Fact]
+    public async Task CoalescedHintAfterReadReceivesANewSequenceWithoutReset()
+    {
+        var feed = new InProcessStateHintFeed(NewInstance());
+        var initial = Value(await feed.PollAndReadAsync<string>(null, (_, reset, _) =>
+        {
+            Xunit.Assert.True(reset);
+            return ValueTask.FromResult(Outcome.Success("initial"));
+        }, cancellationToken: Xunit.TestContext.Current.CancellationToken));
+
+        Xunit.Assert.True(feed.Publish(StateHintKind.Health, "instance-1"));
+        var first = Value(await feed.PollAndReadAsync<string>(initial.Cursor, (hints, reset, _) =>
+        {
+            Xunit.Assert.False(reset);
+            Xunit.Assert.Single(hints);
+            Xunit.Assert.Equal("instance-1", hints[0].TargetId);
+            return ValueTask.FromResult(Outcome.Success("first-read"));
+        }, cancellationToken: Xunit.TestContext.Current.CancellationToken));
+
+        Xunit.Assert.True(feed.Publish(StateHintKind.Health, "instance-1"));
+        var replacement = Value(await feed.PollAndReadAsync<string>(first.Cursor, (hints, reset, _) =>
+        {
+            Xunit.Assert.False(reset);
+            Xunit.Assert.Single(hints);
+            Xunit.Assert.Equal("instance-1", hints[0].TargetId);
+            return ValueTask.FromResult(Outcome.Success("replacement-read"));
+        }, cancellationToken: Xunit.TestContext.Current.CancellationToken));
+        Xunit.Assert.True(replacement.HasAuthoritativeState);
     }
 
     [Xunit.Fact]

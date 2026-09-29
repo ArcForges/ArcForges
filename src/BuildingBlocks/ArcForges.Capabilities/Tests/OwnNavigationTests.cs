@@ -143,7 +143,8 @@ public sealed class OwnNavigationTests
             HealthDimension.Degraded,
             HealthDimension.Capacity,
         }, Enum.GetValues<HealthDimension>());
-        Xunit.Assert.False(Enum.IsDefined((HealthDimension)0));
+        Xunit.Assert.True(Enum.IsDefined((HealthDimension)0));
+        Xunit.Assert.False(Enum.IsDefined((HealthDimension)(-1)));
         Xunit.Assert.All(Enum.GetNames<HealthDimension>(), key => Xunit.Assert.DoesNotContain('_', key));
     }
 

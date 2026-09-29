@@ -7,9 +7,9 @@ namespace ArcForges.Capabilities;
 /// </summary>
 public enum HealthDimension
 {
-    Reachable = 1,
-    Ready = 2,
-    Healthy = 3,
-    Degraded = 4,
-    Capacity = 5,
+    Reachable = 0,
+    Ready = 1,
+    Healthy = 2,
+    Degraded = 3,
+    Capacity = 4,
 }
