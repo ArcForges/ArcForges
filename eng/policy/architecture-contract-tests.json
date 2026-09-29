@@ -1290,6 +1290,16 @@
     "testMethod": "ArcForges.Desktop.Shell.Tests.ScopedSettingsTests.ResolutionCoversEveryScopeCombinationAndExplainsTheWinningSource()"
   },
   {
+    "apiSymbol": "ArcForges.Capabilities.AvailabilityTargetKey.ForProductInstance(ArcForges.Capabilities.InstanceIdentity)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.ForProductInstanceBindsTheExactIdentityAndRejectsNull()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.AvailabilityTargetKey.ForCloudSearchService(ArcForges.Capabilities.SearchService)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.ForCloudSearchServiceBindsTheCanonicalCatalogueIdentityAndRejectsOtherValues()"
+  },
+  {
     "apiSymbol": "ArcForges.Capabilities.ICapabilityProvider.EvaluateAvailabilityAsync(ArcForges.Capabilities.ActionKey, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ActionAvailabilityTests.EvaluateAvailabilityAsyncReturnsEachOfTheNineAuthorizedFacts()"

@@ -15,6 +15,47 @@ public sealed class ActionAvailabilityTests
     private static readonly DateTimeOffset AsOfUtc = new(2026, 9, 29, 9, 0, 0, TimeSpan.Zero);
 
     [Xunit.Fact]
+    public void ForProductInstanceBindsTheExactIdentityAndRejectsNull()
+    {
+        var identity = Instance(AppIdentity.ArcScope);
+
+        var key = AvailabilityTargetKey.ForProductInstance(identity);
+
+        Xunit.Assert.Equal(AvailabilityTargetKind.ProductInstance, key.Kind);
+        Xunit.Assert.Equal(
+            string.Join(
+                ':',
+                "product",
+                "arcscope",
+                identity.Installation.DeviceId.Value.ToString("N"),
+                identity.Installation.InstallationId.Value.ToString("N"),
+                identity.InstanceId.Value.ToString("N"),
+                identity.Epoch.ToString("D20", System.Globalization.CultureInfo.InvariantCulture)),
+            key.Value);
+        Xunit.Assert.Same(identity, key.ProductInstance);
+        Xunit.Assert.Null(key.CloudService);
+        Xunit.Assert.Throws<ArgumentNullException>(() => AvailabilityTargetKey.ForProductInstance(null!));
+    }
+
+    [Xunit.Fact]
+    public void ForCloudSearchServiceBindsTheCanonicalCatalogueIdentityAndRejectsOtherValues()
+    {
+        var service = SearchService.Instance;
+
+        var key = AvailabilityTargetKey.ForCloudSearchService(service);
+
+        Xunit.Assert.Equal(AvailabilityTargetKind.CloudSearchService, key.Kind);
+        Xunit.Assert.Equal("cloud.search", key.Value);
+        Xunit.Assert.Null(key.ProductInstance);
+        Xunit.Assert.Same(service, key.CloudService);
+        Xunit.Assert.Throws<ArgumentNullException>(() => AvailabilityTargetKey.ForCloudSearchService(null!));
+
+        var nonCanonicalService = service with { };
+        Xunit.Assert.NotSame(service, nonCanonicalService);
+        Xunit.Assert.Throws<ArgumentException>(() => AvailabilityTargetKey.ForCloudSearchService(nonCanonicalService));
+    }
+
+    [Xunit.Fact]
     public async Task EvaluateAvailabilityAsyncReturnsEachOfTheNineAuthorizedFacts()
     {
         var expected = new[]

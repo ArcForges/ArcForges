@@ -110,7 +110,7 @@ public sealed record AvailabilityTargetKey
     public static AvailabilityTargetKey ForCloudSearchService(SearchService service)
     {
         ArgumentNullException.ThrowIfNull(service);
-        if (service != SearchService.Instance)
+        if (!ReferenceEquals(service, SearchService.Instance))
         {
             throw new ArgumentException("Only the declared SearchService catalogue identity is supported.", nameof(service));
         }
