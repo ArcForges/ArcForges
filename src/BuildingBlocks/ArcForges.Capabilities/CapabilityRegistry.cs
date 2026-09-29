@@ -208,8 +208,8 @@ public sealed class CapabilityRegistry
         Product("IChatOperations.ListConversations", AppIdentity.Companion, ChatService, ChatPackage, "R1", "none", "none", "Q", RetryMode.SameCommand, EffectKind.PureRead),
         Product("IChatOperations.GetConversation", AppIdentity.Companion, ChatService, ChatPackage, "R1", "none", "none", "Q", RetryMode.SameCommand, EffectKind.PureRead),
         Product("IChatOperations.CreateConversation", AppIdentity.Companion, ChatService, ChatPackage, "R2", "none", "none", "CC", RetryMode.SameCommand, EffectKind.LocalWrite),
-        Product("IChatOperations.AppendUserMessage", AppIdentity.Companion, ChatService, ChatPackage, "R2", "none", "none", "AP", RetryMode.SameCommand, EffectKind.LocalWrite),
-        Product("IChatOperations.StartAgentTurn", AppIdentity.Companion, ChatService, ChatPackage, "R2", "perPlanStep", "none", "NI", RetryMode.Reconcile, EffectKind.CloudWrite, "IProductLifecycle.GetJob"),
+        Product("IChatOperations.AppendUserMessage", AppIdentity.Companion, ChatService, ChatPackage, "R2", "none", "ownedContent", "AP", RetryMode.SameCommand, EffectKind.LocalWrite),
+        Product("IChatOperations.StartAgentTurn", AppIdentity.Companion, ChatService, ChatPackage, "R2", "perPlanStep", "ownedContent", "NI", RetryMode.Reconcile, EffectKind.CloudWrite, "IProductLifecycle.GetJob"),
         Product("IChatOperations.OpenArtifact", AppIdentity.Companion, ChatService, ChatPackage, "R1", "none", "ownedContent", "NI", RetryMode.Never, EffectKind.LocalWrite),
         // Ordinary local/internal search has no egress. Optional external Web search is a
         // runtime source-consent branch and cannot be folded into this single static descriptor.
