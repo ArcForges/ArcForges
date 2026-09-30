@@ -62,6 +62,50 @@ public sealed class CommandPaletteTests
     }
 
     [Fact]
+    public void GetMenuContributionsUsesRegisteredCommandIdentityAndStableOrder()
+    {
+        var palette = new ShellCommandPalette(new CountingCapabilityProvider());
+        var save = Command(
+            "file.save",
+            "Save",
+            "shell.action.file.save",
+            menuPlacement: new ShellMenuPlacement("file", "document", 20));
+        var edit = Command(
+            "edit.undo",
+            "Undo",
+            "shell.action.edit.undo",
+            menuPlacement: new ShellMenuPlacement("edit", "history", 0));
+        var open = Command(
+            "file.open",
+            "Open",
+            "shell.action.file.open",
+            menuPlacement: new ShellMenuPlacement("file", "document", 10));
+        var paletteOnly = Command("help.about", "About", "shell.action.help.about");
+
+        Assert.True(palette.TryRegister(save));
+        Assert.True(palette.TryRegister(paletteOnly));
+        Assert.True(palette.TryRegister(edit));
+        Assert.True(palette.TryRegister(open));
+
+        var contributions = palette.GetMenuContributions();
+        Assert.Equal([edit, open, save], contributions);
+        Assert.Same(edit, contributions[0]);
+        Assert.Same(open, contributions[1]);
+        Assert.Same(save, contributions[2]);
+        Assert.DoesNotContain(paletteOnly, contributions);
+        Assert.True(Assert.IsAssignableFrom<IList<ShellCommand>>(contributions).IsReadOnly);
+
+        Assert.True(palette.TryRegister(Command(
+            "file.close",
+            "Close",
+            "shell.action.file.close",
+            menuPlacement: new ShellMenuPlacement("file", "document", 10))));
+        Assert.Equal([edit, open, save], contributions);
+        Assert.Throws<ArgumentException>(() => new ShellMenuPlacement("File", "document", 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ShellMenuPlacement("file", "document", -1));
+    }
+
+    [Fact]
     public void SearchPaletteRanksRelevantMatchesDeterministicallyWithoutAvailabilityEvaluation()
     {
         var provider = new CountingCapabilityProvider();
@@ -251,8 +295,9 @@ public sealed class CommandPaletteTests
         string actionKey,
         string description = "",
         IEnumerable<string>? keywords = null,
-        CommandShortcut? shortcut = null) =>
-        new(id, title, new ActionKey(actionKey), description, keywords, shortcut);
+        CommandShortcut? shortcut = null,
+        ShellMenuPlacement? menuPlacement = null) =>
+        new(id, title, new ActionKey(actionKey), description, keywords, shortcut, menuPlacement);
 
     private static InstanceIdentity NewInstance(AppIdentity app) =>
         new(
