@@ -1,0 +1,480 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
+
+namespace ArcForges.Desktop.Shell;
+
+public sealed class ShellActivationRequest
+{
+    public ShellActivationRequest(Guid requestId, ShellActivationKind kind, string? target = null)
+    {
+        if (requestId == Guid.Empty)
+        {
+            throw new ArgumentException("An activation request requires a stable non-empty id.", nameof(requestId));
+        }
+
+        if (!Enum.IsDefined(kind))
+        {
+            throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+
+        string? safeTarget = target?.Trim();
+        if (safeTarget is { Length: > 512 } || safeTarget?.Any(char.IsControl) == true)
+        {
+            throw new ArgumentException("An activation target must be bounded and contain no control characters.", nameof(target));
+        }
+
+        RequestId = requestId;
+        Kind = kind;
+        Target = string.IsNullOrEmpty(safeTarget) ? null : safeTarget;
+    }
+
+    public Guid RequestId { get; }
+
+    public ShellActivationKind Kind { get; }
+
+    public string? Target { get; }
+
+    internal bool HasSamePayload(ShellActivationRequest other) =>
+        Kind == other.Kind && string.Equals(Target, other.Target, StringComparison.Ordinal);
+}
+
+public enum ShellActivationKind
+{
+    Activate,
+    OpenTarget,
+}
+
+public enum ShellActivationRouteDisposition
+{
+    Forwarded,
+    AlreadyForwarded,
+    IdentityConflict,
+    CapacityReached,
+}
+
+public sealed class ShellShutdownState
+{
+    public ShellShutdownState(long generation, int activeWorkCount, int unsavedItemCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(generation);
+        ArgumentOutOfRangeException.ThrowIfNegative(activeWorkCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(unsavedItemCount);
+
+        Generation = generation;
+        ActiveWorkCount = activeWorkCount;
+        UnsavedItemCount = unsavedItemCount;
+    }
+
+    public long Generation { get; }
+
+    public int ActiveWorkCount { get; }
+
+    public int UnsavedItemCount { get; }
+}
+
+public enum ShellShutdownDecision
+{
+    KeepWorking,
+    WaitForSafePointAndQuit,
+    SaveThenQuit,
+}
+
+public enum ShellShutdownDisposition
+{
+    KeptOpen,
+    ReconfirmationRequired,
+    Stopped,
+}
+
+public sealed class ShellShutdownPrompt
+{
+    internal ShellShutdownPrompt(long generation, string consequences, IReadOnlyList<ShellShutdownDecision> decisions)
+    {
+        Generation = generation;
+        Consequences = consequences;
+        Decisions = decisions;
+    }
+
+    public long Generation { get; }
+
+    public string Consequences { get; }
+
+    public IReadOnlyList<ShellShutdownDecision> Decisions { get; }
+}
+
+public sealed class ShellShutdownExecutionResult
+{
+    internal ShellShutdownExecutionResult(
+        ShellShutdownDisposition disposition,
+        ShellShutdownPrompt? reconfirmationPrompt = null)
+    {
+        Disposition = disposition;
+        ReconfirmationPrompt = reconfirmationPrompt;
+    }
+
+    public ShellShutdownDisposition Disposition { get; }
+
+    public ShellShutdownPrompt? ReconfirmationPrompt { get; }
+}
+
+public sealed class ShellStartupMeasurement
+{
+    internal ShellStartupMeasurement(TimeSpan workspaceReadyAfter, TimeSpan backgroundStartedAfter, TimeSpan budget)
+    {
+        WorkspaceReadyAfter = workspaceReadyAfter;
+        BackgroundStartedAfter = backgroundStartedAfter;
+        Budget = budget;
+    }
+
+    public TimeSpan WorkspaceReadyAfter { get; }
+
+    public TimeSpan BackgroundStartedAfter { get; }
+
+    public TimeSpan Budget { get; }
+
+    public bool BackgroundStartedAfterWorkspaceReady => BackgroundStartedAfter >= WorkspaceReadyAfter;
+
+    public bool WithinConfiguredBudget => WorkspaceReadyAfter <= Budget;
+}
+
+/// <summary>Host-owned operations invoked by the framework-neutral lifecycle coordinator.</summary>
+public sealed class ShellLifecycleOperations
+{
+    public ShellLifecycleOperations(
+        Func<CancellationToken, ValueTask<bool>> makeWorkspaceUsableAsync,
+        Func<CancellationToken, ValueTask> startBackgroundWorkAsync,
+        Func<ShellActivationRequest, CancellationToken, ValueTask> forwardActivationToPrimaryAsync,
+        Func<CancellationToken, ValueTask<ShellShutdownState>> captureShutdownStateAsync,
+        Func<CancellationToken, ValueTask> stopAcceptingWritesAsync,
+        Func<CancellationToken, ValueTask> resumeAcceptingWritesAsync,
+        Func<CancellationToken, ValueTask> reachSafePointsAsync,
+        Func<ShellShutdownState, CancellationToken, ValueTask> saveUnsavedWorkAsync,
+        Func<CancellationToken, ValueTask> flushWritesAsync,
+        Func<CancellationToken, ValueTask> disconnectServicesAsync,
+        Func<CancellationToken, ValueTask> drainWorkAsync,
+        Func<CancellationToken, ValueTask> stopNativeRuntimeAsync)
+    {
+        MakeWorkspaceUsableAsync = makeWorkspaceUsableAsync ?? throw new ArgumentNullException(nameof(makeWorkspaceUsableAsync));
+        StartBackgroundWorkAsync = startBackgroundWorkAsync ?? throw new ArgumentNullException(nameof(startBackgroundWorkAsync));
+        ForwardActivationToPrimaryAsync = forwardActivationToPrimaryAsync ?? throw new ArgumentNullException(nameof(forwardActivationToPrimaryAsync));
+        CaptureShutdownStateAsync = captureShutdownStateAsync ?? throw new ArgumentNullException(nameof(captureShutdownStateAsync));
+        StopAcceptingWritesAsync = stopAcceptingWritesAsync ?? throw new ArgumentNullException(nameof(stopAcceptingWritesAsync));
+        ResumeAcceptingWritesAsync = resumeAcceptingWritesAsync ?? throw new ArgumentNullException(nameof(resumeAcceptingWritesAsync));
+        ReachSafePointsAsync = reachSafePointsAsync ?? throw new ArgumentNullException(nameof(reachSafePointsAsync));
+        SaveUnsavedWorkAsync = saveUnsavedWorkAsync ?? throw new ArgumentNullException(nameof(saveUnsavedWorkAsync));
+        FlushWritesAsync = flushWritesAsync ?? throw new ArgumentNullException(nameof(flushWritesAsync));
+        DisconnectServicesAsync = disconnectServicesAsync ?? throw new ArgumentNullException(nameof(disconnectServicesAsync));
+        DrainWorkAsync = drainWorkAsync ?? throw new ArgumentNullException(nameof(drainWorkAsync));
+        StopNativeRuntimeAsync = stopNativeRuntimeAsync ?? throw new ArgumentNullException(nameof(stopNativeRuntimeAsync));
+    }
+
+    public Func<CancellationToken, ValueTask<bool>> MakeWorkspaceUsableAsync { get; }
+
+    public Func<CancellationToken, ValueTask> StartBackgroundWorkAsync { get; }
+
+    public Func<ShellActivationRequest, CancellationToken, ValueTask> ForwardActivationToPrimaryAsync { get; }
+
+    public Func<CancellationToken, ValueTask<ShellShutdownState>> CaptureShutdownStateAsync { get; }
+
+    public Func<CancellationToken, ValueTask> StopAcceptingWritesAsync { get; }
+
+    public Func<CancellationToken, ValueTask> ResumeAcceptingWritesAsync { get; }
+
+    public Func<CancellationToken, ValueTask> ReachSafePointsAsync { get; }
+
+    public Func<ShellShutdownState, CancellationToken, ValueTask> SaveUnsavedWorkAsync { get; }
+
+    public Func<CancellationToken, ValueTask> FlushWritesAsync { get; }
+
+    public Func<CancellationToken, ValueTask> DisconnectServicesAsync { get; }
+
+    public Func<CancellationToken, ValueTask> DrainWorkAsync { get; }
+
+    public Func<CancellationToken, ValueTask> StopNativeRuntimeAsync { get; }
+}
+
+/// <summary>
+/// Coordinates host-provided startup, activation routing, and safe shutdown without owning product or OS-specific services.
+/// </summary>
+public sealed class ShellLifecycleCoordinator
+{
+    private const int MaximumRememberedActivations = 4096;
+
+    private readonly ShellLifecycleOperations _operations;
+    private readonly TimeSpan _startupBudget;
+    private readonly object _startupGate = new();
+    private readonly object _shutdownGate = new();
+    private readonly object _activationGate = new();
+    private readonly Dictionary<Guid, RoutedActivation> _activations = [];
+    private ShellStartupMeasurement? _startupMeasurement;
+    private bool _startupRunning;
+    private bool _shutdownRunning;
+
+    public ShellLifecycleCoordinator(ShellLifecycleOperations operations, TimeSpan startupBudget)
+    {
+        _operations = operations ?? throw new ArgumentNullException(nameof(operations));
+        if (startupBudget <= TimeSpan.Zero || startupBudget > TimeSpan.FromMinutes(1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(startupBudget));
+        }
+
+        _startupBudget = startupBudget;
+    }
+
+    /// <summary>Establishes the usable local workspace before starting any background work and returns task-local timing.</summary>
+    public async ValueTask<ShellStartupMeasurement> RunStartupAsync(CancellationToken cancellationToken)
+    {
+        lock (_startupGate)
+        {
+            if (_startupMeasurement is not null)
+            {
+                return _startupMeasurement;
+            }
+
+            if (_startupRunning)
+            {
+                throw new InvalidOperationException("The startup sequence is already in progress.");
+            }
+
+            _startupRunning = true;
+        }
+
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            bool workspaceUsable = await _operations.MakeWorkspaceUsableAsync(cancellationToken).ConfigureAwait(false);
+            if (!workspaceUsable)
+            {
+                throw new InvalidOperationException("Background work cannot start before the local workspace is usable.");
+            }
+
+            TimeSpan workspaceReadyAfter = stopwatch.Elapsed;
+            await _operations.StartBackgroundWorkAsync(cancellationToken).ConfigureAwait(false);
+            var measurement = new ShellStartupMeasurement(workspaceReadyAfter, stopwatch.Elapsed, _startupBudget);
+            lock (_startupGate)
+            {
+                _startupMeasurement = measurement;
+            }
+
+            return measurement;
+        }
+        finally
+        {
+            lock (_startupGate)
+            {
+                _startupRunning = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Forwards one immutable secondary-launch request to the host's primary-instance transport at most once.
+    /// The transport must preserve RequestId as its idempotency key across process boundaries.
+    /// </summary>
+    public async ValueTask<ShellActivationRouteDisposition> RouteActivationAsync(
+        ShellActivationRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        Task<bool> completion;
+        TaskCompletionSource<bool>? owner = null;
+        lock (_activationGate)
+        {
+            if (_activations.TryGetValue(request.RequestId, out RoutedActivation? existing))
+            {
+                if (!request.HasSamePayload(existing.Request))
+                {
+                    return ShellActivationRouteDisposition.IdentityConflict;
+                }
+
+                completion = existing.Completion;
+            }
+            else
+            {
+                if (_activations.Count >= MaximumRememberedActivations)
+                {
+                    return ShellActivationRouteDisposition.CapacityReached;
+                }
+
+                owner = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                completion = owner.Task;
+                _activations.Add(request.RequestId, new RoutedActivation(request, completion));
+            }
+        }
+
+        if (owner is not null)
+        {
+            try
+            {
+                await _operations.ForwardActivationToPrimaryAsync(request, cancellationToken).ConfigureAwait(false);
+                owner.TrySetResult(true);
+                return ShellActivationRouteDisposition.Forwarded;
+            }
+            catch (Exception exception)
+            {
+                lock (_activationGate)
+                {
+                    if (_activations.TryGetValue(request.RequestId, out RoutedActivation? current) &&
+                        ReferenceEquals(current.Completion, completion))
+                    {
+                        _activations.Remove(request.RequestId);
+                    }
+                }
+
+                owner.TrySetException(exception);
+                await completion.ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return ShellActivationRouteDisposition.AlreadyForwarded;
+    }
+
+    /// <summary>Creates a consequence summary and the decisions allowed for the supplied work snapshot.</summary>
+    public static ShellShutdownPrompt CreateShutdownPrompt(ShellShutdownState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var consequences = new List<string>(2);
+        if (state.ActiveWorkCount > 0)
+        {
+            consequences.Add($"Quitting will stop new writes and wait for {state.ActiveWorkCount} active item(s) to reach a safe point; active work will not be silently discarded.");
+        }
+
+        if (state.UnsavedItemCount > 0)
+        {
+            consequences.Add($"{state.UnsavedItemCount} unsaved item(s) must be saved before writes are flushed and services are disconnected.");
+        }
+
+        if (consequences.Count == 0)
+        {
+            consequences.Add("No running or unsaved work is recorded; quitting will still flush writes and disconnect services before stopping the runtime.");
+        }
+
+        ShellShutdownDecision quitDecision = state.UnsavedItemCount > 0
+            ? ShellShutdownDecision.SaveThenQuit
+            : ShellShutdownDecision.WaitForSafePointAndQuit;
+        return new ShellShutdownPrompt(
+            state.Generation,
+            string.Join(" ", consequences),
+            Array.AsReadOnly([ShellShutdownDecision.KeepWorking, quitDecision]));
+    }
+
+    /// <summary>Revalidates the prompt snapshot, then stops writes, reaches safe points, saves, flushes, disconnects and drains.</summary>
+    public async ValueTask<ShellShutdownExecutionResult> ExecuteShutdownAsync(
+        ShellShutdownState promptedState,
+        ShellShutdownDecision decision,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(promptedState);
+        if (!Enum.IsDefined(decision))
+        {
+            throw new ArgumentOutOfRangeException(nameof(decision));
+        }
+
+        lock (_shutdownGate)
+        {
+            if (_shutdownRunning)
+            {
+                throw new InvalidOperationException("A shutdown sequence is already in progress.");
+            }
+
+            _shutdownRunning = true;
+        }
+
+        try
+        {
+            ShellShutdownState current = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
+            if (!SameState(promptedState, current))
+            {
+                return Reconfirm(current);
+            }
+
+            if (!CreateShutdownPrompt(current).Decisions.Contains(decision))
+            {
+                return Reconfirm(current);
+            }
+
+            if (decision == ShellShutdownDecision.KeepWorking)
+            {
+                return new ShellShutdownExecutionResult(ShellShutdownDisposition.KeptOpen);
+            }
+
+            bool writesStopped = false;
+            bool disconnected = false;
+            try
+            {
+                writesStopped = true;
+                await _operations.StopAcceptingWritesAsync(cancellationToken).ConfigureAwait(false);
+                await _operations.ReachSafePointsAsync(cancellationToken).ConfigureAwait(false);
+
+                ShellShutdownState settled = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
+                if (settled.ActiveWorkCount > 0 ||
+                    (settled.UnsavedItemCount > 0 && decision != ShellShutdownDecision.SaveThenQuit))
+                {
+                    writesStopped = false;
+                    await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
+                    return Reconfirm(settled);
+                }
+
+                if (settled.UnsavedItemCount > 0)
+                {
+                    await _operations.SaveUnsavedWorkAsync(settled, cancellationToken).ConfigureAwait(false);
+                    settled = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
+                    if (settled.ActiveWorkCount > 0 || settled.UnsavedItemCount > 0)
+                    {
+                        writesStopped = false;
+                        await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
+                        return Reconfirm(settled);
+                    }
+                }
+
+                await _operations.FlushWritesAsync(cancellationToken).ConfigureAwait(false);
+                await _operations.DisconnectServicesAsync(cancellationToken).ConfigureAwait(false);
+                disconnected = true;
+                await _operations.DrainWorkAsync(cancellationToken).ConfigureAwait(false);
+                await _operations.StopNativeRuntimeAsync(cancellationToken).ConfigureAwait(false);
+                writesStopped = false;
+                return new ShellShutdownExecutionResult(ShellShutdownDisposition.Stopped);
+            }
+            catch (Exception exception)
+            {
+                if (writesStopped && !disconnected)
+                {
+                    writesStopped = false;
+                    try
+                    {
+                        await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception resumeFailure)
+                    {
+                        throw new AggregateException("Shutdown failed and write acceptance could not be restored.", exception, resumeFailure);
+                    }
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            lock (_shutdownGate)
+            {
+                _shutdownRunning = false;
+            }
+        }
+    }
+
+    private static bool SameState(ShellShutdownState left, ShellShutdownState right) =>
+        left.Generation == right.Generation &&
+        left.ActiveWorkCount == right.ActiveWorkCount &&
+        left.UnsavedItemCount == right.UnsavedItemCount;
+
+    private static ShellShutdownExecutionResult Reconfirm(ShellShutdownState state) =>
+        new(ShellShutdownDisposition.ReconfirmationRequired, CreateShutdownPrompt(state));
+
+    private sealed record RoutedActivation(ShellActivationRequest Request, Task<bool> Completion);
+}
