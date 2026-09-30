@@ -53,7 +53,7 @@ public sealed class ShellLayoutTests
         Assert.Equal(["workspace-usable", "background-started"], sequence);
         Assert.Same(measurement, repeated);
         Assert.True(measurement.BackgroundStartedAfterWorkspaceReady);
-        Assert.Equal(measurement.WorkspaceReadyAfter <= measurement.Budget, measurement.WithinConfiguredBudget);
+        Assert.True(measurement.WithinConfiguredBudget);
         Assert.True(measurement.BackgroundStartedAfter >= measurement.WorkspaceReadyAfter);
 
         int backgroundStarts = 0;
@@ -159,6 +159,21 @@ public sealed class ShellLayoutTests
         Assert.Contains("1 active item(s)", reconfirm.ReconfirmationPrompt.Consequences, StringComparison.Ordinal);
         Assert.Contains("1 unsaved item(s)", reconfirm.ReconfirmationPrompt.Consequences, StringComparison.Ordinal);
         Assert.Empty(staleOperations);
+
+        var sameCountsNewGeneration = new ShellShutdownState(generation: 11, activeWorkCount: 0, unsavedItemCount: 0);
+        var generationOnlyOperations = new List<string>();
+        var generationOnlyStale = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(sameCountsNewGeneration),
+                stopAcceptingWritesAsync: _ => Record(generationOnlyOperations, "stop-writes")),
+            TimeSpan.FromSeconds(2.5));
+        ShellShutdownExecutionResult generationOnlyReconfirm = await generationOnlyStale.ExecuteShutdownAsync(
+            promptedState,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, generationOnlyReconfirm.Disposition);
+        Assert.Equal(11, generationOnlyReconfirm.ReconfirmationPrompt!.Generation);
+        Assert.Empty(generationOnlyOperations);
 
         var invalidDecisionCalls = new List<string>();
         var invalidDecisionCoordinator = new ShellLifecycleCoordinator(
