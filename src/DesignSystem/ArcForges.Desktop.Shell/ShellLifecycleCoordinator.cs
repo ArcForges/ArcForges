@@ -65,6 +65,10 @@ public sealed class ShellShutdownState
         UnsavedItemCount = unsavedItemCount;
     }
 
+    /// <summary>
+    /// Gets the host-owned work-state revision. The host must advance it whenever the active or unsaved work set changes,
+    /// even when the corresponding item counts stay the same.
+    /// </summary>
     public long Generation { get; }
 
     public int ActiveWorkCount { get; }
