@@ -206,13 +206,13 @@ public sealed class ShellLifecycleCoordinator
 
     private readonly ShellLifecycleOperations _operations;
     private readonly TimeSpan _startupBudget;
-    private readonly object _startupGate = new();
-    private readonly object _shutdownGate = new();
+    private readonly object _lifecycleQueueGate = new();
     private readonly object _activationGate = new();
     private readonly Dictionary<Guid, RoutedActivation> _activations = [];
+    private Task _lifecycleQueueTail = Task.CompletedTask;
     private ShellStartupMeasurement? _startupMeasurement;
-    private bool _startupRunning;
-    private bool _shutdownRunning;
+    private bool _stopped;
+    private bool _faulted;
 
     public ShellLifecycleCoordinator(ShellLifecycleOperations operations, TimeSpan startupBudget)
     {
@@ -228,47 +228,40 @@ public sealed class ShellLifecycleCoordinator
     /// <summary>Establishes the usable local workspace before starting any background work and returns task-local timing.</summary>
     public async ValueTask<ShellStartupMeasurement> RunStartupAsync(CancellationToken cancellationToken)
     {
-        lock (_startupGate)
+        using LifecycleLease lifecycleLease = await EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        if (_stopped || _faulted)
         {
-            if (_startupMeasurement is not null)
-            {
-                return _startupMeasurement;
-            }
-
-            if (_startupRunning)
-            {
-                throw new InvalidOperationException("The startup sequence is already in progress.");
-            }
-
-            _startupRunning = true;
+            throw new InvalidOperationException("Startup cannot run after shutdown completed or the lifecycle has faulted.");
         }
 
+        if (_startupMeasurement is not null)
+        {
+            return _startupMeasurement;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        bool workspaceUsable = await _operations.MakeWorkspaceUsableAsync(cancellationToken).ConfigureAwait(false);
+        if (!workspaceUsable)
+        {
+            throw new InvalidOperationException("Background work cannot start before the local workspace is usable.");
+        }
+
+        TimeSpan workspaceReadyAfter = stopwatch.Elapsed;
         try
         {
-            var stopwatch = Stopwatch.StartNew();
-            bool workspaceUsable = await _operations.MakeWorkspaceUsableAsync(cancellationToken).ConfigureAwait(false);
-            if (!workspaceUsable)
-            {
-                throw new InvalidOperationException("Background work cannot start before the local workspace is usable.");
-            }
-
-            TimeSpan workspaceReadyAfter = stopwatch.Elapsed;
             await _operations.StartBackgroundWorkAsync(cancellationToken).ConfigureAwait(false);
-            var measurement = new ShellStartupMeasurement(workspaceReadyAfter, stopwatch.Elapsed, _startupBudget);
-            lock (_startupGate)
-            {
-                _startupMeasurement = measurement;
-            }
-
-            return measurement;
         }
-        finally
+        catch
         {
-            lock (_startupGate)
-            {
-                _startupRunning = false;
-            }
+            // The host operation may have partially started work. Do not replay it or permit shutdown to
+            // race an unknown background state; the owner must replace this coordinator after recovery.
+            _faulted = true;
+            throw;
         }
+
+        var measurement = new ShellStartupMeasurement(workspaceReadyAfter, stopwatch.Elapsed, _startupBudget);
+        _startupMeasurement = measurement;
+        return measurement;
     }
 
     /// <summary>
@@ -377,99 +370,144 @@ public sealed class ShellLifecycleCoordinator
             throw new ArgumentOutOfRangeException(nameof(decision));
         }
 
-        lock (_shutdownGate)
+        using LifecycleLease lifecycleLease = await EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        if (_stopped)
         {
-            if (_shutdownRunning)
-            {
-                throw new InvalidOperationException("A shutdown sequence is already in progress.");
-            }
-
-            _shutdownRunning = true;
+            return new ShellShutdownExecutionResult(ShellShutdownDisposition.Stopped);
         }
 
+        if (_faulted)
+        {
+            throw new InvalidOperationException("The lifecycle cannot shut down again after an earlier operation faulted.");
+        }
+
+        ShellShutdownState current = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
+        if (!SameState(promptedState, current))
+        {
+            return Reconfirm(current);
+        }
+
+        if (!CreateShutdownPrompt(current).Decisions.Contains(decision))
+        {
+            return Reconfirm(current);
+        }
+
+        if (decision == ShellShutdownDecision.KeepWorking)
+        {
+            return new ShellShutdownExecutionResult(ShellShutdownDisposition.KeptOpen);
+        }
+
+        bool writesStopped = false;
+        bool disconnectStarted = false;
         try
         {
-            ShellShutdownState current = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
+            writesStopped = true;
+            await _operations.StopAcceptingWritesAsync(cancellationToken).ConfigureAwait(false);
+            await _operations.ReachSafePointsAsync(cancellationToken).ConfigureAwait(false);
+
+            ShellShutdownState settled = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
-            if (!SameState(promptedState, current))
+            if (settled.ActiveWorkCount > 0 ||
+                (settled.UnsavedItemCount > 0 && decision != ShellShutdownDecision.SaveThenQuit))
             {
-                return Reconfirm(current);
-            }
-
-            if (!CreateShutdownPrompt(current).Decisions.Contains(decision))
-            {
-                return Reconfirm(current);
-            }
-
-            if (decision == ShellShutdownDecision.KeepWorking)
-            {
-                return new ShellShutdownExecutionResult(ShellShutdownDisposition.KeptOpen);
-            }
-
-            bool writesStopped = false;
-            bool disconnected = false;
-            try
-            {
-                writesStopped = true;
-                await _operations.StopAcceptingWritesAsync(cancellationToken).ConfigureAwait(false);
-                await _operations.ReachSafePointsAsync(cancellationToken).ConfigureAwait(false);
-
-                ShellShutdownState settled = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
-                    ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
-                if (settled.ActiveWorkCount > 0 ||
-                    (settled.UnsavedItemCount > 0 && decision != ShellShutdownDecision.SaveThenQuit))
-                {
-                    writesStopped = false;
-                    await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
-                    return Reconfirm(settled);
-                }
-
-                if (settled.UnsavedItemCount > 0)
-                {
-                    await _operations.SaveUnsavedWorkAsync(settled, cancellationToken).ConfigureAwait(false);
-                    settled = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
-                        ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
-                    if (settled.ActiveWorkCount > 0 || settled.UnsavedItemCount > 0)
-                    {
-                        writesStopped = false;
-                        await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
-                        return Reconfirm(settled);
-                    }
-                }
-
-                await _operations.FlushWritesAsync(cancellationToken).ConfigureAwait(false);
-                await _operations.DisconnectServicesAsync(cancellationToken).ConfigureAwait(false);
-                disconnected = true;
-                await _operations.DrainWorkAsync(cancellationToken).ConfigureAwait(false);
-                await _operations.StopNativeRuntimeAsync(cancellationToken).ConfigureAwait(false);
                 writesStopped = false;
-                return new ShellShutdownExecutionResult(ShellShutdownDisposition.Stopped);
+                try
+                {
+                    await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    _faulted = true;
+                    throw;
+                }
+
+                return Reconfirm(settled);
             }
-            catch (Exception exception)
+
+            if (settled.UnsavedItemCount > 0)
             {
-                if (writesStopped && !disconnected)
+                await _operations.SaveUnsavedWorkAsync(settled, cancellationToken).ConfigureAwait(false);
+                settled = await _operations.CaptureShutdownStateAsync(cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("The shutdown state provider returned no state.");
+                if (settled.ActiveWorkCount > 0 || settled.UnsavedItemCount > 0)
                 {
                     writesStopped = false;
                     try
                     {
                         await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
                     }
-                    catch (Exception resumeFailure)
+                    catch
                     {
-                        throw new AggregateException("Shutdown failed and write acceptance could not be restored.", exception, resumeFailure);
+                        _faulted = true;
+                        throw;
                     }
-                }
 
-                throw;
+                    return Reconfirm(settled);
+                }
             }
+
+            await _operations.FlushWritesAsync(cancellationToken).ConfigureAwait(false);
+            disconnectStarted = true;
+            await _operations.DisconnectServicesAsync(cancellationToken).ConfigureAwait(false);
+            await _operations.DrainWorkAsync(cancellationToken).ConfigureAwait(false);
+            await _operations.StopNativeRuntimeAsync(cancellationToken).ConfigureAwait(false);
+            writesStopped = false;
+            _stopped = true;
+            return new ShellShutdownExecutionResult(ShellShutdownDisposition.Stopped);
         }
-        finally
+        catch (Exception exception)
         {
-            lock (_shutdownGate)
+            if (writesStopped && !disconnectStarted)
             {
-                _shutdownRunning = false;
+                writesStopped = false;
+                try
+                {
+                    await _operations.ResumeAcceptingWritesAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception resumeFailure)
+                {
+                    _faulted = true;
+                    throw new AggregateException("Shutdown failed and write acceptance could not be restored.", exception, resumeFailure);
+                }
             }
+            else if (disconnectStarted)
+            {
+                // Services are no longer available, so neither startup nor another shutdown attempt can
+                // safely replay the partially completed teardown.
+                _faulted = true;
+            }
+
+            throw;
         }
+    }
+
+    private async ValueTask<LifecycleLease> EnterLifecycleAsync(CancellationToken cancellationToken)
+    {
+        Task previous;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_lifecycleQueueGate)
+        {
+            previous = _lifecycleQueueTail;
+            _lifecycleQueueTail = release.Task;
+        }
+
+        try
+        {
+            await previous.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new LifecycleLease(release);
+        }
+        catch
+        {
+            _ = ReleaseAfterAsync(previous, release);
+            throw;
+        }
+    }
+
+    private static async Task ReleaseAfterAsync(Task previous, TaskCompletionSource release)
+    {
+        await previous.ConfigureAwait(false);
+        release.TrySetResult();
     }
 
     private static bool SameState(ShellShutdownState left, ShellShutdownState right) =>
@@ -479,6 +517,13 @@ public sealed class ShellLifecycleCoordinator
 
     private static ShellShutdownExecutionResult Reconfirm(ShellShutdownState state) =>
         new(ShellShutdownDisposition.ReconfirmationRequired, CreateShutdownPrompt(state));
+
+    private sealed class LifecycleLease(TaskCompletionSource release) : IDisposable
+    {
+        private TaskCompletionSource? _release = release;
+
+        public void Dispose() => Interlocked.Exchange(ref _release, null)?.TrySetResult();
+    }
 
     private sealed record RoutedActivation(ShellActivationRequest Request, Task<bool> Completion);
 }

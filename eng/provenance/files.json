@@ -541,6 +541,7 @@
     "src/DesignSystem/ArcForges.Desktop.Shell/Settings/DeviceLocalSettingsStore.cs",
     "src/DesignSystem/ArcForges.Desktop.Shell/Settings/ScopedSettings.cs",
     "src/DesignSystem/ArcForges.Desktop.Shell/Settings/ScopedSettingsResolver.cs",
+    "src/DesignSystem/ArcForges.Desktop.Shell/ShellLifecycleCoordinator.cs",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/AttentionModelTests.cs",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/CommandPaletteTests.cs",
