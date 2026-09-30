@@ -1475,7 +1475,7 @@
     "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.ApprovalStoreContractUsesInsertAndVersionCompareAndSwap()"
   },
   {
-    "apiSymbol": "ArcForges.Security.Approvals.IApprovalStore.TryResolveAsync(System.Guid, System.Int64, ArcForges.Security.Approvals.ApprovalSnapshot, System.Threading.CancellationToken)",
+    "apiSymbol": "ArcForges.Security.Approvals.IApprovalStore.TryResolveAsync(System.Guid, long, ArcForges.Security.Approvals.ApprovalSnapshot, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.ApprovalStoreContractUsesInsertAndVersionCompareAndSwap()"
   },
