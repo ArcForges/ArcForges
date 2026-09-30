@@ -81,6 +81,170 @@ public sealed class ShellLayoutTests
     }
 
     [Fact]
+    public async Task StartupAndShutdownSerializeAndCompletedShutdownIsTerminal()
+    {
+        var sequence = new List<string>();
+        var workspaceEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWorkspace = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: async cancellationToken =>
+                {
+                    sequence.Add("workspace-entered");
+                    workspaceEntered.TrySetResult(true);
+                    await releaseWorkspace.Task.WaitAsync(cancellationToken).ConfigureAwait(true);
+                    sequence.Add("workspace-usable");
+                    return true;
+                },
+                startBackgroundWorkAsync: _ => Record(sequence, "background-started"),
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                stopAcceptingWritesAsync: _ => Record(sequence, "stop-writes"),
+                reachSafePointsAsync: _ => Record(sequence, "safe-points"),
+                flushWritesAsync: _ => Record(sequence, "flush-writes"),
+                disconnectServicesAsync: _ => Record(sequence, "disconnect-services"),
+                drainWorkAsync: _ => Record(sequence, "drain-work"),
+                stopNativeRuntimeAsync: _ => Record(sequence, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        Task<ShellStartupMeasurement> startup = coordinator
+            .RunStartupAsync(TestContext.Current.CancellationToken)
+            .AsTask();
+        await workspaceEntered.Task.WaitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+        // Invoke shutdown while startup owns the lifecycle gate. It must wait for the usable-workspace and
+        // background-start sequence rather than tearing down services underneath it.
+        Task<ShellShutdownExecutionResult> shutdown = coordinator
+            .ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken)
+            .AsTask();
+        releaseWorkspace.TrySetResult(true);
+
+        await startup.ConfigureAwait(true);
+        ShellShutdownExecutionResult stopped = await shutdown.ConfigureAwait(true);
+
+        Assert.Equal(ShellShutdownDisposition.Stopped, stopped.Disposition);
+        Assert.Equal(
+            [
+                "workspace-entered",
+                "workspace-usable",
+                "background-started",
+                "stop-writes",
+                "safe-points",
+                "flush-writes",
+                "disconnect-services",
+                "drain-work",
+                "stop-runtime"
+            ],
+            sequence);
+
+        ShellShutdownExecutionResult repeatedShutdown = await coordinator.ExecuteShutdownAsync(
+            state,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.Stopped, repeatedShutdown.Disposition);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.RunStartupAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
+        Assert.Equal(9, sequence.Count);
+    }
+
+    [Fact]
+    public async Task CancelledLifecycleWaiterDoesNotReleaseTheQueueAheadOfStartup()
+    {
+        var workspaceEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWorkspace = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int workspaceCalls = 0;
+        int backgroundStarts = 0;
+        var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: async cancellationToken =>
+                {
+                    Interlocked.Increment(ref workspaceCalls);
+                    workspaceEntered.TrySetResult(true);
+                    await releaseWorkspace.Task.WaitAsync(cancellationToken).ConfigureAwait(true);
+                    return true;
+                },
+                startBackgroundWorkAsync: _ =>
+                {
+                    Interlocked.Increment(ref backgroundStarts);
+                    return ValueTask.CompletedTask;
+                },
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state)),
+            TimeSpan.FromSeconds(2.5));
+
+        Task<ShellStartupMeasurement> firstStartup = coordinator
+            .RunStartupAsync(CancellationToken.None)
+            .AsTask();
+        await workspaceEntered.Task.WaitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+        using var cancelledWaiter = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        Task<ShellShutdownExecutionResult> cancelledShutdown = coordinator
+            .ExecuteShutdownAsync(state, ShellShutdownDecision.WaitForSafePointAndQuit, cancelledWaiter.Token)
+            .AsTask();
+        await cancelledWaiter.CancelAsync().ConfigureAwait(true);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await cancelledShutdown.ConfigureAwait(true));
+
+        Task<ShellStartupMeasurement> queuedStartup = coordinator
+            .RunStartupAsync(CancellationToken.None)
+            .AsTask();
+        releaseWorkspace.TrySetResult(true);
+
+        ShellStartupMeasurement firstMeasurement = await firstStartup.ConfigureAwait(true);
+        ShellStartupMeasurement queuedMeasurement = await queuedStartup.ConfigureAwait(true);
+        Assert.Same(firstMeasurement, queuedMeasurement);
+        Assert.Equal(1, workspaceCalls);
+        Assert.Equal(1, backgroundStarts);
+    }
+
+    [Fact]
+    public async Task PartialDisconnectFailureFailsClosedWithoutReplayingShutdown()
+    {
+        var calls = new List<string>();
+        var state = new ShellShutdownState(generation: 2, activeWorkCount: 0, unsavedItemCount: 0);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: _ =>
+                {
+                    calls.Add("workspace");
+                    return ValueTask.FromResult(true);
+                },
+                startBackgroundWorkAsync: _ => Record(calls, "background"),
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                flushWritesAsync: _ => Record(calls, "flush-writes"),
+                disconnectServicesAsync: _ =>
+                {
+                    calls.Add("disconnect-attempt");
+                    throw new IOException("Simulated partial disconnect failure.");
+                },
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                drainWorkAsync: _ => Record(calls, "drain-work"),
+                stopNativeRuntimeAsync: _ => Record(calls, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+
+        Assert.Equal(["stop-writes", "safe-points", "flush-writes", "disconnect-attempt"], calls);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.RunStartupAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+        Assert.Equal(["stop-writes", "safe-points", "flush-writes", "disconnect-attempt"], calls);
+    }
+
+    [Fact]
     public async Task RouteActivationAsyncForwardsSecondaryLaunchToPrimaryExactlyOnce()
     {
         int forwards = 0;
