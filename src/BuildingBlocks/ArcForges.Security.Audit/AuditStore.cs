@@ -124,7 +124,7 @@ public sealed class AuditStore : IDisposable
         try
         {
             using var command = connection.CreateCommand();
-        command.Transaction = transaction;
+            command.Transaction = transaction;
             command.CommandText = $"SELECT sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month FROM {EventTable} WHERE (occurred_unix_seconds > $fromSeconds OR (occurred_unix_seconds=$fromSeconds AND occurred_nanoseconds >= $fromNanoseconds)) AND (occurred_unix_seconds < $toSeconds OR (occurred_unix_seconds=$toSeconds AND occurred_nanoseconds < $toNanoseconds)) AND sequence > $after AND ($event_type IS NULL OR event_type=$event_type) ORDER BY sequence LIMIT $limit;";
             var from = Instant.FromDateTimeOffset(query.FromInclusive);
             var to = Instant.FromDateTimeOffset(query.ToExclusive);
