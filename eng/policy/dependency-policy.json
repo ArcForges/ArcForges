@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "5c19118b5788d82f37582a9733db5f40b965a866c8dc04feb15e6a0496bffa26",
+    "Directory.Packages.props": "5d20afdcf2c12cae4150440d6905cc23efe1b6542efb0140547f2555f9744b5b",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
     "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -217,6 +217,10 @@
     "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
+    "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj": "788d405c8f7e16bbb4f11fa7c3651c08055fc545be4929306987a2a92af78a2a",
+    "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj": "e170254575a6b0723efb271ab7c1216f006c7a816677bd5b447cfff258e79082",
+    "src/BuildingBlocks/ArcForges.Security.Audit/Tests/packages.lock.json": "1c93de4dbc04b8f0a15fef30f352c476b7543ff26f381cbdd348c0803fc092fd",
+    "src/BuildingBlocks/ArcForges.Security.Audit/packages.lock.json": "ba8caa1127c0dc5f1036d45aea694e80008a6395dbe6c5a1d96e3fc4a2bf4352",
     "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
     "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
     "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "0698528ca5db15df9aaff4f645850d383b0b72645bec8848154e90e63d135629",
@@ -671,25 +675,25 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-a01",
+    "owner": "af-20260928-p05",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-09-29",
-    "baselineCommit": "f84180e89d40081db127c145d83ab18c129af1b1",
-    "maintenanceAssessment": "PLT.28 adds only the already-authorized in-repository ArcForges.Capabilities project edge to Desktop.Shell, so the Shell command palette delegates availability to the canonical ICapabilityProvider rather than copying or approximating capability rules. The locked Shell production and test project graphs now reflect this edge and its transitive project graph. The aggregate 53-coordinate NuGet closure and every resolved version and content hash are unchanged; there is no new package coordinate, PackageVersion, external dependency, central pin, package ID, or release activation. Only the two Shell lockfiles change semantically; all other locks, the solution, package manifest and shared build configuration remain untouched. Shell stays non-packable. This immutable successor chains from the active PLT.51 receipt and preserves all prior dependency-review receipts.",
+    "baselineCommit": "8daba1df5130d9e8c344decd88a71d97c1fcc840",
+    "maintenanceAssessment": "PLT.44 adds the owner-scoped append-only local audit store and its focused test project. Its two project files and two exact lockfiles are bound in this successor review; the complete NuGet closure remains exactly 53 existing coordinates with identical versions and content hashes. Two exact MSBuildProjectName-conditioned central-version rows bind only ArcForges.Security.Audit and ArcForges.Security.Audit.Tests to the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1; the default 1.0.0-ci.113.1 and all other project conditions remain unchanged. No package coordinate, dependency version, package ID, packaging-catalogue entry, or publication is introduced. IsPackable is enabled only to let PLT.46 perform its separately authorized package admission and validation; PLT.44 does not select a package ID, edit the catalogue, pack, or publish. This immutable receipt chains from the active PLT.28 receipt and preserves the historical chain.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 restore of the Shell test project regenerated only the two authorized Shell lockfiles. Locked restore, Release build, focused and applicable full tests, architecture and exact-head hosted gates remain required before integration.",
-      "aot-trim": "No AOT/trim setting, SDK, framework or native toolchain changed; Shell remains non-packable and no new runtime/AOT claim is made. Existing AOT/trim gates remain required.",
-      "compatibility": "The new internal project edge uses the existing Capabilities owner and public ICapabilityProvider contract. Availability remains delegated to that canonical evaluator; no copied rule, API owner, public package identity or external dependency is introduced.",
-      "licence-provenance": "No external source or package is introduced. The existing Shell project classification is preserved; only the two exact PLT.28 C# paths and immutable receipt receive firstParty rows, and the existing Shell active-project row is bound to the exact project blob.",
-      "security-sbom": "The locked aggregate remains exactly 53 existing NuGet coordinates with identical content hashes and versions; no package closure expansion occurs. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
-      "runtime-performance-migration": "No runtime, persistence, migration, framework, native ABI or performance claim is introduced; this task supplies an in-process command registry/palette and canonical availability delegation only.",
-      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400; no framework major, runtime, Android, native ABI or toolchain version changed."
+      "compilation": "Pinned SDK 10.0.400 locked restore, format verification, Release solution build, focused Audit tests, dependency/provenance/policy gates are required for this candidate; results will be recorded before integration.",
+      "aot-trim": "No SDK, framework, AOT, trim, native ABI, or toolchain setting is changed. Audit packaging enablement does not claim AOT/trim validation or package acceptance.",
+      "compatibility": "Uses only the already-admitted Microsoft.Data.Sqlite 10.0.12 dependency; no new external dependency or public dependency coordinate is added.",
+      "licence-provenance": "No external source or package is introduced. The exact Audit production/test projects, lockfiles, and PLT.44 receipt are registered under existing first-party/provenance policy; the project remains outside the package catalogue until PLT.46.",
+      "security-sbom": "The locked aggregate remains exactly 53 existing NuGet coordinates with identical content hashes and versions. No package closure expansion occurs; exact-head hosted secret/security gates remain required.",
+      "runtime-performance-migration": "This candidate implements only the local append-only audit-store core and store-owned clock/retention boundary. PLT.41 egress facts and PLT.43 capability-lease facts remain unfulfilled completion-only integrations; no complete security-event coverage is claimed.",
+      "framework-runtime-posture": "Pinned .NET SDK remains 10.0.400; no framework major, runtime, Android, native ABI, or toolchain version changes."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "5c19118b5788d82f37582a9733db5f40b965a866c8dc04feb15e6a0496bffa26",
+      "Directory.Packages.props": "5d20afdcf2c12cae4150440d6905cc23efe1b6542efb0140547f2555f9744b5b",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
       "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -901,6 +905,10 @@
       "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
+      "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj": "788d405c8f7e16bbb4f11fa7c3651c08055fc545be4929306987a2a92af78a2a",
+      "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj": "e170254575a6b0723efb271ab7c1216f006c7a816677bd5b447cfff258e79082",
+      "src/BuildingBlocks/ArcForges.Security.Audit/Tests/packages.lock.json": "1c93de4dbc04b8f0a15fef30f352c476b7543ff26f381cbdd348c0803fc092fd",
+      "src/BuildingBlocks/ArcForges.Security.Audit/packages.lock.json": "ba8caa1127c0dc5f1036d45aea694e80008a6395dbe6c5a1d96e3fc4a2bf4352",
       "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
       "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
       "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "0698528ca5db15df9aaff4f645850d383b0b72645bec8848154e90e63d135629",
@@ -934,7 +942,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-51-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-28-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -945,7 +953,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-28-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-44-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

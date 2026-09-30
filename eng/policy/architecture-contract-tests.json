@@ -630,6 +630,46 @@
     "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"
   },
   {
+    "apiSymbol": "ArcForges.Security.Audit.AuditPartition.For(ArcForges.Security.HumanPrincipal, System.DateTimeOffset)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AuditPartitionForUsesUtcMonthBoundaries()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Append(ArcForges.Security.Audit.AuditEvent)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AppendQueryPreservesEveryRequiredSecurityFactAndSeparatesTelemetry()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.DisposedAuditStoreRefusesFurtherOperations()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.PlaceLegalHold(System.Guid, ArcForges.Security.Audit.AuditPartition, ArcForges.Security.Audit.AuditHoldReason, ArcForges.Security.ActorChain, ArcForges.Security.Audit.AuditSoftwareIdentity, ArcForges.Security.Audit.AuditOrigin)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ActiveLegalHoldBlocksPurgeUntilInternalReleaseCapabilityAndReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Query(ArcForges.Security.Audit.AuditQuery)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AppendQueryPreservesEveryRequiredSecurityFactAndSeparatesTelemetry()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.ReadActiveLegalHolds(ArcForges.Security.Audit.AuditPartition, System.Int32)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ActiveLegalHoldBlocksPurgeUntilInternalReleaseCapabilityAndReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.ReadMaintenanceReceipts(System.Int32)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ActiveLegalHoldBlocksPurgeUntilInternalReleaseCapabilityAndReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.ReadPurgeReceipts(System.Int32)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ExpiredUnheldPartitionPurgeRetainsSingleUseAuthorityAndCoverageReceipt()"
+  },
+  {
     "apiSymbol": "ArcForges.Capabilities.AppIdentity.Parse(string)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.ApplicationCompositionTests.StableProductsAreClosedAndCompanionDoesNotEncodePlatform()"

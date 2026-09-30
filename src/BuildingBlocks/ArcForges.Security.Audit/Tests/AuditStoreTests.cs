@@ -149,11 +149,16 @@ public sealed class AuditStoreTests
         var wrongAction = fixture.Capability(AuditMaintenanceAction.ReleaseLegalHold, oldPartition, holdId: Guid.NewGuid());
         Assert.Throws<UnauthorizedAccessException>(() => fixture.Store.PurgeExpiredPartition(wrongAction));
 
-        var expired = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, oldPartition,
+        var atLifetime = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, oldPartition,
+            lifetime: TimeSpan.FromMilliseconds(1));
+        fixture.AdvanceMonotonic(TimeSpan.FromMilliseconds(1));
+        fixture.SetWallClock(new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        Assert.Throws<UnauthorizedAccessException>(() => fixture.Store.PurgeExpiredPartition(atLifetime));
+
+        var pastLifetime = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, oldPartition,
             lifetime: TimeSpan.FromMilliseconds(1));
         fixture.AdvanceMonotonic(TimeSpan.FromMilliseconds(20));
-        fixture.SetWallClock(new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        Assert.Throws<UnauthorizedAccessException>(() => fixture.Store.PurgeExpiredPartition(expired));
+        Assert.Throws<UnauthorizedAccessException>(() => fixture.Store.PurgeExpiredPartition(pastLifetime));
         Assert.Single(fixture.Store.Query(new AuditQuery(recent.AddMinutes(-1), recent.AddMinutes(1), 10)));
     }
 

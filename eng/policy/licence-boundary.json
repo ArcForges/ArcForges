@@ -101,6 +101,14 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
       "kind": "msbuild"
     },

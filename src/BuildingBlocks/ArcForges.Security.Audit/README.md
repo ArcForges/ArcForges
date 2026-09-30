@@ -1,6 +1,6 @@
 # Local security audit (PLT.44)
 
-`ArcForges.Security.Audit` owns an owner-scoped SQLite file whose security-event table is `local_audit`. It is separate from PLT.01 product content/journal storage and has no dependency on `ArcForges.Observability`; neither system queries or projects the other's records. The library is non-packable and reuses the already-admitted `Microsoft.Data.Sqlite` 10.0.12 closure.
+`ArcForges.Security.Audit` owns an owner-scoped SQLite file whose security-event table is `local_audit`. It is separate from PLT.01 product content/journal storage and has no dependency on `ArcForges.Observability`; neither system queries or projects the other's records. The library is packable and reuses the already-admitted `Microsoft.Data.Sqlite` 10.0.12 closure. PLT.44 does not select a package identity, edit the package inventory, or publish the package; PLT.46 owns package admission and pack, publish, and consumer acceptance.
 
 Callers select an explicit database path, realm/account owner, and finite `AuditRetentionPolicy`. The file binds its owner, retention duration, and policy ID on first creation and fails closed if a later open disagrees. Retention is divided into complete UTC calendar months. A month becomes eligible only after its last instant plus the configured retention days; there is no implicit infinite-retention default.
 
