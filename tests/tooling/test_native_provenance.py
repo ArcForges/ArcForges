@@ -321,5 +321,80 @@ class LegalExtractionTests(unittest.TestCase):
                 native.download_identity(value)
 
 
+class VendorLicenseFetchTests(unittest.TestCase):
+    URLS = (
+        "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual_Studio_2026-License-Community_ENU.docx",
+        "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+    )
+
+    class Response(io.BytesIO):
+        def __init__(self, content, url):
+            super().__init__(content)
+            self.url = url
+
+    def test_only_the_two_exact_visual_studio_license_urls_receive_the_project_user_agent(self):
+        payload = b"reviewed document bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            for index, url in enumerate(self.URLS):
+                with self.subTest(url=url):
+                    response = self.Response(payload, url)
+                    with patch.object(native.urllib.request, "urlopen", return_value=response) as open_source:
+                        result = native.fetch(url, digest, "sha256", f"license-{index}.docx", Path(directory))
+                    request = open_source.call_args.args[0]
+                    self.assertIsInstance(request, native.urllib.request.Request)
+                    self.assertEqual(request.full_url, url)
+                    self.assertEqual(request.get_header("User-agent"), native.VISUAL_STUDIO_LICENSE_USER_AGENT)
+                    self.assertEqual(result.read_bytes(), payload)
+
+        unchanged_urls = (
+            self.URLS[0] + "?download=1",
+            self.URLS[0] + ".backup",
+            "https://example.org/unrelated.docx",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, url in enumerate(unchanged_urls):
+                with self.subTest(url=url):
+                    response = self.Response(payload, url)
+                    with patch.object(native.urllib.request, "urlopen", return_value=response) as open_source:
+                        native.fetch(url, digest, "sha256", f"other-{index}.docx", Path(directory))
+                    self.assertEqual(open_source.call_args.args[0], url)
+
+    def test_verified_cache_hit_skips_transport_for_visual_studio_license(self):
+        url = self.URLS[0]
+        payload = b"already verified"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            (cache / "license.docx").write_bytes(payload)
+            with patch.object(native.urllib.request, "urlopen") as open_source:
+                result = native.fetch(url, digest, "sha256", "license.docx", cache)
+            open_source.assert_not_called()
+            self.assertEqual(result.read_bytes(), payload)
+
+    def test_http_403_propagates_without_promoting_a_cache_file(self):
+        from urllib.error import HTTPError
+
+        url = self.URLS[0]
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            error = HTTPError(url, 403, "Forbidden", {}, None)
+            with patch.object(native.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(HTTPError):
+                    native.fetch(url, "a" * 64, "sha256", "license.docx", cache)
+            self.assertEqual(list(cache.iterdir()), [])
+
+    def test_downloaded_checksum_mismatch_is_removed_not_cached(self):
+        url = self.URLS[0]
+        wrong = b"not the reviewed document"
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            response = self.Response(wrong, url)
+            with patch.object(native.urllib.request, "urlopen", return_value=response):
+                with self.assertRaisesRegex(ValueError, "Downloaded source digest mismatch"):
+                    native.fetch(url, "0" * 64, "sha256", "license.docx", cache)
+            self.assertEqual(list(cache.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

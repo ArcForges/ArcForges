@@ -25,6 +25,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "eng/provenance/artifact-profiles/native-win-x64-r4.json"
 RECEIPT = "provenance/native-closure.json"
 NOTICE = "provenance/NOTICE.txt"
+VISUAL_STUDIO_LICENSE_URLS = frozenset({
+    "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual_Studio_2026-License-Community_ENU.docx",
+    "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+})
+VISUAL_STUDIO_LICENSE_USER_AGENT = "ArcForges/1.0 (+https://github.com/ArcForges/DesktopPlatform)"
 require = provenance.require
 
 
@@ -249,7 +254,9 @@ def fetch(url: str, expected: str, algorithm: str, cache_name: str, cache: Path)
         context.maximum_version = ssl.TLSVersion.TLSv1_2
     descriptor, temporary = tempfile.mkstemp(prefix="arcforges-source-", dir=cache)
     try:
-        with os.fdopen(descriptor, "wb") as output, urllib.request.urlopen(url, timeout=60, context=context) as response:
+        request = (urllib.request.Request(url, headers={"User-Agent": VISUAL_STUDIO_LICENSE_USER_AGENT})
+                   if url in VISUAL_STUDIO_LICENSE_URLS else url)
+        with os.fdopen(descriptor, "wb") as output, urllib.request.urlopen(request, timeout=60, context=context) as response:
             require(response.url.startswith("https://"), "Native source redirected away from HTTPS")
             shutil.copyfileobj(response, output)
         require(matches(Path(temporary)), "Downloaded source digest mismatch: " + cache_name)

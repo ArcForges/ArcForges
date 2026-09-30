@@ -1,0 +1,939 @@
+{
+  "review": {
+    "owner": "af-20260928-p02",
+    "reviewer": "Pending independent exact-head dependency-admission review before merge.",
+    "reviewedOn": "2026-09-30",
+    "baselineCommit": "8daba1df5130d9e8c344decd88a71d97c1fcc840",
+    "maintenanceAssessment": "PLT.39 adds only a test-project reference from Security.Tests to the existing Persistence.Sqlite project so the approval store contract is exercised against the real SqliteStore across close/reopen. This is test-only; production Security has no new project edge. The regenerated Security.Tests lock consumes only already-admitted package identities, versions, and content hashes from the existing Sqlite closure; no new package coordinate, central pin, package ID, dependency version, licence identity, or runtime closure is introduced. This immutable successor chains from active plt-28-r1 and preserves prior receipts and all unrelated dependency policy.",
+    "upgradeChecks": {
+      "compilation": "Pinned SDK 10.0.400 locked restore and Release build for Security.Tests passed; the actual xUnit v3 runner executed 48/48 tests. Final rebased source gates and exact-head hosted CI remain required.",
+      "aot-trim": "No AOT/trim setting, SDK, framework or native toolchain changed; existing AOT/trim gates remain required.",
+      "compatibility": "The only new project edge is test-only Security.Tests to the existing Persistence.Sqlite project; no production edge, public API, package identity or external dependency is added. Existing approval/storage contracts and wire shapes are unchanged.",
+      "licence-provenance": "No external source or package is introduced. Provenance adds firstParty classification only for the task-owned approval sources/tests and this immutable successor; the existing Security.Tests project inventory binds to the exact changed project blob.",
+      "security-sbom": "The aggregate locked NuGet closure retains the same package coordinates, versions and content hashes; the test project reuses the already admitted Persistence.Sqlite closure. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
+      "runtime-performance-migration": "The real SqliteStore close/reopen test demonstrates same-store process-restart persistence only, not cross-device recovery. No production runtime, migration, framework, native ABI or performance claim is introduced.",
+      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400; no framework major, runtime, Android, native ABI or toolchain version changed."
+    },
+    "inputHashes": {
+      ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
+      "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
+      "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
+      "Directory.Packages.props": "5c19118b5788d82f37582a9733db5f40b965a866c8dc04feb15e6a0496bffa26",
+      "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
+      "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
+      "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
+      "eng/acceptance/foundation/Directory.Packages.props": "6c073bc8da6fad53cdc35adb042590e2e6b8cb4fbca8e3e1c2ea799476021ad4",
+      "eng/acceptance/foundation/Foundation.Acceptance.csproj": "df9c2b1ef09c4ffe7473c9a89ed0cccf8a5bfc009a38c81c0899da7ca06ff65a",
+      "eng/acceptance/foundation/package-lock.json": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7",
+      "eng/acceptance/foundation/package.json": "32361db70e2072b195385c9141b7bd5b003fd51f6a919b566fcb2c152da8b780",
+      "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
+      "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
+      "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+      "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
+      "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
+      "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
+      "eng/packaging/packages.json": "e5c97240d1d78a0b3a9ef99fcb60bf1c2187fde3e5f9fd3f8179460fd1083971",
+      "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
+      "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
+      "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
+      "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
+      "eng/provenance/artifact-profiles/native-win-x64-r4.json": "1cf40d8075ae94ca095607fb60cb5ea2cb9ed42f9008c92a6e643660c1756589",
+      "eng/provenance/records/canonical-agpl-legal-r1.json": "876a4d67f4f1cdba5e43a2431f73a242d3e34fa81b45620b8d45a76781d23dd9",
+      "eng/provenance/records/contracts-apache-legal-r1.json": "d436592a4d2f88a0de71a04bcf1c7f52cdf313049ef1b713e525a3ef57025b59",
+      "eng/provenance/records/contracts-provenance-tools-r1.json": "734af233a171876f4f246e0d7f99c7bc5366be65da9801acbd2a1f5a7588bfce",
+      "eng/provenance/records/contracts-provenance-tools-r2.json": "c83a17cc144e82979a35e0a66cadc1577acfe65aa557c08aa9142a54ac6113d2",
+      "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
+      "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
+      "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
+      "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
+      "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
+      "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
+      "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
+      "eng/provenance/records/native-bzip2-r1.json": "ccd1913cbe0f61b1e5bc67b5099a5ebb3f431bc351f0b22195ed5042aec422e4",
+      "eng/provenance/records/native-bzip2-r2.json": "3252bf8b054c8c036bdb6c6ed0935a55fad71729b14d9fc6a9c09b51e6e564a5",
+      "eng/provenance/records/native-bzip2-r3.json": "2cdfe7772e8a31d5eb0e9fea9f57313500beac73873d28872d2a5301e198db69",
+      "eng/provenance/records/native-bzip2-r4.json": "1b963de638e07697ded680d62f9c69d5ac357a95e36fd3ee4c6ee8d7d01168f1",
+      "eng/provenance/records/native-expat-r1.json": "a4fb403414b2e808708729356a2fdeafdd6bb9d7bb017546d02ab3f61438d97a",
+      "eng/provenance/records/native-expat-r2.json": "d65ee576bf2f991ad930763c39a378bf4b74e4fe00200010c4a4f483f8c98e97",
+      "eng/provenance/records/native-expat-r3.json": "01a11f605a4a082c91ad6866c849a0629078dea18affc840fe11fca1fa51eb94",
+      "eng/provenance/records/native-expat-r4.json": "a479f09846fd7d2f5735a405e63f716ec3125430c18b6afc48e6482fd359b2e9",
+      "eng/provenance/records/native-ffmpeg-bin2c-r1.json": "b62c66155d964d01040c5258747b8774ef7f2fec24400f4a2ba62d4581353a38",
+      "eng/provenance/records/native-ffmpeg-bin2c-r2.json": "c0bf5ef98c0890d10779eb6698f453b3606f54053c09a272316b5eb620c34425",
+      "eng/provenance/records/native-ffmpeg-bin2c-r3.json": "a829f636e5a8819c28dbbd366c64dc16d43f7fd577109fc68773ad74dac40eaf",
+      "eng/provenance/records/native-ffmpeg-r1.json": "9f829be583d78dd1765e9bc5a66e4fc3ce11d90093324847c0ccfd2d94c9c619",
+      "eng/provenance/records/native-ffmpeg-r2.json": "4c0f8ba025a34afaaaa75d88357dd3d394bcaa0b1fd2f7591adc1a15454ddfbf",
+      "eng/provenance/records/native-ffmpeg-r3.json": "40266121cd9f30e074b457fcdf107f8936edb64700bbd6bb63f8bf06a2a8cbee",
+      "eng/provenance/records/native-ffnvcodec-r1.json": "ed29951ba6f59d6a3fb0b479dc160cfe41b390dca047b40209e7179b60b21cf0",
+      "eng/provenance/records/native-ffnvcodec-r2.json": "56004e44566872a71808c9077f33729bc3db863c3560bb5534293733cd28792a",
+      "eng/provenance/records/native-ffnvcodec-r3.json": "a34e91ec0113ef0d1558c1b68c92870abc74382b461d1f1ebab59c857a511cfc",
+      "eng/provenance/records/native-fmt-r1.json": "aad9dc5f7f06294883a531749dd126d714a49c61c499b5de22448a9e6318b796",
+      "eng/provenance/records/native-fmt-r2.json": "fe2717b9b3d9577973f9d58ed4e4136fa05ea13bdefe7acb2a202a04eefe74a7",
+      "eng/provenance/records/native-fmt-r3.json": "0fb8b32a4e04fc4f6cc7b435f33745c4048c200b01b6778bd4c81c8a77de8098",
+      "eng/provenance/records/native-fmt-r4.json": "48a194a6aa0d710c0d42fdce2e9c878584e2a9ab6b83142c5a70b4e9edbb068a",
+      "eng/provenance/records/native-imath-r1.json": "9c75fb08b77d704d4a02d1f0dc42c1b9faf9987b152fce8349256991c14dbca0",
+      "eng/provenance/records/native-imath-r2.json": "fa154ba424b28147ae658266e9e619c0aa3ce1fa8caf62b9d4adcd30d1913bc0",
+      "eng/provenance/records/native-imath-r3.json": "7d20bda714f8f2a4e4941060cc04306f3d2623462217d26830ad55dc53826de3",
+      "eng/provenance/records/native-imath-r4.json": "9f33784a7544ed336b1048fefecb385755f981dc04679dfa0ab116d8387f739c",
+      "eng/provenance/records/native-libdeflate-r1.json": "6497100993a2d241d1f5a853ef0dc06bceb1e2e34a8139c70661a1505f8cabcf",
+      "eng/provenance/records/native-libdeflate-r2.json": "eb5d80799ed240163c2e2e8189dee9f743125b17d9fc239221ea7f7b4de65c3c",
+      "eng/provenance/records/native-libdeflate-r3.json": "669c68620aaba0205eb6716e8bd275f2daad62dbe68a3304055cb9c34d5eaa31",
+      "eng/provenance/records/native-libdeflate-r4.json": "4882ca6c915b23d0f5c7e060c231aae872f2aea28aa138282afec4cff66970d6",
+      "eng/provenance/records/native-libjpeg-turbo-r1.json": "32a61377fd43596b779f712b51562a151faa80b528555b50632047e66851810d",
+      "eng/provenance/records/native-libjpeg-turbo-r2.json": "6ddb760641dbb1f9798f89751f2aa5bda342ce7923b6534fcf3f2c22d21c36e0",
+      "eng/provenance/records/native-libjpeg-turbo-r3.json": "a6064580570926734b13f0a4d60aebb75bf5fb42f6d5713964996eae0de3d54f",
+      "eng/provenance/records/native-libjpeg-turbo-r4.json": "acaa0a7e1e840f7d8510437747727ca12ffcd966b3aa1c2d4997ba90383d3447",
+      "eng/provenance/records/native-liblzma-r1.json": "fd0c1a82bddc7c399f87ae3fc7f6a37c752a717a8de8209cf29dd2681f4a1a08",
+      "eng/provenance/records/native-liblzma-r2.json": "1a730b5fdeb98996507972e0e5fd9bac8ce0f1834a4821781ff8557c911bfe2f",
+      "eng/provenance/records/native-liblzma-r3.json": "9b3cdcc9d491ce667d1d998cfa1342fc62848b0d1a0f7a9dd0ea65c952216f6d",
+      "eng/provenance/records/native-liblzma-r4.json": "0d3229f7b3659b2b78ef02a4ec3e06ffbc773c2686684da782e2e15482d8e5ef",
+      "eng/provenance/records/native-libpng-r1.json": "94026969444009ec7c6ca4b8434b0388d76d9adc798e8aa64a0c1c76c312ce58",
+      "eng/provenance/records/native-libpng-r2.json": "49aa9cb729aa12b9f020306d354b7cca8f01e7cb99f6fb9d6f3c05e497e9a1cf",
+      "eng/provenance/records/native-libpng-r3.json": "8c4d16283d49c7633a36ff3e692d6ca9f2cb5998a82449e544e7b048cb1210fd",
+      "eng/provenance/records/native-libpng-r4.json": "b982a80e4ae7f6039674e7e37c6ca74055ac1e020f431191260ea6b8d19800c3",
+      "eng/provenance/records/native-libusb-r1.json": "9892918e3a2226df2b3826402228096d7793281794547497425dda07a2fa2468",
+      "eng/provenance/records/native-libusb-r2.json": "050058749be0db4519746165dfcba9b551a68f78c32c0714bf532a6a6769071d",
+      "eng/provenance/records/native-libusb-r3.json": "74c3aa1e2db6a79a091bb385689b63ff81e52031d15c1c656b700819f42c1df0",
+      "eng/provenance/records/native-libvpl-r1.json": "7892c43d72e2bd6ab6bfb474bf9d0e0067715783e4e9dc9d53861e872df1bc32",
+      "eng/provenance/records/native-libvpl-r2.json": "2f98d16c5dfc1c529a546138150ab0914fdbf5bd5be84ca7ae90e02ea03ac8d8",
+      "eng/provenance/records/native-libvpl-r3.json": "2ed43feaaf7bf4dcb2b2839c1b852b6735db0698f64fbbe9cd13b5506d6d9432",
+      "eng/provenance/records/native-miniaudio-r1.json": "8177aa80a28da91a83e1fff09c9e4988182dd19e99c0b5b27352a237ee114892",
+      "eng/provenance/records/native-miniaudio-r2.json": "c08db68f0e152462419d4cb6cc230c0ae435d676441c2952e6f6b4138bc8c066",
+      "eng/provenance/records/native-miniaudio-r3.json": "7578a40ae8d52de26b8089ec89cefe35166b3b674f6757e722f79e48449c3a59",
+      "eng/provenance/records/native-minizip-ng-r1.json": "11ecbd550ecdc36687727b0aeca764c9717e5c03d8c64a235e07319da5830045",
+      "eng/provenance/records/native-minizip-ng-r2.json": "0caccfd1def5804e25957e78c878d5ba2106e895d5937fb676bd4c3c11b15c60",
+      "eng/provenance/records/native-minizip-ng-r3.json": "39a5a719bf2056d358b06a6707d137775bde40ec45e3693b567d50a4349c0ae0",
+      "eng/provenance/records/native-minizip-ng-r4.json": "2b724d8b7660f0ec0836ff98cb3947e238c4a6dbb6d5ba0ecbecf53e9f4e5948",
+      "eng/provenance/records/native-opencolorio-r1.json": "138eb9210518c5b8f64016559d33cdbbcc4925f3d65a86253166f98a11b53bb1",
+      "eng/provenance/records/native-opencolorio-r2.json": "b674c499bb0e8751337cfa454e81cf65a5cc3e535ea6b4830674446aed7562f3",
+      "eng/provenance/records/native-opencolorio-r3.json": "0fbeb25ba5df2da0eb60078803737141ceb69d3c115ffc07de890c370cf3c41b",
+      "eng/provenance/records/native-opencolorio-r4.json": "bee01300d717e136a69d0beac3b8f7fda1c23fdb0c0f26180d1ca04ec77b2b3b",
+      "eng/provenance/records/native-openexr-r1.json": "591e426761379fcbbf762633f3c4b13a923222d20b1da8528651120950877580",
+      "eng/provenance/records/native-openexr-r2.json": "681453d9597b9f6d4d9d062133609b464d7dbfdc05ca6d07cf0e5f5766f50395",
+      "eng/provenance/records/native-openexr-r3.json": "3922bff104cc175dac6555569f4480b1f05fb10441ee8de21363b8a01da678e2",
+      "eng/provenance/records/native-openexr-r4.json": "3499e79923acd345db4f6bcc38b6a479d476baadb939e9bc293956941a0ae09f",
+      "eng/provenance/records/native-openimageio-r1.json": "7eff2e066559b33257701d1880f74efb9a556978dc7dc8b5ee1dc9be76a8da9e",
+      "eng/provenance/records/native-openimageio-r2.json": "2d860bbe419719a72dd96e046141e97e26487cc25886cd02575ce10df4bb8c6d",
+      "eng/provenance/records/native-openimageio-r3.json": "aa1c8be91b17a1e0b1ffb0530d1d23f71d7faee6e195bcc26f8dae378f574dd0",
+      "eng/provenance/records/native-openimageio-r4.json": "7eb9f10547a390f60aa1cbcc22a69654bdc713c7af9eb87cc0b9e7c995cb5e8a",
+      "eng/provenance/records/native-openjph-r1.json": "79779e9a031d2811f1d13830d35f3153cff511f6cb9aa86c28d6a5d905d60079",
+      "eng/provenance/records/native-openjph-r2.json": "9554e5d133939dd9cdd3cf3df98bff1bdcffa25344fd2ba2633af67bcbc5239d",
+      "eng/provenance/records/native-openjph-r3.json": "501ed6d3645a8661cabfce92f0bdc411b2bdaa9492a7fc6773f7e45cd3d0cbb1",
+      "eng/provenance/records/native-openjph-r4.json": "2956db9c112c71584da4ddf8df7fccc61b5b540a6ccbe4ce91269953cb1c73d3",
+      "eng/provenance/records/native-opentimelineio-r1.json": "72074bcf82b6e813c3aaf4f8fe741498cd0865089f96720f9a832559982f5f0b",
+      "eng/provenance/records/native-opentimelineio-r2.json": "747303a95d89615a8080d45dc98b1faef71e081fa467c74fd98acca847e00671",
+      "eng/provenance/records/native-opentimelineio-r3.json": "3fa020da888e7e7942b1eb528d534018159e4d0befc2a7d4505ad04fd352f3b3",
+      "eng/provenance/records/native-pkgconf-r1.json": "92fefa78ecc8a7cb6c5fb44308800f2d231e49520b92b931e5964ac193aaa7c1",
+      "eng/provenance/records/native-pkgconf-r2.json": "19801f80373877c21932d2ff5dd506193464f2b21d21ec2d821ec6f0e27246b7",
+      "eng/provenance/records/native-pkgconf-r3.json": "9f91d9226843ada3def1eeab75f9d4489dfed944dfa2845ca048707925eadc95",
+      "eng/provenance/records/native-pystring-r1.json": "e519aca475db1028a01c040612b0fd939b92f89c0c00ae163f014d1b382f0db0",
+      "eng/provenance/records/native-pystring-r2.json": "c0ca0d1783fc12a813ad87867d65ec6b746c15d2502dd8e4f711d67a59e608a6",
+      "eng/provenance/records/native-pystring-r3.json": "c3a95bd9e99c690f16894e1bc87508495b01a16e19b8f5d501163e5ce11be43f",
+      "eng/provenance/records/native-pystring-r4.json": "7deba0b0bb547dda8363e1baab8b50040953fffb3c37dcd9b50cee2678931d98",
+      "eng/provenance/records/native-rapidjson-r1.json": "7c774b26ec3c50f988c507a68a77c3f48782144d91e71f69a5b510b764068b22",
+      "eng/provenance/records/native-rapidjson-r2.json": "5c8f775457759fece260a38d777e9e69998ea97a57b11d66327b3c0eab17d822",
+      "eng/provenance/records/native-rapidjson-r3.json": "2cc34eb7e0023cabd4ea674e22b4ddd69155b1fd7eb0809de9bfa34cb707a2db",
+      "eng/provenance/records/native-robin-map-r1.json": "2358156c1d3e4ba5ec70736b189006fde32d2ea3b20e06c3c55ccc0990f4bb18",
+      "eng/provenance/records/native-robin-map-r2.json": "78ce58ff330d99f2d931f5ef4884df07fd4a4ff9c08cb88ca33725bb98260391",
+      "eng/provenance/records/native-robin-map-r3.json": "b05c11319fbff03ccef6bf5c8fdb53a685415d5be4a007afff30a4470f3893c7",
+      "eng/provenance/records/native-robin-map-r4.json": "455cba8974902c464dcbf352bfbd660c91af54d9798d61f26900d61971aaae0c",
+      "eng/provenance/records/native-tiff-r1.json": "0ee90f1c9f5bf69f5100537e8b8c42738635836fd9378803eaaa8828505e0c70",
+      "eng/provenance/records/native-tiff-r2.json": "97b5a80217fae7f0e8e65d5c74e96c1933a6eae793462feb0227d04fe866f93b",
+      "eng/provenance/records/native-tiff-r3.json": "25917b5ffaa9305c3543f833153be313b53ddeebfa02b0451552f6fed478e597",
+      "eng/provenance/records/native-tiff-r4.json": "c0de6d50f3ada630a8f9e961b28f4ca03f52bb41542ba6f3343204c211a19953",
+      "eng/provenance/records/native-vcpkg-cmake-config-r1.json": "26ea3210bcf7e2999f6f1095757dc95d988a9250032be28395e34f0d6ab599db",
+      "eng/provenance/records/native-vcpkg-cmake-config-r2.json": "9579380b5378c5f6089823ca4e50c1e7117d8496e2bc440c7b2393b5b24d9062",
+      "eng/provenance/records/native-vcpkg-cmake-config-r3.json": "bf6d10434787c3a5650eddb78f197e3ff4613f991f95de113c92f88c274096d3",
+      "eng/provenance/records/native-vcpkg-cmake-config-r4.json": "11c5aaa3d5838fe60cf5303912f85dc3e2adff5bb235459e27cc81252074f2aa",
+      "eng/provenance/records/native-vcpkg-cmake-get-vars-r1.json": "71b698733503d4e18b415ea18fc455540cdc312f0ed4d7ee11ab8dd74cbe7cee",
+      "eng/provenance/records/native-vcpkg-cmake-get-vars-r2.json": "ec2ff3a4ea0f4a463a62f520e5bd731a790d1ced5c8b7510b19cffeb5280a836",
+      "eng/provenance/records/native-vcpkg-cmake-get-vars-r3.json": "f38967e2bee6dee771be8d52bc13e4adad16c17bf5300ea7199a83dcb4f6ee30",
+      "eng/provenance/records/native-vcpkg-cmake-r1.json": "a490a0794543455f34670cc8bd30c264920fabfb4624e800d6193393f5efdf68",
+      "eng/provenance/records/native-vcpkg-cmake-r2.json": "6c6c7aef911720cec3a134d2290cead6714503705e290c41b7859a52e0f214e2",
+      "eng/provenance/records/native-vcpkg-cmake-r3.json": "6d480d2873a92fd81ac6bbb42b565d8298da6c7a5f02d4ec8e93231f0449d362",
+      "eng/provenance/records/native-vcpkg-cmake-r4.json": "3aa9dee30b1c863e48c6c1634de31226ff659f8f41c8861407eb5ba6a71c88b9",
+      "eng/provenance/records/native-vcpkg-msbuild-r1.json": "1b46af2740931a423f4f0eea0dc1ee13695de9d6f9069c2139df5f5ae4670920",
+      "eng/provenance/records/native-vcpkg-msbuild-r2.json": "e67619f14992bccef01a67e4865702fa4d4537cafcea06c2fb7bbbfa26a4d938",
+      "eng/provenance/records/native-vcpkg-msbuild-r3.json": "58c1a2888a05cf7cd1cd4938ef58a4fe12211764df8be606532e23b2dc90ff86",
+      "eng/provenance/records/native-vcpkg-pkgconfig-get-modules-r1.json": "964dfde1c96acb59a3c3e3ac0dfd9e31aa90d057bf87957189c6fcffe141e1b8",
+      "eng/provenance/records/native-vcpkg-pkgconfig-get-modules-r2.json": "b1ce3f87b360587156233bafe3ff40cd7544ccd69dda30de878d0f9e790c79e6",
+      "eng/provenance/records/native-vcpkg-pkgconfig-get-modules-r3.json": "acb1cb2249c13e46a0b2f1b3fb3356a5d116e00b0c7b40133ab414413532245c",
+      "eng/provenance/records/native-vcpkg-tool-meson-r1.json": "fdef3cb36ad9bd88f67f131a14ce85bf2a09cd83306a4c06843070b14eb6aed4",
+      "eng/provenance/records/native-vcpkg-tool-meson-r2.json": "2ef534d5c42dc85c60dee2bd095237a06d9f811a8ec79176998bdb89fe5ccc4f",
+      "eng/provenance/records/native-vcpkg-tool-meson-r3.json": "edf632bc088572ee7178d03ba567e92cb44bc534d4a5f290d263e1b963388b65",
+      "eng/provenance/records/native-vulkan-headers-r1.json": "0f2593eef072458ff73a3280261129601857e3e5355e13478bf6a99804fe2fc0",
+      "eng/provenance/records/native-vulkan-headers-r2.json": "89c0592ecf81d4f6be04d59135f24a7f3147abe9d4ce7bdd960efc52aee270cd",
+      "eng/provenance/records/native-vulkan-headers-r3.json": "816650d83a037ce53749066e5750f1c19432249aa3057fb3c8c21464e49372c4",
+      "eng/provenance/records/native-yaml-cpp-r1.json": "d1f713849eb1c20d062bbcefbae527f7d6a935be19ffa9c0f8ac76bc5226b376",
+      "eng/provenance/records/native-yaml-cpp-r2.json": "e0441da6447c9c6e0180f714359c4977b87839bb7095146ffb7ba8b94ba3dab1",
+      "eng/provenance/records/native-yaml-cpp-r3.json": "57bff8322b7436c303e91a2934e4e64ab8497e6074cfacf2e2a632fd451c459c",
+      "eng/provenance/records/native-yaml-cpp-r4.json": "6759fa15d23c11c8af5c8b9b8da85c051a347fa2fe6e13263ae932667141585c",
+      "eng/provenance/records/native-zlib-r1.json": "0c055cc9d8e6be306aa96e9e07c5759f250864b7782682830ff6737ce0303ea4",
+      "eng/provenance/records/native-zlib-r2.json": "55bb98856e9b931d908caa9dc318e781617959d0bd906c9f36a0911eaff86037",
+      "eng/provenance/records/native-zlib-r3.json": "15de8fcc0d0afbc23d700fc28158279a86fae71ac0e536ef03472f2a1f92b203",
+      "eng/provenance/records/native-zlib-r4.json": "5a6473b9f6c01f925d9d53e5f507f07e0b4d0df94e939083137cf6388606662f",
+      "eng/provenance/records/native-zstd-r1.json": "52ea5f89f1ecdb8b9b4b1c7188a979b45c626d62fec31ba6586e5b44a8e4913b",
+      "eng/provenance/records/native-zstd-r2.json": "8e0b4aef35606a46f12a785009a11a97c3b795233f6032c08219777ffe7cf127",
+      "eng/provenance/records/native-zstd-r3.json": "3aee1adfbc2a58523a46023bee145bfac1dd37e5be35f34ba8b072e58d147171",
+      "eng/provenance/records/native-zstd-r4.json": "3b888e67a3ff11e3d60fe2199d910e2d689b06e5ab6105ea8581b398224ed262",
+      "eng/provenance/records/otio-legal-r1.json": "b1cafe73055423716f77ce6fa9d85079da10f41ff51b78eaf5ebe12a54dd2b3d",
+      "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
+      "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
+      "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+      "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
+      "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
+      "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
+      "global.json": "d17cfeed29d17cb8e75b56e26767c591ab560a2d7204f28bcb3ec3f47bb4263e",
+      "native/windows/ArcForges.Native.props": "a3d1e3c574b15b3c428f8b7db98476d120aa276dc566e86a1ade42e910516224",
+      "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj": "8514894388ac30b13550b223dfb94d37d37dbf79816766685e6438ea8aac01da",
+      "src/Build/ArcForges.Build.Policy/Architecture/ArchitecturePolicy.props": "b49df8103b7251e16412b236bcb2e4a9b665365b3f1b034840a4801653fdeb96",
+      "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Metadata.targets": "c0d516a0c0b956689ddfc78ff061d6f3add7a9fe22b4b05baa31bbfed1aca985",
+      "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.props": "5310beac8a834ebff477d2d86d2d8937b2f635aa741294225c99a111d8b72600",
+      "src/Build/ArcForges.Build.Policy/build/ArcForges.Build.Policy.targets": "8c15dc21c5bf599b458e41ea126d2a22157d70f32c81512d25d7f886c504e34e",
+      "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
+      "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
+      "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "ae05aef953a581e9c2baf98d65d9106145c3edf673779d8ec55daa8ced3ffe7f",
+      "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
+      "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "b83120656ca0890664744fcf05c3d75dc1c56ccc7a493a118f63c70c7069643b",
+      "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json": "35cd295d2a07470c88259af06ca22114c709fa2c4e4b929abd599c96a9c26b0c",
+      "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj": "425a68784362a47d01fc14de12c9acb8a6ac0b61d2ecdbcd42c2140bd6e062fa",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj": "fa29f3b8c84f80eef414926739f81f696c7be205b27e0b6da0463f52eace587c",
+      "src/BuildingBlocks/ArcForges.Contributions/Tests/packages.lock.json": "2329c3088610c295fbaaf35a03c858c17d9b748d10fc733707dd4fde0967de8f",
+      "src/BuildingBlocks/ArcForges.Contributions/packages.lock.json": "03ee63c6a4335b1c141cef2016983cd9064532846d582ee6fe03dce8ccf866f5",
+      "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj": "d0620806bcaa6e7770e7617ac1ba671fd6d87d1aee76a7c4f734c9b85f263826",
+      "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Desktop.Graphics/ArcForges.Desktop.Graphics.csproj": "2b1f2e7754125794ca2e15fd689455dcc20d4216cc90e4f0109cf7a372c4c528",
+      "src/BuildingBlocks/ArcForges.Desktop.Graphics/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Desktop.Preview/ArcForges.Desktop.Preview.csproj": "dd3771d911a65c24d62a2cffee8d6a72aea18be6817a9d7aa484d14a8ddedddd",
+      "src/BuildingBlocks/ArcForges.Desktop.Preview/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Desktop.RichContent/ArcForges.Desktop.RichContent.csproj": "1c860029517d0882df14a33386c11dee44d1e6fc85adc84e2ef224abf7edf34a",
+      "src/BuildingBlocks/ArcForges.Desktop.RichContent/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj": "fad00ed9768093a4b5ac43855c4cbcd15a9fec6e4b3bdde7a183398b88fbc664",
+      "src/BuildingBlocks/ArcForges.Desktop.Text/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj": "a8eaa0048788cad95cbb73f66b0edad0bab27b312d39f9134aea6e854eb8d2b6",
+      "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj": "a3dd1928395674cabc3d0a1a88fd2d15c081165620e796767dbe85f5b29d8d1f",
+      "src/BuildingBlocks/ArcForges.Foundation/Tests/packages.lock.json": "a66aa29dc746ed2999d9cfffd2f3ed75f3e73738e85135eb4df026a58491eb09",
+      "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "275edc2c07cd106e7cafdb851474a56dc233c4326849b290a96ffb2c2cba81c6",
+      "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
+      "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "81a817317a9ec179503d64ea597c2d17b9d349705fc7a6a8495935b78ae0fcf8",
+      "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
+      "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "c2bb444ba5d39e0d920b203aa02ccc36512d3d941b9568ddb6a3dc6cb86accd2",
+      "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "03ee63c6a4335b1c141cef2016983cd9064532846d582ee6fe03dce8ccf866f5",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj": "c811b4409a75567b7140dd928db29cd130b4d3161f0384b5702ec50e8a7950e1",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj": "9591a3c2c55e3a8ca4ce0b419c9678a37673615eee7226e3074001f0e335c16c",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7",
+      "src/BuildingBlocks/ArcForges.Persistence.Derived/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj": "cef718cfec9d7cf24b15bc0800f1e2553dc2f1f8967b7199e4319759b7c8ff9d",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj": "3e77a1b68b5009b2393b59c1534d87c9ab26684c850828f03354df89de22d2d7",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json": "6b3f5df901b107d2f1cc78dca31fe656cb44dffa811be58fb82e26facf5ee112",
+      "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
+      "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
+      "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
+      "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
+      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "945292cbe53b9d12c5c5a06300fa7ccc29b30d1088ad4439df0803e7ee33aae6",
+      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "bc1b585f661488c38b18e0bd9558b2738ec05da93809a58d04f6d4b168dc3afa",
+      "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
+      "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c2ee803e0ea8307fff6edd13f351182ea743182bc24b35ff12bdbc1cc6e94e49",
+      "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
+      "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
+      "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
+      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a7dfaa568b5ab071f62edd9ab67cace16cd0f381bb1c13afd7a8a2b1393d1509",
+      "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
+      "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
+      "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
+      "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
+      "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
+      "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj": "e7e89b53d8f01b17385174d0723d480c91159f6209b61eae265bf189fe5645f6",
+      "src/Native/ArcForges.Native.Image.Runtime.win-x64/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj": "f40721a408237dd02ae4d0a244731463245a88dfa66fb9e6fe94921090b9e651",
+      "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
+      "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
+      "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
+      "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
+      "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
+      "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
+      "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
+      "tests/PersistenceTests/packages.lock.json": "c94488ff2560372433bf2ca0d6f04a69429d10cde23265edca24ea6f798b6778"
+    },
+    "frameworkVersions": {
+      "dotnetSdk": "10.0.400"
+    },
+    "previousReceipt": "eng/policy/dependency-reviews/plt-28-r1.json",
+    "namingToolCandidate": {
+      "package": "ArcForges.Contracts.Validation",
+      "version": "1.0.0-ci.205.1",
+      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
+      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
+      "licence": "Apache-2.0",
+      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
+      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
+    }
+  },
+  "nugetClosure": {
+    "arcforges.application.abstractions/1.0.0-ci.29.1": {
+      "contentHash": "8ICXm8LvJsaXgNz6RfiHSoxxqxE3jLJMz8IWCcweW0FIzv6isEl3SMH+pbBATNKIqApDmCN78FT/csCAqMBMRA==",
+      "licence": "AGPL-3.0-only",
+      "nuspecSha256": "ee357e2c21126b5278bba1b94212302e1dd30e25af1adbd45d185f0863ec634a",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.application.abstractions/1.0.0-ci.29.1/arcforges.application.abstractions.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/DesktopPlatform",
+        "workflow": "publish-nuget.yml",
+        "sourceCommit": "ace60538849047184954baed09fb05ec7676d367",
+        "feed": "https://api.nuget.org/v3/index.json"
+      },
+      "classification": "Exact existing DesktopPlatform publication consumed only by the local FND.07 acceptance runner; same AGPL boundary."
+    },
+    "arcforges.contracts.foundation/1.0.0-ci.113.1": {
+      "contentHash": "k51yFjKnec92FJEfOM3/6YEhnbi1wfO4gztqjlhLumg7USTjVnA7ab7rE4X/H1cDb62Ny4c2ufn8Xi/CtBaZnA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "7726a233f9ce81c4373a2ab9423c33d566b919bb2cb90d2b5577cf844bbbbfc4",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.113.1/arcforges.contracts.foundation.nuspec",
+      "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "arcforges.contracts.foundation/1.0.0-ci.216.1": {
+      "contentHash": "+RGxNiaoOBt+j2IOSpUa2WWD4Bnkk8Ten7jbOVFwdUVF8jUQRCCvAGhrPTzZpnr6Sk5MSoA95+pJYgN8T+jEtg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "b2704457f3245e4c44200ed4e8dd87054a81cbe53faa31cd384aad92db78839e",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.foundation/1.0.0-ci.216.1/arcforges.contracts.foundation.nuspec",
+      "classification": "Internal ArcForges Contracts.Foundation dependency already admitted at exact 1.0.0-ci.216.1; consumed by the existing PRF.04 non-packable AOT probe and PLT.19 ArcForges.Capabilities/ArcForges.Capabilities.Tests consumers. Source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.contracts.localrpc.platform/1.0.0-ci.216.1": {
+      "contentHash": "TdmfXUx/V6ImX9AijHou/1pzwWfQPOid3pHR2OnYNDPXj7IxylfUmiDzSIrhwaJKXTgxM3UpuAiiNJxnqjZB2A==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2e9af7a67637cdff08601ce3fb2d20a445fd34c7d535dc4d3508ff10bc9a3c1b",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.localrpc.platform/1.0.0-ci.216.1/arcforges.contracts.localrpc.platform.nuspec",
+      "classification": "Exact CON.05 generated LocalRpc producer consumed only by the PRF.04 non-packable AOT probe; source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.foundation/1.0.0-ci.29.1": {
+      "contentHash": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==",
+      "licence": "AGPL-3.0-only",
+      "nuspecSha256": "e935bdbe249491c131cdc2c9a07dc55a1b9724c664acd3064bd8393a646bdc59",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.foundation/1.0.0-ci.29.1/arcforges.foundation.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/DesktopPlatform",
+        "workflow": "publish-nuget.yml",
+        "sourceCommit": "ace60538849047184954baed09fb05ec7676d367",
+        "feed": "https://api.nuget.org/v3/index.json"
+      },
+      "classification": "Exact existing DesktopPlatform publication consumed only by the local FND.07 acceptance runner; same AGPL boundary."
+    },
+    "coverlet.collector/10.0.1": {
+      "contentHash": "27jXSV/0DbVqF5jDrAxuQFZ9oaz6gmG03p8ttxAFk+X0M4woFYj7MoWDLCna5EGLb0CE6OE7X6ZH3Wt5smTtaA==",
+      "licence": "MIT",
+      "nuspecSha256": "d73992a0c9eb178bf52fde96055930e0ac5b05e53c73ca5c0595f01e61210910",
+      "source": "https://api.nuget.org/v3-flatcontainer/coverlet.collector/10.0.1/coverlet.collector.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "google.protobuf/3.36.1": {
+      "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ==",
+      "licence": "BSD-3-Clause",
+      "nuspecSha256": "d6a4a567ce4889e25d098fd39d13a65ce05c847e8574818edc0d1eee6277eb40",
+      "source": "https://api.nuget.org/v3-flatcontainer/google.protobuf/3.36.1/google.protobuf.nuspec",
+      "classification": "Exact published Contracts.Foundation producer and its generated protobuf runtime; Apache-2.0/BSD-3-Clause permitted inside AGPL consumers."
+    },
+    "grpc.aspnetcore.server/2.83.0": {
+      "contentHash": "rWeSaXaSPIIerc82lhHKqmzlp/sgLnG+Zw1c3YEEVp/un+hJKPxJOXWuGUOS2cs3EvcZBZ2tliXsnAg5Mdk2Ew==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "b9a51de789abe619de7ee4bb9ec9f30452c4bca13d514e53ac574a0bb96116e3",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.aspnetcore.server/2.83.0/grpc.aspnetcore.server.nuspec",
+      "classification": "Exact permitted gRPC ASP.NET Core server candidate; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.core.api/2.84.0": {
+      "contentHash": "p2SOMl6q/GZ4/5MLkgboC/z55g4zKUEruRn/g46QgppjQBVnsLZVBU/9VO7n60ll38G3Eo8Zu9b7x+W01GKFVg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "bba00f5d5be8423dd351662e313648b0abd13100ef67d55f6fc29de44c544a96",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.core.api/2.84.0/grpc.core.api.nuspec",
+      "classification": "Exact CON.05 transitive and permitted gRPC client dependency; consumed through ArcForges.Sdk.Contracts 1.0.0-ci.216.1 by the PLT.24 Capabilities/Contributions lock graphs and used by the non-packable PRF.04 AOT proof only as a build-time candidate."
+    },
+    "grpc.net.client/2.84.0": {
+      "contentHash": "My6Fms2YCyAbihTBZZ3kLS39iTY2pkMAzGDBTC6XhPOujg70eB07AEJ7tPiW3tZ70bhFzHcc3+d4j3DaIPF3aA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "32a43f3448ab90bb71c946533db4d5135cef4728a3ee29bf88d9a0cbf1e67413",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.client/2.84.0/grpc.net.client.nuspec",
+      "classification": "Exact permitted gRPC .NET client candidate; used by the non-packable PRF.04 AOT proof only."
+    },
+    "grpc.net.common/2.84.0": {
+      "contentHash": "DPxm/H8G/lDRrz997wM0M2zN/PGqVeZKDakhBbtABEbv6WIW4HI9g3BvntBQT6ZUROuGacMzfyyF9e5kiTVFfQ==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "f621aa566e63340b572a4f0bd2b996b934407c77b8cdf121f38578e93ee796cb",
+      "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.common/2.84.0/grpc.net.common.nuspec",
+      "classification": "Exact shared gRPC transport dependency selected by the permitted server/client candidates; used by the non-packable PRF.04 AOT proof only."
+    },
+    "microsoft.applicationinsights/2.23.0": {
+      "contentHash": "nWArUZTdU7iqZLycLKWe0TDms48KKGE6pONH2terYNa8REXiqixrMOkf1sk5DHGMaUTqONU2YkS4SAXBhLStgw==",
+      "licence": "MIT",
+      "nuspecSha256": "184c649613d487d2b11466882ad83e375bf94f6aa228afae78dd4005bb0bb2a0",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.applicationinsights/2.23.0/microsoft.applicationinsights.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.bcl.asyncinterfaces/6.0.0": {
+      "contentHash": "UcSjPsst+DfAdJGVDsu346FX0ci0ah+lw3WRtn18NUwEqRt70HaOQ7lI72vy3+1LxtqI3T5GWwV39rQSrCzAeg==",
+      "licence": "MIT",
+      "nuspecSha256": "3a965c424d56f1cee169d88cc9c04f2c04f01bd65f20147b26ac093d761beec9",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.bcl.asyncinterfaces/6.0.0/microsoft.bcl.asyncinterfaces.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.codeanalysis.netanalyzers/10.0.401": {
+      "contentHash": "qGPLk4hknvVp6j9Lowa0qykw1cK7CyEyyy2aVs4dkOGroOMHJLRsMpUT53IKvYT6q78jxv96FZhzy3BrKCPgmA==",
+      "licence": "MIT",
+      "nuspecSha256": "a8e2d43ca608c2f6e4039020149653abd188821fd8db1bed4fceb60fde2f21e1",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.netanalyzers/10.0.401/microsoft.codeanalysis.netanalyzers.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.codecoverage/18.10.1": {
+      "contentHash": "tV7tCyp/t+DuwQugLkCeUN7NBFFB4fEGRPr0gkMQ2nQgAvQQjmGlZZi1dsLzbyoe/A0mbnKybmkIh8qhT9p4Zw==",
+      "licence": "MIT",
+      "nuspecSha256": "e7473877d0450d94c304469a0e89932731f4ba498edd3583211a0cda6ca68c57",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.codecoverage/18.10.1/microsoft.codecoverage.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.data.sqlite.core/10.0.12": {
+      "contentHash": "2aL9eL5HQr0V4b8V909SD+jQAx6qnTTl7sT/v3D8dIvmr2UGdpZIQxqm1pj2Js3e4EYTvpw0oMH7DjapJJuPPw==",
+      "licence": "MIT",
+      "nuspecSha256": "56030907327ba858664e4c2cbc6547ad56d766d900bc323c14408fcd42fc46a0",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.data.sqlite.core/10.0.12/microsoft.data.sqlite.core.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "microsoft.data.sqlite/10.0.12": {
+      "contentHash": "xUq9xUc653ue7ac2rMfCaf8UQN+U3zS8poWYlugycpvJllplMM0Mk7v/+MM0CTlu9zGvbGML4BPH8YWhrUOfGw==",
+      "licence": "MIT",
+      "nuspecSha256": "8e1c47c77197daaac1584979b7bb42a9a8f6deaff9f6d18029b3a689a2107c6c",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.data.sqlite/10.0.12/microsoft.data.sqlite.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "microsoft.dotnet.ilcompiler/10.0.11": {
+      "contentHash": "yloFUsIQOzspIsn2cDHrbgikKaWHAZspzj0EWxnWJJpFC89IBW64OXgCECsrrnzGWQvy1iLX9r5/R4zBf7Am3g==",
+      "licence": "MIT",
+      "nuspecSha256": "2c16a1f000bd7a7e5c0864d2b097d5d00afc5d723770751bc6228bd463c6cc56",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.dotnet.ilcompiler/10.0.11/microsoft.dotnet.ilcompiler.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.net.illink.tasks/10.0.11": {
+      "contentHash": "IBf7lbovvjGWVWXZX5cJ/cO0WXbId0Zq4BuSeT94mGZuOAP66oMeH9PTBZ9Jpp3Jb6jtK0qm/NyUbPRo1gC/wQ==",
+      "licence": "MIT",
+      "nuspecSha256": "6c10c93cd2958d71fc46d60c940044071e15b57a75d469d68adf80f0dff57da1",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.net.illink.tasks/10.0.11/microsoft.net.illink.tasks.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.net.test.sdk/18.10.1": {
+      "contentHash": "SxCFvJE/2ltUQgCgv6+Ixagohw4sZc9hM7Wid2foaNM7paBscktoHLoRDz91fW8wbHG87Rg9Ku59/8PXumqUrA==",
+      "licence": "MIT",
+      "nuspecSha256": "84c823b74b806f5b1f4cce2bdaf81ba78abbe0ae93c9828f578205f3d48abca8",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.net.test.sdk/18.10.1/microsoft.net.test.sdk.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.testing.extensions.telemetry/2.4.0": {
+      "contentHash": "JeP1RFqBa11fWmBk8xEfZcMKr4rxWSyI6OZ+659V069CaMkTEOQBW2UdSSeNz3absOsygcn7JJkzerC4LGnZ9w==",
+      "licence": "MIT",
+      "nuspecSha256": "5a13a0f3b3da2e1ea48c7faac4f0d3a8ca570a562ec4928e8e59d8f10efa9738",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.testing.extensions.telemetry/2.4.0/microsoft.testing.extensions.telemetry.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.testing.extensions.trxreport.abstractions/2.4.0": {
+      "contentHash": "uRb+4qM42dFDg4kWJZ2kFEcwESNVCRZJjItp5vETorN3rSJGysP617LqYirOcrCYmxg+obPreHMM5JcsNDKtBw==",
+      "licence": "MIT",
+      "nuspecSha256": "f99165b201b607209e5f03db0b2be881d020d45da108028c011fa2b2f6b57b99",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.testing.extensions.trxreport.abstractions/2.4.0/microsoft.testing.extensions.trxreport.abstractions.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.testing.platform.msbuild/2.4.0": {
+      "contentHash": "qr5M6h16YHMJLFDcWELFVMMpGte2BUmveBZKT5YoBV+bmuJRPu9bv/Zqke4yQuOEKRNxoAETrG5jr+/6Rnr3Hg==",
+      "licence": "MIT",
+      "nuspecSha256": "1fe1b7f9981ae944b65a9cf851ca791bd5e0dd66dedd5d114f838aeecf5bea4c",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.testing.platform.msbuild/2.4.0/microsoft.testing.platform.msbuild.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.testing.platform/2.4.0": {
+      "contentHash": "dp1N3P1ujb0ztwFgqz2o/ItEvq+pm19/AiA+Xq7Zpcy7oPMcxDBZLYGtf0LlU1MveEBJuKVjZhI+LnkfcH/0jQ==",
+      "licence": "MIT",
+      "nuspecSha256": "66933f17979c2b024e80d6c8b4144150ecc5773153ee6a485aa430645da96b5d",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.testing.platform/2.4.0/microsoft.testing.platform.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.testplatform.objectmodel/18.10.1": {
+      "contentHash": "o+PuLDRVp1iwiVAPBADZItXgm9Ck23XtPhE4kZtZVi0uYnMiiz1Dx9Cjh75kJ+ijfqnORL3VOTOaQVKi0f/ixg==",
+      "licence": "MIT",
+      "nuspecSha256": "3af65b097b8d4c5bc7c1242e3f56fdb3578a38b313f3bdd7472257f1cdd8d98b",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.testplatform.objectmodel/18.10.1/microsoft.testplatform.objectmodel.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.testplatform.testhost/18.10.1": {
+      "contentHash": "KYz2omqkoz9E2mWa4fdgT+Ycie1wi5968EmyJlusjlp87RxxtA2FvDm8tcBEYIDzLnkWGnsKjE4d13Z7/rxkQA==",
+      "licence": "MIT",
+      "nuspecSha256": "801559164f0ab5079bad2f8bfa206046919f6a97ae2af8ef77d7a0bc80317457",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.testplatform.testhost/18.10.1/microsoft.testplatform.testhost.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.win32.registry/5.0.0": {
+      "contentHash": "dDoKi0PnDz31yAyETfRntsLArTlVAVzUzCIvvEDsDsucrl33Dl8pIJG06ePTJTI3tGpeyHS9Cq7Foc/s4EeKcg==",
+      "licence": "MIT",
+      "nuspecSha256": "eb8c4b9d4ebe62d8528dec6ab2a752c2e3488f28f882a6c45a33dcc21eacc58e",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.win32.registry/5.0.0/microsoft.win32.registry.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "runtime.linux-x64.microsoft.dotnet.ilcompiler/10.0.11": {
+      "contentHash": "0lJviBev2CvBdrLhMCJ1hmwOKgjbk1ccRy+brEewywtK4TMft1WaVXv112j6OuTQg8ZMbnN/i3KRD3S6o4NJDw==",
+      "licence": "MIT",
+      "nuspecSha256": "0d304c7cb54460b35cc188ca792aeb0f81772a6ac85d891e23d98889101aa3a0",
+      "source": "https://api.nuget.org/v3-flatcontainer/runtime.linux-x64.microsoft.dotnet.ilcompiler/10.0.11/runtime.linux-x64.microsoft.dotnet.ilcompiler.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "runtime.osx-arm64.microsoft.dotnet.ilcompiler/10.0.11": {
+      "contentHash": "4cxybmyqJI3zZIKkNM1Ft0aq6Q4q6b4SJ11Np5j9lrHHurfheI66dUshpZD/UEMjMqAdg9O03AABAYLYSUzwyw==",
+      "licence": "MIT",
+      "nuspecSha256": "3c8c812ae7efd5e2f30b0de43fcd131582f26d1f4a72736f9922688286d44feb",
+      "source": "https://api.nuget.org/v3-flatcontainer/runtime.osx-arm64.microsoft.dotnet.ilcompiler/10.0.11/runtime.osx-arm64.microsoft.dotnet.ilcompiler.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "runtime.osx-x64.microsoft.dotnet.ilcompiler/10.0.11": {
+      "contentHash": "Nf7MRJg0HZ4G7icNbW8T49O/9UU6x8XoUPffkk3Uh+r+mDAUFHkhIptUc0wDdIRrouJrLt0IJp0LiaQJUB7DbA==",
+      "licence": "MIT",
+      "nuspecSha256": "b350157b66441409caea6b98bba20e59277ac91c18af0772223781a18b2cdad4",
+      "source": "https://api.nuget.org/v3-flatcontainer/runtime.osx-x64.microsoft.dotnet.ilcompiler/10.0.11/runtime.osx-x64.microsoft.dotnet.ilcompiler.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "runtime.win-arm64.microsoft.dotnet.ilcompiler/10.0.11": {
+      "contentHash": "vy/AJM7NafhIa+4EsJrh//5Ba3HW3purZh+KR0Bpt/R20w3s06ZrUsdwHywUs+5E7PfEtbXBcLlebKFusSLBkQ==",
+      "licence": "MIT",
+      "nuspecSha256": "3f546e9d7d6ba67a8a82544e042b34b02df722122ad56b0a7aa6c33cbd0fc006",
+      "source": "https://api.nuget.org/v3-flatcontainer/runtime.win-arm64.microsoft.dotnet.ilcompiler/10.0.11/runtime.win-arm64.microsoft.dotnet.ilcompiler.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "runtime.win-x64.microsoft.dotnet.ilcompiler/10.0.11": {
+      "contentHash": "D6ZKMo3NeTnos7l5S8bMmiPm4LK+y15Q/uduyPw7FX+xKbeWVWdwlcZGkLLPjLvW4ZO6o3ACanq5HsSXJgrt0g==",
+      "licence": "MIT",
+      "nuspecSha256": "e65322f78f21c985eea3b00e9f7cbc413d7b26a997ae861b08ee5265fc49b412",
+      "source": "https://api.nuget.org/v3-flatcontainer/runtime.win-x64.microsoft.dotnet.ilcompiler/10.0.11/runtime.win-x64.microsoft.dotnet.ilcompiler.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "sqlitepclraw.bundle_e_sqlite3/2.1.12": {
+      "contentHash": "mAgscpQMLw5/nfA1Q5oJVAT29yROUo1ifZGbbTpx/lwZpSxMUGoYbKfmvdm8oXER+RzxqBmmQzeBEVKfeHv2nw==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2faa9f418c3b8831efdf92df6aca8322ffa9f7a556e915b46e5daa8e1f8e3233",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.bundle_e_sqlite3/2.1.12/sqlitepclraw.bundle_e_sqlite3.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "sqlitepclraw.core/2.1.12": {
+      "contentHash": "ETpNw9DY3ckWLgRRAeCHj+GKOuPi61aeczkXhgHexUvqoZBAYg8RYESE2J7O1M7+o6QbdSEZwrw9bfqztUVWXg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "8ab9189071aef856b12a9a3d68ac055a01ec6f8fc51b85ac1029e7c5ba12eecc",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.core/2.1.12/sqlitepclraw.core.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "sqlitepclraw.lib.e_sqlite3/2.1.12": {
+      "contentHash": "fWi8Dbknuhgg72fWinIdjXVaqO1hHL4YBBwVLnr7e1c9TAZwJ0QE38j9syW1hwx6HaqEVTwI+O07WPdZn8Rp0w==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "0e82e5cda14ccb8c546596d39393a6a9ba94146ffeeac86069df29ce9d57a731",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.lib.e_sqlite3/2.1.12/sqlitepclraw.lib.e_sqlite3.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "sqlitepclraw.provider.e_sqlite3/2.1.12": {
+      "contentHash": "W3oH4XIfCzFrgUSDKHhN6N+dgzA5YHOR2VxX8GB6Qy7CyrJJgxPEG8NirgYWlPQC5P2jz2knSsexWu4tDUL33g==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "7e5b604b8ad8121fa75f01eec61f56989b717fadfd530188a57d35759d93f573",
+      "source": "https://api.nuget.org/v3-flatcontainer/sqlitepclraw.provider.e_sqlite3/2.1.12/sqlitepclraw.provider.e_sqlite3.nuspec",
+      "classification": "runtime dependency of ArcForges.Persistence.Sqlite; exact package retained as NuGet dependency, not copied source"
+    },
+    "system.security.accesscontrol/6.0.1": {
+      "contentHash": "IQ4NXP/B3Ayzvw0rDQzVTYsCKyy0Jp9KI6aYcK7UnGVlR9+Awz++TIPCQtPYfLJfOpm8ajowMR09V7quD3sEHw==",
+      "licence": "MIT",
+      "nuspecSha256": "2fb3325fbcea2d5eee1eb5666fd391fac8498f7acefe34f922aaceafea5e9df3",
+      "source": "https://api.nuget.org/v3-flatcontainer/system.security.accesscontrol/6.0.1/system.security.accesscontrol.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.analyzers/2.1.0": {
+      "contentHash": "X7QXEcZQGz0G/HL4HUyK+aAvNa/IMGbOCnFIq4jD/Evktq12xANKwzOUr7b08vCmC1LXu/47qHWOdjm3KfaJ0A==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "8d8fb2ff8c8a1505020e13d190a093af179b994eebce42ce03457ed9497e7b68",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.analyzers/2.1.0/xunit.analyzers.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.runner.visualstudio/3.1.5": {
+      "contentHash": "tKi7dSTwP4m5m9eXPM2Ime4Kn7xNf4x4zT9sdLO/G4hZVnQCRiMTWoSZqI/pYTVeI27oPPqHBKYI/DjJ9GsYgA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "0e34c46e1420cea8e5260772ff19bcb3d3faa7709136d2d3ba157f48a97362ba",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.runner.visualstudio/3.1.5/xunit.runner.visualstudio.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.assert/4.0.1": {
+      "contentHash": "nC7d3cY06Oo7hkdwWPZkBR0Ud75xNhgx0P7i0GmMMZC3puCGlc4szFiT30biH03IN/eDnr8h+nv3A1UD17bk/A==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "3f2aef448f6c8e12cb7fa5d6ba111ea5311f530862a3e5fd9a63f153bec1f3af",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.assert/4.0.1/xunit.v3.assert.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.common/4.0.1": {
+      "contentHash": "Qf25TVdadDQYf9zVxSd7L9RNQhuP0jCUHmo96XTmIKLxGefylIEV63jRbXBPFzdXmV09TCdcurk+AQ9LiWS2Hg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "bdf4e653bae8f75b5392928a37bf108fcad4d2a5308524420828e82f3e79ded5",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.common/4.0.1/xunit.v3.common.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.core.mtp-v2/4.0.1": {
+      "contentHash": "7qfTfrIfS2wybpSVyRLmhXHbSudD2eNw66LfukixmKsRCTcfvOrLsx0qGL/lObcEh3Z2F4SIXgoFnLIiB8yfjQ==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "51c8cc20af9bb6071e1df8454579c9048597f5c169db3470dc5057be9844f1da",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.core.mtp-v2/4.0.1/xunit.v3.core.mtp-v2.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.extensibility.core/4.0.1": {
+      "contentHash": "J0d5OfFcp920nZxCRIvU14+TZhiSPQR0wvqEMZ3MRiJLPu1VmYlcRNkmcSW0i1DwkB81gAHc+fHUQf/cU64MYg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "0def7df8a35e99e328a1b8799e169592b961ee06a3f7aac556a42ee8464cecf8",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.extensibility.core/4.0.1/xunit.v3.extensibility.core.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.mtp-v2/4.0.1": {
+      "contentHash": "s88KiWwDDYgOWV3A+ViJiqCe9cLU/Rt6Gb5TfOC7Abv/HKSoj4IHVPcOQk7jPt7HhZHHEts5IuaVpB30eO5B1w==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "9134992ab09b0b8545f7fa31f6ab3c84a659b58493c7afca586a4977ee8998e2",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.mtp-v2/4.0.1/xunit.v3.mtp-v2.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.runner.common/4.0.1": {
+      "contentHash": "p9AyfBpj2e5Iws8B57SbLiSngg7mEdvegHInKR4T2cjt2mis9h8htVgCnmu//agZO4zri6p6VQOj5EkHHTy3gA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2c80dbdeee78193f042e5b5e32c06d3b1d828659fb156c132f82574a5330799f",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.runner.common/4.0.1/xunit.v3.runner.common.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3.runner.inproc.console/4.0.1": {
+      "contentHash": "Hqwfd6ehMIhPmVWUQ2dgmknzuLFTWeyp8ES1q3D4YR5bQVyiXDcaIoaFwqAz2zgLr49WaW4Mz7VVncP7u/Q8/Q==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "621fc57c6e5ab43360c5933415c98727f36abf658d1a7d9793159a2b827d4a5f",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3.runner.inproc.console/4.0.1/xunit.v3.runner.inproc.console.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "xunit.v3/4.0.1": {
+      "contentHash": "KpDYf6jFjYfOchuRJOAXPOpwN03hLE1AF4kWzCUSnhr8JZMiGH4BT1YidCcm6BE1H4E90GyJzuKoCwXbg9PXmA==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "c0407f2bfbba8b98dfc27d55a8707c47afffa3debf66b1b562aba818159f43e8",
+      "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3/4.0.1/xunit.v3.nuspec",
+      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "avalonia.buildservices/11.3.2": {
+      "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
+      "licence": "MIT",
+      "nuspecSha256": "a8846537f7d074b8f9ed753c03678128c36bd046939ee245fad8c575a7cd3e9b",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.buildservices/11.3.2/avalonia.buildservices.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia.remote.protocol/12.1.3": {
+      "contentHash": "HcF69DKyihgg5coLOSp7GTqxQvWAy58LMKauwcHA28uSBJVwu0h5+gTNdJA8Sn/nqJVTRDU98zYsk6i1QSwDVQ==",
+      "licence": "MIT",
+      "nuspecSha256": "4c0cd5ec137d2a376bab20e62bb2cbbdc9b71ffcb044acf41adeaf25cf5025b1",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.remote.protocol/12.1.3/avalonia.remote.protocol.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia/12.1.3": {
+      "contentHash": "l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==",
+      "licence": "MIT",
+      "nuspecSha256": "8fd64a84c229548a71e61390f4a310219f50529af0ee53162ffd39e7874ff4dc",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia/12.1.3/avalonia.nuspec",
+      "classification": "Build-only verification dependency for the isolated PRF.09 Native AOT probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "microcom.runtime/0.11.6": {
+      "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ==",
+      "licence": "MIT",
+      "nuspecSha256": "c7aeab4b73acdba3bb8e66865c2bbe67566b8593d972be2089181344adef345f",
+      "source": "https://api.nuget.org/v3-flatcontainer/microcom.runtime/0.11.6/microcom.runtime.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "arcforges.sdk.contracts/1.0.0-ci.216.1": {
+      "licence": "Apache-2.0",
+      "nuspecSha256": "c7de5c36751d21de28171308dd99c25ec6a451baaf08a0a824534a73260c8a12",
+      "classification": "Exact published CON producer required to consume generated Invocation from ArcForges.Sdk.Contracts 1.0.0-ci.216.1; direct consumer ArcForges.Capabilities, transitively locked for the existing Capabilities and Contributions production/test projects. Apache-2.0 is permitted inside AGPL consumers.",
+      "contentHash": "aN/9J61hb7TTPnOBugNHD4Ic3aBc/3zTIsmseTdaCNO/RiaOTwFnsteg7UKg4pYAfuiL3AkTjjSrxmZ3rNIPMg==",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.sdk.contracts/1.0.0-ci.216.1/arcforges.sdk.contracts.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.contracts.publicapi/1.0.0-ci.216.1": {
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2001724ed917f3754749a16ff5cd458ec50ae6d8a26025456ad21732f4954fad",
+      "classification": "Exact transitive dependency of ArcForges.Sdk.Contracts 1.0.0-ci.216.1 in the existing Capabilities and Contributions production/test lock graphs; no direct PublicApi reference is added. Apache-2.0 is permitted inside AGPL consumers.",
+      "contentHash": "cj1wcu/v8bSGL0pGbKYMcJGFFs7SGF3jsG6GXm49cpj3Cal/tl2orj5jdoDBweOH0LeWZisNfFhfXkvnKR9wfQ==",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.publicapi/1.0.0-ci.216.1/arcforges.contracts.publicapi.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    }
+  },
+  "pythonClosure": {
+    "pre-commit/4.6.0": {
+      "hashes": [
+        "718d2208cef53fdc38206e40524a6d4d9576d103eb16f0fec11c875e7716e9d9",
+        "e2cf246f7299edcabcf15f9b0571fdce06058527f0a06535068a86d38089f29b"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "pre_commit-4.6.0.dist-info/LICENSE",
+          "sha256": "ea2ca27cba7cc35822d95a46d59bcd3cc88e196592e6390d1949a359ffc990e8"
+        },
+        {
+          "source": "pre_commit-4.6.0.dist-info/METADATA",
+          "sha256": "4db1e1d0aa58955d863cb9e0382470ff2b73a2baad9110c14094c70e9f29dd42"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "cfgv/3.5.0": {
+      "hashes": [
+        "a8dc6b26ad22ff227d2634a65cb388215ce6cc96bbcc5cfde7641ae87e8dacc0",
+        "d5b1034354820651caa73ede66a6294d6e95c1b00acc5e9b098e917404669132"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "cfgv-3.5.0.dist-info/LICENSE",
+          "sha256": "01fc3f8031a672b3f5d7d8ac262e432f3ea812809f5697d6bc5b270bf6446561"
+        },
+        {
+          "source": "cfgv-3.5.0.dist-info/METADATA",
+          "sha256": "ae126b80e15f39d0feff7368cefea2ea6478fdcedcde52918d0f58b668e19137"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "identify/2.6.19": {
+      "hashes": [
+        "20e6a87f786f768c092a721ad107fc9df0eb89347be9396cadf3f4abbd1fb78a",
+        "6be5020c38fcb07da56c53733538a3081ea5aa70d36a156f83044bfbf9173842"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "identify-2.6.19.dist-info/LICENSE",
+          "sha256": "edbc2ad3b7084fac873e1b1b450fd370d914eb97f7f31263b4ff65f47dc10c43"
+        },
+        {
+          "source": "identify-2.6.19.dist-info/METADATA",
+          "sha256": "6bd3f4b6084b3aa9bbfdd4631b2edffdc2908b396dfc2971891d0356bccb4965"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "nodeenv/1.10.0": {
+      "hashes": [
+        "5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827",
+        "996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb"
+      ],
+      "licence": "BSD-3-Clause",
+      "evidence": [
+        {
+          "source": "nodeenv-1.10.0.dist-info/METADATA",
+          "sha256": "a8424896a12fd1be10526834176fc754cd296c900f40da655fb2e03c1b7eb921"
+        },
+        {
+          "source": "nodeenv-1.10.0.dist-info/licenses/LICENSE",
+          "sha256": "606faf42d48b54d539dae99db6fecd48544535587e27275b319a3f36113cb6fa"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "pyyaml/6.0.3": {
+      "hashes": [
+        "00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c",
+        "0150219816b6a1fa26fb4699fb7daa9caf09eb1999f3b70fb6e786805e80375a",
+        "02893d100e99e03eda1c8fd5c441d8c60103fd175728e23e431db1b589cf5ab3",
+        "02ea2dfa234451bbb8772601d7b8e426c2bfa197136796224e50e35a78777956",
+        "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6",
+        "10892704fc220243f5305762e276552a0395f7beb4dbf9b14ec8fd43b57f126c",
+        "16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65",
+        "1d37d57ad971609cf3c53ba6a7e365e40660e3be0e5175fa9f2365a379d6095a",
+        "1ebe39cb5fc479422b83de611d14e2c0d3bb2a18bbcb01f229ab3cfbd8fee7a0",
+        "214ed4befebe12df36bcc8bc2b64b396ca31be9304b8f59e25c11cf94a4c033b",
+        "2283a07e2c21a2aa78d9c4442724ec1eb15f5e42a723b99cb3d822d48f5f7ad1",
+        "22ba7cfcad58ef3ecddc7ed1db3409af68d023b7f940da23c6c2a1890976eda6",
+        "27c0abcb4a5dac13684a37f76e701e054692a9b2d3064b70f5e4eb54810553d7",
+        "28c8d926f98f432f88adc23edf2e6d4921ac26fb084b028c733d01868d19007e",
+        "2e71d11abed7344e42a8849600193d15b6def118602c4c176f748e4583246007",
+        "34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310",
+        "37503bfbfc9d2c40b344d06b2199cf0e96e97957ab1c1b546fd4f87e53e5d3e4",
+        "3c5677e12444c15717b902a5798264fa7909e41153cdf9ef7ad571b704a63dd9",
+        "3ff07ec89bae51176c0549bc4c63aa6202991da2d9a6129d7aef7f1407d3f295",
+        "41715c910c881bc081f1e8872880d3c650acf13dfa8214bad49ed4cede7c34ea",
+        "418cf3f2111bc80e0933b2cd8cd04f286338bb88bdc7bc8e6dd775ebde60b5e0",
+        "44edc647873928551a01e7a563d7452ccdebee747728c1080d881d68af7b997e",
+        "4a2e8cebe2ff6ab7d1050ecd59c25d4c8bd7e6f400f5f82b96557ac0abafd0ac",
+        "4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9",
+        "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7",
+        "5190d403f121660ce8d1d2c1bb2ef1bd05b5f68533fc5c2ea899bd15f4399b35",
+        "5498cd1645aa724a7c71c8f378eb29ebe23da2fc0d7a08071d89469bf1d2defb",
+        "5cf4e27da7e3fbed4d6c3d8e797387aaad68102272f8f9752883bc32d61cb87b",
+        "5e0b74767e5f8c593e8c9b5912019159ed0533c70051e9cce3e8b6aa699fcd69",
+        "5ed875a24292240029e4483f9d4a4b8a1ae08843b9c54f43fcc11e404532a8a5",
+        "5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b",
+        "5fdec68f91a0c6739b380c83b951e2c72ac0197ace422360e6d5a959d8d97b2c",
+        "6344df0d5755a2c9a276d4473ae6b90647e216ab4757f8426893b5dd2ac3f369",
+        "64386e5e707d03a7e172c0701abfb7e10f0fb753ee1d773128192742712a98fd",
+        "652cb6edd41e718550aad172851962662ff2681490a8a711af6a4d288dd96824",
+        "66291b10affd76d76f54fad28e22e51719ef9ba22b29e1d7d03d6777a9174198",
+        "66e1674c3ef6f541c35191caae2d429b967b99e02040f5ba928632d9a7f0f065",
+        "6adc77889b628398debc7b65c073bcb99c4a0237b248cacaf3fe8a557563ef6c",
+        "79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c",
+        "7c6610def4f163542a622a73fb39f534f8c101d690126992300bf3207eab9764",
+        "7f047e29dcae44602496db43be01ad42fc6f1cc0d8cd6c83d342306c32270196",
+        "8098f252adfa6c80ab48096053f512f2321f0b998f98150cea9bd23d83e1467b",
+        "850774a7879607d3a6f50d36d04f00ee69e7fc816450e5f7e58d7f17f1ae5c00",
+        "8d1fab6bb153a416f9aeb4b8763bc0f22a5586065f86f7664fc23339fc1c1fac",
+        "8da9669d359f02c0b91ccc01cac4a67f16afec0dac22c2ad09f46bee0697eba8",
+        "8dc52c23056b9ddd46818a57b78404882310fb473d63f17b07d5c40421e47f8e",
+        "9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28",
+        "93dda82c9c22deb0a405ea4dc5f2d0cda384168e466364dec6255b293923b2f3",
+        "96b533f0e99f6579b3d4d4995707cf36df9100d67e0c8303a0c55b27b5f99bc5",
+        "9c57bb8c96f6d1808c030b1687b9b5fb476abaa47f0db9c0101f5e9f394e97f4",
+        "9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b",
+        "9f3bfb4965eb874431221a3ff3fdcddc7e74e3b07799e0e84ca4a0f867d449bf",
+        "a33284e20b78bd4a18c8c2282d549d10bc8408a2a7ff57653c0cf0b9be0afce5",
+        "a80cb027f6b349846a3bf6d73b5e95e782175e52f22108cfa17876aaeff93702",
+        "b30236e45cf30d2b8e7b3e85881719e98507abed1011bf463a8fa23e9c3e98a8",
+        "b3bc83488de33889877a0f2543ade9f70c67d66d9ebb4ac959502e12de895788",
+        "b865addae83924361678b652338317d1bd7e79b1f4596f96b96c77a5a34b34da",
+        "b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d",
+        "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc",
+        "bdb2c67c6c1390b63c6ff89f210c8fd09d9a1217a465701eac7316313c915e4c",
+        "c1ff362665ae507275af2853520967820d9124984e0f7466736aea23d8611fba",
+        "c2514fceb77bc5e7a2f7adfaa1feb2fb311607c9cb518dbc378688ec73d8292f",
+        "c3355370a2c156cffb25e876646f149d5d68f5e0a3ce86a5084dd0b64a994917",
+        "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5",
+        "d0eae10f8159e8fdad514efdc92d74fd8d682c933a6dd088030f3834bc8e6b26",
+        "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f",
+        "ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b",
+        "eda16858a3cab07b80edaf74336ece1f986ba330fdb8ee0d6c0d68fe82bc96be",
+        "ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c",
+        "efd7b85f94a6f21e4932043973a7ba2613b059c4a000551892ac9f1d11f5baf3",
+        "f7057c9a337546edc7973c0d3ba84ddcdf0daa14533c2065749c9075001090e6",
+        "fa160448684b4e94d80416c0fa4aac48967a969efe22931448d853ada8baf926",
+        "fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "pyyaml-6.0.3.dist-info/METADATA",
+          "sha256": "847a701020334386852b6e07bad1053cb0ce3da9ee1846e7e9d02b24e8bb3f8d"
+        },
+        {
+          "source": "pyyaml-6.0.3.dist-info/licenses/LICENSE",
+          "sha256": "8d3928f9dc4490fd635707cb88eb26bd764102a7282954307d3e5167a577e8a4"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "virtualenv/21.5.1": {
+      "hashes": [
+        "55aa670b67bbfb991b03fda39bd3276d92c419d702376e98c5df1c9989a26783",
+        "dca3bf98275a59c652b69d68e73433e597d977c2da9198882479d1a7188009c8"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "virtualenv-21.5.1.dist-info/METADATA",
+          "sha256": "a2b4e6261451dbe7dfc3ff6b720292889b9b02edb9023c4f3f93337bfa2f3187"
+        },
+        {
+          "source": "virtualenv-21.5.1.dist-info/licenses/LICENSE",
+          "sha256": "5c15919378c5b2aaab7b19cea70d8cdc75f76879e32454e4c0399f8b71d171e9"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "distlib/0.4.3": {
+      "hashes": [
+        "4b0ce306c966eb73bc3a7b6abad017c556dadd92c44701562cd528ac7fde4d5b",
+        "f152097224a0ae24be5a0f6bae1b9359af82133bce63f98a95f86cae1aede9ed"
+      ],
+      "licence": "PSF-2.0",
+      "evidence": [
+        {
+          "source": "distlib-0.4.3.dist-info/METADATA",
+          "sha256": "6c988f8c23faa0ef8734f6863b32976d65f5851333161e8a8df3d80fc57e080d"
+        },
+        {
+          "source": "distlib-0.4.3.dist-info/licenses/LICENSE.txt",
+          "sha256": "808e10c8a6ab8deb149ff9b3fb19f447a808094606d712a9ca57fead3552599d"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "filelock/3.29.5": {
+      "hashes": [
+        "6e6034c57a00a020e767f2614a5539863f056de7e7991d6d1473aef7ff73f156",
+        "8af830889ba3a0ffcefbd6c7d2af8a54012058103771f2e10848222f476a1693"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "filelock-3.29.5.dist-info/METADATA",
+          "sha256": "0221323a2a7129ed6f8672eecd33c5b0e4b78ff2f179ba751ed89b3de8538fec"
+        },
+        {
+          "source": "filelock-3.29.5.dist-info/licenses/LICENSE",
+          "sha256": "608c89d5060ae9921adccf3236695bc654a9946e12323ef6c021dfa04e294d48"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "platformdirs/4.10.0": {
+      "hashes": [
+        "31e761a6a0ca04faf7353ea759bdba55652be214725111e5aac52dfa29d4bef7",
+        "fb516cdb12eb0d857d0cd85a7c57cea4d060bee4578d6cf5a14dfdf8cbf8784a"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "platformdirs-4.10.0.dist-info/METADATA",
+          "sha256": "c4ee18f5b6d2b38512a30c289200b1463f298a8261c8fa63f2584ea97e93cf78"
+        },
+        {
+          "source": "platformdirs-4.10.0.dist-info/licenses/LICENSE",
+          "sha256": "29e0fd62e929850e86eb28c3fdccf0cefdf4fa94879011cffb3d0d4bed6d4db6"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    },
+    "python-discovery/1.4.3": {
+      "hashes": [
+        "ad57d7045a862460d4a235986c33f13ed707d3aeb9153fa47eb7dfd0d4673289",
+        "b6e1e4a7d9e3f6948c39746ffe8218225162d738ba39d05ab1d2f6c1cac4878c"
+      ],
+      "licence": "MIT",
+      "evidence": [
+        {
+          "source": "python_discovery-1.4.3.dist-info/METADATA",
+          "sha256": "ffd0a6dec984955e2582e78b7183037478c5ce8ebab633b5b6a1fe2ba2b0906d"
+        },
+        {
+          "source": "python_discovery-1.4.3.dist-info/licenses/LICENSE",
+          "sha256": "90e25e1faf2a4aaea8d95ee8e7f5738b052a1acc0c9c58068101f931a86bd588"
+        }
+      ],
+      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+    }
+  }
+}
