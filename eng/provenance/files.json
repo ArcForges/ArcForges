@@ -601,7 +601,15 @@
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/ActionAvailabilityTests.cs",
     "src/BuildingBlocks/ArcForges.Capabilities/InvocationPipeline.cs",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/InvocationPipelineTests.cs",
-    "eng/policy/dependency-reviews/plt-24-r1.json"
+    "eng/policy/dependency-reviews/plt-24-r1.json",
+    "src/BuildingBlocks/ArcForges.Security/Approvals/ApprovalContracts.cs",
+    "src/BuildingBlocks/ArcForges.Security/Approvals/ApprovalCoordinator.cs",
+    "src/BuildingBlocks/ArcForges.Security/Approvals/Steering.cs",
+    "src/BuildingBlocks/ArcForges.Security/Approvals/StepUp.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/ApprovalCoordinatorTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/ApprovalGuardrailTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/SqliteApprovalStoreTests.cs",
+    "eng/policy/dependency-reviews/plt-39-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

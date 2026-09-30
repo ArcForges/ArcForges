@@ -112,7 +112,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
-      "blob": "52ce0797b29d637436ec478a384227da39f8fca2"
+      "blob": "4f8624aa6d1453f8fc8a9617477448659a9f91d9"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",

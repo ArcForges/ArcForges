@@ -1443,5 +1443,75 @@
     "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.TryResolveShortcut(ArcForges.Desktop.Shell.Commands.CommandShortcut, out ArcForges.Desktop.Shell.Commands.ShellCommand?)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.TryResolveShortcutUsesNormalizedBindingsAndRefusesUnknownGestures()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.ApprovalCoordinator.CancelAsync(System.Guid, ArcForges.Security.HumanPrincipal, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.ApprovalAfterCancellationIsRefusedAndCancellationReplayDoesNotChangeState()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.ApprovalCoordinator.DecideAsync(System.Guid, ArcForges.Security.Approvals.ApprovalDecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.SameDecisionIsIdempotentAndConflictingDuplicateCannotReplaceIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.ApprovalCoordinator.GetAsync(System.Guid, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.PendingApprovalExpiresAtExactBoundaryAndCannotBeDecided()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.ApprovalCoordinator.RequestAsync(ArcForges.Security.Approvals.ApprovalIntent, System.TimeSpan, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.DuplicateRequestDoesNotExtendExpiryOrChangeTheActionBinding()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.IApprovalStore.ReadAsync(System.Guid, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.ApprovalStoreContractUsesInsertAndVersionCompareAndSwap()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.IApprovalStore.TryCreatePendingAsync(ArcForges.Security.Approvals.ApprovalSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.ApprovalStoreContractUsesInsertAndVersionCompareAndSwap()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.IApprovalStore.TryResolveAsync(System.Guid, System.Int64, ArcForges.Security.Approvals.ApprovalSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalCoordinatorTests.ApprovalStoreContractUsesInsertAndVersionCompareAndSwap()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.ILocalPresenceVerifier.ConfirmLocalPresenceAsync(ArcForges.Security.Approvals.StepUpChallenge, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.HighestRiskRequiresSeparateDeviceLocalPresenceAfterFreshIdentityStepUp()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.IStepUpAuthenticator.AuthenticateAsync(ArcForges.Security.Approvals.StepUpChallenge, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.BiometricApplicationUnlockCannotSatisfyFreshStepUpEvenWithLocalPresence()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.StepUpCoordinator.CompleteAsync(ArcForges.Security.Approvals.StepUpChallenge, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.HighestRiskRequiresSeparateDeviceLocalPresenceAfterFreshIdentityStepUp()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.StepUpCoordinator.CreateChallenge(ArcForges.Security.HumanPrincipal, ArcForges.Contracts.Foundation.Values.CommandId, ArcForges.Security.Approvals.SensitiveOperation, ArcForges.Security.RiskAssessment, System.TimeSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.StepUpChallengeExpiresAtBoundaryAndRejectsWrongIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.StepUpCoordinator.TryConsume(ArcForges.Security.Approvals.StepUpProof, ArcForges.Security.HumanPrincipal, ArcForges.Contracts.Foundation.Values.CommandId, ArcForges.Security.Approvals.SensitiveOperation, ArcForges.Security.RiskAssessment)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.BiometricApplicationUnlockCannotSatisfyFreshStepUpEvenWithLocalPresence()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.IRunningOperationSteerer.TryApplyAsync(ArcForges.Security.Approvals.SteeringRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.SteeringChangesOnlyTheRunningOperationDirectionAndLeavesApprovalPending()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Approvals.SteeringCoordinator.ApplyAsync(ArcForges.Security.Approvals.SteeringRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.SteeringChangesOnlyTheRunningOperationDirectionAndLeavesApprovalPending()"
   }
 ]

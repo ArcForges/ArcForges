@@ -218,8 +218,8 @@
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
     "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
     "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
-    "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
-    "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "0698528ca5db15df9aaff4f645850d383b0b72645bec8848154e90e63d135629",
+    "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "945292cbe53b9d12c5c5a06300fa7ccc29b30d1088ad4439df0803e7ee33aae6",
+    "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "bc1b585f661488c38b18e0bd9558b2738ec05da93809a58d04f6d4b168dc3afa",
     "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
     "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c2ee803e0ea8307fff6edd13f351182ea743182bc24b35ff12bdbc1cc6e94e49",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
@@ -671,18 +671,18 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "af-20260928-a01",
+    "owner": "af-20260928-p02",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
-    "reviewedOn": "2026-09-29",
-    "baselineCommit": "f84180e89d40081db127c145d83ab18c129af1b1",
-    "maintenanceAssessment": "PLT.28 adds only the already-authorized in-repository ArcForges.Capabilities project edge to Desktop.Shell, so the Shell command palette delegates availability to the canonical ICapabilityProvider rather than copying or approximating capability rules. The locked Shell production and test project graphs now reflect this edge and its transitive project graph. The aggregate 53-coordinate NuGet closure and every resolved version and content hash are unchanged; there is no new package coordinate, PackageVersion, external dependency, central pin, package ID, or release activation. Only the two Shell lockfiles change semantically; all other locks, the solution, package manifest and shared build configuration remain untouched. Shell stays non-packable. This immutable successor chains from the active PLT.51 receipt and preserves all prior dependency-review receipts.",
+    "reviewedOn": "2026-09-30",
+    "baselineCommit": "8daba1df5130d9e8c344decd88a71d97c1fcc840",
+    "maintenanceAssessment": "PLT.39 adds only a test-project reference from Security.Tests to the existing Persistence.Sqlite project so the approval store contract is exercised against the real SqliteStore across close/reopen. This is test-only; production Security has no new project edge. The regenerated Security.Tests lock consumes only already-admitted package identities, versions, and content hashes from the existing Sqlite closure; no new package coordinate, central pin, package ID, dependency version, licence identity, or runtime closure is introduced. This immutable successor chains from active plt-28-r1 and preserves prior receipts and all unrelated dependency policy.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 restore of the Shell test project regenerated only the two authorized Shell lockfiles. Locked restore, Release build, focused and applicable full tests, architecture and exact-head hosted gates remain required before integration.",
-      "aot-trim": "No AOT/trim setting, SDK, framework or native toolchain changed; Shell remains non-packable and no new runtime/AOT claim is made. Existing AOT/trim gates remain required.",
-      "compatibility": "The new internal project edge uses the existing Capabilities owner and public ICapabilityProvider contract. Availability remains delegated to that canonical evaluator; no copied rule, API owner, public package identity or external dependency is introduced.",
-      "licence-provenance": "No external source or package is introduced. The existing Shell project classification is preserved; only the two exact PLT.28 C# paths and immutable receipt receive firstParty rows, and the existing Shell active-project row is bound to the exact project blob.",
-      "security-sbom": "The locked aggregate remains exactly 53 existing NuGet coordinates with identical content hashes and versions; no package closure expansion occurs. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
-      "runtime-performance-migration": "No runtime, persistence, migration, framework, native ABI or performance claim is introduced; this task supplies an in-process command registry/palette and canonical availability delegation only.",
+      "compilation": "Pinned SDK 10.0.400 locked restore and Release build for Security.Tests passed; the actual xUnit v3 runner executed 48/48 tests. Final rebased source gates and exact-head hosted CI remain required.",
+      "aot-trim": "No AOT/trim setting, SDK, framework or native toolchain changed; existing AOT/trim gates remain required.",
+      "compatibility": "The only new project edge is test-only Security.Tests to the existing Persistence.Sqlite project; no production edge, public API, package identity or external dependency is added. Existing approval/storage contracts and wire shapes are unchanged.",
+      "licence-provenance": "No external source or package is introduced. Provenance adds firstParty classification only for the task-owned approval sources/tests and this immutable successor; the existing Security.Tests project inventory binds to the exact changed project blob.",
+      "security-sbom": "The aggregate locked NuGet closure retains the same package coordinates, versions and content hashes; the test project reuses the already admitted Persistence.Sqlite closure. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
+      "runtime-performance-migration": "The real SqliteStore close/reopen test demonstrates same-store process-restart persistence only, not cross-device recovery. No production runtime, migration, framework, native ABI or performance claim is introduced.",
       "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400; no framework major, runtime, Android, native ABI or toolchain version changed."
     },
     "inputHashes": {
@@ -902,8 +902,8 @@
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
       "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj": "c5453614f44777bf7a42ed393c51c66d901603d29e8077013730655294c7df43",
-      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "055824c3b541e94eae4ba2662b0e5ca2e819599799e46d0c18e52ad6cf098b32",
-      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "0698528ca5db15df9aaff4f645850d383b0b72645bec8848154e90e63d135629",
+      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "945292cbe53b9d12c5c5a06300fa7ccc29b30d1088ad4439df0803e7ee33aae6",
+      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "bc1b585f661488c38b18e0bd9558b2738ec05da93809a58d04f6d4b168dc3afa",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c2ee803e0ea8307fff6edd13f351182ea743182bc24b35ff12bdbc1cc6e94e49",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
@@ -934,7 +934,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-51-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-28-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -945,7 +945,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-28-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-39-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
