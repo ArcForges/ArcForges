@@ -51,7 +51,8 @@ class SecretScanAllowlistTests(unittest.TestCase):
 
     @staticmethod
     def _exact_regex(line):
-        return '^' + re.escape(line).replace(r'\ ', ' ').replace(r'\.', '[.]') + '$'
+        # Gitleaks reports every added line after the first of a fragment with its preceding newline.
+        return '^\\n?' + re.escape(line).replace(r'\ ', ' ').replace(r'\.', '[.]') + '$'
 
     def test_allowlist_has_only_the_two_exact_path_bound_groups(self):
         self.assertTrue(self.config['extend']['useDefault'])
@@ -99,10 +100,22 @@ class SecretScanAllowlistTests(unittest.TestCase):
         self.assertEqual(sum(self._allowed(self.RECEIPT_PATH, line) for line in receipt_lines), 2)
         for line in policy_lines:
             self.assertTrue(self._allowed(self.POLICY_PATH, line))
+            self.assertTrue(self._allowed(self.POLICY_PATH, '\n' + line))
             self.assertFalse(self._allowed(self.POLICY_PATH, line, 'another-rule'))
         for line in receipt_lines:
             self.assertTrue(self._allowed(self.RECEIPT_PATH, line))
+            self.assertTrue(self._allowed(self.RECEIPT_PATH, '\n' + line))
             self.assertFalse(self._allowed(self.RECEIPT_PATH, line, 'another-rule'))
+
+    def test_actual_files_carry_exactly_the_allowlisted_project_lines(self):
+        for path, count in ((self.POLICY_PATH, 4), (self.RECEIPT_PATH, 2)):
+            with self.subTest(path=path):
+                lines = (ROOT / path).read_text(encoding='utf-8').split('\n')
+                observed = [line for line in lines if any(project in line for project in self.PROJECT_PATHS)]
+                self.assertEqual(len(observed), count)
+                for line in observed:
+                    self.assertTrue(self._allowed(path, line))
+                    self.assertTrue(self._allowed(path, '\n' + line))
 
     def test_wrong_key_digest_path_swaps_suffix_and_unrelated_hash_are_rejected(self):
         project_path, tests_path = self.PROJECT_PATHS
@@ -115,6 +128,12 @@ class SecretScanAllowlistTests(unittest.TestCase):
             ('eng/policy/other.json', valid_project),
             (self.POLICY_PATH, valid_project + ' credential=example-not-a-secret'),
             (self.POLICY_PATH, self._line(project_path, 'a' * 64, 4)),
+            (self.POLICY_PATH, '\n\n' + valid_project),
+            (self.POLICY_PATH, valid_project + '\n'),
+            (self.POLICY_PATH, '\n' + valid_project + '\n' + valid_project),
+            (self.POLICY_PATH, ' ' + valid_project),
+            (self.POLICY_PATH, self._line(project_path, project_hash, 5)),
+            (self.RECEIPT_PATH, self._line(project_path, project_hash, 4)),
         )
         for path, line in candidates:
             with self.subTest(path=path, line=line):

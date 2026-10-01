@@ -107,6 +107,14 @@
       "blob": "439261198ed7e999ef2871fe1c68f7c0e61a680b"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj",
+      "blob": "a7ffa7b5cb74ae2e1a06e36bfe90601f3e05fa83"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+      "blob": "3b1cf48e40fffc2151c81be96de942b9794b9f88"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
       "blob": "f5c6dee76aeab29ac95ba4c36f7ed501941af8e8"
     },

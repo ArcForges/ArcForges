@@ -1538,5 +1538,105 @@
     "apiSymbol": "ArcForges.Desktop.Shell.ShellLifecycleCoordinator.ExecuteShutdownAsync(ArcForges.Desktop.Shell.ShellShutdownState, ArcForges.Desktop.Shell.ShellShutdownDecision, System.Threading.CancellationToken)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ExecuteShutdownAsyncRequiresChoiceAndRunsDrainInOrderWithoutLosingWork()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretApplicationDimension.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ApplicationDimensionAcceptsOnlyFrozenFirstPartyProductValues(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretBroker.Store(ArcForges.Security.Secrets.SecretPartition, System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ReferencesAreOpaqueAndPersonalWorkspaceScopesAreSeparated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretBroker.GrantConnectorUse(ArcForges.Security.Secrets.SecretRef, ArcForges.Security.ActorChain, string, System.TimeSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ConnectorGrantIsForegroundAndDefinitionBoundAndRevokesImmediately()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretBroker.UseConnectorGrant(ArcForges.Security.Secrets.ConnectorSecretGrant, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ConnectorGrantIsForegroundAndDefinitionBoundAndRevokesImmediately()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretBroker.Revoke(ArcForges.Security.Secrets.ConnectorSecretGrant)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ConnectorGrantIsForegroundAndDefinitionBoundAndRevokesImmediately()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretBroker.Delete(ArcForges.Security.Secrets.SecretRef)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ReferencesAreOpaqueAndPersonalWorkspaceScopesAreSeparated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretPartition.Personal()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ReferencesAreOpaqueAndPersonalWorkspaceScopesAreSeparated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretPartition.ForWorkspace(ArcForges.Contracts.Foundation.Values.WorkspaceId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ReferencesAreOpaqueAndPersonalWorkspaceScopesAreSeparated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.ISecretBackingStore.Write(string, System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.ISecretBackingStore.Read(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.ISecretBackingStore.Delete(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.ISecretHostContextProvider.GetCurrent()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ConnectorGrantIsForegroundAndDefinitionBoundAndRevokesImmediately()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.IConnectorSecretOperationExecutor.Execute(string, System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ConnectorGrantIsForegroundAndDefinitionBoundAndRevokesImmediately()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretRef.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ReferencesAreOpaqueAndPersonalWorkspaceScopesAreSeparated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.ConnectorSecretGrant.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.ConnectorGrantIsForegroundAndDefinitionBoundAndRevokesImmediately()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.WindowsCredentialManagerSecretStore.Write(string, System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.WindowsCredentialManagerSecretStore.Read(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.WindowsCredentialManagerSecretStore.Delete(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.SecretBroker.RevokeAllConnectorGrants()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.SignOutRevokesEveryOutstandingGrantImmediatelyWithoutDeletingSecretsOrOtherAppGrants()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.OsSecretStore.CreateForCurrentPlatform()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.PlatformStoreSelectionIsFailClosedAndNeverOverstatesIsolation()"
   }
 ]
