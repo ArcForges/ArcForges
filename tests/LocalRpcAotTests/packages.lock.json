@@ -15,11 +15,11 @@
       },
       "Grpc.AspNetCore.Server": {
         "type": "Direct",
-        "requested": "[2.83.0, )",
-        "resolved": "2.83.0",
-        "contentHash": "rWeSaXaSPIIerc82lhHKqmzlp/sgLnG+Zw1c3YEEVp/un+hJKPxJOXWuGUOS2cs3EvcZBZ2tliXsnAg5Mdk2Ew==",
+        "requested": "[2.84.0, )",
+        "resolved": "2.84.0",
+        "contentHash": "RXUkMjU+Hu5tvf5EXNoJlKX+ADvR2HERkNRznMFpsQQiHFsaQ+OYyhgomuLxAaiNuPUmCUGPxyiCdqq//lrQdg==",
         "dependencies": {
-          "Grpc.Net.Common": "2.83.0"
+          "Grpc.Net.Common": "2.84.0"
         }
       },
       "Grpc.Net.Client": {
