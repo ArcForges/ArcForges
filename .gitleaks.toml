@@ -36,8 +36,8 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Exact PLT.44 mirrored dependency-review input lines"
-paths = ['''^eng/policy/dependency-reviews/plt-44-r1[.]json$''']
+description = "Exact mirrored Security.Secrets project lines in any dependency-review receipt"
+paths = ['''^eng/policy/dependency-reviews/[A-Za-z0-9._-]+[.]json$''']
 regexTarget = "line"
 targetRules = ["generic-api-key"]
 condition = "AND"

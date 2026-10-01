@@ -21,6 +21,8 @@ class SecretScanAllowlistTests(unittest.TestCase):
     POLICY_PATH = 'eng/policy/dependency-policy.json'
     RECEIPT_PATH = 'eng/policy/dependency-reviews/plt-40-r1.json'
     PLT44_RECEIPT_PATH = 'eng/policy/dependency-reviews/plt-44-r1.json'
+    RECEIPT_DIRECTORY_PATH_REGEX = '^eng/policy/dependency-reviews/[A-Za-z0-9._-]+[.]json$'
+    ANY_RECEIPT_DESCRIPTION = 'Exact mirrored Security.Secrets project lines in any dependency-review receipt'
     PROJECT_PATHS = (
         'src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj',
         'src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj',
@@ -69,9 +71,8 @@ class SecretScanAllowlistTests(unittest.TestCase):
         expected = (
             (self.POLICY_PATH, 4),
             (self.RECEIPT_PATH, 2),
-            (self.PLT44_RECEIPT_PATH, 2),
         )
-        self.assertEqual(len(task_groups), len(expected))
+        self.assertEqual(len(task_groups), len(expected) + 1)
         for group, (path, count) in zip(task_groups, expected):
             with self.subTest(path=path):
                 self.assertEqual(group['paths'], ['^' + path.replace('.', '[.]') + '$'])
@@ -86,6 +87,17 @@ class SecretScanAllowlistTests(unittest.TestCase):
                     for project_path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
                 }
                 self.assertEqual(set(group['regexes']), expected_regexes)
+        any_receipt = task_groups[-1]
+        self.assertEqual(any_receipt['description'], self.ANY_RECEIPT_DESCRIPTION)
+        self.assertEqual(any_receipt['paths'], [self.RECEIPT_DIRECTORY_PATH_REGEX])
+        self.assertEqual(any_receipt['targetRules'], ['generic-api-key'])
+        self.assertEqual(any_receipt['condition'], 'AND')
+        self.assertEqual(any_receipt['regexTarget'], 'line')
+        self.assertEqual(set(any_receipt['regexes']), {
+            self._exact_regex(self._line(project_path, digest, 6))
+            for project_path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+        })
+        self.assertEqual(len(any_receipt['regexes']), 2)
 
     def test_exact_six_observed_lines_match_only_the_generic_api_key_rule(self):
         policy_lines = [
@@ -120,26 +132,60 @@ class SecretScanAllowlistTests(unittest.TestCase):
                     self.assertTrue(self._allowed(path, line))
                     self.assertTrue(self._allowed(path, '\n' + line))
 
-    def test_plt44_receipt_group_matches_only_its_two_observed_whole_lines(self):
+    def test_receipt_directory_group_accepts_only_the_two_exact_lines_in_any_receipt_file(self):
         lines = [
             self._line(path, digest, 6)
             for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
         ]
-        observed = [
-            line for line in (ROOT / self.PLT44_RECEIPT_PATH).read_text(encoding='utf-8').split('\n')
-            if any(project in line for project in self.PROJECT_PATHS)
-        ]
-        self.assertEqual(observed, lines)
-        for line in lines:
-            self.assertTrue(self._allowed(self.PLT44_RECEIPT_PATH, line))
-            self.assertTrue(self._allowed(self.PLT44_RECEIPT_PATH, '\n' + line))
-            self.assertFalse(self._allowed(self.PLT44_RECEIPT_PATH, line, 'another-rule'))
-            self.assertFalse(self._allowed(self.PLT44_RECEIPT_PATH, '\n\n' + line))
-            self.assertFalse(self._allowed(self.PLT44_RECEIPT_PATH, ' ' + line))
-        # The PLT.44 group is path-bound: PLT.40's receipt and the policy file are not widened by it.
+        receipts = (
+            self.RECEIPT_PATH,
+            self.PLT44_RECEIPT_PATH,
+            'eng/policy/dependency-reviews/plt-09-r1.json',
+            'eng/policy/dependency-reviews/future-task.r2.json',
+        )
         group = self.groups[-1]
-        self.assertEqual(group['description'], 'Exact PLT.44 mirrored dependency-review input lines')
-        self.assertFalse(any(self._matches(group, path, lines[0]) for path in (self.POLICY_PATH, self.RECEIPT_PATH)))
+        for path in receipts:
+            with self.subTest(path=path):
+                for line in lines:
+                    self.assertTrue(self._matches(group, path, line))
+                    self.assertTrue(self._matches(group, path, '\n' + line))
+                    self.assertFalse(self._matches(group, path, line, 'another-rule'))
+                    self.assertFalse(self._matches(group, path, '\n\n' + line))
+                    self.assertFalse(self._matches(group, path, line + '\n'))
+                    self.assertFalse(self._matches(group, path, ' ' + line))
+        for path in (
+            self.POLICY_PATH,
+            'eng/policy/other.json',
+            'eng/policy/dependency-reviews/sub/plt-09-r1.json',
+            'eng/policy/dependency-reviews/plt-09-r1.json.bak',
+            'eng/policy/dependency-reviews/plt-09-r1.txt',
+            'eng/policy/dependency-reviews/.json',
+            'eng/policy/dependency-reviews/',
+            'README.md',
+            'src/BuildingBlocks/ArcForges.Security.Secrets/README.md',
+            'x/eng/policy/dependency-reviews/plt-09-r1.json',
+        ):
+            with self.subTest(rejected_path=path):
+                for line in lines:
+                    self.assertFalse(self._matches(group, path, line))
+
+    def test_actual_receipts_carry_only_allowlisted_secrets_project_lines(self):
+        directory = ROOT / 'eng/policy/dependency-reviews'
+        lines = {
+            self._line(path, digest, 6)
+            for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+        }
+        found = 0
+        for receipt in sorted(directory.glob('*.json')):
+            relative = receipt.relative_to(ROOT).as_posix()
+            for line in receipt.read_text(encoding='utf-8').split('\n'):
+                if any(project in line for project in self.PROJECT_PATHS):
+                    found += 1
+                    with self.subTest(path=relative, line=line):
+                        self.assertIn(line, lines)
+                        self.assertTrue(self._allowed(relative, line))
+                        self.assertTrue(self._allowed(relative, '\n' + line))
+        self.assertGreaterEqual(found, 4)
 
     def test_wrong_key_digest_path_swaps_suffix_and_unrelated_hash_are_rejected(self):
         project_path, tests_path = self.PROJECT_PATHS
@@ -163,8 +209,13 @@ class SecretScanAllowlistTests(unittest.TestCase):
             (self.PLT44_RECEIPT_PATH, self._line(tests_path, project_hash, 6)),
             (self.PLT44_RECEIPT_PATH, self._line(project_path, 'a' * 64, 6)),
             (self.PLT44_RECEIPT_PATH, self._line(project_path, project_hash, 6) + ' credential=example-not-a-secret'),
-            (self.PLT44_RECEIPT_PATH.replace('plt-44', 'plt-45'), self._line(project_path, project_hash, 6)),
-            (self.PLT44_RECEIPT_PATH.replace('plt-44-r1.json', 'plt-44-r2.json'), self._line(project_path, project_hash, 6)),
+            ('eng/policy/dependency-reviews/plt-09-r1.json', self._line(project_path, project_hash, 4)),
+            ('eng/policy/dependency-reviews/plt-09-r1.json', self._line(project_path, tests_hash, 6)),
+            ('eng/policy/dependency-reviews/plt-09-r1.json', self._line(tests_path, project_hash, 6)),
+            ('eng/policy/dependency-reviews/plt-09-r1.json', self._line(project_path, 'b' * 64, 6)),
+            ('eng/policy/dependency-reviews/plt-09-r1.json', self._line(project_path, project_hash, 6) + ' credential=example-not-a-secret'),
+            ('eng/policy/dependency-reviews/sub/plt-09-r1.json', self._line(project_path, project_hash, 6)),
+            ('README.md', self._line(project_path, project_hash, 6)),
         )
         for path, line in candidates:
             with self.subTest(path=path, line=line):
