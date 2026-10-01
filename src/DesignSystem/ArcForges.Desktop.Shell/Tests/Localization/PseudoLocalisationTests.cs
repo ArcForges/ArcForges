@@ -60,6 +60,11 @@ public sealed class PseudoLocalisationTests
         Assert.False(PseudoLocaliser.IsWholePseudoMessage(text));
         Assert.False(PseudoLocaliser.IsWholePseudoMessage(pseudo + pseudo));
         Assert.False(PseudoLocaliser.IsWholePseudoMessage(pseudo[..^1]));
+        Assert.False(PseudoLocaliser.IsWholePseudoMessage(pseudo[1..]));
+        Assert.False(PseudoLocaliser.IsWholePseudoMessage(pseudo[..^1] + pseudo));
+        Assert.False(PseudoLocaliser.IsWholePseudoMessage(pseudo + "x" + PseudoLocaliser.EndMarker));
+        Assert.False(PseudoLocaliser.IsWholePseudoMessage(PseudoLocaliser.StartMarker + "x" + pseudo));
+        Assert.False(PseudoLocaliser.IsWholePseudoMessage(PseudoLocaliser.StartMarker.ToString()));
         Assert.Throws<FormatException>(() => PseudoLocaliser.Transform("{unterminated"));
         Assert.Throws<ArgumentNullException>(() => PseudoLocaliser.Transform(null!));
         Assert.Throws<ArgumentNullException>(() => PseudoLocaliser.IsWholePseudoMessage(null!));
@@ -183,6 +188,20 @@ public sealed class PseudoLocalisationTests
             Assert.Contains("2 active items to reach", many, StringComparison.Ordinal);
             Assert.Contains("3 unsaved items must be saved", many, StringComparison.Ordinal);
             Assert.DoesNotContain("(s)", one + many, StringComparison.Ordinal);
+
+            // Each singular and plural branch of the single-count sentences is asserted on its own.
+            Assert.Equal(
+                "Quitting will stop new writes and wait for 1 active item to reach a safe point; active work will not be silently discarded.",
+                ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 1, 0)).Consequences);
+            Assert.Equal(
+                "Quitting will stop new writes and wait for 2 active items to reach a safe point; active work will not be silently discarded.",
+                ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 2, 0)).Consequences);
+            Assert.Equal(
+                "1 unsaved item must be saved before writes are flushed and services are disconnected.",
+                ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 0, 1)).Consequences);
+            Assert.Equal(
+                "2 unsaved items must be saved before writes are flushed and services are disconnected.",
+                ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 0, 2)).Consequences);
         }
         finally
         {

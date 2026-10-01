@@ -225,9 +225,12 @@ public sealed class FocusNavigatorTests
                     reachable.Add(id);
                 }
 
-                while (navigator.Move(FocusDirection.Down) || navigator.Move(FocusDirection.Right))
+                // Bounded by the node count so a regression in the roving edge guard fails instead of hanging.
+                int roving = PseudoLocalisationTests.Flatten(surface.Root).Count(static node => node.Keyboard == KeyboardAccess.Roving);
+                for (int moves = 0; moves <= roving && (navigator.Move(FocusDirection.Down) || navigator.Move(FocusDirection.Right)); moves++)
                 {
                     reachable.Add(navigator.CurrentId!);
+                    Assert.True(moves < roving, "Roving navigation did not stop at the last item.");
                 }
 
                 navigator.MoveNext();

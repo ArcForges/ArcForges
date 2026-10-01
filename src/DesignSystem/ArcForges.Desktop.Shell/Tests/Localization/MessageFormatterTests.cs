@@ -61,6 +61,12 @@ public sealed class MessageFormatterTests
     [InlineData("ar", 7L, "few")]
     [InlineData("ar", 11L, "many")]
     [InlineData("ar", 100L, "other")]
+    [InlineData("ar", 3L, "few")]
+    [InlineData("ar", 10L, "few")]
+    [InlineData("ar", 103L, "few")]
+    [InlineData("ar", 99L, "many")]
+    [InlineData("ar", 111L, "many")]
+    [InlineData("ar", 102L, "other")]
     public void PluralCategoriesFollowTheLanguageFamilyRules(string language, long count, string expected)
     {
         const string pattern = "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}";
@@ -89,6 +95,8 @@ public sealed class MessageFormatterTests
         FormatException notAnInteger = Assert.Throws<FormatException>(() => ShellMessageFormatter.Format(ItemPattern, Args(("count", secret)), culture));
         Assert.DoesNotContain(secret, notAnInteger.Message, StringComparison.Ordinal);
         Assert.Throws<FormatException>(() => ShellMessageFormatter.Format(ItemPattern, Args(("count", 1.5m)), culture));
+        Assert.Throws<FormatException>(() => ShellMessageFormatter.Format("{a}{a}{a}", Args(("a", new string('x', 7000))), culture));
+        Assert.Equal(new string('x', 7000), ShellMessageFormatter.Format("{a}", Args(("a", new string('x', 7000))), culture));
         Assert.Throws<ArgumentNullException>(() => ShellMessageFormatter.Format(null!, null, culture));
         Assert.Throws<ArgumentNullException>(() => ShellMessageFormatter.Format("x", null, null!));
     }
