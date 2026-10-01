@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 using System.Globalization;
-using System.Resources;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Desktop.Shell.Localization;
 using ArcForges.Foundation.Errors;
 
 namespace ArcForges.Desktop.Shell.Errors;
@@ -11,10 +11,6 @@ namespace ArcForges.Desktop.Shell.Errors;
 public static class ErrorPresenter
 {
     private const string GenericMessageKey = "error.generic";
-
-    private static readonly ResourceManager Strings = new(
-        "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
-        typeof(ErrorPresenter).Assembly);
 
     /// <summary>Creates a human-readable presentation without exposing exception or wire-detail text.</summary>
     public static (string Title, string WhatHappened, string RetryGuidance, string UserAction, string SupportReferenceId)
@@ -38,8 +34,8 @@ public static class ErrorPresenter
     }
 
     private static string GetText(string key, CultureInfo culture) =>
-        Strings.GetString(key, culture)
-        ?? Strings.GetString(GenericMessageKey, culture)
+        ShellText.TryGetText(ShellText.ErrorSet, key, culture)
+        ?? ShellText.TryGetText(ShellText.ErrorSet, GenericMessageKey, culture)
         ?? throw new InvalidOperationException("The safe error presentation resources are unavailable.");
 
     private static string RetryResourceKey(RetryMode mode) => mode switch

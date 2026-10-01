@@ -1688,5 +1688,80 @@
     "apiSymbol": "ArcForges.Security.Audit.CapabilityLeaseAuditAdapter.Record(ArcForges.Security.Audit.CapabilityLeaseLifecycleFact)",
     "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
     "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.CapabilityLeaseLifecycleKindsAppendDurablyAndPreserveTheGuidIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.ShellMessageFormatter.Format(string, System.Collections.Generic.IReadOnlyDictionary<string, object?>?, System.Globalization.CultureInfo)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.MessageFormatterTests.FormatSubstitutesNamedArgumentsAndSelectsPluralBranchesWithLocaleNumbers()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.PseudoLocaliser.Transform(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.PseudoLocalisationTests.TransformMarksWholeMessagesAccentsLettersAndPreservesPlaceholdersAndPlurals()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.PseudoLocaliser.IsWholePseudoMessage(string)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.PseudoLocalisationTests.TransformExpandsTextAndRejectsInvalidPatterns()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.ShellText.Resolve(ArcForges.Desktop.Shell.Localization.LocalizedText, System.Globalization.CultureInfo?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.PseudoLocalisationTests.ResolveFailsClosedForAnUndefinedKeyWithoutLeakingIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.ShellText.BeginPseudoLocalisation()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.PseudoLocalisationTests.PseudoLocalisationIsScopedToTheExecutionFlowAndRestoresOnDispose()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.FlowDirections.FromCulture(System.Globalization.CultureInfo)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.FlowDirectionTests.FromCultureClassifiesReadingDirection()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.FlowDirections.ToPhysical(ArcForges.Desktop.Shell.DockRegion, ArcForges.Desktop.Shell.Localization.FlowDirection)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.FlowDirectionTests.ToPhysicalMirrorsOnlyTheLeadingAndTrailingEdgesInRightToLeft()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.FlowDirections.MirrorX(double, double, double)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.FlowDirectionTests.MirrorXReflectsSpansExactlyAndIsItsOwnInverse()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.ShellAccessibilityAudit.Evaluate(System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.Accessibility.ShellSurface>, System.Globalization.CultureInfo?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.ShellAccessibilityAuditTests.AuditReportsEachContractViolationWithItsStableRule()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.FocusNavigator.MoveNext()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.FocusNavigatorTests.TabAndShiftTabVisitEveryTabStopInFocusOrderAndWrap()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.FocusNavigator.MovePrevious()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.FocusNavigatorTests.TabAndShiftTabVisitEveryTabStopInFocusOrderAndWrap()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.FocusNavigator.Move(ArcForges.Desktop.Shell.Accessibility.FocusDirection)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.FocusNavigatorTests.ArrowKeysMoveInsideARovingGroupWithoutWrappingAndKeepTheGroupAsOneTabStop()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.FocusNavigator.Activate()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.FocusNavigatorTests.ModalSurfaceTrapsFocusAndDismissRestoresTheOriginatingElement()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.FocusNavigator.OpenModal(ArcForges.Desktop.Shell.Accessibility.ShellSurface)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.FocusNavigatorTests.ModalSurfaceTrapsFocusAndDismissRestoresTheOriginatingElement()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.FocusNavigator.Dismiss()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Accessibility.FocusNavigatorTests.ModalSurfaceTrapsFocusAndDismissRestoresTheOriginatingElement()"
   }
 ]

@@ -3,6 +3,11 @@ using System.Collections.ObjectModel;
 
 namespace ArcForges.Desktop.Shell;
 
+/// <summary>
+/// Where a panel docks. <see cref="Left"/> and <see cref="Right"/> are the leading and trailing edges of the reading
+/// direction, not physical sides, so one saved layout mirrors correctly under a right-to-left interface language.
+/// UI adapters draw with <see cref="Localization.FlowDirections.ToPhysical"/>.
+/// </summary>
 public enum DockRegion
 {
     Left,

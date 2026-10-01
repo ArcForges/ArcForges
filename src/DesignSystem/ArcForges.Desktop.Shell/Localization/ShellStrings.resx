@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- Workspace window -->
+  <data name="workspace.window.name" xml:space="preserve"><value>Workspace</value></data>
+  <data name="workspace.toolbar.name" xml:space="preserve"><value>Workspace toolbar</value></data>
+  <data name="workspace.palette-button.name" xml:space="preserve"><value>Open command palette</value></data>
+  <data name="workspace.palette-button.description" xml:space="preserve"><value>Search for a command and run it from the keyboard.</value></data>
+  <data name="workspace.attention-button.name" xml:space="preserve"><value>{count, plural, =0 {Nothing needs your attention} one {# item needs your attention} other {# items need your attention}}</value></data>
+  <data name="workspace.settings-button.name" xml:space="preserve"><value>Open settings</value></data>
+  <data name="workspace.panel-start.name" xml:space="preserve"><value>Leading side panel</value></data>
+  <data name="workspace.panel-start.toggle.name" xml:space="preserve"><value>Show or hide the leading side panel</value></data>
+  <data name="workspace.splitter-start.name" xml:space="preserve"><value>Resize the leading side panel</value></data>
+  <data name="workspace.center.name" xml:space="preserve"><value>Workspace content</value></data>
+  <data name="workspace.splitter-end.name" xml:space="preserve"><value>Resize the trailing side panel</value></data>
+  <data name="workspace.panel-end.name" xml:space="preserve"><value>Trailing side panel</value></data>
+  <data name="workspace.panel-end.toggle.name" xml:space="preserve"><value>Show or hide the trailing side panel</value></data>
+  <data name="workspace.panel-bottom.name" xml:space="preserve"><value>Bottom panel</value></data>
+  <data name="workspace.panel-bottom.toggle.name" xml:space="preserve"><value>Show or hide the bottom panel</value></data>
+  <data name="workspace.status.name" xml:space="preserve"><value>Status</value></data>
+
+  <!-- Command palette -->
+  <data name="command-palette.name" xml:space="preserve"><value>Command palette</value></data>
+  <data name="command-palette.query.name" xml:space="preserve"><value>Search commands</value></data>
+  <data name="command-palette.query.description" xml:space="preserve"><value>Type to filter commands, then use the arrow keys to choose a result.</value></data>
+  <data name="command-palette.results.name" xml:space="preserve"><value>Command results</value></data>
+  <data name="command-palette.result.name" xml:space="preserve"><value>{title}</value></data>
+  <data name="command-palette.result-count.name" xml:space="preserve"><value>{count, plural, =0 {No commands match} one {# command matches} other {# commands match}}</value></data>
+  <data name="command-palette.close.name" xml:space="preserve"><value>Close command palette</value></data>
+
+  <!-- Scoped settings -->
+  <data name="settings.name" xml:space="preserve"><value>Settings</value></data>
+  <data name="settings.search.name" xml:space="preserve"><value>Search settings</value></data>
+  <data name="settings.scopes.name" xml:space="preserve"><value>Setting scopes</value></data>
+  <data name="settings.scope.application.name" xml:space="preserve"><value>Application</value></data>
+  <data name="settings.scope.workspace.name" xml:space="preserve"><value>Workspace</value></data>
+  <data name="settings.scope.device.name" xml:space="preserve"><value>This device</value></data>
+  <data name="settings.scope.instance.name" xml:space="preserve"><value>This window</value></data>
+  <data name="settings.effective.name" xml:space="preserve"><value>This value comes from the {scope} scope.</value></data>
+  <data name="settings.reset.name" xml:space="preserve"><value>Use the inherited value</value></data>
+
+  <!-- Attention centre -->
+  <data name="attention.name" xml:space="preserve"><value>Attention centre</value></data>
+  <data name="attention.live.name" xml:space="preserve"><value>Notifications</value></data>
+  <data name="attention.items.name" xml:space="preserve"><value>Items that need your attention</value></data>
+  <data name="attention.item.name" xml:space="preserve"><value>{title}</value></data>
+  <data name="attention.open-item.name" xml:space="preserve"><value>Open the selected item</value></data>
+
+  <!-- Error presentation -->
+  <data name="error-dialog.name" xml:space="preserve"><value>Error</value></data>
+  <data name="error-dialog.details.name" xml:space="preserve"><value>Error details</value></data>
+  <data name="error-dialog.what.name" xml:space="preserve"><value>What happened</value></data>
+  <data name="error-dialog.retry.name" xml:space="preserve"><value>Whether to try again</value></data>
+  <data name="error-dialog.action.name" xml:space="preserve"><value>What you can do</value></data>
+  <data name="error-dialog.reference.name" xml:space="preserve"><value>Support reference</value></data>
+  <data name="error-dialog.copy.name" xml:space="preserve"><value>Copy the support reference</value></data>
+  <data name="error-dialog.try-again.name" xml:space="preserve"><value>Try again</value></data>
+  <data name="error-dialog.close.name" xml:space="preserve"><value>Close</value></data>
+</root>
