@@ -318,5 +318,21 @@
     "module": "",
     "production": false,
     "aot": false
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
+    "role": "Persistence",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
   }
 ]

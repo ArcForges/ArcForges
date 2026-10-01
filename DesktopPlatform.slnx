@@ -27,6 +27,8 @@
     <Project Path="src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj" />
   </Folder>
   <Folder Name="/src/DesignSystem/">
     <Project Path="src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj" />

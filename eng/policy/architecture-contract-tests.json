@@ -1638,5 +1638,55 @@
     "apiSymbol": "ArcForges.Security.Secrets.OsSecretStore.CreateForCurrentPlatform()",
     "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
     "testMethod": "ArcForges.Security.Secrets.Tests.SecretBrokerTests.PlatformStoreSelectionIsFailClosedAndNeverOverstatesIsolation()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditPartition.For(ArcForges.Security.HumanPrincipal, System.DateTimeOffset)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AuditPartitionForUsesUtcMonthBoundaries()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Append(ArcForges.Security.Audit.AuditEvent)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AppendQueryPreservesEveryRequiredSecurityFactAndSeparatesTelemetry()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.DisposedAuditStoreRefusesFurtherOperations()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.PlaceLegalHold(System.Guid, ArcForges.Security.Audit.AuditPartition, ArcForges.Security.Audit.AuditHoldReason, ArcForges.Security.ActorChain, ArcForges.Security.Audit.AuditSoftwareIdentity, ArcForges.Security.Audit.AuditOrigin)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ActiveLegalHoldBlocksPurgeUntilInternalReleaseCapabilityAndReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Query(ArcForges.Security.Audit.AuditQuery)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AppendQueryPreservesEveryRequiredSecurityFactAndSeparatesTelemetry()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.ReadActiveLegalHolds(ArcForges.Security.Audit.AuditPartition, int)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ActiveLegalHoldBlocksPurgeUntilInternalReleaseCapabilityAndReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.ReadMaintenanceReceipts(int)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ActiveLegalHoldBlocksPurgeUntilInternalReleaseCapabilityAndReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.ReadPurgeReceipts(int)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ExpiredUnheldPartitionPurgeRetainsSingleUseAuthorityAndCoverageReceipt()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.EgressDecisionAuditAdapter.Record(ArcForges.Security.Audit.EgressDecisionFact)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.EgressAllowedAndDeniedDecisionsAppendBeforeReturnWithEveryTypedFact()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.CapabilityLeaseAuditAdapter.Record(ArcForges.Security.Audit.CapabilityLeaseLifecycleFact)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.CapabilityLeaseLifecycleKindsAppendDurablyAndPreserveTheGuidIdentity()"
   }
 ]
