@@ -100,7 +100,7 @@ public sealed record CommandShortcut
     }
 }
 
-/// <summary>Immutable shell metadata bound to one canonical capability action.</summary>
+/// <summary>Immutable menu position for a command; menu content always comes from the registered command identity.</summary>
 public sealed class ShellMenuPlacement
 {
     public ShellMenuPlacement(string menuId, string sectionId, int order)
@@ -141,6 +141,7 @@ public sealed class ShellMenuPlacement
         !value.Contains("--", StringComparison.Ordinal);
 }
 
+/// <summary>Immutable shell metadata bound to one canonical capability action.</summary>
 public sealed class ShellCommand
 {
     private readonly string[] _keywords;

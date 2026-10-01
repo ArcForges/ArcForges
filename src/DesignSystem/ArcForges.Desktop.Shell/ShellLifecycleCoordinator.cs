@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Globalization;
+using System.Resources;
 
 namespace ArcForges.Desktop.Shell;
 
@@ -204,11 +206,16 @@ public sealed class ShellLifecycleCoordinator
 {
     private const int MaximumRememberedActivations = 4096;
 
+    private static readonly ResourceManager LifecycleStrings = new(
+        "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
+        typeof(ShellLifecycleCoordinator).Assembly);
+
     private readonly ShellLifecycleOperations _operations;
     private readonly TimeSpan _startupBudget;
     private readonly object _lifecycleQueueGate = new();
     private readonly object _activationGate = new();
     private readonly Dictionary<Guid, RoutedActivation> _activations = [];
+    private readonly Queue<Guid> _completedActivations = new();
     private Task _lifecycleQueueTail = Task.CompletedTask;
     private ShellStartupMeasurement? _startupMeasurement;
     private bool _stopped;
@@ -266,7 +273,8 @@ public sealed class ShellLifecycleCoordinator
 
     /// <summary>
     /// Forwards one immutable secondary-launch request to the host's primary-instance transport at most once.
-    /// The transport must preserve RequestId as its idempotency key across process boundaries.
+    /// The transport must preserve RequestId as its idempotency key across process boundaries. Duplicate suppression
+    /// covers the most recent 4096 completed requests and every in-flight request.
     /// </summary>
     public async ValueTask<ShellActivationRouteDisposition> RouteActivationAsync(
         ShellActivationRequest request,
@@ -289,7 +297,9 @@ public sealed class ShellLifecycleCoordinator
             }
             else
             {
-                if (_activations.Count >= MaximumRememberedActivations)
+                // Completed requests are only remembered for duplicate suppression and are evicted oldest-first,
+                // so a long-lived primary keeps accepting launches. Only in-flight forwards count toward capacity.
+                if (_activations.Count - _completedActivations.Count >= MaximumRememberedActivations)
                 {
                     return ShellActivationRouteDisposition.CapacityReached;
                 }
@@ -305,6 +315,15 @@ public sealed class ShellLifecycleCoordinator
             try
             {
                 await _operations.ForwardActivationToPrimaryAsync(request, cancellationToken).ConfigureAwait(false);
+                lock (_activationGate)
+                {
+                    _completedActivations.Enqueue(request.RequestId);
+                    while (_completedActivations.Count > MaximumRememberedActivations)
+                    {
+                        _activations.Remove(_completedActivations.Dequeue());
+                    }
+                }
+
                 owner.TrySetResult(true);
                 return ShellActivationRouteDisposition.Forwarded;
             }
@@ -333,28 +352,21 @@ public sealed class ShellLifecycleCoordinator
     public static ShellShutdownPrompt CreateShutdownPrompt(ShellShutdownState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        var consequences = new List<string>(2);
-        if (state.ActiveWorkCount > 0)
+        // Each combination is one complete localisable sentence set; nothing is assembled from fragments.
+        string consequences = (state.ActiveWorkCount > 0, state.UnsavedItemCount > 0) switch
         {
-            consequences.Add($"Quitting will stop new writes and wait for {state.ActiveWorkCount} active item(s) to reach a safe point; active work will not be silently discarded.");
-        }
-
-        if (state.UnsavedItemCount > 0)
-        {
-            consequences.Add($"{state.UnsavedItemCount} unsaved item(s) must be saved before writes are flushed and services are disconnected.");
-        }
-
-        if (consequences.Count == 0)
-        {
-            consequences.Add("No running or unsaved work is recorded; quitting will still flush writes and disconnect services before stopping the runtime.");
-        }
+            (true, true) => Format("lifecycle.shutdown.consequence.active_and_unsaved", state.ActiveWorkCount, state.UnsavedItemCount),
+            (true, false) => Format("lifecycle.shutdown.consequence.active", state.ActiveWorkCount),
+            (false, true) => Format("lifecycle.shutdown.consequence.unsaved", state.UnsavedItemCount),
+            _ => Format("lifecycle.shutdown.consequence.none"),
+        };
 
         ShellShutdownDecision quitDecision = state.UnsavedItemCount > 0
             ? ShellShutdownDecision.SaveThenQuit
             : ShellShutdownDecision.WaitForSafePointAndQuit;
         return new ShellShutdownPrompt(
             state.Generation,
-            string.Join(" ", consequences),
+            consequences,
             Array.AsReadOnly([ShellShutdownDecision.KeepWorking, quitDecision]));
     }
 
@@ -502,6 +514,13 @@ public sealed class ShellLifecycleCoordinator
             _ = ReleaseAfterAsync(previous, release);
             throw;
         }
+    }
+
+    private static string Format(string key, params object[] arguments)
+    {
+        string template = LifecycleStrings.GetString(key, CultureInfo.CurrentUICulture)
+            ?? throw new InvalidOperationException("The shutdown prompt resources are unavailable.");
+        return string.Format(CultureInfo.CurrentCulture, template, arguments);
     }
 
     private static async Task ReleaseAfterAsync(Task previous, TaskCompletionSource release)

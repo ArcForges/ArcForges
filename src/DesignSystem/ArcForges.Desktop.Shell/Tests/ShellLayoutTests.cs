@@ -400,6 +400,180 @@ public sealed class ShellLayoutTests
     }
 
     [Fact]
+    public async Task CompletedActivationMemoryIsBoundedAndNeverRefusesLaterLaunches()
+    {
+        int forwards = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(forwardActivationToPrimaryAsync: (_, _) =>
+            {
+                forwards++;
+                return ValueTask.CompletedTask;
+            }),
+            TimeSpan.FromSeconds(2.5));
+        var first = new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.Activate);
+
+        Assert.Equal(
+            ShellActivationRouteDisposition.Forwarded,
+            await coordinator.RouteActivationAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal(
+            ShellActivationRouteDisposition.AlreadyForwarded,
+            await coordinator.RouteActivationAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal(1, forwards);
+
+        for (int index = 0; index < 4200; index++)
+        {
+            Assert.Equal(
+                ShellActivationRouteDisposition.Forwarded,
+                await coordinator.RouteActivationAsync(
+                    new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.Activate),
+                    TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(4201, forwards);
+
+        // Only the most recent completed requests are remembered; the earliest was evicted, not refused forever.
+        Assert.Equal(
+            ShellActivationRouteDisposition.Forwarded,
+            await coordinator.RouteActivationAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal(4202, forwards);
+    }
+
+    [Fact]
+    public async Task FailedActivationForwardIsNotRememberedAndCanBeRetried()
+    {
+        int attempts = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(forwardActivationToPrimaryAsync: (_, _) =>
+            {
+                if (++attempts == 1)
+                {
+                    throw new IOException("Simulated primary transport failure.");
+                }
+
+                return ValueTask.CompletedTask;
+            }),
+            TimeSpan.FromSeconds(2.5));
+        var request = new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.OpenTarget, "workspace:one");
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await coordinator.RouteActivationAsync(request, TestContext.Current.CancellationToken).ConfigureAwait(true));
+        Assert.Equal(
+            ShellActivationRouteDisposition.Forwarded,
+            await coordinator.RouteActivationAsync(request, TestContext.Current.CancellationToken));
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public void ShutdownConsequencesComeFromExternalisedResourcesForEveryWorkCombination()
+    {
+        var resources = new System.Resources.ResourceManager(
+            "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
+            typeof(ShellLifecycleCoordinator).Assembly);
+        string Expected(string key, params object[] arguments) =>
+            string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                resources.GetString(key, System.Globalization.CultureInfo.CurrentUICulture)!,
+                arguments);
+
+        Assert.Equal(
+            Expected("lifecycle.shutdown.consequence.active", 3),
+            ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 3, 0)).Consequences);
+        Assert.Equal(
+            Expected("lifecycle.shutdown.consequence.unsaved", 4),
+            ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 0, 4)).Consequences);
+        Assert.Equal(
+            Expected("lifecycle.shutdown.consequence.active_and_unsaved", 3, 4),
+            ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 3, 4)).Consequences);
+        ShellShutdownPrompt idle = ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 0, 0));
+        Assert.Equal(Expected("lifecycle.shutdown.consequence.none"), idle.Consequences);
+        Assert.Equal(
+            [ShellShutdownDecision.KeepWorking, ShellShutdownDecision.WaitForSafePointAndQuit],
+            idle.Decisions);
+        Assert.DoesNotContain("{", idle.Consequences, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RealShellComponentsRestoreLayoutBeforeBackgroundWorkAndPersistItAtShutdown()
+    {
+        var root = NewTemporaryRoot();
+        try
+        {
+            var application = ApplicationKey.Parse("editor");
+            var layout = LayoutKey.Parse("default");
+            var inspector = PanelKey.Parse("inspector");
+            var displays = Displays(new DisplayWorkArea(DisplayId.Parse("display-one"), new WindowBounds(0, 0, 1920, 1080), true));
+            NewStore(root, "editor", "default").Save(Snapshot(
+                "editor",
+                "default",
+                [Placement("main", "display-one", new WindowBounds(10, 20, 900, 700))],
+                [new PanelPlacement(inspector, DockRegion.Right, true, 2)]));
+
+            // Second launch: every dependency of the lifecycle coordinator is a real Shell component
+            // (device-local store, window registry, panel host and restorer).
+            var windows = new WindowRegistry(IdentityGeneration.NewInstance());
+            var panels = new PanelHost(DensityMode.Comfortable, [new PanelDefinition(inspector)]);
+            var store = NewStore(root, "editor", "default");
+            var restoredAtBackgroundStart = -1;
+            var flushed = false;
+            var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+            var coordinator = new ShellLifecycleCoordinator(
+                LifecycleOperations(
+                    makeWorkspaceUsableAsync: _ =>
+                    {
+                        LayoutLoadResult loaded = store.Load();
+                        if (loaded.Status != LayoutLoadStatus.Loaded)
+                        {
+                            return ValueTask.FromResult(false);
+                        }
+
+                        LayoutRestorer.Restore(loaded.Snapshot!, windows, panels, displays);
+                        return ValueTask.FromResult(true);
+                    },
+                    startBackgroundWorkAsync: _ =>
+                    {
+                        restoredAtBackgroundStart = windows.Count;
+                        return ValueTask.CompletedTask;
+                    },
+                    captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                    flushWritesAsync: _ =>
+                    {
+                        store.Save(LayoutSnapshot.Create(application, layout, windows.Snapshot(), panels.Snapshot()));
+                        flushed = true;
+                        return ValueTask.CompletedTask;
+                    }),
+                TimeSpan.FromSeconds(2.5));
+
+            ShellStartupMeasurement measurement = await coordinator.RunStartupAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, restoredAtBackgroundStart);
+            Assert.Contains(panels.Snapshot(), panel => panel.Key == inspector && panel.Region == DockRegion.Right && panel.IsCollapsed);
+            Assert.True(measurement.BackgroundStartedAfterWorkspaceReady);
+            Assert.True(measurement.WithinConfiguredBudget);
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"Shell startup path with real layout restore: workspace usable after {measurement.WorkspaceReadyAfter.TotalMilliseconds:F3} ms " +
+                $"(budget {measurement.Budget.TotalMilliseconds:F0} ms). Task-local only; not ArcScope product/reference-hardware evidence.");
+
+            // Mutate the layout, then quit: the flush step must persist it before services stop.
+            Assert.True(panels.SetCollapsed(inspector, false));
+            ShellShutdownExecutionResult stopped = await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(ShellShutdownDisposition.Stopped, stopped.Disposition);
+            Assert.True(flushed);
+            LayoutLoadResult reloaded = NewStore(root, "editor", "default").Load();
+            Assert.Equal(LayoutLoadStatus.Loaded, reloaded.Status);
+            Assert.Contains(reloaded.Snapshot!.Panels, panel => panel.Key == inspector && !panel.IsCollapsed);
+            Assert.Equal("main", Assert.Single(reloaded.Snapshot.Windows).Id.Value);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void PanelHostSupportsDockingCollapsingAndSemanticDensityMetrics()
     {
         var left = PanelKey.Parse("navigation");
