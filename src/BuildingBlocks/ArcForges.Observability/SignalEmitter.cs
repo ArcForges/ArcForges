@@ -38,7 +38,9 @@ public sealed class SignalEmitter : IDisposable
 
         var context = ObservabilityScope.Current
             ?? throw new InvalidOperationException("A complete observability context must be installed before emitting a signal.");
-        var properties = context.MaterializeDimensions();
+        // The typed context is already validated; the scrubbing processor is the second line of defence that
+        // guarantees only reviewed fields with reviewed value shapes reach any exporter.
+        var properties = RedactionProcessor.Scrub(context.MaterializeDimensions());
         var metrics = GetMetrics(context);
         var timestamp = DateTimeOffset.UtcNow;
         var signal = new StructuredSignal(stableEventName, level, timestamp, properties);
