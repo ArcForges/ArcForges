@@ -34,6 +34,7 @@ public sealed class ShellActivationRequest
 
     public ShellActivationKind Kind { get; }
 
+    /// <summary>Gets an opaque, bounded, control-free string. The host must validate and authorise it; deep-link hostile-input handling is not this type's job.</summary>
     public string? Target { get; }
 
     internal bool HasSamePayload(ShellActivationRequest other) =>
@@ -174,28 +175,40 @@ public sealed class ShellLifecycleOperations
         StopNativeRuntimeAsync = stopNativeRuntimeAsync ?? throw new ArgumentNullException(nameof(stopNativeRuntimeAsync));
     }
 
+    /// <summary>Makes the authorised local workspace usable without waiting on account, Cloud or policy. Returning false or throwing leaves startup retryable and never starts background work.</summary>
     public Func<CancellationToken, ValueTask<bool>> MakeWorkspaceUsableAsync { get; }
 
+    /// <summary>Starts background work (connections, helpers, sync). It runs only after the workspace is usable; a failure is terminal for this coordinator because partial background state is unknown.</summary>
     public Func<CancellationToken, ValueTask> StartBackgroundWorkAsync { get; }
 
+    /// <summary>Delivers one activation request to the primary instance over the host transport. The host owns primary election, the transport and the receiving side, and must treat the request id as an idempotency key.</summary>
     public Func<ShellActivationRequest, CancellationToken, ValueTask> ForwardActivationToPrimaryAsync { get; }
 
+    /// <summary>Captures the current active-work and unsaved-item snapshot; the host must advance the generation whenever that set changes.</summary>
     public Func<CancellationToken, ValueTask<ShellShutdownState>> CaptureShutdownStateAsync { get; }
 
+    /// <summary>Stops accepting new external or remote write commands only. It must not make saving or flushing already accepted local work fail.</summary>
     public Func<CancellationToken, ValueTask> StopAcceptingWritesAsync { get; }
 
+    /// <summary>Restores write acceptance when shutdown is abandoned or fails before services are disconnected. It is called with a non-cancellable token; a failure here faults the coordinator.</summary>
     public Func<CancellationToken, ValueTask> ResumeAcceptingWritesAsync { get; }
 
+    /// <summary>Cancels or checkpoints cancellable work and lets non-cancellable work reach a safe point.</summary>
     public Func<CancellationToken, ValueTask> ReachSafePointsAsync { get; }
 
+    /// <summary>Saves unsaved items (not Cloud-pending content that is already locally durable) before writes are flushed.</summary>
     public Func<ShellShutdownState, CancellationToken, ValueTask> SaveUnsavedWorkAsync { get; }
 
+    /// <summary>Flushes critical transactions to durable local storage.</summary>
     public Func<CancellationToken, ValueTask> FlushWritesAsync { get; }
 
+    /// <summary>Disconnects this application's presence and stops owned helper endpoints and realtime connections. Once started, a failure faults the coordinator rather than replaying teardown.</summary>
     public Func<CancellationToken, ValueTask> DisconnectServicesAsync { get; }
 
+    /// <summary>Opportunistically drains the sync outbox and remaining queued work.</summary>
     public Func<CancellationToken, ValueTask> DrainWorkAsync { get; }
 
+    /// <summary>Shuts down the native runtime; the last step before the process may exit.</summary>
     public Func<CancellationToken, ValueTask> StopNativeRuntimeAsync { get; }
 }
 
@@ -344,7 +357,17 @@ public sealed class ShellLifecycleCoordinator
             }
         }
 
-        await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The first caller's token cancelled the forward, not this duplicate's. A cancelled forward is not
+            // remembered, so retry as a fresh attempt instead of inheriting the other caller's cancellation.
+            return await RouteActivationAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
         return ShellActivationRouteDisposition.AlreadyForwarded;
     }
 
