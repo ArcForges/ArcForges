@@ -53,7 +53,8 @@ public sealed class RepositoryPolicyTests
     {
         var owners = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["ArcImageNative"] = "ArcForges.Native.Image",
+            ["ArcImageNative"] = Path.Combine(Root, "src", "Native", "ArcForges.Native.Image"),
+            ["Advapi32.dll"] = Path.Combine(Root, "src", "BuildingBlocks", "ArcForges.Security.Secrets"),
         };
         var exports = new HashSet<string>(StringComparer.Ordinal);
         foreach (string file in Files("*.cs").Where(file => Path.GetRelativePath(Root, file)
@@ -64,13 +65,18 @@ public sealed class RepositoryPolicyTests
             int declarations = System.Text.RegularExpressions.Regex.Count(source, @"\bLibraryImport\s*\(");
             int matched = 0;
             foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
-                source, """LibraryImport\("([^"]+)", EntryPoint = "([^"]+)"\)"""))
+                source, """LibraryImport\("([^"]+)", EntryPoint = "([^"]+)"(, StringMarshalling = StringMarshalling\.Utf16)?(, SetLastError = true)?\)"""))
             {
                 matched++;
                 string library = match.Groups[1].Value;
+                string entryPoint = match.Groups[2].Value;
                 Xunit.Assert.True(owners.TryGetValue(library, out string? owner), library);
-                Xunit.Assert.Equal(Path.Combine(Root, "src", "Native", owner!), Path.GetDirectoryName(file));
-                Xunit.Assert.True(exports.Add(library + ":" + match.Groups[2].Value), "Duplicate production binding: " + match.Value);
+                Xunit.Assert.Equal(owner, Path.GetDirectoryName(file));
+                Xunit.Assert.Equal(library == "Advapi32.dll" && (entryPoint == "CredReadW" || entryPoint == "CredDeleteW"),
+                    match.Groups[3].Success);
+                Xunit.Assert.Equal(library == "Advapi32.dll" && (entryPoint == "CredWriteW" || entryPoint == "CredReadW" || entryPoint == "CredDeleteW"),
+                    match.Groups[4].Success);
+                Xunit.Assert.True(exports.Add(library + ":" + entryPoint), "Duplicate production binding: " + match.Value);
             }
 
             Xunit.Assert.Equal(declarations, matched);
@@ -78,6 +84,10 @@ public sealed class RepositoryPolicyTests
 
         string[] expectedExports =
         [
+            "Advapi32.dll:CredDeleteW",
+            "Advapi32.dll:CredFree",
+            "Advapi32.dll:CredReadW",
+            "Advapi32.dll:CredWriteW",
             "ArcImageNative:arc_image_get_abi_version",
             "ArcImageNative:arc_image_get_build_info",
             "ArcImageNative:arc_image_get_last_error",

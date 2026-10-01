@@ -23,6 +23,8 @@
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/ArcForges.Persistence.Resources.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj" />
   </Folder>
