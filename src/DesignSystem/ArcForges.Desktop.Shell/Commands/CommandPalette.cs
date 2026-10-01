@@ -100,6 +100,47 @@ public sealed record CommandShortcut
     }
 }
 
+/// <summary>Immutable menu position for a command; menu content always comes from the registered command identity.</summary>
+public sealed class ShellMenuPlacement
+{
+    public ShellMenuPlacement(string menuId, string sectionId, int order)
+    {
+        if (!IsMenuKey(menuId))
+        {
+            throw new ArgumentException("Menu IDs must be bounded lowercase dotted keys.", nameof(menuId));
+        }
+
+        if (!IsMenuKey(sectionId))
+        {
+            throw new ArgumentException("Menu section IDs must be bounded lowercase dotted keys.", nameof(sectionId));
+        }
+
+        if (order is < 0 or > 4096)
+        {
+            throw new ArgumentOutOfRangeException(nameof(order));
+        }
+
+        MenuId = menuId;
+        SectionId = sectionId;
+        Order = order;
+    }
+
+    public string MenuId { get; }
+
+    public string SectionId { get; }
+
+    public int Order { get; }
+
+    private static bool IsMenuKey(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= 96 &&
+        (value[0] is >= 'a' and <= 'z' or >= '0' and <= '9') &&
+        (value[^1] is >= 'a' and <= 'z' or >= '0' and <= '9') &&
+        value.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '-') &&
+        !value.Contains("..", StringComparison.Ordinal) &&
+        !value.Contains("--", StringComparison.Ordinal);
+}
+
 /// <summary>Immutable shell metadata bound to one canonical capability action.</summary>
 public sealed class ShellCommand
 {
@@ -112,7 +153,8 @@ public sealed class ShellCommand
         ActionKey actionKey,
         string? description = "",
         IEnumerable<string>? keywords = null,
-        CommandShortcut? shortcut = null)
+        CommandShortcut? shortcut = null,
+        ShellMenuPlacement? menuPlacement = null)
     {
         if (!IsCommandId(id))
         {
@@ -140,6 +182,7 @@ public sealed class ShellCommand
         _keywords = keywordItems;
         _keywordView = Array.AsReadOnly(_keywords);
         Shortcut = shortcut;
+        MenuPlacement = menuPlacement;
     }
 
     public string Id { get; }
@@ -153,6 +196,8 @@ public sealed class ShellCommand
     public IReadOnlyList<string> Keywords => _keywordView;
 
     public CommandShortcut? Shortcut { get; }
+
+    public ShellMenuPlacement? MenuPlacement { get; }
 
     internal IEnumerable<string> SearchTerms
     {
@@ -253,6 +298,21 @@ public sealed class ShellCommandPalette
         {
             return Array.AsReadOnly(_commands.Values
                 .OrderBy(static command => command.Id, StringComparer.Ordinal)
+                .ToArray());
+        }
+    }
+
+    /// <summary>Returns registered menu commands in a stable menu, section, order, and command-ID order.</summary>
+    public IReadOnlyList<ShellCommand> GetMenuContributions()
+    {
+        lock (_gate)
+        {
+            return Array.AsReadOnly(_commands.Values
+                .Where(static command => command.MenuPlacement is not null)
+                .OrderBy(static command => command.MenuPlacement!.MenuId, StringComparer.Ordinal)
+                .ThenBy(static command => command.MenuPlacement!.SectionId, StringComparer.Ordinal)
+                .ThenBy(static command => command.MenuPlacement!.Order)
+                .ThenBy(static command => command.Id, StringComparer.Ordinal)
                 .ToArray());
         }
     }

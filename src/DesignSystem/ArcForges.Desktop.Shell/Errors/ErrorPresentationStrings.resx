@@ -67,4 +67,8 @@
   <data name="error.security.isolation_unavailable" xml:space="preserve"><value>The required security isolation is not available.</value></data>
   <data name="error.resource.parser_failed" xml:space="preserve"><value>The resource could not be safely read.</value></data>
   <data name="error.state.stale_fence" xml:space="preserve"><value>This operation is no longer current.</value></data>
+  <data name="lifecycle.shutdown.consequence.active" xml:space="preserve"><value>Quitting will stop new writes and wait for {0} active item(s) to reach a safe point; active work will not be silently discarded.</value></data>
+  <data name="lifecycle.shutdown.consequence.unsaved" xml:space="preserve"><value>{0} unsaved item(s) must be saved before writes are flushed and services are disconnected.</value></data>
+  <data name="lifecycle.shutdown.consequence.active_and_unsaved" xml:space="preserve"><value>Quitting will stop new writes and wait for {0} active item(s) to reach a safe point; active work will not be silently discarded. {1} unsaved item(s) must be saved before writes are flushed and services are disconnected.</value></data>
+  <data name="lifecycle.shutdown.consequence.none" xml:space="preserve"><value>No running or unsaved work is recorded; quitting will still flush writes and disconnect services before stopping the runtime.</value></data>
 </root>

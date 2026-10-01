@@ -30,6 +30,815 @@ public sealed class ShellLayoutTests
     }
 
     [Fact]
+    public async Task RunStartupAsyncRunsLocalWorkBeforeBackgroundAndReturnsMeasurement()
+    {
+        var sequence = new List<string>();
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: _ =>
+                {
+                    sequence.Add("workspace-usable");
+                    return ValueTask.FromResult(true);
+                },
+                startBackgroundWorkAsync: _ =>
+                {
+                    sequence.Add("background-started");
+                    return ValueTask.CompletedTask;
+                }),
+            TimeSpan.FromSeconds(2.5));
+
+        var measurement = await coordinator.RunStartupAsync(TestContext.Current.CancellationToken);
+        var repeated = await coordinator.RunStartupAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["workspace-usable", "background-started"], sequence);
+        Assert.Same(measurement, repeated);
+        Assert.True(measurement.BackgroundStartedAfterWorkspaceReady);
+        Assert.True(measurement.BackgroundStartedAfter >= measurement.WorkspaceReadyAfter);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Shell startup path only: workspace usable after {measurement.WorkspaceReadyAfter.TotalMilliseconds:F3} ms; " +
+            $"background start after {measurement.BackgroundStartedAfter.TotalMilliseconds:F3} ms; " +
+            $"configured budget {measurement.Budget.TotalMilliseconds:F0} ms. Not ArcScope product/reference-hardware evidence.");
+
+        TimeSpan budget = TimeSpan.FromSeconds(2.5);
+        var atBudget = new ShellStartupMeasurement(budget, budget, budget);
+        var overBudget = new ShellStartupMeasurement(TimeSpan.FromTicks(budget.Ticks + 1), budget, budget);
+        Assert.True(atBudget.WithinConfiguredBudget);
+        Assert.False(overBudget.WithinConfiguredBudget);
+
+        int backgroundStarts = 0;
+        var blocked = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: _ => ValueTask.FromResult(false),
+                startBackgroundWorkAsync: _ =>
+                {
+                    backgroundStarts++;
+                    return ValueTask.CompletedTask;
+                }),
+            TimeSpan.FromSeconds(2.5));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await blocked.RunStartupAsync(TestContext.Current.CancellationToken).ConfigureAwait(false));
+        Assert.Equal(0, backgroundStarts);
+    }
+
+    [Fact]
+    public async Task StartupAndShutdownSerializeAndCompletedShutdownIsTerminal()
+    {
+        var sequence = new List<string>();
+        var workspaceEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWorkspace = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: async cancellationToken =>
+                {
+                    sequence.Add("workspace-entered");
+                    workspaceEntered.TrySetResult(true);
+                    await releaseWorkspace.Task.WaitAsync(cancellationToken).ConfigureAwait(true);
+                    sequence.Add("workspace-usable");
+                    return true;
+                },
+                startBackgroundWorkAsync: _ => Record(sequence, "background-started"),
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                stopAcceptingWritesAsync: _ => Record(sequence, "stop-writes"),
+                reachSafePointsAsync: _ => Record(sequence, "safe-points"),
+                flushWritesAsync: _ => Record(sequence, "flush-writes"),
+                disconnectServicesAsync: _ => Record(sequence, "disconnect-services"),
+                drainWorkAsync: _ => Record(sequence, "drain-work"),
+                stopNativeRuntimeAsync: _ => Record(sequence, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        Task<ShellStartupMeasurement> startup = coordinator
+            .RunStartupAsync(TestContext.Current.CancellationToken)
+            .AsTask();
+        await workspaceEntered.Task.WaitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+        // Invoke shutdown while startup owns the lifecycle gate. It must wait for the usable-workspace and
+        // background-start sequence rather than tearing down services underneath it.
+        Task<ShellShutdownExecutionResult> shutdown = coordinator
+            .ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken)
+            .AsTask();
+        releaseWorkspace.TrySetResult(true);
+
+        await startup.ConfigureAwait(true);
+        ShellShutdownExecutionResult stopped = await shutdown.ConfigureAwait(true);
+
+        Assert.Equal(ShellShutdownDisposition.Stopped, stopped.Disposition);
+        Assert.Equal(
+            [
+                "workspace-entered",
+                "workspace-usable",
+                "background-started",
+                "stop-writes",
+                "safe-points",
+                "flush-writes",
+                "disconnect-services",
+                "drain-work",
+                "stop-runtime"
+            ],
+            sequence);
+
+        ShellShutdownExecutionResult repeatedShutdown = await coordinator.ExecuteShutdownAsync(
+            state,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.Stopped, repeatedShutdown.Disposition);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.RunStartupAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
+        Assert.Equal(9, sequence.Count);
+    }
+
+    [Fact]
+    public async Task CancelledLifecycleWaiterDoesNotReleaseTheQueueAheadOfStartup()
+    {
+        var workspaceEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWorkspace = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int workspaceCalls = 0;
+        int backgroundStarts = 0;
+        var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: async cancellationToken =>
+                {
+                    Interlocked.Increment(ref workspaceCalls);
+                    workspaceEntered.TrySetResult(true);
+                    await releaseWorkspace.Task.WaitAsync(cancellationToken).ConfigureAwait(true);
+                    return true;
+                },
+                startBackgroundWorkAsync: _ =>
+                {
+                    Interlocked.Increment(ref backgroundStarts);
+                    return ValueTask.CompletedTask;
+                },
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state)),
+            TimeSpan.FromSeconds(2.5));
+
+        Task<ShellStartupMeasurement> firstStartup = coordinator
+            .RunStartupAsync(CancellationToken.None)
+            .AsTask();
+        await workspaceEntered.Task.WaitAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+        using var cancelledWaiter = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        Task<ShellShutdownExecutionResult> cancelledShutdown = coordinator
+            .ExecuteShutdownAsync(state, ShellShutdownDecision.WaitForSafePointAndQuit, cancelledWaiter.Token)
+            .AsTask();
+        await cancelledWaiter.CancelAsync().ConfigureAwait(true);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await cancelledShutdown.ConfigureAwait(true));
+
+        Task<ShellStartupMeasurement> queuedStartup = coordinator
+            .RunStartupAsync(CancellationToken.None)
+            .AsTask();
+        releaseWorkspace.TrySetResult(true);
+
+        ShellStartupMeasurement firstMeasurement = await firstStartup.ConfigureAwait(true);
+        ShellStartupMeasurement queuedMeasurement = await queuedStartup.ConfigureAwait(true);
+        Assert.Same(firstMeasurement, queuedMeasurement);
+        Assert.Equal(1, workspaceCalls);
+        Assert.Equal(1, backgroundStarts);
+    }
+
+    [Fact]
+    public async Task PartialDisconnectFailureFailsClosedWithoutReplayingShutdown()
+    {
+        var calls = new List<string>();
+        var state = new ShellShutdownState(generation: 2, activeWorkCount: 0, unsavedItemCount: 0);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                makeWorkspaceUsableAsync: _ =>
+                {
+                    calls.Add("workspace");
+                    return ValueTask.FromResult(true);
+                },
+                startBackgroundWorkAsync: _ => Record(calls, "background"),
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                flushWritesAsync: _ => Record(calls, "flush-writes"),
+                disconnectServicesAsync: _ =>
+                {
+                    calls.Add("disconnect-attempt");
+                    throw new IOException("Simulated partial disconnect failure.");
+                },
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                drainWorkAsync: _ => Record(calls, "drain-work"),
+                stopNativeRuntimeAsync: _ => Record(calls, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+
+        Assert.Equal(["stop-writes", "safe-points", "flush-writes", "disconnect-attempt"], calls);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.RunStartupAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+        Assert.Equal(["stop-writes", "safe-points", "flush-writes", "disconnect-attempt"], calls);
+    }
+
+    [Fact]
+    public async Task RouteActivationAsyncForwardsSecondaryLaunchToPrimaryExactlyOnce()
+    {
+        int forwards = 0;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(forwardActivationToPrimaryAsync: async (_, cancellationToken) =>
+            {
+                Interlocked.Increment(ref forwards);
+                entered.TrySetResult(true);
+                await release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }),
+            TimeSpan.FromSeconds(2.5));
+        var request = new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.OpenTarget, "workspace:one");
+
+        Task<ShellActivationRouteDisposition> first = coordinator
+            .RouteActivationAsync(request, TestContext.Current.CancellationToken)
+            .AsTask();
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Task<ShellActivationRouteDisposition> duplicate = coordinator
+            .RouteActivationAsync(request, TestContext.Current.CancellationToken)
+            .AsTask();
+        release.TrySetResult(true);
+
+        ShellActivationRouteDisposition[] results = await Task.WhenAll(first, duplicate);
+        Assert.Equal(ShellActivationRouteDisposition.Forwarded, results[0]);
+        Assert.Equal(ShellActivationRouteDisposition.AlreadyForwarded, results[1]);
+        Assert.Equal(1, forwards);
+        Assert.Equal(
+            ShellActivationRouteDisposition.IdentityConflict,
+            await coordinator.RouteActivationAsync(
+                new ShellActivationRequest(request.RequestId, ShellActivationKind.OpenTarget, "workspace:two"),
+                TestContext.Current.CancellationToken));
+        Assert.Equal(1, forwards);
+        Assert.Throws<ArgumentException>(() => new ShellActivationRequest(Guid.Empty, ShellActivationKind.Activate));
+    }
+
+    [Fact]
+    public void CreateShutdownPromptStatesRunningAndUnsavedConsequences()
+    {
+        var state = new ShellShutdownState(generation: 7, activeWorkCount: 2, unsavedItemCount: 1);
+
+        ShellShutdownPrompt prompt = ShellLifecycleCoordinator.CreateShutdownPrompt(state);
+
+        Assert.Equal(7, prompt.Generation);
+        Assert.Equal(PromptText("lifecycle.shutdown.consequence.active_and_unsaved", 2, 1), prompt.Consequences);
+        Assert.Equal(
+            [ShellShutdownDecision.KeepWorking, ShellShutdownDecision.SaveThenQuit],
+            prompt.Decisions);
+    }
+
+    [Fact]
+    public async Task ExecuteShutdownAsyncRequiresChoiceAndRunsDrainInOrderWithoutLosingWork()
+    {
+        var promptedState = new ShellShutdownState(generation: 10, activeWorkCount: 0, unsavedItemCount: 0);
+        ShellShutdownPrompt originalPrompt = ShellLifecycleCoordinator.CreateShutdownPrompt(promptedState);
+        var changedState = new ShellShutdownState(generation: 11, activeWorkCount: 1, unsavedItemCount: 1);
+        var staleOperations = new List<string>();
+        var stale = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(changedState),
+                stopAcceptingWritesAsync: _ =>
+                {
+                    staleOperations.Add("stop-writes");
+                    return ValueTask.CompletedTask;
+                },
+                reachSafePointsAsync: _ =>
+                {
+                    staleOperations.Add("safe-points");
+                    return ValueTask.CompletedTask;
+                }),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownExecutionResult reconfirm = await stale.ExecuteShutdownAsync(
+            promptedState,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(10, originalPrompt.Generation);
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, reconfirm.Disposition);
+        Assert.Equal(11, reconfirm.ReconfirmationPrompt!.Generation);
+        Assert.Equal(
+            PromptText("lifecycle.shutdown.consequence.active_and_unsaved", 1, 1),
+            reconfirm.ReconfirmationPrompt.Consequences);
+        Assert.Empty(staleOperations);
+
+        var sameCountsNewGeneration = new ShellShutdownState(generation: 11, activeWorkCount: 0, unsavedItemCount: 0);
+        var generationOnlyOperations = new List<string>();
+        var generationOnlyStale = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(sameCountsNewGeneration),
+                stopAcceptingWritesAsync: _ => Record(generationOnlyOperations, "stop-writes")),
+            TimeSpan.FromSeconds(2.5));
+        ShellShutdownExecutionResult generationOnlyReconfirm = await generationOnlyStale.ExecuteShutdownAsync(
+            promptedState,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, generationOnlyReconfirm.Disposition);
+        Assert.Equal(11, generationOnlyReconfirm.ReconfirmationPrompt!.Generation);
+        Assert.Empty(generationOnlyOperations);
+
+        var invalidDecisionCalls = new List<string>();
+        var invalidDecisionCoordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(promptedState),
+                stopAcceptingWritesAsync: _ => Record(invalidDecisionCalls, "stop-writes")),
+            TimeSpan.FromSeconds(2.5));
+        ShellShutdownExecutionResult invalidDecision = await invalidDecisionCoordinator.ExecuteShutdownAsync(
+            promptedState,
+            ShellShutdownDecision.SaveThenQuit,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, invalidDecision.Disposition);
+        Assert.Empty(invalidDecisionCalls);
+
+        var calls = new List<string>();
+        var expected = new ShellShutdownState(generation: 20, activeWorkCount: 1, unsavedItemCount: 1);
+        var reachedSafePoint = new ShellShutdownState(generation: 21, activeWorkCount: 0, unsavedItemCount: 1);
+        var saved = new ShellShutdownState(generation: 22, activeWorkCount: 0, unsavedItemCount: 0);
+        int captureCount = 0;
+        var draining = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ =>
+                {
+                    captureCount++;
+                    return ValueTask.FromResult(captureCount switch
+                    {
+                        1 => expected,
+                        2 => reachedSafePoint,
+                        _ => saved,
+                    });
+                },
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                saveUnsavedWorkAsync: (_, _) => Record(calls, "save-unsaved"),
+                flushWritesAsync: _ => Record(calls, "flush-writes"),
+                disconnectServicesAsync: _ => Record(calls, "disconnect-services"),
+                drainWorkAsync: _ => Record(calls, "drain-work"),
+                stopNativeRuntimeAsync: _ => Record(calls, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownExecutionResult stopped = await draining.ExecuteShutdownAsync(
+            expected,
+            ShellShutdownDecision.SaveThenQuit,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ShellShutdownDisposition.Stopped, stopped.Disposition);
+        Assert.Equal(
+            ["stop-writes", "safe-points", "save-unsaved", "flush-writes", "disconnect-services", "drain-work", "stop-runtime"],
+            calls);
+        Assert.Equal(3, captureCount);
+    }
+
+    [Fact]
+    public async Task CompletedActivationMemoryIsBoundedAndNeverRefusesLaterLaunches()
+    {
+        int forwards = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(forwardActivationToPrimaryAsync: (_, _) =>
+            {
+                forwards++;
+                return ValueTask.CompletedTask;
+            }),
+            TimeSpan.FromSeconds(2.5));
+        var first = new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.Activate);
+
+        Assert.Equal(
+            ShellActivationRouteDisposition.Forwarded,
+            await coordinator.RouteActivationAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal(
+            ShellActivationRouteDisposition.AlreadyForwarded,
+            await coordinator.RouteActivationAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal(1, forwards);
+
+        for (int index = 0; index < 4200; index++)
+        {
+            Assert.Equal(
+                ShellActivationRouteDisposition.Forwarded,
+                await coordinator.RouteActivationAsync(
+                    new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.Activate),
+                    TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(4201, forwards);
+
+        // Only the most recent completed requests are remembered; the earliest was evicted, not refused forever.
+        Assert.Equal(
+            ShellActivationRouteDisposition.Forwarded,
+            await coordinator.RouteActivationAsync(first, TestContext.Current.CancellationToken));
+        Assert.Equal(4202, forwards);
+    }
+
+    [Fact]
+    public async Task FailedActivationForwardIsNotRememberedAndCanBeRetried()
+    {
+        int attempts = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(forwardActivationToPrimaryAsync: (_, _) =>
+            {
+                if (++attempts == 1)
+                {
+                    throw new IOException("Simulated primary transport failure.");
+                }
+
+                return ValueTask.CompletedTask;
+            }),
+            TimeSpan.FromSeconds(2.5));
+        var request = new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.OpenTarget, "workspace:one");
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await coordinator.RouteActivationAsync(request, TestContext.Current.CancellationToken).ConfigureAwait(true));
+        Assert.Equal(
+            ShellActivationRouteDisposition.Forwarded,
+            await coordinator.RouteActivationAsync(request, TestContext.Current.CancellationToken));
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public void ShutdownConsequencesComeFromExternalisedResourcesForEveryWorkCombination()
+    {
+        Assert.Equal(
+            PromptText("lifecycle.shutdown.consequence.active", 3),
+            ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 3, 0)).Consequences);
+        Assert.Equal(
+            PromptText("lifecycle.shutdown.consequence.unsaved", 4),
+            ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 0, 4)).Consequences);
+        Assert.Equal(
+            PromptText("lifecycle.shutdown.consequence.active_and_unsaved", 3, 4),
+            ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 3, 4)).Consequences);
+        ShellShutdownPrompt idle = ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 0, 0));
+        Assert.Equal(PromptText("lifecycle.shutdown.consequence.none"), idle.Consequences);
+        Assert.Equal(
+            [ShellShutdownDecision.KeepWorking, ShellShutdownDecision.WaitForSafePointAndQuit],
+            idle.Decisions);
+        Assert.DoesNotContain("{", idle.Consequences, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RealShellComponentsRestoreLayoutBeforeBackgroundWorkAndPersistItAtShutdown()
+    {
+        var root = NewTemporaryRoot();
+        try
+        {
+            var application = ApplicationKey.Parse("editor");
+            var layout = LayoutKey.Parse("default");
+            var inspector = PanelKey.Parse("inspector");
+            var displays = Displays(new DisplayWorkArea(DisplayId.Parse("display-one"), new WindowBounds(0, 0, 1920, 1080), true));
+            NewStore(root, "editor", "default").Save(Snapshot(
+                "editor",
+                "default",
+                [Placement("main", "display-one", new WindowBounds(10, 20, 900, 700))],
+                [new PanelPlacement(inspector, DockRegion.Right, true, 2)]));
+
+            // Second launch: every dependency of the lifecycle coordinator is a real Shell component
+            // (device-local store, window registry, panel host and restorer).
+            var windows = new WindowRegistry(IdentityGeneration.NewInstance());
+            var panels = new PanelHost(DensityMode.Comfortable, [new PanelDefinition(inspector)]);
+            var store = NewStore(root, "editor", "default");
+            var restoredAtBackgroundStart = -1;
+            var flushed = false;
+            var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+            var coordinator = new ShellLifecycleCoordinator(
+                LifecycleOperations(
+                    makeWorkspaceUsableAsync: _ =>
+                    {
+                        LayoutLoadResult loaded = store.Load();
+                        if (loaded.Status != LayoutLoadStatus.Loaded)
+                        {
+                            return ValueTask.FromResult(false);
+                        }
+
+                        LayoutRestorer.Restore(loaded.Snapshot!, windows, panels, displays);
+                        return ValueTask.FromResult(true);
+                    },
+                    startBackgroundWorkAsync: _ =>
+                    {
+                        restoredAtBackgroundStart = windows.Count;
+                        return ValueTask.CompletedTask;
+                    },
+                    captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                    flushWritesAsync: _ =>
+                    {
+                        store.Save(LayoutSnapshot.Create(application, layout, windows.Snapshot(), panels.Snapshot()));
+                        flushed = true;
+                        return ValueTask.CompletedTask;
+                    }),
+                TimeSpan.FromSeconds(2.5));
+
+            ShellStartupMeasurement measurement = await coordinator.RunStartupAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, restoredAtBackgroundStart);
+            Assert.Contains(panels.Snapshot(), panel => panel.Key == inspector && panel.Region == DockRegion.Right && panel.IsCollapsed);
+            Assert.True(measurement.BackgroundStartedAfterWorkspaceReady);
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"Shell startup path with real layout restore: workspace usable after {measurement.WorkspaceReadyAfter.TotalMilliseconds:F3} ms " +
+                $"(budget {measurement.Budget.TotalMilliseconds:F0} ms). Task-local only; not ArcScope product/reference-hardware evidence.");
+
+            // Mutate the layout, then quit: the flush step must persist it before services stop.
+            Assert.True(panels.SetCollapsed(inspector, false));
+            ShellShutdownExecutionResult stopped = await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(ShellShutdownDisposition.Stopped, stopped.Disposition);
+            Assert.True(flushed);
+            LayoutLoadResult reloaded = NewStore(root, "editor", "default").Load();
+            Assert.Equal(LayoutLoadStatus.Loaded, reloaded.Status);
+            Assert.Contains(reloaded.Snapshot!.Panels, panel => panel.Key == inspector && !panel.IsCollapsed);
+            Assert.Equal("main", Assert.Single(reloaded.Snapshot.Windows).Id.Value);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ActiveWorkRemainingAfterSafePointResumesWritesAndNeverTearsDown()
+    {
+        var calls = new List<string>();
+        var prompted = new ShellShutdownState(generation: 1, activeWorkCount: 1, unsavedItemCount: 0);
+        var stillActive = new ShellShutdownState(generation: 2, activeWorkCount: 2, unsavedItemCount: 0);
+        int captures = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(++captures == 1 ? prompted : stillActive),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                saveUnsavedWorkAsync: (_, _) => Record(calls, "save"),
+                flushWritesAsync: _ => Record(calls, "flush"),
+                disconnectServicesAsync: _ => Record(calls, "disconnect"),
+                drainWorkAsync: _ => Record(calls, "drain"),
+                stopNativeRuntimeAsync: _ => Record(calls, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownExecutionResult result = await coordinator.ExecuteShutdownAsync(
+            prompted,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, result.Disposition);
+        Assert.Equal(2, result.ReconfirmationPrompt!.Generation);
+        Assert.Equal(PromptText("lifecycle.shutdown.consequence.active", 2), result.ReconfirmationPrompt.Consequences);
+        Assert.Equal(["stop-writes", "safe-points", "resume-writes"], calls);
+    }
+
+    [Fact]
+    public async Task UnsavedItemsAppearingAfterSafePointUnderWaitDecisionResumeWritesAndReconfirm()
+    {
+        var calls = new List<string>();
+        var prompted = new ShellShutdownState(generation: 1, activeWorkCount: 1, unsavedItemCount: 0);
+        var nowUnsaved = new ShellShutdownState(generation: 2, activeWorkCount: 0, unsavedItemCount: 3);
+        int captures = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(++captures == 1 ? prompted : nowUnsaved),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                saveUnsavedWorkAsync: (_, _) => Record(calls, "save"),
+                flushWritesAsync: _ => Record(calls, "flush"),
+                disconnectServicesAsync: _ => Record(calls, "disconnect")),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownExecutionResult result = await coordinator.ExecuteShutdownAsync(
+            prompted,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, result.Disposition);
+        Assert.Equal(
+            [ShellShutdownDecision.KeepWorking, ShellShutdownDecision.SaveThenQuit],
+            result.ReconfirmationPrompt!.Decisions);
+        Assert.Equal(PromptText("lifecycle.shutdown.consequence.unsaved", 3), result.ReconfirmationPrompt.Consequences);
+        Assert.Equal(["stop-writes", "safe-points", "resume-writes"], calls);
+    }
+
+    [Fact]
+    public async Task SaveLeavingItemsUnsavedResumesWritesBeforeFlushOrDisconnect()
+    {
+        var calls = new List<string>();
+        var prompted = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 2);
+        var stillUnsaved = new ShellShutdownState(generation: 2, activeWorkCount: 0, unsavedItemCount: 1);
+        int captures = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(++captures <= 2 ? prompted : stillUnsaved),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                saveUnsavedWorkAsync: (_, _) => Record(calls, "save"),
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                flushWritesAsync: _ => Record(calls, "flush"),
+                disconnectServicesAsync: _ => Record(calls, "disconnect")),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownExecutionResult result = await coordinator.ExecuteShutdownAsync(
+            prompted,
+            ShellShutdownDecision.SaveThenQuit,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ShellShutdownDisposition.ReconfirmationRequired, result.Disposition);
+        Assert.Equal(PromptText("lifecycle.shutdown.consequence.unsaved", 1), result.ReconfirmationPrompt!.Consequences);
+        Assert.Equal(["stop-writes", "safe-points", "save", "resume-writes"], calls);
+    }
+
+    [Theory]
+    [InlineData("safe-points")]
+    [InlineData("save")]
+    [InlineData("flush")]
+    public async Task FailureBeforeDisconnectResumesWritesAndLeavesShutdownRetryable(string failingStep)
+    {
+        var calls = new List<string>();
+        var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 1);
+        bool failNext = true;
+        ValueTask MaybeFail(string step)
+        {
+            calls.Add(step);
+            if (step == failingStep && failNext)
+            {
+                failNext = false;
+                throw new IOException("Simulated failure at " + step);
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => MaybeFail("safe-points"),
+                saveUnsavedWorkAsync: (_, _) =>
+                {
+                    ValueTask step = MaybeFail("save");
+                    state = new ShellShutdownState(generation: 2, activeWorkCount: 0, unsavedItemCount: 0);
+                    return step;
+                },
+                flushWritesAsync: _ => MaybeFail("flush"),
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                disconnectServicesAsync: _ => Record(calls, "disconnect"),
+                drainWorkAsync: _ => Record(calls, "drain"),
+                stopNativeRuntimeAsync: _ => Record(calls, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownState promptedState = state;
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                promptedState,
+                ShellShutdownDecision.SaveThenQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+
+        Assert.Equal("resume-writes", calls[^1]);
+        Assert.DoesNotContain("disconnect", calls);
+        Assert.DoesNotContain("drain", calls);
+        Assert.DoesNotContain("stop-runtime", calls);
+        Assert.Contains(failingStep, calls);
+
+        // The coordinator is not faulted: a fresh prompt for the current state can still complete shutdown.
+        ShellShutdownState retryState = state;
+        ShellShutdownExecutionResult retry = await coordinator.ExecuteShutdownAsync(
+            retryState,
+            ShellLifecycleCoordinator.CreateShutdownPrompt(retryState).Decisions[1],
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.Stopped, retry.Disposition);
+        Assert.Equal("stop-runtime", calls[^1]);
+    }
+
+    [Fact]
+    public async Task FailedResumeAfterShutdownFailureFaultsTheCoordinatorWithBothFailures()
+    {
+        var state = new ShellShutdownState(generation: 1, activeWorkCount: 0, unsavedItemCount: 0);
+        int disconnects = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                flushWritesAsync: _ => throw new IOException("Simulated flush failure."),
+                resumeAcceptingWritesAsync: _ => throw new InvalidOperationException("Simulated resume failure."),
+                disconnectServicesAsync: _ =>
+                {
+                    disconnects++;
+                    return ValueTask.CompletedTask;
+                }),
+            TimeSpan.FromSeconds(2.5));
+
+        AggregateException failure = await Assert.ThrowsAsync<AggregateException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+
+        Assert.Contains(failure.InnerExceptions, inner => inner is IOException);
+        Assert.Contains(failure.InnerExceptions, inner => inner is InvalidOperationException);
+        Assert.Equal(0, disconnects);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                state,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.RunStartupAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public async Task FailedResumeAfterAbandonedShutdownFaultsTheCoordinator()
+    {
+        var prompted = new ShellShutdownState(generation: 1, activeWorkCount: 1, unsavedItemCount: 0);
+        var stillActive = new ShellShutdownState(generation: 2, activeWorkCount: 1, unsavedItemCount: 0);
+        int captures = 0;
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(++captures == 1 ? prompted : stillActive),
+                resumeAcceptingWritesAsync: _ => throw new InvalidOperationException("Simulated resume failure.")),
+            TimeSpan.FromSeconds(2.5));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                prompted,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.ExecuteShutdownAsync(
+                stillActive,
+                ShellShutdownDecision.WaitForSafePointAndQuit,
+                TestContext.Current.CancellationToken).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public async Task KeepWorkingDecisionLeavesEveryServiceAndWriteUntouched()
+    {
+        var calls = new List<string>();
+        var state = new ShellShutdownState(generation: 4, activeWorkCount: 1, unsavedItemCount: 1);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(
+                captureShutdownStateAsync: _ => ValueTask.FromResult(state),
+                stopAcceptingWritesAsync: _ => Record(calls, "stop-writes"),
+                reachSafePointsAsync: _ => Record(calls, "safe-points"),
+                resumeAcceptingWritesAsync: _ => Record(calls, "resume-writes"),
+                saveUnsavedWorkAsync: (_, _) => Record(calls, "save"),
+                flushWritesAsync: _ => Record(calls, "flush"),
+                disconnectServicesAsync: _ => Record(calls, "disconnect"),
+                drainWorkAsync: _ => Record(calls, "drain"),
+                stopNativeRuntimeAsync: _ => Record(calls, "stop-runtime")),
+            TimeSpan.FromSeconds(2.5));
+
+        ShellShutdownExecutionResult result = await coordinator.ExecuteShutdownAsync(
+            state,
+            ShellShutdownDecision.KeepWorking,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ShellShutdownDisposition.KeptOpen, result.Disposition);
+        Assert.Null(result.ReconfirmationPrompt);
+        Assert.Empty(calls);
+
+        // Keeping work running does not end the lifecycle: a later informed quit still works.
+        state = new ShellShutdownState(generation: 5, activeWorkCount: 0, unsavedItemCount: 0);
+        ShellShutdownExecutionResult quit = await coordinator.ExecuteShutdownAsync(
+            state,
+            ShellShutdownDecision.WaitForSafePointAndQuit,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(ShellShutdownDisposition.Stopped, quit.Disposition);
+    }
+
+    [Fact]
+    public async Task DuplicateActivationDoesNotInheritTheFirstCallersCancellation()
+    {
+        int attempts = 0;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new ShellLifecycleCoordinator(
+            LifecycleOperations(forwardActivationToPrimaryAsync: async (_, cancellationToken) =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    entered.TrySetResult(true);
+                    await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+                }
+            }),
+            TimeSpan.FromSeconds(2.5));
+        var request = new ShellActivationRequest(Guid.NewGuid(), ShellActivationKind.Activate);
+        using var ownerCancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+
+        Task<ShellActivationRouteDisposition> owner = coordinator.RouteActivationAsync(request, ownerCancellation.Token).AsTask();
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Task<ShellActivationRouteDisposition> duplicate = coordinator
+            .RouteActivationAsync(request, TestContext.Current.CancellationToken)
+            .AsTask();
+        await ownerCancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await owner.ConfigureAwait(true));
+        Assert.Equal(ShellActivationRouteDisposition.Forwarded, await duplicate.WaitAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
     public void PanelHostSupportsDockingCollapsingAndSemanticDensityMetrics()
     {
         var left = PanelKey.Parse("navigation");
@@ -333,4 +1142,48 @@ public sealed class ShellLayoutTests
 
     private static string NewTemporaryRoot()
         => Path.Combine(Path.GetTempPath(), "arcf-or-plt27-" + Guid.NewGuid().ToString("N"));
+
+    private static ShellLifecycleOperations LifecycleOperations(
+        Func<CancellationToken, ValueTask<bool>>? makeWorkspaceUsableAsync = null,
+        Func<CancellationToken, ValueTask>? startBackgroundWorkAsync = null,
+        Func<ShellActivationRequest, CancellationToken, ValueTask>? forwardActivationToPrimaryAsync = null,
+        Func<CancellationToken, ValueTask<ShellShutdownState>>? captureShutdownStateAsync = null,
+        Func<CancellationToken, ValueTask>? stopAcceptingWritesAsync = null,
+        Func<CancellationToken, ValueTask>? resumeAcceptingWritesAsync = null,
+        Func<CancellationToken, ValueTask>? reachSafePointsAsync = null,
+        Func<ShellShutdownState, CancellationToken, ValueTask>? saveUnsavedWorkAsync = null,
+        Func<CancellationToken, ValueTask>? flushWritesAsync = null,
+        Func<CancellationToken, ValueTask>? disconnectServicesAsync = null,
+        Func<CancellationToken, ValueTask>? drainWorkAsync = null,
+        Func<CancellationToken, ValueTask>? stopNativeRuntimeAsync = null) =>
+        new(
+            makeWorkspaceUsableAsync ?? (static _ => ValueTask.FromResult(true)),
+            startBackgroundWorkAsync ?? (static _ => ValueTask.CompletedTask),
+            forwardActivationToPrimaryAsync ?? (static (_, _) => ValueTask.CompletedTask),
+            captureShutdownStateAsync ?? (static _ => ValueTask.FromResult(new ShellShutdownState(0, 0, 0))),
+            stopAcceptingWritesAsync ?? (static _ => ValueTask.CompletedTask),
+            resumeAcceptingWritesAsync ?? (static _ => ValueTask.CompletedTask),
+            reachSafePointsAsync ?? (static _ => ValueTask.CompletedTask),
+            saveUnsavedWorkAsync ?? (static (_, _) => ValueTask.CompletedTask),
+            flushWritesAsync ?? (static _ => ValueTask.CompletedTask),
+            disconnectServicesAsync ?? (static _ => ValueTask.CompletedTask),
+            drainWorkAsync ?? (static _ => ValueTask.CompletedTask),
+            stopNativeRuntimeAsync ?? (static _ => ValueTask.CompletedTask));
+
+    private static string PromptText(string key, params object[] arguments)
+    {
+        var resources = new System.Resources.ResourceManager(
+            "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
+            typeof(ShellLifecycleCoordinator).Assembly);
+        return string.Format(
+            System.Globalization.CultureInfo.CurrentCulture,
+            resources.GetString(key, System.Globalization.CultureInfo.CurrentUICulture)!,
+            arguments);
+    }
+
+    private static ValueTask Record(List<string> calls, string step)
+    {
+        calls.Add(step);
+        return ValueTask.CompletedTask;
+    }
 }

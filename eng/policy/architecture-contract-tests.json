@@ -1513,5 +1513,30 @@
     "apiSymbol": "ArcForges.Security.Approvals.SteeringCoordinator.ApplyAsync(ArcForges.Security.Approvals.SteeringRequest, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.ApprovalGuardrailTests.SteeringChangesOnlyTheRunningOperationDirectionAndLeavesApprovalPending()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Commands.ShellCommandPalette.GetMenuContributions()",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.CommandPaletteTests.GetMenuContributionsUsesRegisteredCommandIdentityAndStableOrder()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ShellLifecycleCoordinator.RunStartupAsync(System.Threading.CancellationToken)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.RunStartupAsyncRunsLocalWorkBeforeBackgroundAndReturnsMeasurement()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ShellLifecycleCoordinator.RouteActivationAsync(ArcForges.Desktop.Shell.ShellActivationRequest, System.Threading.CancellationToken)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.RouteActivationAsyncForwardsSecondaryLaunchToPrimaryExactlyOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ShellLifecycleCoordinator.CreateShutdownPrompt(ArcForges.Desktop.Shell.ShellShutdownState)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.CreateShutdownPromptStatesRunningAndUnsavedConsequences()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.ShellLifecycleCoordinator.ExecuteShutdownAsync(ArcForges.Desktop.Shell.ShellShutdownState, ArcForges.Desktop.Shell.ShellShutdownDecision, System.Threading.CancellationToken)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.ShellLayoutTests.ExecuteShutdownAsyncRequiresChoiceAndRunsDrainInOrderWithoutLosingWork()"
   }
 ]
