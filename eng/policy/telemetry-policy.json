@@ -1,0 +1,364 @@
+{
+  "schemaVersion": 1,
+  "authority": [
+    "ArcForges-Design docs/architecture/13-observability-and-operations.md: OA-08, SG-02, SG-03, SG-05, DM-01 to DM-04, RD-01 to RD-08, CC-01 to CC-03, TV-01 and TV-03",
+    "ArcForges-Design docs/planning/work-packages/12-observability-foundation.md: WP-12.02 (redaction) and WP-12.03 (cardinality and sampling)"
+  ],
+  "owners": {
+    "dimensions": "PLT.47 vocabulary; PLT.49 records it here and extends it only with the route dimensions of RD-08",
+    "redaction": "PLT.49",
+    "samplingAndRetention": "PLT.50 supplies the values Design leaves open; this file records only what Design fixes"
+  },
+  "dimensions": [
+    {
+      "name": "application.id",
+      "kind": "application-id",
+      "members": [
+        "arcscope",
+        "companion"
+      ]
+    },
+    {
+      "name": "instance.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "build.id",
+      "kind": "build-id"
+    },
+    {
+      "name": "deployment.environment",
+      "kind": "enum",
+      "members": [
+        "Development",
+        "Production",
+        "Staging",
+        "Test"
+      ]
+    },
+    {
+      "name": "actor.ref",
+      "kind": "sha256-reference"
+    },
+    {
+      "name": "workspace.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "transport",
+      "kind": "enum",
+      "members": [
+        "Http",
+        "LocalRpc",
+        "Provider",
+        "Queue",
+        "Realtime",
+        "Worker"
+      ]
+    },
+    {
+      "name": "service.name",
+      "kind": "enum",
+      "members": [
+        "Application",
+        "Capabilities",
+        "Cloud",
+        "Device",
+        "Extensions",
+        "Security",
+        "Storage",
+        "Sync"
+      ]
+    },
+    {
+      "name": "interface.name",
+      "kind": "enum",
+      "members": [
+        "ApplicationLifecycle",
+        "ConnectorHost",
+        "HealthProbe",
+        "ResourceStore",
+        "SecretBroker"
+      ]
+    },
+    {
+      "name": "method.name",
+      "kind": "enum",
+      "members": [
+        "Check",
+        "Commit",
+        "Create",
+        "Delete",
+        "Emit",
+        "Execute",
+        "Read",
+        "Start",
+        "Stop",
+        "Update",
+        "Write"
+      ]
+    },
+    {
+      "name": "capability.name",
+      "kind": "enum",
+      "members": [
+        "ConnectorInvoke",
+        "Egress",
+        "ResourceRead",
+        "ResourceWrite",
+        "SecretUse"
+      ]
+    },
+    {
+      "name": "resource.ref",
+      "kind": "sha256-reference"
+    },
+    {
+      "name": "command.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "task.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "run.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "attempt.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "correlation.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "causation.id",
+      "kind": "guid-32"
+    },
+    {
+      "name": "expected.revision",
+      "kind": "unsigned-integer"
+    },
+    {
+      "name": "result.revision",
+      "kind": "unsigned-integer"
+    },
+    {
+      "name": "duration.ms",
+      "kind": "duration-ms"
+    },
+    {
+      "name": "queue.time.ms",
+      "kind": "duration-ms"
+    },
+    {
+      "name": "result.code",
+      "kind": "enum",
+      "members": [
+        "Cancelled",
+        "Failed",
+        "Refused",
+        "Succeeded",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "reason.code",
+      "kind": "reason-code"
+    },
+    {
+      "name": "native.abi.version",
+      "kind": "native-abi-version"
+    },
+    {
+      "name": "native.abi.build",
+      "kind": "build-id"
+    },
+    {
+      "name": "reconnect.count",
+      "kind": "count"
+    },
+    {
+      "name": "sequence.gap.count",
+      "kind": "count"
+    },
+    {
+      "name": "http.route",
+      "kind": "route-template"
+    },
+    {
+      "name": "http.request.method",
+      "kind": "http-method",
+      "members": [
+        "CONNECT",
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "PATCH",
+        "POST",
+        "PUT",
+        "TRACE",
+        "_OTHER"
+      ]
+    },
+    {
+      "name": "http.response.status_code",
+      "kind": "http-status-code"
+    }
+  ],
+  "routeParameters": {
+    "namePrefix": "http.route.param.",
+    "kind": "guid-32",
+    "slotRule": "The slot name must be declared by a route template registered through RouteTemplateSet.Create (a lower-case word of at most 32 letters and digits, starting with a letter, that is not a known-sensitive field name); the value is an opaque identifier, never a name or path. A field whose slot name no registered template declares is removed."
+  },
+  "metricLabels": {
+    "pointLabels": [
+      "service.name"
+    ],
+    "scopeAttributes": [
+      "application.id",
+      "instance.id",
+      "build.id",
+      "deployment.environment"
+    ],
+    "unboundedIdentifiersAreNeverLabels": true
+  },
+  "redaction": {
+    "exportRule": "A field is exported only if its name is in dimensions or routeParameters, is not a known-sensitive name, and its value has exactly the kind recorded for it. Every other field is removed, including every header, cookie, token, prompt, note, path, raw URL and exception text.",
+    "operationNameRule": "A span or span-event name is exported only as dot-separated ASCII words (at most 80 characters); anything else is exported as 'redacted'. Status descriptions, links and baggage are never exported.",
+    "sensitiveFieldNames": {
+      "exact": [
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+        "x-csrf-token",
+        "x-amz-security-token"
+      ],
+      "words": [
+        "auth",
+        "authorization",
+        "bearer",
+        "byok",
+        "cookie",
+        "cookies",
+        "credential",
+        "credentials",
+        "jwt",
+        "otp",
+        "passkey",
+        "passkeys",
+        "passwd",
+        "password",
+        "passwords",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "header",
+        "headers",
+        "prompt",
+        "prompts",
+        "completion",
+        "completions",
+        "message",
+        "messages",
+        "content",
+        "contents",
+        "body",
+        "payload",
+        "payloads",
+        "text",
+        "note",
+        "notes",
+        "annotation",
+        "annotations",
+        "attachment",
+        "attachments",
+        "document",
+        "documents",
+        "file",
+        "files",
+        "filename",
+        "filepath",
+        "path",
+        "paths",
+        "directory",
+        "folder",
+        "url",
+        "uri",
+        "query",
+        "querystring",
+        "exception",
+        "stacktrace",
+        "stack"
+      ],
+      "wordSequences": [
+        [
+          "api",
+          "key"
+        ],
+        [
+          "private",
+          "key"
+        ],
+        [
+          "access",
+          "key"
+        ],
+        [
+          "signing",
+          "key"
+        ],
+        [
+          "one",
+          "time",
+          "code"
+        ],
+        [
+          "raw",
+          "sync"
+        ]
+      ]
+    }
+  },
+  "sampling": {
+    "head": {
+      "configurablePer": [
+        "signal",
+        "route"
+      ],
+      "defaultRatio": null
+    },
+    "diagnosticBuffer": {
+      "defaultBytes": 8388608,
+      "hardLimitBytes": 16777216,
+      "perTraceRetentionSeconds": 30
+    },
+    "promotion": {
+      "errorAndSlow": "spans-still-recorded-only",
+      "everyErrorTraceRetained": false
+    },
+    "lossIsCountedAndVisible": true
+  },
+  "retention": {
+    "signalClassPosture": {
+      "metrics": "longest-aggregated",
+      "traces": "short-sampled",
+      "logs": "short-to-medium"
+    },
+    "durationsByClassAndEnvironment": null,
+    "productionAndNonProductionBudgetedSeparately": true,
+    "auditRetentionIsIndependent": true
+  },
+  "notFixedByDesign": [
+    "sampling.head.defaultRatio",
+    "retention.durationsByClassAndEnvironment"
+  ]
+}

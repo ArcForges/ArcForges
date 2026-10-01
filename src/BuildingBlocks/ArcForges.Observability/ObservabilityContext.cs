@@ -63,6 +63,8 @@ public sealed record ObservabilityContext
     public TimeSpan? QueueTime { get; init; }
     public SignalResultCode? ResultCode { get; init; }
     public ReasonCode? ReasonCode { get; init; }
+    /// <summary>The URL of a request as its registered route template plus opaque identifiers, never as a raw URL.</summary>
+    public RecordedRoute? Route { get; init; }
     public NativeAbiVersion? NativeAbiVersion { get; init; }
     public string? NativeAbiBuildId { get; init; }
     public int? ReconnectCount { get; init; }
@@ -76,6 +78,20 @@ public sealed record ObservabilityContext
         Assembly? applicationAssembly = null)
     {
         return new ObservabilityContext(application, instanceId, environment, applicationAssembly);
+    }
+
+    /// <summary>
+    /// Records a failure by its reason code only. The exception's message, data, stack trace and inner exceptions are
+    /// never read, because they can embed user input (observability architecture RD-07). A cancellation is recorded as
+    /// cancelled with no reason code.
+    /// </summary>
+    public ObservabilityContext WithFailure(Exception exception, ExceptionReasonMapper? mapper = null)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        ReasonCode? reason = (mapper ?? ExceptionReasonMapper.Default).Map(exception);
+        return reason is null
+            ? this with { ResultCode = SignalResultCode.Cancelled, ReasonCode = null }
+            : this with { ResultCode = SignalResultCode.Failed, ReasonCode = reason };
     }
 
     internal Dictionary<string, object?> MaterializeDimensions()
@@ -109,6 +125,7 @@ public sealed record ObservabilityContext
         AddDuration(values, "queue.time.ms", QueueTime);
         AddEnum(values, "result.code", ResultCode);
         if (ReasonCode is not null) values.Add("reason.code", ReasonCode.Code);
+        AddRoute(values, Route);
         if (NativeAbiVersion is { } nativeVersion) values.Add("native.abi.version", nativeVersion.ToString());
         AddBuildId(values, "native.abi.build", NativeAbiBuildId);
         AddCount(values, "reconnect.count", ReconnectCount);
@@ -116,11 +133,12 @@ public sealed record ObservabilityContext
         return values;
     }
 
+    internal static bool IsValidBuildId(string value) => value == "local.local" || IsLocalCommitBuild(value) || IsCiBuild(value);
+
     private static string ValidateBuildId(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        bool valid = value == "local.local" || IsLocalCommitBuild(value) || IsCiBuild(value);
-        if (!valid)
+        if (!IsValidBuildId(value))
         {
             throw new ArgumentException("Build identity must match a build-policy local or CI stamp.", nameof(value));
         }
@@ -170,22 +188,40 @@ public sealed record ObservabilityContext
         return true;
     }
 
+    private static readonly System.Buffers.SearchValues<char> LowerHex = System.Buffers.SearchValues.Create("0123456789abcdef");
+
+    internal static bool IsSha256Reference(string value) =>
+        value.Length == 71 && value.StartsWith("sha256:", StringComparison.Ordinal)
+        && value.AsSpan(7).IndexOfAnyExcept(LowerHex) < 0;
+
     private static string RequireHashReference(string value, string parameterName)
     {
-        if (value.Length != 71 || !value.StartsWith("sha256:", StringComparison.Ordinal))
+        if (!IsSha256Reference(value))
         {
             throw new ArgumentException("A lowercase SHA-256 reference is required; raw identifiers are not accepted.", parameterName);
         }
 
-        foreach (char character in value.AsSpan(7))
+        return value;
+    }
+
+    private static void AddRoute(Dictionary<string, object?> values, RecordedRoute? route)
+    {
+        if (route is null) return;
+        if (!RouteTemplateSet.IsValidRecordedTemplate(route.Template))
         {
-            if (character is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
-            {
-                throw new ArgumentException("A lowercase SHA-256 reference is required; raw identifiers are not accepted.", parameterName);
-            }
+            throw new ArgumentException("A route must be recorded through a RouteTemplateSet.", nameof(route));
         }
 
-        return value;
+        values.Add("http.route", route.Template);
+        foreach (RouteIdentifier identifier in route.Identifiers)
+        {
+            if (identifier.Value == Guid.Empty || !RouteTemplateSet.IsRegisteredSlotName(identifier.Slot))
+            {
+                throw new ArgumentException("A route identifier must fill a valid slot with a non-empty identifier.", nameof(route));
+            }
+
+            values.Add(TelemetryFields.RouteParameterPrefix + identifier.Slot, Format(identifier.Value));
+        }
     }
 
     private static void AddHashReference(Dictionary<string, object?> values, string name, string? value)
