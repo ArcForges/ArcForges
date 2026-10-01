@@ -113,6 +113,14 @@
           "role": "aot-library"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
           "role": "aot-library"
         },
