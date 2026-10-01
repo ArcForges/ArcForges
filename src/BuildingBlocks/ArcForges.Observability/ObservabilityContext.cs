@@ -215,7 +215,7 @@ public sealed record ObservabilityContext
         values.Add("http.route", route.Template);
         foreach (RouteIdentifier identifier in route.Identifiers)
         {
-            if (identifier.Value == Guid.Empty || !RouteTemplateSet.IsValidSlotName(identifier.Slot))
+            if (identifier.Value == Guid.Empty || !RouteTemplateSet.IsRegisteredSlotName(identifier.Slot))
             {
                 throw new ArgumentException("A route identifier must fill a valid slot with a non-empty identifier.", nameof(route));
             }

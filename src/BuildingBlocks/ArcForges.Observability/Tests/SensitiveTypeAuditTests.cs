@@ -40,6 +40,13 @@ public sealed class SensitiveTypeAuditTests
     [InlineData(typeof(OpenContent), "must be a sealed concrete type")]
     [InlineData(typeof(DerivedContent), "derives from")]
     [InlineData(typeof(ProtectedText), "ProtectedText.Hidden exposes String")]
+    [InlineData(typeof(TaskOfText), "TaskOfText.Load returns Task")]
+    [InlineData(typeof(LazyText), "LazyText.Value exposes Lazy")]
+    [InlineData(typeof(FuncText), "FuncText.Reveal exposes Func")]
+    [InlineData(typeof(BuilderMember), "BuilderMember.Builder exposes StringBuilder")]
+    [InlineData(typeof(ReaderMember), "ReaderMember.Open returns TextReader")]
+    [InlineData(typeof(SequenceMember), "SequenceMember.Bytes returns ReadOnlySequence")]
+    [InlineData(typeof(ExplicitText), "ExplicitText.ArcForges.Observability.Tests.SensitiveTypeAuditTests.IShowsText.Show returns String")]
     public void AnythingAnExporterFormatterOrSerializerCouldReachIsReported(Type type, string expected)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -207,6 +214,46 @@ public sealed class SensitiveTypeAuditTests
     private class ProtectedText
     {
         protected string Hidden { get; } = "x";
+    }
+
+    private sealed class TaskOfText
+    {
+        public Task<string> Load() => Task.FromResult("x");
+    }
+
+    private sealed class LazyText
+    {
+        public Lazy<string> Value { get; } = new(() => "x");
+    }
+
+    private sealed class FuncText
+    {
+        public readonly Func<string> Reveal = () => "x";
+    }
+
+    private sealed class BuilderMember
+    {
+        public System.Text.StringBuilder Builder { get; } = new();
+    }
+
+    private sealed class ReaderMember
+    {
+        public TextReader Open() => TextReader.Null;
+    }
+
+    private sealed class SequenceMember
+    {
+        public System.Buffers.ReadOnlySequence<byte> Bytes() => default;
+    }
+
+    private interface IShowsText
+    {
+        string Show();
+    }
+
+    private sealed class ExplicitText : IShowsText
+    {
+        string IShowsText.Show() => "x";
     }
 
     private sealed class DerivedProtectedText : ProtectedText

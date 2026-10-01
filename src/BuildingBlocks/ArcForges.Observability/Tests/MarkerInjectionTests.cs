@@ -217,7 +217,10 @@ public sealed class MarkerInjectionTests
             }));
             activity.AddLink(new ActivityLink(default, new ActivityTagsCollection { ["note"] = value }));
             activity.SetStatus(ActivityStatusCode.Error, value);
-            injected += 9;
+            activity.SetTag("http.route.param.zzmarkerslot" + kind, "0123456789abcdef0123456789abcdef");
+            activity.AddException(new IOException(value));
+            activity.AddException(new InvalidOperationException(value), new TagList { { "exception.escaped", true }, { "note", value } });
+            injected += 12;
         }
 
         return injected;

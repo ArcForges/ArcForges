@@ -35,8 +35,12 @@ tests keep it identical to what this library enforces.
   holds secret or user content is declared with `[SensitiveContent]`; the reference structural audit in this project's
   tests (`SensitiveTypeAudit`) fails any such type that is a record, is unsealed, implements a formatting interface,
   exposes text, bytes, spans, streams or `object`, converts to such a type, or overrides `ToString` with anything but
-  `Name:[redacted]`. The audit uses reflection, which production AOT code may not, so it lives in the tests; an owner
-  of a content type runs the same check over its own assembly.
+  `Name:[redacted]`. It is a reference audit, not a proof: it examines one type's own declared members (including
+  explicit interface implementations) and treats arrays, spans, memory, sequences, `Task<>`, `ValueTask<>`, `Lazy<>`,
+  `Func<>`, `IEnumerable` carriers, `StringBuilder`, `TextReader` and `TextWriter` of text or bytes as text. It does
+  not follow members transitively into other types, inspect inherited members (a base type other than `object` is
+  itself a finding), or recognise carriers it does not list. The audit uses reflection, which production AOT code may
+  not, so it lives in the tests; an owner of a content type runs the same check over its own assembly.
 - **Scrubbing processor.** `RedactionProcessor` removes every field that is not in the reviewed export vocabulary, is a
   known-sensitive header or field name (authorization, cookie, API key, token, prompt, note, path, raw URL, exception
   text, and so on), or has a value that is not exactly the reviewed shape of its field. `SignalEmitter` runs every

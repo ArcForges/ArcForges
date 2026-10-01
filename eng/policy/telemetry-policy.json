@@ -212,7 +212,7 @@
   "routeParameters": {
     "namePrefix": "http.route.param.",
     "kind": "guid-32",
-    "slotRule": "A lower-case word of at most 32 letters and digits, starting with a letter, that is not a known-sensitive field name; the value is an opaque identifier, never a name or path."
+    "slotRule": "The slot name must be declared by a route template registered through RouteTemplateSet.Create (a lower-case word of at most 32 letters and digits, starting with a letter, that is not a known-sensitive field name); the value is an opaque identifier, never a name or path. A field whose slot name no registered template declares is removed."
   },
   "metricLabels": {
     "pointLabels": [

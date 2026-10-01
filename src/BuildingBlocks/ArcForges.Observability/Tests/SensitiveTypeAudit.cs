@@ -76,7 +76,7 @@ internal static class SensitiveTypeAudit
 
         foreach (MethodInfo method in type.GetMethods(Surface).Where(method => !method.IsSpecialName || IsConversion(method)))
         {
-            if (!IsExposed(method))
+            if (!IsExposed(method) && !IsExplicitInterfaceImplementation(method))
             {
                 continue;
             }
@@ -116,6 +116,8 @@ internal static class SensitiveTypeAudit
         }
     }
 
+    private static bool IsExplicitInterfaceImplementation(MethodInfo method) => method.IsPrivate && method.IsFinal && method.Name.Contains('.', StringComparison.Ordinal);
+
     private static bool IsConversion(MethodInfo method) => method.Name is "op_Implicit" or "op_Explicit";
 
     private static bool IsExposed(MethodBase? method) =>
@@ -139,6 +141,11 @@ internal static class SensitiveTypeAudit
             return IsReadable(type.GetElementType()!);
         }
 
+        if (type == typeof(System.Text.StringBuilder) || typeof(TextReader).IsAssignableFrom(type) || typeof(TextWriter).IsAssignableFrom(type))
+        {
+            return true;
+        }
+
         if (type == typeof(char) || type == typeof(byte))
         {
             return true;
@@ -148,7 +155,9 @@ internal static class SensitiveTypeAudit
         {
             Type definition = type.GetGenericTypeDefinition();
             bool buffer = definition == typeof(ReadOnlySpan<>) || definition == typeof(Span<>)
-                || definition == typeof(ReadOnlyMemory<>) || definition == typeof(Memory<>);
+                || definition == typeof(ReadOnlyMemory<>) || definition == typeof(Memory<>)
+                || definition == typeof(System.Buffers.ReadOnlySequence<>) || definition == typeof(Task<>) || definition == typeof(ValueTask<>)
+                || definition == typeof(Lazy<>) || definition == typeof(Func<>);
             bool sequence = typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
             if (buffer || sequence)
             {

@@ -174,6 +174,30 @@ public sealed class RedactionProcessorTests
     }
 
     [Fact]
+    public void ARouteParameterFieldNameIsExportedOnlyForASlotARegisteredTemplateDeclares()
+    {
+        const string hostile = "zzmarkerslotname";
+        Assert.Empty(RedactionProcessor.ScrubFields([new("http.route.param." + hostile, Id)]));
+
+        RouteTemplateSet.Create(["/slots/{" + hostile + "}"]);
+        Assert.Single(RedactionProcessor.ScrubFields([new("http.route.param." + hostile, Id)]));
+        Assert.Empty(RedactionProcessor.ScrubFields([new("http.route.param." + hostile + "x", Id)]));
+
+        var instance = new InstanceId(Guid.NewGuid());
+        const string foreignSource = "Test.Foreign.SlotNames";
+        using var source = new ActivitySource(foreignSource);
+        using var exporter = new LocalTestExporter(instance, foreignSource);
+        using (Activity activity = source.StartActivity("slots.probe")!)
+        {
+            activity.SetTag("http.route.param.zzunregisteredslotchosenbyanattacker", Id);
+            activity.SetTag("http.route.param.zzunregisteredslotchosenbyanattackerb", Id);
+        }
+
+        Assert.DoesNotContain("zzunregistered", exporter.ExportedText(), StringComparison.Ordinal);
+        Assert.Empty(Assert.Single(exporter.Spans).Tags);
+    }
+
+    [Fact]
     public void ObjectsWithoutAReviewedShapeNeverReachAnExporter()
     {
         var kept = RedactionProcessor.ScrubFields(
@@ -237,6 +261,27 @@ public sealed class RedactionProcessorTests
             });
         Assert.DoesNotContain("marker", Everything(span), StringComparison.Ordinal);
         Assert.Throws<ArgumentNullException>(() => RedactionProcessor.Scrub((Activity)null!));
+    }
+
+    [Fact]
+    public void ARealActivityAddExceptionEventIsReducedToItsNameAndNothingElse()
+    {
+        using var source = new ActivitySource("Test.Real.AddException");
+        using var listener = Listener(source.Name);
+        using Activity activity = source.StartActivity("exception.probe")!;
+        activity.AddException(new System.IO.IOException("zzmarker-message C:\\Users\\someone\\diary.txt"),
+            new TagList { { "note", "zzmarker-note" }, { "result.code", "Failed" } });
+        activity.Stop();
+
+        // The live activity really holds the message and stack trace, which no API can remove from it.
+        ActivityEvent live = Assert.Single(activity.Events);
+        Assert.Contains(live.Tags, tag => tag.Key == "exception.message" && ((string?)tag.Value)!.Contains("zzmarker", StringComparison.Ordinal));
+        Assert.Contains(live.Tags, tag => tag.Key == "exception.stacktrace");
+
+        ScrubbedSpanEvent exported = Assert.Single(RedactionProcessor.Scrub(activity).Events);
+        Assert.Equal("exception", exported.Name);
+        Assert.Equal("result.code", Assert.Single(exported.Tags.Keys));
+        Assert.DoesNotContain("zzmarker", Everything(RedactionProcessor.Scrub(activity)), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -86,7 +86,7 @@ internal static class TelemetryFields
         }
 
         if (name.StartsWith(RouteParameterPrefix, StringComparison.Ordinal)
-            && RouteTemplateSet.IsValidSlotName(name.AsSpan(RouteParameterPrefix.Length)))
+            && RouteTemplateSet.IsRegisteredSlotName(name.AsSpan(RouteParameterPrefix.Length)))
         {
             rule = RouteParameter;
             return true;

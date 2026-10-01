@@ -49,6 +49,10 @@ public sealed class RouteTemplateSet
     // these, so a foreign instrumentation tag cannot smuggle a path-shaped string through as a "template".
     private static readonly ConcurrentDictionary<string, byte> Registered = new(StringComparer.Ordinal);
 
+    // The slot names of those templates. An exporter accepts an http.route.param.<slot> field only for one of these,
+    // so a foreign tag cannot carry attacker-chosen text in the field name.
+    private static readonly ConcurrentDictionary<string, byte> RegisteredSlots = new(StringComparer.Ordinal);
+
     private static readonly SearchValues<char> SlotCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyz0123456789");
     private static readonly SearchValues<char> LiteralCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyz0123456789._-");
 
@@ -91,6 +95,10 @@ public sealed class RouteTemplateSet
         foreach (Template template in parsed)
         {
             Registered.TryAdd(template.Text, 0);
+            foreach (string slot in template.SlotNames)
+            {
+                RegisteredSlots.TryAdd(slot, 0);
+            }
         }
 
         return new RouteTemplateSet(parsed.ToArray());
@@ -130,6 +138,10 @@ public sealed class RouteTemplateSet
 
         return !SensitiveFieldNames.IsSensitive(slot.ToString());
     }
+
+    /// <summary>True only for a slot name that some registered template declares (and so passed <see cref="IsValidSlotName"/>).</summary>
+    internal static bool IsRegisteredSlotName(ReadOnlySpan<char> slot) =>
+        IsValidSlotName(slot) && RegisteredSlots.ContainsKey(slot.ToString());
 
     /// <summary>True for the unmatched marker or for a template some <see cref="RouteTemplateSet"/> registered.</summary>
     internal static bool IsValidRecordedTemplate(string value) =>
@@ -209,6 +221,8 @@ public sealed class RouteTemplateSet
         }
 
         public string Text { get; }
+
+        public IEnumerable<string> SlotNames => _segments.Where(segment => segment.IsSlot).Select(segment => segment.Value);
 
         /// <summary>The template with every slot name replaced, so interchangeable slot names collide.</summary>
         public string Shape { get; }
