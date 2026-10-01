@@ -110,7 +110,8 @@ public sealed class SecretBroker
         EnsureSameNamespace(reference, context);
         var grant = new ConnectorSecretGrant(Guid.NewGuid(), _brokerId, connectorDefinitionId, reference,
             SHA256.HashData(ActorChainSnapshot.Encode(targetActorChain)), context.Session,
-            context.RecoveryGeneration, _timeProvider.GetUtcNow() + lifetime);
+            context.RecoveryGeneration, _timeProvider.GetUtcNow() + lifetime, _timeProvider.GetTimestamp(), lifetime);
+        EvictExpiredGrants();
         if (!_grants.TryAdd(grant.Id, grant)) throw new InvalidOperationException("Connector grant identity collision.");
         return grant;
     }
@@ -128,7 +129,7 @@ public sealed class SecretBroker
                 throw new UnauthorizedAccessException("Connector secret grant is unknown or revoked.");
             }
 
-            if (_timeProvider.GetUtcNow() >= grant.ExpiresAt)
+            if (IsExpired(grant))
             {
                 grant.IsRevoked = true;
                 _grants.TryRemove(grant.Id, out _);
@@ -176,8 +177,9 @@ public sealed class SecretBroker
     }
 
     /// <summary>
-    /// Immediately revokes every outstanding connector grant of this broker, as own sign-out must (revocation is
-    /// immediate). Stored secrets, other applications' vaults and local data are untouched.
+    /// Revokes every outstanding connector grant of this broker, as own sign-out must: no use starts after this returns,
+    /// while an executor operation already in flight completes first (revocation waits for it). Stored secrets, other
+    /// applications' vaults and local data are untouched.
     /// </summary>
     public int RevokeAllConnectorGrants()
     {
@@ -205,6 +207,23 @@ public sealed class SecretBroker
         var context = RequireDirectHumanContext();
         EnsureSameNamespace(reference, context);
         return _store.Delete(Target(reference.Location));
+    }
+
+    private bool IsExpired(ConnectorSecretGrant grant) =>
+        _timeProvider.GetElapsedTime(grant.IssuedTimestamp) >= grant.Lifetime;
+
+    // Expired grants are evicted when the next grant is minted, so only the human host can grow the table.
+    private void EvictExpiredGrants()
+    {
+        foreach (var pair in _grants.ToArray())
+        {
+            var grant = pair.Value;
+            if (!IsExpired(grant)) continue;
+            lock (grant.SyncRoot)
+            {
+                if (_grants.TryRemove(grant.Id, out var active) && ReferenceEquals(active, grant)) grant.IsRevoked = true;
+            }
+        }
     }
 
     private SecretHostContext RequireDirectHumanContext()

@@ -160,6 +160,8 @@ public interface ISecretHostContextProvider
 /// connector children never implement this interface, receive this object, or receive its secret span.
 /// Implementations perform the granted credential-bearing operation in the owning host and must never
 /// forward the raw credential over connector IPC. A connector child cannot supply an arbitrary callback.
+/// The operation must have bounded runtime: it runs while the grant is locked, so sign-out revocation of that one grant
+/// waits for it, and an operation already in flight completes after sign-out began (nothing starts after revocation).
 /// </summary>
 public interface IConnectorSecretOperationExecutor
 {
@@ -173,7 +175,8 @@ public interface IConnectorSecretOperationExecutor
 public sealed class ConnectorSecretGrant
 {
     internal ConnectorSecretGrant(Guid id, Guid brokerId, string definitionId, SecretRef secret,
-        byte[] actorFingerprint, SessionId session, ulong recoveryGeneration, DateTimeOffset expiresAt)
+        byte[] actorFingerprint, SessionId session, ulong recoveryGeneration, DateTimeOffset expiresAt,
+        long issuedTimestamp, TimeSpan lifetime)
     {
         Id = id;
         BrokerId = brokerId;
@@ -183,6 +186,8 @@ public sealed class ConnectorSecretGrant
         Session = session;
         RecoveryGeneration = recoveryGeneration;
         ExpiresAt = expiresAt;
+        IssuedTimestamp = issuedTimestamp;
+        Lifetime = lifetime;
     }
 
     internal Guid Id { get; }
@@ -194,6 +199,10 @@ public sealed class ConnectorSecretGrant
     internal ulong RecoveryGeneration { get; }
     internal object SyncRoot { get; } = new();
     internal bool IsRevoked { get; set; }
+    internal long IssuedTimestamp { get; }
+    internal TimeSpan Lifetime { get; }
+
+    /// <summary>Informational wall-clock time at issue. Expiry is enforced on the monotonic clock, so a wall-clock change cannot extend or shorten a grant.</summary>
     public DateTimeOffset ExpiresAt { get; }
 
     public override string ToString() => "ConnectorSecretGrant:[redacted]";

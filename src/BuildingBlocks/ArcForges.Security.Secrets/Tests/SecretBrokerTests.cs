@@ -9,6 +9,9 @@ namespace ArcForges.Security.Secrets.Tests;
 
 public sealed class SecretBrokerTests
 {
+    public static bool LocalWindowsStoreEnabled => OperatingSystem.IsWindows()
+        && Environment.GetEnvironmentVariable("ARCFORGES_LOCAL_OS_SECRET_STORE") == "1";
+
     private static readonly Guid Realm = Guid.Parse("10000000-0000-0000-0000-000000000001");
     private static readonly Guid User = Guid.Parse("20000000-0000-0000-0000-000000000002");
     private static readonly Guid Device = Guid.Parse("30000000-0000-0000-0000-000000000003");
@@ -302,11 +305,173 @@ public sealed class SecretBrokerTests
             new RecordingConnectorExecutor(), SecretIsolationPolicy.RequireOsEnforcedPerApplication));
     }
 
+    [Theory]
+    [InlineData("product")]
+    [InlineData("realm")]
+    [InlineData("account")]
+    [InlineData("device")]
+    [InlineData("installation")]
+    public void SiblingBrokerCannotDeleteAnotherApplicationsSecret(string dimension)
+    {
+        var backing = new MemoryBackingStore();
+        var owner = new Fixture(SecretApplicationDimension.ArcScope, backing);
+        var reference = owner.Broker.Store(SecretPartition.Personal(), "owner-secret"u8);
+        var sibling = dimension switch
+        {
+            "product" => new Fixture(SecretApplicationDimension.Companion, backing),
+            "realm" => new Fixture(SecretApplicationDimension.ArcScope, backing, realm: Guid.NewGuid()),
+            "account" => new Fixture(SecretApplicationDimension.ArcScope, backing, user: Guid.NewGuid()),
+            "device" => new Fixture(SecretApplicationDimension.ArcScope, backing, device: Guid.NewGuid()),
+            _ => new Fixture(SecretApplicationDimension.ArcScope, backing, installation: Guid.NewGuid()),
+        };
+
+        Assert.Throws<UnauthorizedAccessException>(() => sibling.Broker.Delete(reference));
+        Assert.Equal(SHA256.HashData("owner-secret"u8), owner.UseDigest(reference));
+        Assert.True(owner.Broker.Delete(reference));
+    }
+
+    [Theory]
+    [InlineData("session")]
+    [InlineData("device")]
+    [InlineData("installation")]
+    [InlineData("owner")]
+    [InlineData("agent-final-actor")]
+    [InlineData("empty-chain")]
+    [InlineData("definition-mismatch")]
+    public void GrantTargetOutsideTheHumanSessionOrNotTheNamedConnectorIsRefused(string defect)
+    {
+        var fixture = new Fixture(SecretApplicationDimension.ArcScope);
+        var reference = fixture.Broker.Store(SecretPartition.Personal(), "connector-key"u8);
+        const string definition = "connector.calendar.v2";
+        var human = fixture.Context(isForeground: true);
+        fixture.Provider.Current = human;
+        var good = human.ActorChain;
+        DelegatedActor Actor(ActorKind kind, string identity) =>
+            new(kind, Guid.NewGuid(), new InstanceId(Guid.NewGuid()), identity);
+        ActorChain Chain(HumanPrincipal? owner = null, DeviceId? device = null, InstallationId? installation = null,
+            SessionId? session = null, IEnumerable<DelegatedActor>? actors = null) =>
+            new(owner ?? good.Owner, device ?? good.Device, installation ?? good.Installation,
+                session ?? good.Session, good.CallerInstance, actors ?? []);
+
+        var control = Chain(actors: [Actor(ActorKind.Extension, definition)]);
+        var defective = defect switch
+        {
+            "session" => Chain(session: new SessionId(Guid.NewGuid()), actors: [Actor(ActorKind.Extension, definition)]),
+            "device" => Chain(device: new DeviceId(Guid.NewGuid()), actors: [Actor(ActorKind.Extension, definition)]),
+            "installation" => Chain(installation: new InstallationId(Guid.NewGuid()), actors: [Actor(ActorKind.Extension, definition)]),
+            "owner" => Chain(owner: new HumanPrincipal(new RealmId(Realm), new UserId(Guid.NewGuid()),
+                HumanIdentityKind.LocalHuman), actors: [Actor(ActorKind.Extension, definition)]),
+            "agent-final-actor" => Chain(actors: [Actor(ActorKind.Agent, definition)]),
+            "empty-chain" => Chain(),
+            _ => Chain(actors: [Actor(ActorKind.Extension, "other.definition")]),
+        };
+
+        Assert.Throws<UnauthorizedAccessException>(() => fixture.Broker.GrantConnectorUse(reference, defective,
+            definition, TimeSpan.FromMinutes(1)));
+        // The same call with a well-formed target succeeds, so the refusal above is the named defect alone.
+        Assert.NotNull(fixture.Broker.GrantConnectorUse(reference, control, definition, TimeSpan.FromMinutes(1)));
+        Assert.Equal(0, fixture.Executor.InvocationCount);
+    }
+
     [Fact]
+    public void GrantRequiresAForegroundHumanAndAPositiveBoundedLifetime()
+    {
+        var fixture = new Fixture(SecretApplicationDimension.ArcScope);
+        var reference = fixture.Broker.Store(SecretPartition.Personal(), "connector-key"u8);
+        const string definition = "connector.calendar.v2";
+        var background = fixture.Context(isForeground: false);
+        var target = fixture.ConnectorContext(definition, background.Session).ActorChain;
+        fixture.Provider.Current = background;
+
+        Assert.Throws<UnauthorizedAccessException>(() => fixture.Broker.GrantConnectorUse(reference, target,
+            definition, TimeSpan.FromMinutes(1)));
+
+        var foreground = fixture.Context(isForeground: true, session: background.Session);
+        fixture.Provider.Current = foreground;
+        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.Broker.GrantConnectorUse(reference, target,
+            definition, TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.Broker.GrantConnectorUse(reference, target,
+            definition, TimeSpan.FromSeconds(-1)));
+        Assert.NotNull(fixture.Broker.GrantConnectorUse(reference, target, definition, TimeSpan.FromTicks(1)));
+    }
+
+    [Fact]
+    public void SecretValuesMustBeNonEmptyAndWithinTheCredentialStoreBound()
+    {
+        var fixture = new Fixture(SecretApplicationDimension.ArcScope);
+        byte[] empty = [];
+        byte[] atLimit = new byte[SecretBroker.MaximumSecretBytes];
+        byte[] overLimit = new byte[SecretBroker.MaximumSecretBytes + 1];
+        atLimit.AsSpan().Fill(7);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.Broker.Store(SecretPartition.Personal(), empty));
+        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.Broker.Store(SecretPartition.Personal(), overLimit));
+        var reference = fixture.Broker.Store(SecretPartition.Personal(), atLimit);
+        Assert.Equal(SHA256.HashData(atLimit), fixture.UseDigest(reference));
+    }
+
+    [Fact]
+    public void GrantExpiryFollowsTheMonotonicClockAndNotWallClockChanges()
+    {
+        var time = new TestTimeProvider(DateTimeOffset.Parse("2026-09-28T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+        var fixture = new Fixture(SecretApplicationDimension.ArcScope, timeProvider: time);
+        var reference = fixture.Broker.Store(SecretPartition.Personal(), "connector-key"u8);
+        const string definition = "connector.calendar.v2";
+        var grant = fixture.CreateConnectorGrant(reference, definition, TimeSpan.FromMinutes(1));
+
+        time.ChangeWallClock(TimeSpan.FromHours(-2));
+        fixture.Broker.UseConnectorGrant(grant, definition);
+        time.ChangeWallClock(TimeSpan.FromHours(5));
+        fixture.Broker.UseConnectorGrant(grant, definition);
+        Assert.Equal(2, fixture.Executor.InvocationCount);
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Throws<UnauthorizedAccessException>(() => fixture.Broker.UseConnectorGrant(grant, definition));
+        Assert.Equal(2, fixture.Executor.InvocationCount);
+    }
+
+    [Fact]
+    public void ExpiredGrantsAreEvictedWhenTheNextGrantIsIssued()
+    {
+        var time = new TestTimeProvider(DateTimeOffset.Parse("2026-09-28T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+        var fixture = new Fixture(SecretApplicationDimension.ArcScope, timeProvider: time);
+        var reference = fixture.Broker.Store(SecretPartition.Personal(), "connector-key"u8);
+        const string definition = "connector.calendar.v2";
+        _ = fixture.CreateConnectorGrant(reference, definition, TimeSpan.FromMinutes(1));
+        time.Advance(TimeSpan.FromMinutes(2));
+        fixture.Provider.Current = fixture.Context();
+        _ = fixture.CreateConnectorGrant(reference, definition, TimeSpan.FromMinutes(1));
+
+        // Only the fresh grant is still tracked; the expired one was evicted at issue time.
+        Assert.Equal(1, fixture.Broker.RevokeAllConnectorGrants());
+    }
+
+    [Fact]
+    public void WindowsStoreAcceptsOnlyCanonicalOpaqueTargetsBeforeAnyNativeCall()
+    {
+        var validate = typeof(WindowsCredentialManagerSecretStore).GetMethod("ValidateTarget",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        void Check(string? target) => validate.Invoke(null, [target]);
+        string valid = "ArcForges.Secrets.v1." + new string('A', 64);
+
+        Check(valid);
+        Check("ArcForges.Secrets.v1." + string.Concat(Enumerable.Repeat("0123456789ABCDEF", 4)));
+        foreach (string? bad in new string?[]
+        {
+            null, "", valid[..^1], valid + "A", "ArcForges.Secrets.v2." + new string('A', 64),
+            "ArcForges.Secrets.v1." + new string('a', 64), "ArcForges.Secrets.v1." + new string('G', 64),
+            "arcforges.secrets.v1." + new string('A', 64), " " + valid,
+        })
+        {
+            var failure = Assert.Throws<System.Reflection.TargetInvocationException>(() => Check(bad));
+            Assert.IsAssignableFrom<ArgumentException>(failure.InnerException);
+        }
+    }
+
+    [Fact(Skip = "Explicit local Windows Credential Manager opt-in (ARCFORGES_LOCAL_OS_SECRET_STORE=1).", SkipUnless = nameof(LocalWindowsStoreEnabled))]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void WindowsCredentialManagerRoundTripIsExplicitlyLocalOptIn()
     {
-        if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable("ARCFORGES_LOCAL_OS_SECRET_STORE") != "1") return;
-
         string target = "ArcForges.Secrets.v1." + Convert.ToHexString(SHA256.HashData(RandomNumberGenerator.GetBytes(32)));
         var store = new WindowsCredentialManagerSecretStore();
         byte[] value = RandomNumberGenerator.GetBytes(32);
@@ -324,11 +489,10 @@ public sealed class SecretBrokerTests
         Assert.Null(store.Read(target));
     }
 
-    [Fact]
+    [Fact(Skip = "Explicit local Windows Credential Manager opt-in (ARCFORGES_LOCAL_OS_SECRET_STORE=1).", SkipUnless = nameof(LocalWindowsStoreEnabled))]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void WindowsCredentialManagerEntryIsVisibleToASameUserSiblingProcessSoItIsNotAnOsIsolationBoundary()
     {
-        if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable("ARCFORGES_LOCAL_OS_SECRET_STORE") != "1") return;
-
         string target = "ArcForges.Secrets.v1." + Convert.ToHexString(SHA256.HashData(RandomNumberGenerator.GetBytes(32)));
         var store = new WindowsCredentialManagerSecretStore();
         byte[] value = RandomNumberGenerator.GetBytes(32);
@@ -480,8 +644,18 @@ public sealed class SecretBrokerTests
     private sealed class TestTimeProvider(DateTimeOffset now) : TimeProvider
     {
         private DateTimeOffset _now = now;
+        private long _ticks;
         public override DateTimeOffset GetUtcNow() => _now;
-        public void Advance(TimeSpan duration) => _now += duration;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _ticks;
+        public void Advance(TimeSpan duration)
+        {
+            _now += duration;
+            _ticks += duration.Ticks;
+        }
+
+        // A wall-clock change only: the monotonic timestamp does not move.
+        public void ChangeWallClock(TimeSpan delta) => _now += delta;
     }
 
 }

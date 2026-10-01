@@ -45,4 +45,17 @@ adapter exists; `OsSecretStore.CreateForCurrentPlatform` fails closed with
 to files, preferences or memory.
 
 The real OS round trip is an explicit local opt-in via `ARCFORGES_LOCAL_OS_SECRET_STORE=1`;
-normal tests remain offline.
+normal tests remain offline, and the two Windows-only tests are reported as skipped everywhere else,
+including hosted CI. The Windows adapter's execution evidence is therefore a local opt-in run, not CI.
+
+## Known limits
+
+- Grant expiry uses the monotonic clock (`TimeProvider.GetTimestamp`), so a wall-clock change cannot extend
+  or shorten a grant; `ConnectorSecretGrant.ExpiresAt` is informational.
+- Revocation is immediate for every use that has not started. The host executor runs while its grant is locked,
+  so revoking that one grant (sign-out) waits for an operation already in flight, which then completes; the
+  executor contract therefore requires bounded runtime.
+- Expired grants are evicted when the next grant is minted or on `RevokeAllConnectorGrants`; only the foreground
+  human host can mint grants, so the table is host-bounded.
+- The production project is classified AOT-compatible by policy, but no Native AOT publish of it runs in CI.
+- There is no cross-process or concurrent-use test of the broker.
