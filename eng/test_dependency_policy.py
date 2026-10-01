@@ -20,6 +20,7 @@ from release_channels import authorized, bound_candidate, publication, selected,
 class SecretScanAllowlistTests(unittest.TestCase):
     POLICY_PATH = 'eng/policy/dependency-policy.json'
     RECEIPT_PATH = 'eng/policy/dependency-reviews/plt-40-r1.json'
+    PLT44_RECEIPT_PATH = 'eng/policy/dependency-reviews/plt-44-r1.json'
     PROJECT_PATHS = (
         'src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj',
         'src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj',
@@ -54,10 +55,10 @@ class SecretScanAllowlistTests(unittest.TestCase):
         # Gitleaks reports every added line after the first of a fragment with its preceding newline.
         return '^\\n?' + re.escape(line).replace(r'\ ', ' ').replace(r'\.', '[.]') + '$'
 
-    def test_allowlist_has_only_the_two_exact_path_bound_groups(self):
+    def test_allowlist_has_only_the_exact_path_bound_task_groups(self):
         self.assertTrue(self.config['extend']['useDefault'])
         self.assertNotIn('allowlist', self.config)
-        self.assertEqual(len(self.groups), 3)
+        self.assertEqual(len(self.groups), 4)
         baseline, *task_groups = self.groups
         self.assertEqual(baseline['description'], 'Generated outputs and public test fixtures')
         self.assertEqual(baseline['paths'], [
@@ -68,7 +69,9 @@ class SecretScanAllowlistTests(unittest.TestCase):
         expected = (
             (self.POLICY_PATH, 4),
             (self.RECEIPT_PATH, 2),
+            (self.PLT44_RECEIPT_PATH, 2),
         )
+        self.assertEqual(len(task_groups), len(expected))
         for group, (path, count) in zip(task_groups, expected):
             with self.subTest(path=path):
                 self.assertEqual(group['paths'], ['^' + path.replace('.', '[.]') + '$'])
@@ -117,6 +120,27 @@ class SecretScanAllowlistTests(unittest.TestCase):
                     self.assertTrue(self._allowed(path, line))
                     self.assertTrue(self._allowed(path, '\n' + line))
 
+    def test_plt44_receipt_group_matches_only_its_two_observed_whole_lines(self):
+        lines = [
+            self._line(path, digest, 6)
+            for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
+        ]
+        observed = [
+            line for line in (ROOT / self.PLT44_RECEIPT_PATH).read_text(encoding='utf-8').split('\n')
+            if any(project in line for project in self.PROJECT_PATHS)
+        ]
+        self.assertEqual(observed, lines)
+        for line in lines:
+            self.assertTrue(self._allowed(self.PLT44_RECEIPT_PATH, line))
+            self.assertTrue(self._allowed(self.PLT44_RECEIPT_PATH, '\n' + line))
+            self.assertFalse(self._allowed(self.PLT44_RECEIPT_PATH, line, 'another-rule'))
+            self.assertFalse(self._allowed(self.PLT44_RECEIPT_PATH, '\n\n' + line))
+            self.assertFalse(self._allowed(self.PLT44_RECEIPT_PATH, ' ' + line))
+        # The PLT.44 group is path-bound: PLT.40's receipt and the policy file are not widened by it.
+        group = self.groups[-1]
+        self.assertEqual(group['description'], 'Exact PLT.44 mirrored dependency-review input lines')
+        self.assertFalse(any(self._matches(group, path, lines[0]) for path in (self.POLICY_PATH, self.RECEIPT_PATH)))
+
     def test_wrong_key_digest_path_swaps_suffix_and_unrelated_hash_are_rejected(self):
         project_path, tests_path = self.PROJECT_PATHS
         project_hash, tests_hash = self.PROJECT_HASHES
@@ -134,6 +158,13 @@ class SecretScanAllowlistTests(unittest.TestCase):
             (self.POLICY_PATH, ' ' + valid_project),
             (self.POLICY_PATH, self._line(project_path, project_hash, 5)),
             (self.RECEIPT_PATH, self._line(project_path, project_hash, 4)),
+            (self.PLT44_RECEIPT_PATH, self._line(project_path, project_hash, 4)),
+            (self.PLT44_RECEIPT_PATH, self._line(project_path, tests_hash, 6)),
+            (self.PLT44_RECEIPT_PATH, self._line(tests_path, project_hash, 6)),
+            (self.PLT44_RECEIPT_PATH, self._line(project_path, 'a' * 64, 6)),
+            (self.PLT44_RECEIPT_PATH, self._line(project_path, project_hash, 6) + ' credential=example-not-a-secret'),
+            (self.PLT44_RECEIPT_PATH.replace('plt-44', 'plt-45'), self._line(project_path, project_hash, 6)),
+            (self.PLT44_RECEIPT_PATH.replace('plt-44-r1.json', 'plt-44-r2.json'), self._line(project_path, project_hash, 6)),
         )
         for path, line in candidates:
             with self.subTest(path=path, line=line):
