@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using System.Globalization;
-using System.Resources;
+using ArcForges.Desktop.Shell.Localization;
 
 namespace ArcForges.Desktop.Shell;
 
@@ -219,10 +219,6 @@ public sealed class ShellLifecycleCoordinator
 {
     private const int MaximumRememberedActivations = 4096;
 
-    private static readonly ResourceManager LifecycleStrings = new(
-        "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
-        typeof(ShellLifecycleCoordinator).Assembly);
-
     private readonly ShellLifecycleOperations _operations;
     private readonly TimeSpan _startupBudget;
     private readonly object _lifecycleQueueGate = new();
@@ -378,9 +374,9 @@ public sealed class ShellLifecycleCoordinator
         // Each combination is one complete localisable sentence set; nothing is assembled from fragments.
         string consequences = (state.ActiveWorkCount > 0, state.UnsavedItemCount > 0) switch
         {
-            (true, true) => Format("lifecycle.shutdown.consequence.active_and_unsaved", state.ActiveWorkCount, state.UnsavedItemCount),
-            (true, false) => Format("lifecycle.shutdown.consequence.active", state.ActiveWorkCount),
-            (false, true) => Format("lifecycle.shutdown.consequence.unsaved", state.UnsavedItemCount),
+            (true, true) => Format("lifecycle.shutdown.consequence.active_and_unsaved", ("active", state.ActiveWorkCount), ("unsaved", state.UnsavedItemCount)),
+            (true, false) => Format("lifecycle.shutdown.consequence.active", ("active", state.ActiveWorkCount)),
+            (false, true) => Format("lifecycle.shutdown.consequence.unsaved", ("unsaved", state.UnsavedItemCount)),
             _ => Format("lifecycle.shutdown.consequence.none"),
         };
 
@@ -539,11 +535,14 @@ public sealed class ShellLifecycleCoordinator
         }
     }
 
-    private static string Format(string key, params object[] arguments)
+    private static string Format(string key, params (string Name, object Value)[] arguments)
     {
-        string template = LifecycleStrings.GetString(key, CultureInfo.CurrentUICulture)
-            ?? throw new InvalidOperationException("The shutdown prompt resources are unavailable.");
-        return string.Format(CultureInfo.CurrentCulture, template, arguments);
+        CultureInfo culture = CultureInfo.CurrentUICulture;
+        string pattern = ShellText.GetPattern(ShellText.ErrorSet, key, culture);
+        return ShellMessageFormatter.Format(
+            pattern,
+            arguments.ToDictionary(static pair => pair.Name, static pair => (object?)pair.Value, StringComparer.Ordinal),
+            culture);
     }
 
     private static async Task ReleaseAfterAsync(Task previous, TaskCompletionSource release)
