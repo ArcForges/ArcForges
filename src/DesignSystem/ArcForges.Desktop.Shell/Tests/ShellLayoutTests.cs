@@ -1172,13 +1172,26 @@ public sealed class ShellLayoutTests
 
     private static string PromptText(string key, params object[] arguments)
     {
+        string[] names = key switch
+        {
+            "lifecycle.shutdown.consequence.active_and_unsaved" => ["active", "unsaved"],
+            "lifecycle.shutdown.consequence.active" => ["active"],
+            "lifecycle.shutdown.consequence.unsaved" => ["unsaved"],
+            _ => [],
+        };
         var resources = new System.Resources.ResourceManager(
             "ArcForges.Desktop.Shell.Errors.ErrorPresentationStrings",
             typeof(ShellLifecycleCoordinator).Assembly);
-        return string.Format(
-            System.Globalization.CultureInfo.CurrentCulture,
+        var named = new Dictionary<string, object?>(StringComparer.Ordinal);
+        for (int index = 0; index < names.Length; index++)
+        {
+            named[names[index]] = arguments[index];
+        }
+
+        return ArcForges.Desktop.Shell.Localization.ShellMessageFormatter.Format(
             resources.GetString(key, System.Globalization.CultureInfo.CurrentUICulture)!,
-            arguments);
+            named,
+            System.Globalization.CultureInfo.CurrentUICulture);
     }
 
     private static ValueTask Record(List<string> calls, string step)

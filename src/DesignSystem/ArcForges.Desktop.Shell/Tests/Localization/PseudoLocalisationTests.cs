@@ -102,6 +102,17 @@ public sealed class PseudoLocalisationTests
         visible.Add(("notification:title", generic.Title));
         visible.Add(("notification:body", generic.Body));
 
+        foreach (ShellShutdownState state in new[]
+        {
+            new ShellShutdownState(1, 0, 0),
+            new ShellShutdownState(1, 2, 0),
+            new ShellShutdownState(1, 0, 1),
+            new ShellShutdownState(1, 3, 4),
+        })
+        {
+            visible.Add(($"shutdown:{state.ActiveWorkCount}:{state.UnsavedItemCount}", ShellLifecycleCoordinator.CreateShutdownPrompt(state).Consequences));
+        }
+
         foreach (ShellSurface surface in ShellSurfaceCatalog.All)
         {
             foreach (AccessibleNode node in Flatten(surface.Root))
@@ -155,6 +166,28 @@ public sealed class PseudoLocalisationTests
         InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() => ShellText.Resolve(missing, CultureInfo.InvariantCulture));
         Assert.DoesNotContain("not-defined-anywhere", failure.Message, StringComparison.Ordinal);
         Assert.Throws<ArgumentNullException>(() => ShellText.Resolve(null!));
+    }
+
+    [Fact]
+    public void ShutdownConsequencesUseWholePluralSentencesRatherThanItemParenthesisHacks()
+    {
+        CultureInfo previous = CultureInfo.CurrentUICulture;
+        try
+        {
+            CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
+            string one = ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 1, 1)).Consequences;
+            string many = ShellLifecycleCoordinator.CreateShutdownPrompt(new ShellShutdownState(1, 2, 3)).Consequences;
+
+            Assert.Contains("1 active item to reach", one, StringComparison.Ordinal);
+            Assert.Contains("1 unsaved item must be saved", one, StringComparison.Ordinal);
+            Assert.Contains("2 active items to reach", many, StringComparison.Ordinal);
+            Assert.Contains("3 unsaved items must be saved", many, StringComparison.Ordinal);
+            Assert.DoesNotContain("(s)", one + many, StringComparison.Ordinal);
+        }
+        finally
+        {
+            CultureInfo.CurrentUICulture = previous;
+        }
     }
 
     internal static IEnumerable<(string Set, string Key, string Value)> AllResourceStrings()

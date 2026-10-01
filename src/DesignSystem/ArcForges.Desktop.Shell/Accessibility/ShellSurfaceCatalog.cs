@@ -20,11 +20,13 @@ public static class ShellCommandIds
     public const string ErrorCopyReference = "shell.error.copy-reference";
     public const string ErrorRetry = "shell.error.retry";
     public const string ErrorClose = "shell.error.close";
+    public const string ShutdownKeepWorking = "shell.shutdown.keep-working";
+    public const string ShutdownQuit = "shell.shutdown.quit";
 }
 
 /// <summary>
 /// The accessibility declaration of every shell surface whose state model ships in this assembly: the workspace window,
-/// the command palette, scoped settings, the attention centre and error presentation. A UI adapter binds each node to a
+/// the command palette, scoped settings, the attention centre, error presentation and the shutdown prompt. A UI adapter binds each node to a
 /// framework control. List and status arguments (counts, titles, scope names) are representative samples; the adapter
 /// supplies live values through the same resource keys. Product content hosted inside a region is the product's own
 /// surface and is audited by the product with <see cref="ShellAccessibilityAudit"/>.
@@ -38,6 +40,7 @@ public static class ShellSurfaceCatalog
         Settings(),
         AttentionCentre(),
         ErrorDialog(),
+        ShutdownPrompt(),
     ];
 
     /// <summary>Every declared shell surface in a stable order.</summary>
@@ -57,6 +60,9 @@ public static class ShellSurfaceCatalog
 
     /// <summary>The modal error presentation dialog.</summary>
     public static ShellSurface ErrorSurface => AllSurfaces[4];
+
+    /// <summary>The modal shutdown prompt that states the consequences of quitting with running or unsaved work.</summary>
+    public static ShellSurface ShutdownSurface => AllSurfaces[5];
 
     private static LocalizedText Text(string key, params (string Name, object? Value)[] arguments) =>
         new(key, arguments.Length == 0 ? null : arguments.ToDictionary(static pair => pair.Name, static pair => pair.Value, StringComparer.Ordinal));
@@ -326,5 +332,34 @@ public static class ShellSurfaceCatalog
                 keyboard: KeyboardAccess.TabStop,
                 focusOrder: 3,
                 commandId: ShellCommandIds.ErrorClose),
+        ]));
+
+    private static ShellSurface ShutdownPrompt() => new("shell.shutdown-prompt", new AccessibleNode(
+        "shell.shutdown-prompt",
+        AccessibleRole.AlertDialog,
+        Text("shutdown-prompt.name"),
+        isModal: true,
+        dismissCommandId: ShellCommandIds.ShutdownKeepWorking,
+        children:
+        [
+            new AccessibleNode(
+                "shell.shutdown-prompt.consequences",
+                AccessibleRole.Alert,
+                Text("shutdown-prompt.consequences.name"),
+                live: LiveRegionPoliteness.Assertive),
+            new AccessibleNode(
+                "shell.shutdown-prompt.keep-working",
+                AccessibleRole.Button,
+                Text("shutdown-prompt.keep-working.name"),
+                keyboard: KeyboardAccess.TabStop,
+                focusOrder: 1,
+                commandId: ShellCommandIds.ShutdownKeepWorking),
+            new AccessibleNode(
+                "shell.shutdown-prompt.quit",
+                AccessibleRole.Button,
+                Text("shutdown-prompt.quit.name"),
+                keyboard: KeyboardAccess.TabStop,
+                focusOrder: 2,
+                commandId: ShellCommandIds.ShutdownQuit),
         ]));
 }

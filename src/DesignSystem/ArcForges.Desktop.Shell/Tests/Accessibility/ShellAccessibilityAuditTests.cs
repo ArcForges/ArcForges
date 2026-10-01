@@ -15,9 +15,9 @@ public sealed class ShellAccessibilityAuditTests
     [Fact]
     public void EveryShellSurfaceConformsToTheAccessibilityContractInNeutralAndPseudoLocales()
     {
-        Assert.Equal(5, ShellSurfaceCatalog.All.Count);
+        Assert.Equal(6, ShellSurfaceCatalog.All.Count);
         Assert.Equal(
-            ["shell.workspace", "shell.command-palette", "shell.settings", "shell.attention", "shell.error-dialog"],
+            ["shell.workspace", "shell.command-palette", "shell.settings", "shell.attention", "shell.error-dialog", "shell.shutdown-prompt"],
             ShellSurfaceCatalog.All.Select(static surface => surface.Id));
 
         foreach (string culture in new[] { "", "en-US", "de-DE", "ar" })
