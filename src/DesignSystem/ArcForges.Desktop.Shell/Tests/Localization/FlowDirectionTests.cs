@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
-using ArcForges.Desktop.Shell.Localization;
 using ArcForges.DesignSystem;
+using ArcForges.Desktop.Shell.Localization;
 using Xunit;
 
 namespace ArcForges.Desktop.Shell.Tests.Localization;

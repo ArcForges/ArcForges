@@ -280,7 +280,7 @@ internal static class PluralRules
             "ru" or "uk" or "be" => (mod10, mod100) switch
             {
                 (1, not 11) => PluralCategory.One,
-                (>= 2 and <= 4, not (>= 12 and <= 14)) => PluralCategory.Few,
+                (2 or 3 or 4, not (12 or 13 or 14)) => PluralCategory.Few,
                 _ => PluralCategory.Many,
             },
             "ar" => n switch
