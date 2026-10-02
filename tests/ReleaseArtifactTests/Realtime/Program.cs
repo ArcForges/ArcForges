@@ -40,11 +40,10 @@ internal sealed class SelfTestRunner
 
 internal static class Program
 {
-    // Assembly.Location is empty inside a Native AOT image and is the path of the assembly under the JIT; this line only reports which one ran.
-    [SuppressMessage("SingleFile", "IL3000", Justification = "The empty location is exactly what identifies a Native AOT image; the value is only printed.")]
-    private static bool IsNativeImage() => string.IsNullOrEmpty(typeof(Program).Assembly.Location);
-
     private const string SelfTestFlag = "--self-test";
+
+    // A managed run has RealtimeAotProbe.dll beside it; a Native AOT image does not. The line only reports which one ran.
+    private static bool IsNativeImage() => !File.Exists(Path.Combine(AppContext.BaseDirectory, "RealtimeAotProbe.dll"));
 
     public static async Task<int> Main(string[] args)
     {

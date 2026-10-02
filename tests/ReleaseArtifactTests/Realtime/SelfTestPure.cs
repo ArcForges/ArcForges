@@ -263,7 +263,7 @@ internal static class SelfTestPure
         backoff.Succeeded();
         Check.Equal(0, backoff.Attempt, "success resets the ladder");
         Check.Equal(TimeSpan.Zero, backoff.NextDelay(() => 0.0), "full jitter can draw zero");
-        Check.Equal(TimeSpan.FromSeconds(1), backoff.NextCeiling() , "the ladder climbed once");
+        Check.Equal(TimeSpan.FromSeconds(1), backoff.NextCeiling(), "the ladder climbed once");
         Check.Equal(TimeSpan.FromSeconds(0.5), TimeSpan.FromTicks(new ReconnectBackoff(policy).NextDelay(() => 0.5).Ticks * 2), "half jitter on the first ceiling is a quarter second");
         Check.Equal(TimeSpan.FromSeconds(0.5), new ReconnectBackoff(policy).NextDelay(() => 7.0), "a random source above one is clamped");
         Check.Equal(TimeSpan.Zero, new ReconnectBackoff(policy).NextDelay(() => -3.0), "a random source below zero is clamped");

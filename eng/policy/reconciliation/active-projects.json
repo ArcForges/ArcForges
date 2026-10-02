@@ -209,6 +209,10 @@
     {
       "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
       "blob": "faf8bcb2c550dbd642d281f9f93845fa51c973db"
+    },
+    {
+      "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
+      "blob": "001f6d6855882333dba77d60083d1091c2ac8dba"
     }
   ]
 }

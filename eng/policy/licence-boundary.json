@@ -211,6 +211,10 @@
     {
       "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
+      "kind": "msbuild"
     }
   ]
 }

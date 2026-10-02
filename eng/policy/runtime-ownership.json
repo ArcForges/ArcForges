@@ -169,6 +169,10 @@
           "role": "test-or-build-tool"
         },
         {
+          "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
           "role": "test-or-build-tool"
         },
