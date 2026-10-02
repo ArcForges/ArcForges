@@ -2123,5 +2123,105 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RegisterControl(ArcForges.LocalRpc.LocalRpcControlOperation, Grpc.Core.IMethod)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBoundsGuardTests.ControlRegistrationIsValidatedSingleUseAndClosedAtBuild()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcChildBootstrap.FromResource(byte[])",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheChildTakesTheDescriptorAndTheSecretFromTheResourceAndClearsTheCallersCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcChildBootstrap.ComputeProof(System.Guid, System.ReadOnlySpan<byte>, System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheProofIsComputedOnceAndTheSecretIsDestroyedByIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcChildBootstrap.AcceptGrant(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheCredentialHeadersCarryTheNonceTheInstanceAndTheContractSetInTheDesignedForms()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcChildBootstrap.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.ADisposedChildCannotProveAndItsUnusedSecretIsDestroyed()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCallCredentials.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.DisposingTheCredentialsClearsTheNonce()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCallCredentials.BlockingUnaryCall<TRequest, TResponse>(TRequest, Grpc.Core.Interceptors.ClientInterceptorContext<TRequest, TResponse>, Grpc.Core.Interceptors.Interceptor.BlockingUnaryCallContinuation<TRequest, TResponse>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheCredentialsInterceptorPresentsTheHeadersOnEveryKindOfCallAndReplacesWhatACallerSet()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCallCredentials.AsyncUnaryCall<TRequest, TResponse>(TRequest, Grpc.Core.Interceptors.ClientInterceptorContext<TRequest, TResponse>, Grpc.Core.Interceptors.Interceptor.AsyncUnaryCallContinuation<TRequest, TResponse>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheCredentialsInterceptorPresentsTheHeadersOnEveryKindOfCallAndReplacesWhatACallerSet()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCallCredentials.AsyncServerStreamingCall<TRequest, TResponse>(TRequest, Grpc.Core.Interceptors.ClientInterceptorContext<TRequest, TResponse>, Grpc.Core.Interceptors.Interceptor.AsyncServerStreamingCallContinuation<TRequest, TResponse>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheCredentialsInterceptorPresentsTheHeadersOnEveryKindOfCallAndReplacesWhatACallerSet()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCallCredentials.AsyncClientStreamingCall<TRequest, TResponse>(Grpc.Core.Interceptors.ClientInterceptorContext<TRequest, TResponse>, Grpc.Core.Interceptors.Interceptor.AsyncClientStreamingCallContinuation<TRequest, TResponse>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheCredentialsInterceptorPresentsTheHeadersOnEveryKindOfCallAndReplacesWhatACallerSet()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCallCredentials.AsyncDuplexStreamingCall<TRequest, TResponse>(Grpc.Core.Interceptors.ClientInterceptorContext<TRequest, TResponse>, Grpc.Core.Interceptors.Interceptor.AsyncDuplexStreamingCallContinuation<TRequest, TResponse>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheCredentialsInterceptorPresentsTheHeadersOnEveryKindOfCallAndReplacesWhatACallerSet()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLeaseKeeper.Start(ArcForges.LocalRpc.LocalRpcRenewal)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheDefaultLeaseKeeperRenewsEveryTenSecondsOnTheRealClockAndKeepsAThirtySecondLease()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLeaseKeeper.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcChildRegistrationTests.TheKeeperReportsTheExpiryTheParentGaveAndStopsWhenDisposed()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRegistration.Create(ArcForges.LocalRpc.LocalRpcLaunch)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationTests.TheGrantedNonceIsFreshForEveryRegistration()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRegistration.AuthorizeConnectionAsync(ArcForges.LocalRpc.LocalRpcConnectionInfo, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationTests.ARegistrationAdmitsConnectionsOnlyUntilTheChildRegistered()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRegistration.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationTests.ADisposedRegistrationStopsItsWatchdogRevokesTheLaunchAndDisposesTwice()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBootstrapCall.TryChallenge(System.Guid, System.ReadOnlySpan<byte>, ArcForges.LocalRpc.LocalRpcLaunchIdentity, out ArcForges.LocalRpc.LocalRpcBootstrapChallenge?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationGateTests.AChildRegistersOverGeneratedCallsAndThenCallsOrdinaryServicesWithItsCredentials()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBootstrapCall.TryConfirm(System.Guid, System.ReadOnlySpan<byte>, out ArcForges.LocalRpc.LocalRpcRegistrationGrant?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationGateTests.AChildRegistersOverGeneratedCallsAndThenCallsOrdinaryServicesWithItsCredentials()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBootstrapCall.TryRenew(System.ReadOnlySpan<byte>, out System.DateTimeOffset)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationGateTests.AnUnrenewedChildIsStoppedWhenItsLeaseEndsAndRenewalsKeepAChildAliveThroughManyLeases()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerCallContextExtensions.GetBootstrapCall(Grpc.Core.ServerCallContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationGateTests.AServerWithoutTheGateGivesTheServiceNoBootstrapCallSoItRefuses()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RequireRegistration(ArcForges.LocalRpc.LocalRpcRegistration)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationGateTests.ARegistrationServesOneServerAndABuilderTakesOneRegistration()"
   }
 ]
