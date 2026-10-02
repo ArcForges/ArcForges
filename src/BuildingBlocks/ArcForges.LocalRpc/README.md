@@ -3,10 +3,12 @@
 Generated gRPC over HTTP/2 between a parent and the helper or extension children it owns, carried only by
 a Windows Named Pipe or a Unix domain socket. The project is non-packable until its package task admits it.
 
-This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01) and the call bounds on top of
-them (WP-08.04). It has no LocalBootstrap authentication, registration lease, routing, retry or brokered-resource logic; those
+This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01), the call bounds on top of
+them (WP-08.04) and the child registration lifecycle (WP-08.02). It has no routing, retry or brokered-resource logic; those
 are the later local RPC tasks. It does not define a contract: the services it serves are the generated
-`ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner.
+`ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The library references no contract package:
+the registration code works on bytes, ids and the generated service's method names, and the owner's generated
+`LocalBootstrapService` implementation is the thin mapping between its messages and the registration (the tests contain one).
 
 ## What it provides
 
@@ -152,6 +154,54 @@ A parent creates one `LocalRpcLaunchAuthority` (`Create(runtimeRoot)`), and each
   they may call the authority. An exception a callback throws is swallowed: the launch is revoked either way and the failure does not
   reach the caller that caused the revocation (for example the launch call that superseded it).
 
+## Child registration lifecycle (WP-08.02)
+
+A launch (above) is the parent's side of one child; a `LocalRpcRegistration` (`LocalRpcRegistration.Create(launch)`) is the
+authenticated registration on it, and `LocalRpcServerBuilder.RequireRegistration(registration)` serves it. A registration serves
+one server and one connection.
+
+- **Bootstrap (annex 09 section 2).** The child sends its instance id, 32 random bytes and the child kind, build and protocol it claims
+  (`Challenge`); the parent answers with a challenge id, 32 random bytes, its own instance id and a lifetime of five seconds. The
+  child confirms with `HMAC-SHA256(secret, "arcforges.local.bootstrap.v1" || challenge UUID || client bytes || server bytes || client
+  instance UUID || server instance UUID)` (every UUID as its 16 big-endian bytes; the proof is checked against an independently
+  computed value). A challenge belongs to the connection it was issued on, is used once, and a new challenge replaces the earlier
+  one of that connection. The first confirmation that holds a live challenge on its connection consumes the launch secret whatever
+  the proof is, and **a proof that does not match revokes the launch**: that child can only be relaunched. A confirmation on
+  another connection, naming another challenge, or after the five seconds is refused without touching the secret. A claimed
+  child kind, build, build digest, protocol or contract-set digest that differs from the launch is refused as well (not a revocation);
+  nothing measures the child's executable, so a matching claim is not an attestation (the launcher's signed-inventory check owns that).
+- **Lease and renewal.** A proven confirmation grants a random 32-byte peer nonce and a 30-second lease; the child renews every
+  10 seconds (`LocalRpcLeaseKeeper`) and a renewal sets the lease to 30 seconds from the renewal. Only a renewal extends the lease,
+  never an ordinary call. The lease is judged on the monotonic and on the wall clock, whichever gets there first, and expiry is
+  latched; a watchdog timer ends an unrenewed registration at its expiry without any call, and a timer that fires early re-arms for the
+  remainder. A renewal command id seen before returns the expiry recorded for it and extends nothing (the last 16 command ids are
+  remembered); an expired registration is never renewed or revived.
+- **Every call is checked before routing.** The gate answers, before any handler, queue slot or unknown-service answer, with one
+  `UNAUTHENTICATED` status that names no cause, unless the call is one of the two bootstrap steps of an unregistered child (matched by
+  exact path) or carries `x-af-peer-bin` (the nonce), `x-af-instance-bin` (16-byte caller instance) and `x-af-contract-set` (the launch's contract-set
+  digest, 64 hex digits) that match the registration on the registered connection within the lease. Any other spelling of a bootstrap
+  path needs credentials. The bootstrap steps and the renewal are declared as control operations, so they use the reserved control
+  slots of the call bounds and a saturated data lane cannot starve a registration (refused calls never reach admission at all).
+- **Epoch fencing and fresh grants.** A registration ends, for good, when the lease passes, its connection closes, a newer epoch of
+  the slot supersedes the launch (at once, not at the lease), the launch is revoked, its parent or bound child process is gone, the proof
+  is rejected or it is disposed; ending it revokes the launch. A registered child is admitted no second connection. A relaunch is the
+  next epoch with a new endpoint, secret, instance id and nonce: nothing of the old grant is inherited and the old child's
+  credentials mean nothing to the new registration. A restarted parent is a new process with a new authority, whose epochs start at 1
+  again, so the epoch number alone fences nothing there: the old credentials fail because they match no launch, secret or nonce of the new run
+  (the old parent's registrations end when it dies, and a stale launch is refused as a parent mismatch).
+- **Owner's service.** The owner implements the generated `LocalBootstrapService`; the gate gives each of its calls a
+  `LocalRpcBootstrapCall` (`ServerCallContext.GetBootstrapCall()`) with the three steps. The call carries the connection the call arrived
+  on, so a service cannot name another connection; a service that finds no bootstrap call (a server without the gate) must refuse.
+  A child uses `LocalRpcChildBootstrap` (the bootstrap resource, the single-use proof, the credentials interceptor) and
+  `LocalRpcLeaseKeeper`; both clear what they hold.
+- **What the peer sees.** One refusal status for every cause, so the gate is no oracle for the secret, the nonce or the state.
+  The parent sees the cause (`LocalRpcRegistrationRefusal`, `EndReason`).
+
+Known limits, stated exactly: a same-user process that learns the endpoint and gets a challenge on its own connection can burn the
+launch with a wrong proof (the specified behavior: the launch is revoked and relaunched). The secret and nonce are zeroed in managed memory
+only. The lease watchdog and connection loss end the registration but this library neither kills the child process nor stops the server:
+the owner does that when `Ended` is cancelled.
+
 ## OS user boundary
 
 A Named Pipe is created with `CurrentUserOnly` (a DACL granting only the current user); the first instance also
@@ -162,14 +212,17 @@ is not claimed to be network-isolated. A Unix socket is bound only in a director
 permission bits, is never created over an existing file, is set to mode 0600 and is removed when the listener is
 unbound; the client refuses a symbolic link.
 
-This package does not read the peer process or user of an accepted connection and does not authenticate the
-child. A same-user process that learns an endpoint's address can connect to it: the launch descriptor, the nonce and the
-one-use secret decide what a claim may do, and the proof that uses the secret is the registration task's (WP-08.02); until that
-task exists nothing here proves who is on the other end of a connection. Reading the peer would need a native binding on
-Windows (the repository restricts those) and, for the launch-bound streams the design prefers, names the creating parent rather
-than the child (see annex 09); `Socket.GetRawSocketOption` could read `SO_PEERCRED` on Linux without a native binding but is
-not used. Pipe-name squatting by another process of the same user is contained by the unguessable per-launch names and the
-client's owner check; the owner check against a foreign pipe is not tested.
+This package does not read the peer process or user of an accepted connection. Authentication of the child is the launch secret's
+proof (WP-08.02, above), the connection binding and the owner-only endpoint, not an OS identity: a same-user process that learns an
+endpoint's address can connect to it and get a challenge, and only the proof decides what it may do. What reading the peer would
+take, within the repository's rules: on Windows the process id of a pipe client needs `GetNamedPipeClientProcessId`, a native
+binding that the repository's closed `LibraryImport` map (architecture tests) does not allow this project; the managed
+`NamedPipeServerStream.GetImpersonationUserName` returns the client's user name only when the client connects at identification level or
+above (this library's client uses the anonymous level, for which it fails), and the account's SID needs impersonation level, which
+would give the parent the child's token. For the launch-bound streams the design prefers, socket peer credentials name the creating parent,
+not the child (annex 09). `Socket.GetRawSocketOption` could read `SO_PEERCRED` on Linux without a native binding but is not used.
+Pipe-name squatting by another process of the same user is contained by the unguessable per-launch names and the client's owner check; the
+owner check against a foreign pipe is not tested, and no wrong-user denial has been observed.
 
 ## Validation
 
@@ -194,5 +247,12 @@ clock for queue deadlines and the handshake and idle limits and a hand-written t
 for the cancellation and health methods, which the pinned Platform contract does not have (`CancelSession` is in the Sandbox
 contract, which this repository does not admit). Bootstrap and lease renewal use the real generated `LocalBootstrapService`.
 One opt-in check runs the 16/64 saturation, a typed refusal, a health call and a cancel over a real Named Pipe and AF_UNIX.
+
+The registration tests (`LocalBootstrapProof`, `LocalRpcRegistrationTests`, `LocalRpcRegistrationGateTests`,
+`LocalRpcChildRegistrationTests`) run offline in CI: the registration state machine on a fake clock and fake timers, the gate over real
+Kestrel HTTP/2 with the generated `LocalBootstrapService` and connector services on in-memory streams, the call bounds
+under saturation, and real-clock tests with short leases. One opt-in class (same variable) runs registration over a real Named Pipe
+(Windows) and a real Unix-socket path, and with a real child process that reads its bootstrap resource from its inherited standard input,
+registers, renews, and is killed (`LocalRpcRegistrationOsChecks`, helper mode `register`).
 
 Hosted CI never executes those checks and a successful run on one OS says nothing about the others.
