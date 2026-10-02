@@ -15,6 +15,8 @@
     <Project Path="src/BuildingBlocks/ArcForges.Desktop.Text/ArcForges.Desktop.Text.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj" />
