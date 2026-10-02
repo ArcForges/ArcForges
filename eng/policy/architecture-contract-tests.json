@@ -2103,5 +2103,25 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.AuthorizeConnectionsAsync(System.Func<ArcForges.LocalRpc.LocalRpcConnectionInfo, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>>)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTransportTests.AnAsynchronousDecisionSeesTheConnectionAndAdmitsIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRefusal.TryRead(Grpc.Core.RpcException, out ArcForges.LocalRpc.LocalRpcRefusal?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBoundsGuardTests.ARefusalIsReadOnlyWhenItWasMarkedAsNotDispatched()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServer.GetBoundsSnapshot()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCallBoundsTests.TheDataLaneHoldsSixteenActiveAndSixtyFourQueuedAndRefusesTheRestBeforeDispatch()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RegisterControl(ArcForges.LocalRpc.LocalRpcControlOperation, string, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBoundsGuardTests.ControlRegistrationIsValidatedSingleUseAndClosedAtBuild()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RegisterControl(ArcForges.LocalRpc.LocalRpcControlOperation, Grpc.Core.IMethod)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBoundsGuardTests.ControlRegistrationIsValidatedSingleUseAndClosedAtBuild()"
   }
 ]

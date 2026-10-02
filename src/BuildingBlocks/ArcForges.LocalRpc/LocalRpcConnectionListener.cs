@@ -16,12 +16,14 @@ internal sealed class LocalRpcListenEndPoint : EndPoint
         LocalRpcEndpoint? endpoint,
         LocalRpcStreamSupplier? supplier,
         LocalRpcLimits limits,
-        Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? authorizer)
+        Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? authorizer,
+        LocalRpcBoundsRegistry bounds)
     {
         Endpoint = endpoint;
         Supplier = supplier;
         Limits = limits;
         Authorizer = authorizer;
+        Bounds = bounds;
     }
 
     internal LocalRpcEndpoint? Endpoint { get; }
@@ -31,6 +33,8 @@ internal sealed class LocalRpcListenEndPoint : EndPoint
     internal LocalRpcLimits Limits { get; }
 
     internal Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? Authorizer { get; }
+
+    internal LocalRpcBoundsRegistry Bounds { get; }
 
     internal LocalRpcTransport Transport => Endpoint?.Transport ?? (OperatingSystem.IsWindows()
         ? LocalRpcTransport.NamedPipe : LocalRpcTransport.UnixDomainSocket);
@@ -106,6 +110,7 @@ internal sealed class LocalRpcConnectionListener : IConnectionListener
 
     public EndPoint EndPoint => _endPoint;
 
+    [SuppressMessage("Reliability", "CA2000", Justification = "Ownership of the connection context passes to Kestrel, which disposes it; a denied stream is disposed here.")]
     public async ValueTask<ConnectionContext?> AcceptAsync(CancellationToken cancellationToken = default)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
@@ -143,8 +148,18 @@ internal sealed class LocalRpcConnectionListener : IConnectionListener
                         continue;
                     }
 
+                    // The peer's call bounds and watchdog live exactly as long as its connection: the slot is released
+                    // and the bounds dropped only when the connection has been fully torn down.
+                    var connectionId = $"localrpc-{sequence}";
+                    var peer = _endPoint.Bounds.Add(connectionId);
+                    var context = new StreamConnectionContext(connectionId, stream, _endPoint, () =>
+                    {
+                        _endPoint.Bounds.Remove(peer);
+                        ReleaseSlot();
+                    });
                     handedOver = true;
-                    return new StreamConnectionContext($"localrpc-{sequence}", stream, _endPoint, ReleaseSlot);
+                    peer.Start(context.Abort);
+                    return context;
                 }
                 finally
                 {

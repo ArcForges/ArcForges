@@ -307,11 +307,12 @@ public sealed class LocalRpcLaunchTransportTests
         var endpoint = LocalRpcEndpoint.CreateForVerification(LocalRpcTransport.NamedPipe, "af-listener-info");
         var seen = new List<LocalRpcConnectionInfo>();
         await using var source = new QueueAcceptSource(3);
-        var listenEndPoint = new LocalRpcListenEndPoint(endpoint, null, new LocalRpcLimits(), (connection, _) =>
+        var limits = new LocalRpcLimits();
+        var listenEndPoint = new LocalRpcListenEndPoint(endpoint, null, limits, (connection, _) =>
         {
             seen.Add(connection);
             return ValueTask.FromResult(connection.Sequence != 2);
-        });
+        }, new LocalRpcBoundsRegistry(limits, TimeProvider.System));
         await using var listener = new LocalRpcConnectionListener(listenEndPoint, source);
 
         var first = await listener.AcceptAsync(ct);
