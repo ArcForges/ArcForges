@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.LocalRpc</AssemblyName>
+    <RootNamespace>ArcForges.LocalRpc</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>ArcForges.LocalRpc</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Parent-owned generated gRPC transport over Windows Named Pipes and Unix domain sockets.</Description>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Grpc.AspNetCore.Server" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <Compile Remove="Tests/**/*.cs" />
+    <None Remove="Tests/**" />
+    <InternalsVisibleTo Include="ArcForges.LocalRpc.Tests" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

@@ -600,6 +600,81 @@
     "testMethod": "ArcForges.Foundation.Tests.VersionAxisTests.EveryAxisParsesAndKeepsItsOwnType()"
   },
   {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcClientChannel.Create(ArcForges.LocalRpc.LocalRpcEndpoint, ArcForges.LocalRpc.LocalRpcLimits?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.BuildersOverAnEndpointBuildWithoutBindingAnythingAndChannelsConnectLazily()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcClientChannel.CreateFromStreams(System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.IO.Stream>>, ArcForges.LocalRpc.LocalRpcLimits?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.GeneratedUnaryCallRoundTripsOverASuppliedStream()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcClientChannel.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.StoppingAndDisposingTheServerClosesConnectionsAndDropsUnacceptedStreams()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcEndpointTests.ThePublicFactoriesRefuseTheOtherPlatformsTransport()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcEndpoint.UnixDomainSocket(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcEndpointTests.ThePublicFactoriesRefuseTheOtherPlatformsTransport()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServer.CreateBuilder(ArcForges.LocalRpc.LocalRpcEndpoint)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.BuildersOverAnEndpointBuildWithoutBindingAnythingAndChannelsConnectLazily()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServer.CreateBuilder(ArcForges.LocalRpc.LocalRpcStreamSupplier)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.GeneratedUnaryCallRoundTripsOverASuppliedStream()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServer.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.StoppingAndDisposingTheServerClosesConnectionsAndDropsUnacceptedStreams()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServer.StartAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.TheServerListensOnNoIpAddressAndIgnoresEnvironmentUrls()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServer.StopAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.StoppingAndDisposingTheServerClosesConnectionsAndDropsUnacceptedStreams()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.AddService<TService>(TService)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.RegistrationIsExplicitSingleUseAndRequiresAService()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.AuthorizeConnections(System.Func<ArcForges.LocalRpc.LocalRpcConnectionInfo, bool>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.AConnectionTheAuthorizerDeniesReceivesNoByteAndNeverReachesHttp2()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.Build()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.RegistrationIsExplicitSingleUseAndRequiresAService()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcStreamSupplier.Complete()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.ASupplierServesOneServerAndRefusesStreamsOnceCompleted()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcStreamSupplier.TrySupply(System.IO.Stream)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcTransportTests.ASupplierServesOneServerAndRefusesStreamsOnceCompleted()"
+  },
+  {
     "apiSymbol": "ArcForges.Native.Image.ImageAbi.GetAbiVersion()",
     "testProject": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
     "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ImagePublicContractHasOnlyTypedManagedResults()"

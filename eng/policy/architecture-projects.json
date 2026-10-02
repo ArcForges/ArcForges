@@ -128,6 +128,22 @@
     "aot": false
   },
   {
+    "path": "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",
     "role": "NativeAdapter",
     "owner": "DesktopPlatform",

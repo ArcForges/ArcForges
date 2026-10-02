@@ -1,0 +1,283 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics.CodeAnalysis;
+using Grpc.AspNetCore.Server;
+using Grpc.Core;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+
+namespace ArcForges.LocalRpc;
+
+/// <summary>
+/// Collects the explicit registration of a private helper server. Nothing is discovered by scanning: a service
+/// is served only when its generated base class implementation is added here.
+/// </summary>
+public sealed class LocalRpcServerBuilder
+{
+    private const DynamicallyAccessedMemberTypes ServiceMembers =
+        DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicMethods
+        | DynamicallyAccessedMemberTypes.NonPublicMethods;
+
+    private readonly LocalRpcEndpoint? _endpoint;
+    private readonly LocalRpcStreamSupplier? _supplier;
+    private readonly List<ServiceRegistration> _services = [];
+    private readonly HashSet<Type> _registered = [];
+    private LocalRpcLimits _limits = new();
+    private Func<LocalRpcConnectionInfo, bool>? _authorizer;
+    private bool _built;
+
+    internal LocalRpcServerBuilder(LocalRpcEndpoint? endpoint, LocalRpcStreamSupplier? supplier)
+    {
+        _endpoint = endpoint;
+        _supplier = supplier;
+    }
+
+    /// <summary>Transport bounds; validated when the server is built.</summary>
+    public LocalRpcLimits Limits
+    {
+        get => _limits;
+        set => _limits = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    /// <summary>Serves one generated gRPC service implementation. Each service type is registered at most once.</summary>
+    public LocalRpcServerBuilder AddService<[DynamicallyAccessedMembers(ServiceMembers)] TService>(TService service)
+        where TService : class
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        EnsureNotBuilt();
+        if (!_registered.Add(typeof(TService)))
+        {
+            throw new InvalidOperationException("A service type is registered once.");
+        }
+
+        _services.Add(new ServiceRegistration(
+            services => services.AddSingleton(service),
+            endpoints => endpoints.MapGrpcService<TService>()));
+        return this;
+    }
+
+    /// <summary>
+    /// Decides for every accepted connection, before HTTP/2 reads a byte, whether the peer may talk to this server.
+    /// A decision that throws denies the connection.
+    /// </summary>
+    public LocalRpcServerBuilder AuthorizeConnections(Func<LocalRpcConnectionInfo, bool> authorizer)
+    {
+        ArgumentNullException.ThrowIfNull(authorizer);
+        EnsureNotBuilt();
+        _authorizer = authorizer;
+        return this;
+    }
+
+    /// <summary>Builds the server. Nothing listens until <see cref="LocalRpcServer.StartAsync"/>.</summary>
+    public LocalRpcServer Build()
+    {
+        EnsureNotBuilt();
+        var limits = _limits.Validated();
+        if (_services.Count == 0)
+        {
+            throw new InvalidOperationException("A server registers at least one generated service explicitly.");
+        }
+
+        if (_supplier is not null)
+        {
+            _supplier.Claim();
+        }
+
+        _built = true;
+        var endPoint = new LocalRpcListenEndPoint(_endpoint, _supplier, limits, _authorizer);
+        var registrations = _services.ToArray();
+        var host = new HostBuilder()
+            .ConfigureWebHost(web =>
+            {
+                web.UseKestrelCore();
+                web.ConfigureKestrel(kestrel =>
+                {
+                    kestrel.AddServerHeader = false;
+                    kestrel.Limits.MaxConcurrentUpgradedConnections = 0;
+                    kestrel.Limits.MaxRequestBodySize = null;
+                    kestrel.Limits.MaxRequestHeadersTotalSize = 32 * 1024;
+                    kestrel.Limits.Http2.MaxRequestHeaderFieldSize = 16 * 1024;
+                    kestrel.Listen(endPoint, listen => listen.Protocols = HttpProtocols.Http2);
+                });
+                web.ConfigureServices(services =>
+                {
+                    services.RemoveAll<IConnectionListenerFactory>();
+                    services.AddSingleton<IConnectionListenerFactory, LocalRpcConnectionListenerFactory>();
+                    services.AddSingleton<IHostLifetime, InertHostLifetime>();
+                    services.Configure<HostOptions>(options => options.ShutdownTimeout = limits.ShutdownTimeout);
+                    services.AddRouting();
+                    services.AddGrpc();
+                    // AddGrpc registers its own defaults (including gzip) after a caller's configure delegate, so the
+                    // profile is applied as a post-configuration; the compression guard below does not depend on it.
+                    services.PostConfigure<GrpcServiceOptions>(options =>
+                    {
+                        options.MaxReceiveMessageSize = limits.MaxMessageBytes;
+                        options.MaxSendMessageSize = limits.MaxMessageBytes;
+                        options.EnableDetailedErrors = false;
+                        options.IgnoreUnknownServices = false;
+                        options.ResponseCompressionAlgorithm = null;
+                        options.CompressionProviders.Clear();
+                    });
+                    foreach (var registration in registrations)
+                    {
+                        registration.Register(services);
+                    }
+                });
+                web.Configure(app =>
+                {
+                    app.Use(RefuseCompressedRequestsAsync);
+                    app.UseRouting();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        foreach (var registration in registrations)
+                        {
+                            registration.Map(endpoints);
+                        }
+                    });
+                });
+            })
+            .Build();
+        return new LocalRpcServer(host, limits, _supplier);
+    }
+
+    /// <summary>
+    /// The private profile has no compression: a request that names any encoding other than identity is answered with
+    /// a gRPC status before routing, so no message is ever decompressed and the 4 MiB bound holds for the wire and the
+    /// decoded size alike.
+    /// </summary>
+    private static Task RefuseCompressedRequestsAsync(HttpContext context, RequestDelegate next)
+    {
+        if (context.Request.Headers.TryGetValue("grpc-encoding", out var encoding)
+            && encoding.Count > 0
+            && !string.Equals(encoding[0], "identity", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "application/grpc";
+            context.Response.Headers["grpc-status"] = ((int)StatusCode.Unimplemented).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            context.Response.Headers["grpc-message"] = "Compression is not supported.";
+            return Task.CompletedTask;
+        }
+
+        return next(context);
+    }
+
+    private void EnsureNotBuilt()
+    {
+        if (_built)
+        {
+            throw new InvalidOperationException("A server builder builds one server.");
+        }
+    }
+
+    private sealed record ServiceRegistration(Action<IServiceCollection> Register, Action<IEndpointRouteBuilder> Map);
+
+    private sealed class InertHostLifetime : IHostLifetime
+    {
+        public Task WaitForStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// A parent-owned helper/extension gRPC server over exactly one private OS stream transport. It never binds a TCP
+/// listener, never reads a URL or Kestrel endpoint configuration and never discovers peers.
+/// </summary>
+public sealed class LocalRpcServer : IAsyncDisposable
+{
+    private readonly IHost _host;
+    private readonly LocalRpcLimits _limits;
+    private readonly LocalRpcStreamSupplier? _supplier;
+    private int _state;
+
+    internal LocalRpcServer(IHost host, LocalRpcLimits limits, LocalRpcStreamSupplier? supplier)
+    {
+        _host = host;
+        _limits = limits;
+        _supplier = supplier;
+    }
+
+    internal IServiceProvider Services => _host.Services;
+
+    /// <summary>Begins registering a server that listens on one endpoint of one transport.</summary>
+    public static LocalRpcServerBuilder CreateBuilder(LocalRpcEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        return new LocalRpcServerBuilder(endpoint, null);
+    }
+
+    /// <summary>Begins registering a server that accepts only the already-connected streams a launcher supplies.</summary>
+    public static LocalRpcServerBuilder CreateBuilder(LocalRpcStreamSupplier streams)
+    {
+        ArgumentNullException.ThrowIfNull(streams);
+        return new LocalRpcServerBuilder(null, streams);
+    }
+
+    /// <summary>Starts listening. The server refuses to run if any IP-based address is bound.</summary>
+    public async Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.CompareExchange(ref _state, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("A server starts once.");
+        }
+
+        var factories = _host.Services.GetServices<IConnectionListenerFactory>().ToArray();
+        if (factories.Length != 1 || factories[0] is not LocalRpcConnectionListenerFactory)
+        {
+            throw new InvalidOperationException("Only the private stream transport may listen.");
+        }
+
+        await _host.StartAsync(cancellationToken).ConfigureAwait(false);
+        var addresses = _host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
+        // Kestrel lists a custom endpoint as http://<EndPoint.ToString()>; any other entry is an IP/URL binding.
+        if (addresses is null || addresses.Addresses.Any(address => !address.StartsWith("http://localrpc:", StringComparison.Ordinal)))
+        {
+            await _host.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("An IP address was bound (" + string.Join(", ", addresses?.Addresses ?? []) + "); a private helper server never listens on TCP.");
+        }
+    }
+
+    /// <summary>Stops accepting, completes in-flight calls within the shutdown bound and closes every connection.</summary>
+    public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _state) == 1)
+        {
+            await _host.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Stops the server, releases the endpoint and disposes streams that were never accepted.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _state, 2) == 2)
+        {
+            return;
+        }
+
+        using var timeout = new CancellationTokenSource(_limits.ShutdownTimeout + TimeSpan.FromSeconds(1));
+        try
+        {
+            await _host.StopAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Bounded shutdown: remaining connections are closed by disposing the host.
+        }
+        finally
+        {
+            _host.Dispose();
+            if (_supplier is not null)
+            {
+                await _supplier.DisposeUnacceptedAsync().ConfigureAwait(false);
+            }
+        }
+    }
+}
