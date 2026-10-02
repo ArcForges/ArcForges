@@ -78,9 +78,9 @@ CC-01 to CC-03).
   idle process held spans stay in memory (within the budget, never exported) until the next call. There is no promise
   that every error trace is retained, and promotion export is not rate-capped: the bound is on the buffer, not on what
   an error storm exports.
-- **Loss is counted.** `TracePolicy.Statistics` holds every counter: head-sampled, promoted, expired-unpromoted, overflow,
-  evicted-trace, late, oversize, not-retained error, consent-suppressed, purged and export-failure counts, plus the buffer
-  size. Only some of them are instruments, all without point labels: six counters (`arcf_trace_span_head_sampled`,
+- **Loss is counted.** `TracePolicy.Statistics` holds these counters: head-sampled, promoted, expired-unpromoted, overflow,
+  evicted-trace, late, oversize, not-retained error, consent-suppressed, purged and export-failure counts, the error-fact
+  count, and the current buffered-span, buffered-byte and closed-trace-marker readings. Only some of them are instruments, all without point labels: six counters (`arcf_trace_span_head_sampled`,
   `arcf_trace_span_promoted`, `arcf_trace_span_lost_overflow`, `arcf_trace_span_lost_late`, `arcf_trace_span_lost_oversize`
   and `arcf_trace_error_span_not_retained`) and the `arcf_trace_buffer_bytes` gauge. Expired-unpromoted, evicted-trace,
   consent-suppressed, purged and export-failure counts are in `Statistics` only.
@@ -91,8 +91,9 @@ CC-01 to CC-03).
 - **Consent.** `ITelemetryConsent` is read live on every span. With consent absent nothing is exported or held, and no
   fact or instrument measurement is produced; statistics stay readable locally. Consent has no change notification, so held
   spans are purged when the next span ends, or an instrument is read, while consent is absent, or when the host calls
-  `PurgeBuffer`: the host (PLT.52) must call `PurgeBuffer` when consent is revoked, or spans collected before a revocation
-  could be exported after a re-grant. The attached listener keeps recording spans and keeps setting the head-sampled flag
+  `PurgeBuffer`: the host wiring must call `PurgeBuffer` when consent is revoked (the consent state of
+  `ArcForges.Observability.Desktop` raises `TelemetryConsent.Changed` for that, but at the time of writing nothing outside
+  this project calls `PurgeBuffer`), or spans collected before a revocation could be exported after a re-grant. The attached listener keeps recording spans and keeps setting the head-sampled flag
   that propagates on outgoing context while consent is absent, and `SignalEmitter`'s own sink and instruments are not
   consent-gated by this library. A Cloud host passes `TelemetryConsent.NotRequired`.
 - **Trust and concurrency.** A remote parent's sampled flag is trusted, so a caller that sends a sampled trace context
