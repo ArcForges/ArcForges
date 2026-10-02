@@ -39,6 +39,9 @@ internal sealed class ManualTimeProvider : TimeProvider
 
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
+    /// <summary>When false, advancing the clock never runs a timer, so only the evaluate-on-read path can end a session.</summary>
+    public bool RunTimers { get; set; } = true;
+
     public override DateTimeOffset GetUtcNow() => _now;
 
     public override long GetTimestamp() => _timestamp;
@@ -59,15 +62,33 @@ internal sealed class ManualTimeProvider : TimeProvider
         RunDueTimers();
     }
 
+    /// <summary>Runs every live timer now, before the clock has reached its due time: a timer that fires slightly early.</summary>
+    public void FireTimersEarly()
+    {
+        foreach (ManualTimer timer in _timers.ToArray())
+        {
+            if (!timer.Disposed)
+            {
+                timer.Disposed = true;
+                timer.Fire();
+            }
+        }
+    }
+
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {
-        var timer = new ManualTimer(callback, state, _timestamp + dueTime.Ticks);
+        var timer = new ManualTimer(this, callback, state, _timestamp + dueTime.Ticks);
         _timers.Add(timer);
         return timer;
     }
 
     private void RunDueTimers()
     {
+        if (!RunTimers)
+        {
+            return;
+        }
+
         foreach (ManualTimer timer in _timers.ToArray())
         {
             if (!timer.Disposed && timer.DueAt <= _timestamp)
@@ -78,15 +99,20 @@ internal sealed class ManualTimeProvider : TimeProvider
         }
     }
 
-    private sealed class ManualTimer(TimerCallback callback, object? state, long dueAt) : ITimer
+    private sealed class ManualTimer(ManualTimeProvider owner, TimerCallback callback, object? state, long dueAt) : ITimer
     {
-        public long DueAt { get; } = dueAt;
+        public long DueAt { get; private set; } = dueAt;
 
         public bool Disposed { get; set; }
 
         public void Fire() => callback(state);
 
-        public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            DueAt = owner._timestamp + dueTime.Ticks;
+            Disposed = false;
+            return true;
+        }
 
         public void Dispose() => Disposed = true;
 

@@ -40,17 +40,20 @@ public sealed class VerboseSessionTests
     }
 
     [Fact]
-    public void AWallClockAdjustmentCannotExtendASessionAndExpiryNeedsNoTimer()
+    public void AWallClockAdjustmentCannotExtendASessionAndReadingTheStateEndsItWithoutAnyTimer()
     {
         using var directory = new TestDirectory();
-        var time = new ManualTimeProvider();
+        var time = new ManualTimeProvider { RunTimers = false };
         using DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path, time);
+        var changes = new List<VerboseSessionChange>();
+        diagnostics.Verbose.Changed += (_, change) => changes.Add(change.Change);
         diagnostics.Verbose.Start(TimeSpan.FromMinutes(5));
 
-        // The monotonic clock passes the period while the wall clock is set back an hour.
+        // The monotonic clock passes the period while the wall clock is set back an hour; no timer runs.
         time.Advance(TimeSpan.FromMinutes(5), TimeSpan.FromHours(-1));
 
         Assert.False(diagnostics.Verbose.IsActive);
+        Assert.Equal([VerboseSessionChange.Started, VerboseSessionChange.Expired], changes);
         Fixtures.Emit(diagnostics.LocalSink, SignalEventName.OperationCompleted, SignalLevel.Trace);
         Assert.DoesNotContain(diagnostics.ReadRecent(100), entry => entry.Level == SignalLevel.Trace);
     }
@@ -100,5 +103,26 @@ public sealed class VerboseSessionTests
         Assert.Equal(3, diagnostics.ReadRecent(100).Count(entry => entry.Level == SignalLevel.Debug));
         Assert.Equal(0, transport.Total);
         Assert.Contains(diagnostics.ReadRecent(100), entry => entry.Name == "diagnostics.verbose.stopped");
+    }
+
+    [Fact]
+    public void ATimerThatFiresEarlyIsArmedAgainAndStillReportsTheExpiry()
+    {
+        using var directory = new TestDirectory();
+        var time = new ManualTimeProvider();
+        using DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path, time);
+        var changes = new List<VerboseSessionChange>();
+        diagnostics.Verbose.Changed += (_, change) => changes.Add(change.Change);
+        diagnostics.Verbose.Start(TimeSpan.FromMinutes(10));
+
+        time.Advance(TimeSpan.FromMinutes(9));
+        time.FireTimersEarly();
+        Assert.Equal([VerboseSessionChange.Started], changes);
+        Assert.True(diagnostics.Verbose.IsActive);
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal([VerboseSessionChange.Started, VerboseSessionChange.Expired], changes);
+        Assert.Contains(diagnostics.ReadRecent(100), entry => entry.Name == "diagnostics.verbose.expired");
+        Assert.False(diagnostics.Verbose.IsActive);
     }
 }

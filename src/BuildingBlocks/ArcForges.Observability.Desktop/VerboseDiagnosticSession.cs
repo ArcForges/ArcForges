@@ -134,10 +134,23 @@ public sealed class VerboseDiagnosticSession
 
     private void OnTimer()
     {
-        (_, bool expired) = Evaluate();
+        (VerboseSessionState state, bool expired) = Evaluate();
         if (expired)
         {
             Raise(VerboseSessionChange.Expired);
+            return;
+        }
+
+        if (state.IsActive)
+        {
+            // A timer may fire a moment before the monotonic clock agrees that the period is over; arm it again for what is left.
+            lock (_gate)
+            {
+                if (_active)
+                {
+                    _timer?.Change(state.Remaining, Timeout.InfiniteTimeSpan);
+                }
+            }
         }
     }
 

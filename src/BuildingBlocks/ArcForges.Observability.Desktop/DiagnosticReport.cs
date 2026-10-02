@@ -56,7 +56,9 @@ public sealed record DiagnosticReportReceipt(string SupportReference, string Dig
 
 /// <summary>
 /// The host's report upload, given to <see cref="ApprovedDiagnosticReport.SendAsync"/> only. This library never holds
-/// an uploader, so nothing can be uploaded except a report the user previewed and approved.
+/// an uploader, so nothing can be uploaded except a report the user previewed and approved. The synchronous part of
+/// <see cref="UploadAsync"/> (up to its first await) runs while the consent send gate is held, so a revocation waits for
+/// it and none starts afterwards; the rest of an upload that has started is neither awaited nor cancelled by a revocation.
 /// </summary>
 public interface IDiagnosticReportUploader
 {
@@ -65,7 +67,9 @@ public interface IDiagnosticReportUploader
 
 /// <summary>
 /// A generated report that has not been approved. The flow is fixed: generate, show it in full (<see cref="Preview"/>),
-/// the user approves (<see cref="Approve"/>), then it is sent. Generating a report sends nothing.
+/// the user approves (<see cref="Approve"/>), then it is sent. Generating a report sends nothing. The library enforces the
+/// order (no approval before <see cref="Preview"/> was called) and that the sent bytes are the previewed text; it cannot
+/// know that a user interface actually displayed the text or that a person, not code, called <see cref="Approve"/>.
 /// </summary>
 public sealed class DiagnosticReportDraft
 {
@@ -169,8 +173,9 @@ public sealed class ApprovedDiagnosticReport
 
     /// <summary>
     /// Hands the approved report to <paramref name="uploader"/> once. It fails without calling the uploader when the
-    /// approval was already used, has expired, or was withdrawn by a revocation of consent. A failure of the uploader is
-    /// reported as an unknown effect, because the report may or may not have arrived; it is not sent again by this call.
+    /// approval was already used, has expired, or was withdrawn by a revocation of consent. No upload starts after a
+    /// revocation has returned; one that already started is not cancelled. A failure of the uploader is reported as an
+    /// unknown effect, because the report may or may not have arrived; it is not sent again by this call.
     /// </summary>
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "An uploader failure of any kind is reported as a typed dependency failure with unknown effect.")]
     public async ValueTask<Outcome<DiagnosticReportReceipt>> SendAsync(IDiagnosticReportUploader uploader, CancellationToken cancellationToken = default)

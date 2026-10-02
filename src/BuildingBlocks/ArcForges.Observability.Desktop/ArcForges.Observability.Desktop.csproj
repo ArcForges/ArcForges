@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Tests/**/*.cs" />
+    <InternalsVisibleTo Include="ArcForges.Observability.Desktop.Tests" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <ProjectReference Include="../ArcForges.Observability/ArcForges.Observability.csproj" />
   </ItemGroup>

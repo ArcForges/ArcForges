@@ -11,8 +11,11 @@ namespace ArcForges.Observability.Desktop;
 /// <see cref="TelemetryConsentState.Absent"/>, which sends nothing. Consent is held in a small local record that is
 /// read fail-closed: a missing, unreadable, unknown or malformed record is Absent. Diagnostics are not consent (QI-24):
 /// the local diagnostic store, a verbose session and a user-approved report never read this state.
+/// It is the <see cref="ITelemetryConsent"/> that the Observability trace policy reads live on every span. Note that the
+/// Observability assembly also has a static class named <c>TelemetryConsent</c> (for hosts that need no consent); a file that imports
+/// both namespaces must qualify one of them.
 /// </summary>
-public sealed class TelemetryConsent
+public sealed class TelemetryConsent : ITelemetryConsent
 {
     internal const string FileName = "telemetry-consent.json";
     private const int RecordVersion = 1;
@@ -60,22 +63,34 @@ public sealed class TelemetryConsent
     /// <summary>How many times consent was revoked in this process; an approval taken before a revocation is void.</summary>
     internal long Revocations => Interlocked.Read(ref _revocations);
 
+    /// <summary>Runs inside <see cref="Grant"/> after the grant was stored and before it takes effect; tests use it to interleave a revocation.</summary>
+    internal Action? BeforeGrantCommit { get; set; }
+
     /// <summary>
     /// Records the user's explicit grant. The grant is made durable first; if it cannot be stored the exception
-    /// propagates and the state stays as it was, so a grant that would not survive a restart is never claimed.
+    /// propagates and the state stays as it was, so a grant that would not survive a restart is never claimed. A grant
+    /// that a concurrent <see cref="Revoke"/> overtakes has no effect: the state change is one atomic exchange from the
+    /// state the grant started from, so a revocation can never be overwritten by a grant that began earlier.
     /// </summary>
     public void Grant()
     {
         lock (_stateGate)
         {
-            if (State == TelemetryConsentState.Granted)
+            TelemetryConsentState previous = State;
+            if (previous == TelemetryConsentState.Granted)
             {
                 return;
             }
 
             Instant now = _clock.GetCurrentInstant();
             Persist(TelemetryConsentState.Granted, now);
-            Volatile.Write(ref _state, (int)TelemetryConsentState.Granted);
+            BeforeGrantCommit?.Invoke();
+            if (Interlocked.CompareExchange(ref _state, (int)TelemetryConsentState.Granted, (int)previous) != (int)previous)
+            {
+                // Revoke already set the state; it stores the revocation once this lock is released.
+                return;
+            }
+
             _changedAt = now;
         }
 
@@ -83,19 +98,21 @@ public sealed class TelemetryConsent
     }
 
     /// <summary>
-    /// Revokes consent. Collection stops first and locally: the state is Revoked before anything else happens, no send
-    /// that has not begun can begin, and a send already in progress has finished when this method returns. Only then is
-    /// the revocation made durable. If it cannot be stored, the stored record is removed (an absent record is also no
-    /// consent); if that fails too the exception propagates, but this process stays revoked.
+    /// Revokes consent. Collection stops first and locally: the state becomes Revoked in one atomic exchange before
+    /// anything else happens, so no send that has not begun can begin, and a synchronous send to the host transport that is
+    /// already inside the send gate has handed its signal over when this method returns. Only then is the revocation made
+    /// durable. If it cannot be stored, the stored record is removed (an absent record is also no consent); if that fails
+    /// too the exception propagates, but this process stays revoked. The guarantee is at the hand-off to the host: a host
+    /// that queued telemetry must drop its queue when <see cref="Changed"/> reports the revocation, and an upload that an
+    /// approved report already started is not cancelled.
     /// </summary>
     public void Revoke()
     {
-        if (State == TelemetryConsentState.Revoked)
+        if (Interlocked.Exchange(ref _state, (int)TelemetryConsentState.Revoked) == (int)TelemetryConsentState.Revoked)
         {
             return;
         }
 
-        Volatile.Write(ref _state, (int)TelemetryConsentState.Revoked);
         Interlocked.Increment(ref _revocations);
         lock (SendGate)
         {
@@ -182,5 +199,4 @@ public sealed class TelemetryConsent
         TelemetryConsentState.Revoked => "revoked",
         _ => "absent",
     };
-
 }

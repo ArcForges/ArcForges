@@ -19,9 +19,33 @@ internal static class DiagnosticReportWriter
 {
     internal const int FormatVersion = 1;
 
+    /// <summary>The most serialized log-entry bytes one report may carry (256 KiB); the oldest entries are left out, and counted in the report.</summary>
+    internal const int MaximumLogBytes = 256 * 1024;
+
+    /// <summary>Keeps the newest entries whose serialized size fits <see cref="MaximumLogBytes"/>; <paramref name="omitted"/> counts the rest.</summary>
+    internal static IReadOnlyList<LocalDiagnosticEntry> FitToByteLimit(IReadOnlyList<LocalDiagnosticEntry> oldestFirst, out int omitted)
+    {
+        long total = 0;
+        int keepFrom = oldestFirst.Count;
+        for (int index = oldestFirst.Count - 1; index >= 0; index--)
+        {
+            LocalDiagnosticEntry entry = oldestFirst[index];
+            total += DiagnosticEntryFormat.Serialize(entry.OccurredAt, entry.Name, entry.Level, entry.Tier, entry.Fields).Length;
+            if (total > MaximumLogBytes)
+            {
+                break;
+            }
+
+            keepFrom = index;
+        }
+
+        omitted = keepFrom;
+        return keepFrom == 0 ? oldestFirst : oldestFirst.Skip(keepFrom).ToArray();
+    }
+
     internal static (string Text, string Digest) Build(ObservabilityContext identity, TelemetryConsentState consent,
         DiagnosticReportOrigin origin, string supportReference, DateTimeOffset generatedAt, CrashMarker? crash,
-        IReadOnlyList<LocalDiagnosticEntry>? entries, int skipped)
+        IReadOnlyList<LocalDiagnosticEntry>? entries, int skipped, int omitted)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true, NewLine = "\n" }))
@@ -61,6 +85,7 @@ internal static class DiagnosticReportWriter
             if (entries is not null)
             {
                 writer.WriteNumber("skippedEntries", skipped);
+                writer.WriteNumber("omittedEntries", omitted);
                 writer.WriteStartArray("logEntries");
                 foreach (LocalDiagnosticEntry entry in entries)
                 {

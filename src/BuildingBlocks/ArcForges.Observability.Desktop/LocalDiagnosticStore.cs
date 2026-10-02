@@ -78,62 +78,78 @@ internal sealed class LocalDiagnosticStore : IStructuredEventSink
             DiagnosticEntryFormat.ValidateFields(fields ?? []));
     }
 
-    /// <summary>The newest entries, oldest first. A line that is not a valid entry is skipped and counted.</summary>
+    /// <summary>
+    /// The newest entries, oldest first. A line that is not a valid entry is skipped and counted. The segment list is taken
+    /// under the write lock but the files are read outside it, so building a report or a view never stalls the event path; a
+    /// segment removed or half-written while it is read costs entries from the view, never the writer.
+    /// </summary>
     internal IReadOnlyList<LocalDiagnosticEntry> ReadRecent(int maxEntries, out int skipped)
     {
         skipped = 0;
         var newestFirst = new List<LocalDiagnosticEntry>();
+        List<string> newestSegmentsFirst;
         lock (_gate)
         {
-            foreach (string path in Segments().Select(segment => segment.Path).Reverse())
+            newestSegmentsFirst = Segments().Select(segment => segment.Path).Reverse().ToList();
+        }
+
+        foreach (string path in newestSegmentsFirst)
+        {
+            byte[] bytes;
+            try
             {
-                byte[] bytes;
-                try
+                bytes = ReadSegment(path);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            int end = bytes.Length;
+            while (end > 0 && newestFirst.Count < maxEntries)
+            {
+                int start = end - 1;
+                while (start > 0 && bytes[start - 1] != (byte)'\n')
                 {
-                    bytes = File.ReadAllBytes(path);
+                    start--;
                 }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+
+                ReadOnlySpan<byte> line = bytes.AsSpan(start, end - start);
+                end = start;
+                line = line.TrimEnd((byte)'\n').TrimEnd((byte)'\r');
+                if (line.IsEmpty)
                 {
                     continue;
                 }
 
-                int end = bytes.Length;
-                while (end > 0 && newestFirst.Count < maxEntries)
+                if (line.Length <= DiagnosticEntryFormat.MaxLineBytes
+                    && DiagnosticEntryFormat.TryParse(line, out LocalDiagnosticEntry? entry))
                 {
-                    int start = end - 1;
-                    while (start > 0 && bytes[start - 1] != (byte)'\n')
-                    {
-                        start--;
-                    }
-
-                    ReadOnlySpan<byte> line = bytes.AsSpan(start, end - start);
-                    end = start;
-                    line = line.TrimEnd((byte)'\n').TrimEnd((byte)'\r');
-                    if (line.IsEmpty)
-                    {
-                        continue;
-                    }
-
-                    if (line.Length <= DiagnosticEntryFormat.MaxLineBytes
-                        && DiagnosticEntryFormat.TryParse(line, out LocalDiagnosticEntry? entry))
-                    {
-                        newestFirst.Add(entry!);
-                    }
-                    else
-                    {
-                        skipped++;
-                    }
+                    newestFirst.Add(entry!);
                 }
-
-                if (newestFirst.Count >= maxEntries)
+                else
                 {
-                    break;
+                    skipped++;
                 }
+            }
+
+            if (newestFirst.Count >= maxEntries)
+            {
+                break;
             }
         }
 
         newestFirst.Reverse();
         return newestFirst;
+    }
+
+    private static byte[] ReadSegment(string path)
+    {
+        const FileShare sharing = FileShare.ReadWrite | FileShare.Delete;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, sharing);
+        var bytes = new byte[stream.Length];
+        stream.ReadExactly(bytes);
+        return bytes;
     }
 
     private void Append(DateTimeOffset occurredAt, string name, SignalLevel level, DiagnosticTier tier, Dictionary<string, object?> fields)

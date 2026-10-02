@@ -46,11 +46,20 @@ public sealed class ConsentTests
     }
 
     [Fact]
-    public void TheLibraryHasNoNetworkCapabilityAndHoldsNeitherAnUploaderNorATransport()
+    public void TheLibraryReferencesNoNetworkAssemblyHasNoPInvokeAndHoldsNoUploaderOrTransportField()
     {
         Assembly library = typeof(DesktopDiagnostics).Assembly;
         Assert.DoesNotContain(library.GetReferencedAssemblies(),
             reference => reference.Name!.StartsWith("System.Net", StringComparison.Ordinal));
+
+        // A tripwire, not a proof: it catches an added network reference, native call or typed uploader or transport field.
+        foreach (Type type in library.GetTypes())
+        {
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                Assert.False(method.Attributes.HasFlag(MethodAttributes.PinvokeImpl), method.Name);
+            }
+        }
 
         foreach (Type type in library.GetTypes().Where(type => !type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)))
         {
@@ -201,5 +210,100 @@ public sealed class ConsentTests
         Assert.True(failure is IOException or UnauthorizedAccessException);
         Assert.Equal(TelemetryConsentState.Absent, diagnostics.Consent.State);
         Assert.False(diagnostics.Consent.IsGranted);
+    }
+
+    [Fact]
+    public async Task AGrantOvertakenByARevocationCannotLeaveTheProcessGranted()
+    {
+        using var directory = new TestDirectory();
+        var transport = new RecordingTransport();
+        Task? revoking = null;
+        using (DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path))
+        {
+            ConsentGatedTelemetry telemetry = diagnostics.CreateTelemetry(transport);
+
+            // Between the grant being stored and taking effect, a revocation begins and sets the state.
+            diagnostics.Consent.BeforeGrantCommit = () =>
+            {
+                revoking = Task.Run(diagnostics.Consent.Revoke, TestContext.Current.CancellationToken);
+                Assert.True(SpinWait.SpinUntil(() => diagnostics.Consent.State == TelemetryConsentState.Revoked, TimeSpan.FromSeconds(30)));
+            };
+            diagnostics.Consent.Grant();
+            Assert.NotNull(revoking);
+            await revoking!.ConfigureAwait(true);
+
+            Assert.Equal(TelemetryConsentState.Revoked, diagnostics.Consent.State);
+            Fixtures.Emit(telemetry, SignalEventName.OperationCompleted, SignalLevel.Information, count: 3);
+            Assert.Equal(0, transport.Total);
+        }
+
+        // The stored record agrees with memory, so a restart does not resume sending either.
+        using DesktopDiagnostics restarted = Fixtures.Open(directory.Path);
+        Assert.Equal(TelemetryConsentState.Revoked, restarted.Consent.State);
+    }
+
+    [Fact]
+    public void ARevocationThatCannotBeStoredRemovesTheRecordSoARestartIsNotGranted()
+    {
+        using var directory = new TestDirectory();
+        using (DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path))
+        {
+            diagnostics.Consent.Grant();
+            Assert.True(File.Exists(Path.Combine(directory.Path, ConsentFile)));
+
+            // A directory where the temporary record belongs makes storing the revocation fail.
+            Directory.CreateDirectory(Path.Combine(directory.Path, ConsentFile + ".tmp"));
+            diagnostics.Consent.Revoke();
+
+            Assert.Equal(TelemetryConsentState.Revoked, diagnostics.Consent.State);
+            Assert.False(File.Exists(Path.Combine(directory.Path, ConsentFile)));
+        }
+
+        using DesktopDiagnostics restarted = Fixtures.Open(directory.Path);
+        Assert.NotEqual(TelemetryConsentState.Granted, restarted.Consent.State);
+        Assert.False(restarted.Consent.IsGranted);
+    }
+
+    [Fact]
+    public void DetailBelowInformationStaysLocalEvenWhileConsentIsGrantedAndAVerboseSessionRuns()
+    {
+        using var directory = new TestDirectory();
+        using DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path);
+        var transport = new RecordingTransport();
+        ConsentGatedTelemetry telemetry = diagnostics.CreateTelemetry(transport);
+        diagnostics.Consent.Grant();
+        diagnostics.Verbose.Start(TimeSpan.FromMinutes(5));
+
+        Fixtures.Emit(telemetry, SignalEventName.OperationCompleted, SignalLevel.Debug);
+        Fixtures.Emit(telemetry, SignalEventName.OperationCompleted, SignalLevel.Trace);
+        Fixtures.Emit(telemetry, SignalEventName.OperationCompleted, SignalLevel.Warning);
+
+        Assert.Equal([SignalLevel.Warning], transport.Signals.Select(signal => signal.Level).ToArray());
+        Assert.Equal(3, diagnostics.ReadRecent(100).Count(entry => entry.Name == "operation.completed"));
+    }
+
+    [Fact]
+    public void TheConsentIsTheLiveStateTheObservabilityTracePolicyReadsAndAnnouncesEachChange()
+    {
+        using var directory = new TestDirectory();
+        using DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path);
+        var announced = new List<bool>();
+        diagnostics.Consent.Changed += (_, _) => announced.Add(ReadLive(diagnostics.Consent));
+
+        Assert.False(ReadLive(diagnostics.Consent));
+        diagnostics.Consent.Grant();
+        Assert.True(ReadLive(diagnostics.Consent));
+        diagnostics.Consent.Revoke();
+        Assert.False(ReadLive(diagnostics.Consent));
+
+        // A host drops what it queued when it is told consent is no longer granted; each announcement already shows the new state.
+        Assert.Equal([true, false], announced);
+    }
+
+    private static bool ReadLive(TelemetryConsent consent)
+    {
+        // Read through the interface the Observability trace policy consumes.
+        ITelemetryConsent[] asInterface = [consent];
+        return asInterface[0].IsGranted;
     }
 }

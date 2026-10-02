@@ -118,7 +118,7 @@ public sealed class DesktopDiagnostics : IDisposable
     /// <summary>
     /// Records that the process is crashing, for a host's unhandled-exception handler. Only the registered reason code
     /// of the exception type is kept (never its message, data or stack), together with a support reference. It is stored
-    /// locally; nothing is sent and no consent is consulted. It never throws: a handler must not fail while failing.
+    /// locally; nothing is sent and no consent is consulted. A failure to store the record never throws (a handler must not fail while failing); only a null argument does.
     /// </summary>
     public void RecordCrash(Exception exception)
     {
@@ -223,14 +223,16 @@ public sealed class DesktopDiagnostics : IDisposable
         ArgumentOutOfRangeException.ThrowIfGreaterThan(options.MaximumLogEntries, LocalDiagnosticStore.MaxEntriesPerRead);
         IReadOnlyList<LocalDiagnosticEntry>? entries = null;
         int skipped = 0;
+        int omitted = 0;
         if (options.IncludeLogEntries)
         {
-            entries = _store.ReadRecent(options.MaximumLogEntries, out skipped);
+            IReadOnlyList<LocalDiagnosticEntry> read = _store.ReadRecent(options.MaximumLogEntries, out skipped);
+            entries = DiagnosticReportWriter.FitToByteLimit(read, out omitted);
         }
 
         string reference = crash?.SupportReference ?? SupportReference.Create();
         (string text, string digest) = DiagnosticReportWriter.Build(_options.Identity, Consent.State, origin, reference,
-            _clock.GetCurrentInstant().ToDateTimeOffset(), crash, entries, skipped);
+            _clock.GetCurrentInstant().ToDateTimeOffset(), crash, entries, skipped, omitted);
         _store.Record(DiagnosticEventKind.ReportGenerated,
             [new KeyValuePair<string, object?>(DiagnosticEntryFormat.SupportReferenceField, reference)]);
         return new DiagnosticReportDraft(this, reference, origin, text, digest);

@@ -38,11 +38,19 @@ public sealed class ConsentGatedTelemetry : IStructuredEventSink
         _transport = transport;
     }
 
-    /// <summary>Keeps the event locally and, only while consent is granted, sends it.</summary>
+    /// <summary>
+    /// Keeps the event locally and, only while consent is granted, sends it. Detail below Information (Debug and Trace,
+    /// which only a verbose session keeps) stays on this device even with consent: client telemetry is minimal (DG-01).
+    /// </summary>
     public void Write(StructuredSignal signal)
     {
         ArgumentNullException.ThrowIfNull(signal);
         _local.Write(signal);
+        if (signal.Level < SignalLevel.Information)
+        {
+            return;
+        }
+
         SendIfGranted(() => _transport.Send(signal));
     }
 

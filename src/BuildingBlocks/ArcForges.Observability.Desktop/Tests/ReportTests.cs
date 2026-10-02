@@ -227,4 +227,74 @@ public sealed class ReportTests
         Assert.DoesNotContain(Marker, report, StringComparison.Ordinal);
         Assert.Contains("\"skippedEntries\": 2", report, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task AnApprovalIsValidUntilExactlyItsLifetimeHasPassed()
+    {
+        using var directory = new TestDirectory();
+        var time = new ManualTimeProvider();
+        using DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path, time);
+        var uploader = new RecordingUploader();
+        TimeSpan lifetime = TimeSpan.FromMinutes(15);
+
+        DiagnosticReportDraft justInside = diagnostics.CreateReport();
+        justInside.Preview();
+        ApprovedDiagnosticReport insideApproval = justInside.Approve();
+        time.Advance(lifetime - TimeSpan.FromTicks(1));
+        Outcome<DiagnosticReportReceipt> inside = await insideApproval.SendAsync(uploader, TestContext.Current.CancellationToken).ConfigureAwait(true);
+        Assert.Equal(OutcomeKind.Success, inside.Kind);
+
+        DiagnosticReportDraft atLimit = diagnostics.CreateReport();
+        atLimit.Preview();
+        ApprovedDiagnosticReport limitApproval = atLimit.Approve();
+        time.Advance(lifetime);
+        Outcome<DiagnosticReportReceipt> expired = await limitApproval.SendAsync(uploader, TestContext.Current.CancellationToken).ConfigureAwait(true);
+        Assert.Equal("perm.approval_expired", Fixtures.FailureCode(expired));
+        Assert.Single(uploader.Uploads);
+    }
+
+    [Fact]
+    public async Task ARepeatedRevocationChangesNothingAndDoesNotVoidALaterApproval()
+    {
+        using var directory = new TestDirectory();
+        using DesktopDiagnostics diagnostics = Fixtures.Open(directory.Path);
+        var uploader = new RecordingUploader();
+        int changes = 0;
+        diagnostics.Consent.Changed += (_, _) => changes++;
+
+        diagnostics.Consent.Grant();
+        diagnostics.Consent.Revoke();
+        DiagnosticReportDraft draft = diagnostics.CreateReport();
+        draft.Preview();
+        ApprovedDiagnosticReport approved = draft.Approve();
+        diagnostics.Consent.Revoke();
+
+        Assert.Equal(2, changes);
+        Outcome<DiagnosticReportReceipt> sent = await approved.SendAsync(uploader, TestContext.Current.CancellationToken).ConfigureAwait(true);
+        Assert.Equal(OutcomeKind.Success, sent.Kind);
+        Assert.Single(uploader.Uploads);
+    }
+
+    [Fact]
+    public void ALogInAReportIsCappedInBytesAndTheLeftOutEntriesAreCounted()
+    {
+        var fields = new Dictionary<string, object?> { ["padding"] = new string('x', 900) };
+        var entries = Enumerable.Range(0, 1000)
+            .Select(index => new LocalDiagnosticEntry(new DateTimeOffset(2026, 10, 2, 8, 0, 0, TimeSpan.Zero).AddSeconds(index),
+                "operation.completed", SignalLevel.Information, DiagnosticTier.LocalMinimal, fields))
+            .ToArray();
+
+        IReadOnlyList<LocalDiagnosticEntry> kept = DiagnosticReportWriter.FitToByteLimit(entries, out int omitted);
+
+        Assert.InRange(kept.Count, 1, 999);
+        Assert.Equal(entries.Length - kept.Count, omitted);
+        Assert.Same(entries[^1], kept[^1]);
+        Assert.Same(entries[omitted], kept[0]);
+        long bytes = kept.Sum(entry => DiagnosticEntryFormat.Serialize(entry.OccurredAt, entry.Name, entry.Level, entry.Tier, entry.Fields).Length);
+        Assert.True(bytes <= DiagnosticReportWriter.MaximumLogBytes);
+
+        IReadOnlyList<LocalDiagnosticEntry> small = DiagnosticReportWriter.FitToByteLimit(entries.Take(3).ToArray(), out int none);
+        Assert.Equal(3, small.Count);
+        Assert.Equal(0, none);
+    }
 }
