@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "3e1780eeb24de67ebf512bfd17f66d51fac9da71e50c1f999162e6f152396d7b",
+    "Directory.Packages.props": "66ad3721f5e3cf2d4690a4851db24fc87db4dd845269710bc1a9f5bcd70db575",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
     "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -207,6 +207,10 @@
     "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164",
     "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
     "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj": "36539c5aac18de096f4956a48d832c2566068409a7c39b99a8f0254597ea7255",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj": "f530a19cd569d1291e8593a07232a5d30ad41ec966d659f5deb522905a32ebb6",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/packages.lock.json": "041d44c07cced9649ead71a03bf645210c4f7ce105f2667539400dbd85362238",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/packages.lock.json": "65a20afa293666592531d349f51b909d3a26327991444dfade78b881d9318252",
     "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "81a817317a9ec179503d64ea597c2d17b9d349705fc7a6a8495935b78ae0fcf8",
     "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
     "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "c2bb444ba5d39e0d920b203aa02ccc36512d3d941b9568ddb6a3dc6cb86accd2",
@@ -697,25 +701,25 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261001-plt09",
+    "owner": "w-c20261002-plt52",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
-    "reviewedOn": "2026-10-01",
-    "baselineCommit": "81d53f56a47641fb27764ce2c3b5912ee5dfeeb2",
-    "maintenanceAssessment": "PLT.09 adds the non-packable ArcForges.LocalRpc project and its offline test project. The library references only the already admitted Grpc.AspNetCore.Server 2.83.0 and Grpc.Net.Client 2.84.0 candidates plus the Microsoft.AspNetCore.App shared-framework reference of the pinned .NET 10.0.400 SDK; the test project reuses the admitted ArcForges.Contracts.LocalRpc.Platform 1.0.0-ci.216.1 candidate (conditional Foundation 1.0.0-ci.216.1 selection only for that test project). Only the transitive Microsoft.Extensions.DependencyInjection.Abstractions and Microsoft.Extensions.Logging.Abstractions 8.0.1 test-host coordinates are newly recorded, with exact locked content hashes and MIT nuspec evidence. No dependency version, package identity, runtime, framework or packages.json entry changes; the project stays non-packable until its package task.",
+    "reviewedOn": "2026-10-02",
+    "baselineCommit": "348492fcb882a192417946bc50d47917986676b9",
+    "maintenanceAssessment": "PLT.52 adds the non-packable ArcForges.Observability.Desktop project (local diagnostic store, consent, report approval and verbose session) and its offline test project. Both reference only the same-repository ArcForges.Observability and ArcForges.Foundation projects and no package; their two project files and two exact lock files are bound in this successor review, and the complete NuGet closure remains exactly the existing admitted coordinates with identical versions and content hashes (no coordinate is added). Two exact MSBuildProjectName-conditioned central-version rows bind only ArcForges.Observability.Desktop and ArcForges.Observability.Desktop.Tests to the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1 (the Foundation edge of ArcForges.Observability requires it); the default 1.0.0-ci.113.1 and every other condition are unchanged. No package identity, packages.json entry, runtime, framework or SDK setting changes; the project stays non-packable until PLT.53.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 locked restore of DesktopPlatform.slnx and Release build pass; the offline LocalRpc suite passes.",
-      "aot-trim": "The library sets IsAotCompatible with IL2026/IL3050 as errors and compiles without suppression; no Native AOT publish of this library was run locally and none runs in CI.",
-      "compatibility": "Serves and calls only generated gRPC bindings; no wire type, descriptor or schema is copied or changed.",
-      "licence-provenance": "Two newly recorded coordinates have exact locked hashes and MIT nuspec evidence; provenance adds first-party classification for the task-owned sources and this receipt.",
-      "security-sbom": "The complete locked graph is admitted and CI retains NuGet audit; no claim of absent current advisories is made.",
-      "runtime-performance-migration": "Offline fixtures use in-memory streams; real Named Pipe and AF_UNIX runs are explicit local opt-in on one OS and are recorded in the Plan ledger. No performance or migration claim.",
+      "compilation": "Release build of the full DesktopPlatform.slnx with compiler-generated files and the offline Observability.Desktop suite pass locally on SDK 10.0.401 (the pinned 10.0.400 is not installed; the two new lock files carry the ILLink 10.0.11 entry of the pinned SDK). Locked restore on the pinned SDK is evaluated by hosted CI only.",
+      "aot-trim": "The library sets IsAotCompatible with IL2026/IL3050 as errors and uses no reflection or serializer; the architecture gate classifies it AOT-compatible. No Native AOT publish of this library was run locally and none runs in CI for it.",
+      "compatibility": "No wire type, schema or external dependency is added; the local log, consent record and report text are private on-disk and in-memory formats of this library.",
+      "licence-provenance": "No new external coordinate; provenance adds first-party classification for the task-owned sources, projects, tests, README, locks and this receipt.",
+      "security-sbom": "The complete locked graph is the already-admitted one and CI retains NuGet audit; no claim of absent current advisories is made.",
+      "runtime-performance-migration": "Offline tests use temporary directories and a manual time provider; no real exporter, backend, UI or product host was exercised. No performance or migration claim.",
       "framework-runtime-posture": "global.json stays on .NET SDK 10.0.400; no framework major, native ABI, Android or toolchain change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "3e1780eeb24de67ebf512bfd17f66d51fac9da71e50c1f999162e6f152396d7b",
+      "Directory.Packages.props": "66ad3721f5e3cf2d4690a4851db24fc87db4dd845269710bc1a9f5bcd70db575",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
       "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -917,6 +921,10 @@
       "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164",
       "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
+      "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj": "36539c5aac18de096f4956a48d832c2566068409a7c39b99a8f0254597ea7255",
+      "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj": "f530a19cd569d1291e8593a07232a5d30ad41ec966d659f5deb522905a32ebb6",
+      "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/packages.lock.json": "041d44c07cced9649ead71a03bf645210c4f7ce105f2667539400dbd85362238",
+      "src/BuildingBlocks/ArcForges.Observability.Desktop/packages.lock.json": "65a20afa293666592531d349f51b909d3a26327991444dfade78b881d9318252",
       "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "81a817317a9ec179503d64ea597c2d17b9d349705fc7a6a8495935b78ae0fcf8",
       "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
       "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "c2bb444ba5d39e0d920b203aa02ccc36512d3d941b9568ddb6a3dc6cb86accd2",
@@ -972,7 +980,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-35-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-09-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -983,7 +991,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-09-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-52-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

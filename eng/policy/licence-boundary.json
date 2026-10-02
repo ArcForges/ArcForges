@@ -199,6 +199,14 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+      "kind": "msbuild"
     }
   ]
 }

@@ -197,6 +197,14 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
       "blob": "db96c5b33bf861a9d1c16ce8777fe4acef0129ea"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
+      "blob": "9dc28f27d3ed7da26fa8fd464d0d5a3646adb117"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+      "blob": "b0ed7c0159904973534815eeaaa19505ff5028a1"
     }
   ]
 }

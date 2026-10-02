@@ -1908,5 +1908,105 @@
     "apiSymbol": "ArcForges.Observability.TracePolicy.PurgeBuffer()",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.TracePolicyTests.ThePurgeCommandDiscardsEverythingHeldAtOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.ConsentGatedTelemetry.Export(System.Diagnostics.Activity)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.GrantedConsentSendsEventsAndSpansAndRevocationStopsThemAtOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.ConsentGatedTelemetry.Write(ArcForges.Observability.StructuredSignal)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.GrantedConsentSendsEventsAndSpansAndRevocationStopsThemAtOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.IClientTelemetryTransport.Send(ArcForges.Observability.ScrubbedSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.GrantedConsentSendsEventsAndSpansAndRevocationStopsThemAtOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.IClientTelemetryTransport.Send(ArcForges.Observability.StructuredSignal)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.GrantedConsentSendsEventsAndSpansAndRevocationStopsThemAtOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.TelemetryConsent.Grant()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.GrantedConsentSendsEventsAndSpansAndRevocationStopsThemAtOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.TelemetryConsent.Revoke()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.RevocationWaitsForASendInProgressAndNoSendStartsAfterItReturns()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.CreateTelemetry(ArcForges.Observability.Desktop.IClientTelemetryTransport)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ConsentTests.ConsentAbsentSendsNoSignalOffTheDeviceYetLocalDiagnosticsStillRecord()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.Open(ArcForges.Observability.Desktop.DesktopDiagnosticsOptions)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.LocalStoreTests.TheLocalViewIsBoundedAndOrderedOldestFirstAndOptionsAreValidated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.ReadRecent(int)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.LocalStoreTests.TheLocalViewIsBoundedAndOrderedOldestFirstAndOptionsAreValidated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.VerboseSessionTests.DisposingTheDiagnosticsEndsAVerboseSessionAndRefusesANewOne()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.VerboseDiagnosticSession.Start(System.TimeSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.VerboseSessionTests.AVerboseSessionKeepsDetailLocallyOnlyWhileActiveAndEndsOnItsOwn()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.VerboseDiagnosticSession.Stop()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.VerboseSessionTests.AVerboseSessionIsBoundedStoppableAndNeverEnablesUpload()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.CreateReport(ArcForges.Observability.Desktop.DiagnosticReportOptions?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.AReportIsGeneratedShownInFullAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DiagnosticReportDraft.Preview()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.AReportIsGeneratedShownInFullAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DiagnosticReportDraft.Approve()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.AReportIsGeneratedShownInFullAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.ApprovedDiagnosticReport.SendAsync(ArcForges.Observability.Desktop.IDiagnosticReportUploader, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.AReportIsGeneratedShownInFullAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.IDiagnosticReportUploader.UploadAsync(ArcForges.Observability.Desktop.DiagnosticReportUpload, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.AReportIsGeneratedShownInFullAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.RecordCrash(System.Exception)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.ACrashIsKeptLocallyNeverUploadedAutomaticallyAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.TryGetPendingCrashReport(ArcForges.Observability.Desktop.DiagnosticReportOptions?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.ACrashIsKeptLocallyNeverUploadedAutomaticallyAndSentOnlyAfterApproval()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.DismissPendingCrashReport()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.ADismissedCrashReportIsDiscardedWithoutAnythingBeingSent()"
   }
 ]
