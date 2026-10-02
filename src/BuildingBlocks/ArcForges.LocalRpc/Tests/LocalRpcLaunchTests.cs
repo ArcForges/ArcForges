@@ -863,6 +863,174 @@ public sealed class LocalRpcLaunchTests
         var expired = authority.Launch("slot-e", Standard, LocalRpcLaunchTransport.SuppliedStreams);
         world.Clock.Advance(TimeSpan.FromSeconds(11));
         Assert.Throws<InvalidOperationException>(expired.HandoffBootstrapResource);
-        Assert.False(expired.SecretIsZeroed());
+        Assert.True(expired.SecretIsZeroed());
+    }
+
+
+    // ---- the callback's copy of the secret, the clocks, and a throwing Revoked callback (re-review)
+
+    [Fact]
+    public async Task TheSecretCopyTheCallbackReceivedIsZeroedWhenTheCallbackReturnsOrThrows()
+    {
+        using var world = new LaunchWorld();
+        var released = new List<byte[]>();
+        await using var authority = LocalRpcLaunchAuthority.Create(world.Root, null, world.Environment() with { SecretCopyReleased = released.Add });
+        var returning = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var resource = returning.HandoffBootstrapResource();
+        var handedOver = resource[^LocalRpcLaunchDescriptor.SecretLength..];
+        var seen = Array.Empty<byte>();
+
+        _ = returning.ConsumeSecret(0, (_, secret) =>
+        {
+            seen = secret.ToArray();
+            return 0;
+        });
+
+        Assert.Equal(handedOver, seen);
+        Assert.NotEqual(new byte[LocalRpcLaunchDescriptor.SecretLength], seen);
+        var copy = Assert.Single(released);
+        Assert.Equal(new byte[LocalRpcLaunchDescriptor.SecretLength], copy);
+
+        var throwing = authority.Launch("slot-b", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        Assert.Throws<FormatException>(() => throwing.ConsumeSecret<int, int>(0, (_, secret) =>
+        {
+            seen = secret.ToArray();
+            throw new FormatException("proof rejected");
+        }));
+        Assert.NotEqual(new byte[LocalRpcLaunchDescriptor.SecretLength], seen);
+        Assert.Equal(2, released.Count);
+        Assert.Equal(new byte[LocalRpcLaunchDescriptor.SecretLength], released[1]);
+    }
+
+    [Fact]
+    public async Task TheSecretCopyIsZeroedWhenTheLaunchRefusesTheConsumption()
+    {
+        using var world = new LaunchWorld();
+        var released = new List<byte[]>();
+        await using var authority = LocalRpcLaunchAuthority.Create(world.Root, null, world.Environment() with { SecretCopyReleased = released.Add });
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var child = world.SpawnFake(5501);
+        launch.BindChild(child);
+        world.Processes.Set(child, ProcessLiveness.Dead);
+
+        Assert.Throws<InvalidOperationException>(() => launch.ConsumeSecret(0, (_, _) => 0));
+
+        var copy = Assert.Single(released);
+        Assert.Equal(new byte[LocalRpcLaunchDescriptor.SecretLength], copy);
+        Assert.True(launch.SecretIsZeroed());
+    }
+
+    [Fact]
+    public async Task ASecretCopyTheCallbackSawIsNotLeftBehindWhenTheCallbackRevokesTheLaunch()
+    {
+        using var world = new LaunchWorld();
+        var released = new List<byte[]>();
+        await using var authority = LocalRpcLaunchAuthority.Create(world.Root, null, world.Environment() with { SecretCopyReleased = released.Add });
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        var error = Assert.Throws<InvalidOperationException>(() => launch.ConsumeSecret(0, (_, _) =>
+        {
+            launch.Revoke();
+            return 0;
+        }));
+
+        Assert.Contains("Revoked", error.Message, StringComparison.Ordinal);
+        Assert.Equal(new byte[LocalRpcLaunchDescriptor.SecretLength], Assert.Single(released));
+    }
+
+    [Fact]
+    public async Task AWallClockStepBackwardCannotExtendTheBootstrapWindowAndAStepForwardShortensIt()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var stepped = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var forward = authority.Launch("slot-b", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        world.Clock.Advance(TimeSpan.FromSeconds(6));
+        world.Clock.StepWallClock(TimeSpan.FromHours(-1));
+        Assert.Equal(LocalRpcLaunchRefusal.None, stepped.Status());
+        world.Clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, stepped.Status());
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, authority.Verify(stepped.Descriptor.ToClaim()));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, forward.Status());
+
+        using var second = new LaunchWorld();
+        await using var other = second.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = other.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        second.Clock.StepWallClock(TimeSpan.FromSeconds(11));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+    }
+
+    [Fact]
+    public async Task TheMonotonicWindowEndsExactlyAtItsLengthWithoutHelpFromTheWallClock()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        world.Clock.AdvanceMonotonic(TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
+        Assert.Equal(LocalRpcLaunchRefusal.None, launch.Status());
+        world.Clock.AdvanceMonotonic(TimeSpan.FromTicks(1));
+
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+    }
+
+    [Fact]
+    public async Task ExpiryOnceSeenIsLatchedEvenIfTheWallClockLaterStepsBack()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        world.Clock.StepWallClock(TimeSpan.FromSeconds(11));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+
+        world.Clock.StepWallClock(TimeSpan.FromHours(-2));
+
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, authority.Verify(launch.Descriptor.ToClaim()));
+    }
+
+    [Fact]
+    public async Task AnExpiredLaunchDestroysItsStoredSecretAsSoonAsExpiryIsSeen()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        Assert.False(launch.SecretIsZeroed());
+
+        world.Clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.False(launch.SecretIsZeroed());
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+
+        Assert.True(launch.SecretIsZeroed());
+    }
+
+    [Fact]
+    public async Task ARevokedCallbackThatThrowsNeitherUndoesTheRevocationNorFailsTheCallerThatCausedIt()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var old = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var ran = 0;
+        using var first = old.Revoked.Register(() =>
+        {
+            ran++;
+            throw new InvalidOperationException("the owner's callback failed");
+        });
+        using var second = old.Revoked.Register(() => ran++);
+
+        var current = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        Assert.Equal(2UL, current.Descriptor.Epoch);
+        Assert.Equal(2, ran);
+        Assert.Equal(LocalRpcLaunchRefusal.Revoked, old.Status());
+        Assert.Equal(LocalRpcLaunchRefusal.None, authority.Verify(current.Descriptor.ToClaim()));
+        old.Revoke();
+
+        var direct = authority.Launch("slot-b", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        using var third = direct.Revoked.Register(() => throw new InvalidOperationException("again"));
+        direct.Revoke();
+        Assert.True(direct.Revoked.IsCancellationRequested);
+        await direct.DisposeAsync();
     }
 }

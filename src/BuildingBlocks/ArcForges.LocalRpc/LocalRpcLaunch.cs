@@ -28,6 +28,9 @@ internal sealed record LaunchEnvironment
     /// <summary>Uses a Unix socket launch directory even on Windows (the same verification route as the transport tests).</summary>
     internal bool ForceUnixSocket { get; init; }
 
+    /// <summary>Called with the callback's secret copy right after it was zeroed; only offline fixtures observe it.</summary>
+    internal Action<byte[]>? SecretCopyReleased { get; init; }
+
     /// <summary>How long a launch directory without a readable record is left alone before it counts as abandoned.</summary>
     internal TimeSpan AbandonedGrace { get; init; } = TimeSpan.FromSeconds(60);
 }
@@ -253,6 +256,8 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     private bool _consumed;
     private bool _bootstrapped;
     private bool _expired;
+    private readonly long _issuedTimestamp;
+    private readonly TimeSpan _window;
     private int _revocation;
     private int _disposed;
 
@@ -260,6 +265,9 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     {
         _disposedCallback = disposed;
         Descriptor = descriptor;
+        _environment = environment;
+        _issuedTimestamp = environment.Clock.GetTimestamp();
+        _window = descriptor.BootstrapDeadlineUtc - descriptor.IssuedAtUtc;
         _directory = directory;
         _environment = environment;
         _revokedToken = _revoked.Token;
@@ -365,7 +373,7 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
             CryptographicOperations.ZeroMemory(_secret);
             if (status != LocalRpcLaunchRefusal.None)
             {
-                CryptographicOperations.ZeroMemory(secret);
+                ReleaseCopy(secret);
                 throw new InvalidOperationException("The launch no longer authorizes: " + status + ".");
             }
         }
@@ -388,8 +396,14 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(secret);
+            ReleaseCopy(secret);
         }
+    }
+
+    private void ReleaseCopy(byte[] secret)
+    {
+        CryptographicOperations.ZeroMemory(secret);
+        _environment.SecretCopyReleased?.Invoke(secret);
     }
 
     /// <summary>Why this launch would refuse right now, ignoring any claim. <see cref="LocalRpcLaunchRefusal.None"/> means it authorizes.</summary>
@@ -419,13 +433,17 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
             return LocalRpcLaunchRefusal.ChildGone;
         }
 
-        if (_expired || (!_bootstrapped && _environment.Clock.GetUtcNow() >= Descriptor.BootstrapDeadlineUtc))
+        // The window runs out on whichever clock gets there first: the monotonic one (a wall-clock step back cannot extend it) or the
+        // wall clock (a step forward, or a suspended machine, shortens it). Once seen, expiry is latched and the secret is destroyed.
+        if (!_expired && !_bootstrapped
+            && (_environment.Clock.GetElapsedTime(_issuedTimestamp) >= _window
+                || _environment.Clock.GetUtcNow() >= Descriptor.BootstrapDeadlineUtc))
         {
             _expired = true;
-            return LocalRpcLaunchRefusal.Expired;
+            CryptographicOperations.ZeroMemory(_secret);
         }
 
-        return LocalRpcLaunchRefusal.None;
+        return _expired ? LocalRpcLaunchRefusal.Expired : LocalRpcLaunchRefusal.None;
     }
 
     /// <summary>Verifies a claim against this launch: its status first, then the launch id, epoch, nonce, build and protocol.</summary>
@@ -493,6 +511,11 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
         catch (ObjectDisposedException)
         {
             // Disposed concurrently: already revoked.
+        }
+        catch (AggregateException)
+        {
+            // A Revoked callback threw. The launch is revoked either way, and the failure must not reach whoever caused the
+            // revocation (for example the launch call that superseded this one).
         }
     }
 

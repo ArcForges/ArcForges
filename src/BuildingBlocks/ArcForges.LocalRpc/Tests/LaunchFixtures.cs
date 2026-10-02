@@ -8,10 +8,26 @@ namespace ArcForges.LocalRpc.Tests;
 internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
 {
     private long _ticks = start.UtcTicks;
+    private long _stamp = 1_000_000;
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
     public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
 
-    internal void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
+    public override long GetTimestamp() => Interlocked.Read(ref _stamp);
+
+    /// <summary>Time passes on both the wall clock and the monotonic clock.</summary>
+    internal void Advance(TimeSpan by)
+    {
+        _ = Interlocked.Add(ref _ticks, by.Ticks);
+        _ = Interlocked.Add(ref _stamp, by.Ticks);
+    }
+
+    /// <summary>Only the monotonic clock moves (the wall clock stands still).</summary>
+    internal void AdvanceMonotonic(TimeSpan by) => Interlocked.Add(ref _stamp, by.Ticks);
+
+    /// <summary>The wall clock is stepped (negative: back) while the monotonic clock does not move.</summary>
+    internal void StepWallClock(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
 }
 
 /// <summary>A process table a test controls: unlisted processes are dead.</summary>

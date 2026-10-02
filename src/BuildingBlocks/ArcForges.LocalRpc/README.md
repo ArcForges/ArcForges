@@ -62,14 +62,20 @@ A parent creates one `LocalRpcLaunchAuthority` (`Create(runtimeRoot)`), and each
   returns and the launch still authorizes, ends the bootstrap window. It refuses (the secret is destroyed, the callback does not run,
   `InvalidOperationException`) when the launch does not authorize at the start: expired, revoked, issuing parent gone or bound child
   gone. A callback that finishes after the deadline does not extend the launch (expiry is latched), and a callback that throws leaves
-  the window running with the secret spent. The callback runs outside the launch lock, over a copy that is zeroed afterwards. The secret is zeroed in managed memory only: it is not pinned, locked or protected from a debugger. The
+  the window running with the secret spent. The callback runs outside the launch lock, over a copy that is zeroed when it returns, throws
+  or is refused. **A callback that returns, whatever its result, ends the bootstrap window**: a caller that rejects the proof must
+  revoke the launch itself (the registration task does). The bootstrap window runs out on whichever clock gets there first, the
+  monotonic one (a wall-clock step back cannot extend it) or the wall clock (a step forward, or a suspended machine, shortens it); when
+  expiry is first seen it is latched and the stored secret is destroyed. The secret is zeroed in managed memory only: it is not pinned, locked or protected from a debugger. The
   HMAC transcript that uses it is the registration task's.
 - **Child process.** `BindChild` records the launcher's verified child process (id and start time); from then on the launch
   authorizes only while that process runs. The check happens when a claim or connection is decided; no watcher runs, so a
   child that exits is noticed at the next decision. Process start values are compared within 2 s. On Windows and macOS the start
   value is the UTC start time. On Linux it is the start in clock ticks since boot read from `/proc/<pid>/stat` (USER_HZ taken as 100),
   because the start time .NET reports on Linux follows the wall clock; a process that is gone or a zombie counts as dead, an unreadable
-  `/proc` entry as unknown. That Linux path, and a reboot that reuses a process id at the same tick, were not exercised locally.
+  `/proc` entry as unknown. The value is ticks since boot, so a record written before a reboot whose process id and tick happen to
+  coincide with a running process is taken as that process: the directory is kept, never deleted (it fails safe). The Linux path
+  ran only in hosted CI (a self-probe and the parser tests), and the reboot case was not exercised at all.
 - **Endpoint files.** A private endpoint on Linux/macOS is a socket inside a per-launch directory of an owner-only root. The
   root and each launch directory are created with owner-only access in the same call (mode 0700 on Unix, a protected DACL
   naming only the current user on Windows), a launch directory is built under a temporary name with its record and renamed into
@@ -90,7 +96,8 @@ A parent creates one `LocalRpcLaunchAuthority` (`Create(runtimeRoot)`), and each
   admits a connection only while the launch authorizes and only when the connection arrived on the launch's own endpoint.
   Revoking a launch cancels `Revoked`; the owner closes its server connections then, since an HTTP/2 connection admitted earlier
   stays open until the owner closes it. `Revoked` callbacks run synchronously on the thread that revoked, outside the authority's lock, so
-  they may call the authority.
+  they may call the authority. An exception a callback throws is swallowed: the launch is revoked either way and the failure does not
+  reach the caller that caused the revocation (for example the launch call that superseded it).
 
 ## OS user boundary
 
