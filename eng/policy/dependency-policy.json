@@ -19,7 +19,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "e5c97240d1d78a0b3a9ef99fcb60bf1c2187fde3e5f9fd3f8179460fd1083971",
+    "eng/packaging/packages.json": "2be15c9fe37a4ced07948a821f5837edd71582ee480ede0091d5a080b55da5d2",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -229,11 +229,11 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "945292cbe53b9d12c5c5a06300fa7ccc29b30d1088ad4439df0803e7ee33aae6",
     "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "bc1b585f661488c38b18e0bd9558b2738ec05da93809a58d04f6d4b168dc3afa",
     "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
-    "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c2ee803e0ea8307fff6edd13f351182ea743182bc24b35ff12bdbc1cc6e94e49",
+    "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
     "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
-    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a7dfaa568b5ab071f62edd9ab67cace16cd0f381bb1c13afd7a8a2b1393d1509",
+    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "c0d4c9c68da4779c0d5e6c9e44998f27dc5c4edc0108e396790394c43d5675c3",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
     "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
@@ -679,19 +679,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261001-plt44",
+    "owner": "w-c20261001-plt35",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
-    "reviewedOn": "2026-10-01",
-    "baselineCommit": "c0def810f6dba4a5c29bc4fbb5beba199b3664ed",
-    "maintenanceAssessment": "PLT.44 adds the owner-scoped append-only local audit store, its closed typed egress-decision and capability-lease lifecycle intakes, and a focused test project. Its two project files and two exact lockfiles are bound in this successor review; the complete NuGet closure remains exactly the existing admitted coordinates with identical versions and content hashes. Two exact MSBuildProjectName-conditioned central-version rows bind only ArcForges.Security.Audit and ArcForges.Security.Audit.Tests to the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1; the default 1.0.0-ci.113.1 and all other project conditions remain unchanged. The audit project uses only the existing Microsoft.Data.Sqlite 10.0.12 closure and takes a production project edge to ArcForges.Security and ArcForges.Foundation; Security never references Audit. No package coordinate, dependency version, package ID, packaging-catalogue entry, or publication is introduced. The audit project stays non-packable (the repository policy test requires every packable project to be in the packaging catalogue); PLT.44 does not select a package ID, edit the catalogue, pack, or publish, and PLT.46 owns package admission. This immutable successor chains from the active plt-40-r1 receipt and preserves all prior receipts and unrelated dependency policy.",
+    "reviewedOn": "2026-10-02",
+    "baselineCommit": "99344df1ad24b4aaf0dfd288668da419b8d9a987",
+    "maintenanceAssessment": "PLT.35 activates the two already-delivered framework-neutral libraries ArcForges.DesignSystem and ArcForges.Desktop.Shell as NuGet packages in the existing single-version release set. It sets IsPackable on the two production projects (the Shell project also gains its PackageId, readme and licence/notice pack items, mirroring ArcForges.Capabilities), appends two entries to eng/packaging/packages.json, and corrects the two package readmes. DesignSystem has no package dependencies; Shell depends exactly on ArcForges.DesignSystem, ArcForges.Capabilities and ArcForges.Foundation at the same release version plus the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1 pin. No source, package ID outside those two, dependency version, central package selector, lockfile or test project changes, and the locked NuGet closure keeps identical coordinates, versions and content hashes. This immutable successor only re-binds the changed dependency inputs (packages.json and the two project files) and chains from the active plt-44-r1 receipt, preserving all prior receipts and unrelated dependency policy.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 locked restore and Release build of the Audit test project passed with warnings as errors; the actual xUnit v3 runner executed 24/24 Audit tests (including stored-row tamper, reopen and raw-SQL guard tests). Format verification, solution build, architecture and exact-head hosted CI remain required.",
-      "aot-trim": "No SDK, framework, AOT, trim, native ABI or toolchain setting is changed. The audit project is classified AOT-compatible by the existing architecture gate; no AOT/trim package validation or package acceptance is claimed.",
-      "compatibility": "Uses only the already-admitted Microsoft.Data.Sqlite 10.0.12 dependency; no new external dependency or public dependency coordinate is added. The typed egress and lease intakes are audit-owned closed contracts, not a wire or external schema change.",
-      "licence-provenance": "No external source or package is introduced. The exact Audit production and test projects, sources, lockfiles and the PLT.44 receipt are registered under existing first-party/provenance policy; the project stays outside the package catalogue until PLT.46.",
-      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no package closure expansion occurs. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
-      "runtime-performance-migration": "Implements the local append-only audit-store core, store-owned clock/retention boundary and typed intake contracts only, validated by offline tests. Real PLT.41 egress and PLT.43 lease emission are unfulfilled completion-only integrations; no complete security-event coverage is claimed.",
-      "framework-runtime-posture": "Pinned .NET SDK remains 10.0.400; no framework major, runtime, Android, native ABI, or toolchain version changes."
+      "compilation": "With the pinned SDK 10.0.400 (the user-level installation; the machine-wide SDK is 10.0.401), the locked restore of both projects and their project references succeeded and dotnet pack produced ArcForges.Foundation, ArcForges.Capabilities, ArcForges.DesignSystem and ArcForges.Desktop.Shell with no warnings. The generated Shell nuspec dependency set equals the new catalogue entry exactly (checked with packages.validate_generated_dependencies). The full catalogue pack and verify run only in the hosted managed-packages job and remain required on the exact head.",
+      "aot-trim": "No AOT, trim, SDK, framework or native toolchain setting changed; both projects are already classified AOT-compatible by the existing architecture gate. As a one-time explicit local opt-in outside the repository, a throwaway consumer that references only the locally packed Shell package was published with Native AOT for win-x64 with warnings as errors (including IL2026 and IL3050) and produced no diagnostics, and the published executable ran. This is not a hosted gate and not a claim for any other RID.",
+      "compatibility": "Public APIs, schemas and package coordinates of every existing package are unchanged. Two new package identities are added to the release set; consumers pin them explicitly and no existing consumer pin or lock changes.",
+      "licence-provenance": "No external source or package is introduced. Both packages declare AGPL-3.0-only and carry LICENSE, NOTICE.md and README.md as the existing managed packages do. Provenance adds only this receipt as a firstParty row; the licence boundary, runtime ownership and architecture inventories already list both projects.",
+      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no package closure expansion occurs. The restored closure of a Shell-only consumer is the Shell, DesignSystem, Capabilities, Foundation, Contracts.Foundation, Contracts.PublicApi, Sdk.Contracts, Google.Protobuf and Grpc.Core.Api packages and nothing else. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
+      "runtime-performance-migration": "No schema, migration, runtime behavior or performance claim is introduced. Package publication of these libraries does not by itself prove any application composition, UI-framework adapter, assistive-technology behavior or product startup budget.",
+      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400 with net10.0 targets; no framework major, runtime, Android, native ABI or toolchain version changed."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -711,7 +711,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "e5c97240d1d78a0b3a9ef99fcb60bf1c2187fde3e5f9fd3f8179460fd1083971",
+      "eng/packaging/packages.json": "2be15c9fe37a4ced07948a821f5837edd71582ee480ede0091d5a080b55da5d2",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -921,11 +921,11 @@
       "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "945292cbe53b9d12c5c5a06300fa7ccc29b30d1088ad4439df0803e7ee33aae6",
       "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "bc1b585f661488c38b18e0bd9558b2738ec05da93809a58d04f6d4b168dc3afa",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
-      "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c2ee803e0ea8307fff6edd13f351182ea743182bc24b35ff12bdbc1cc6e94e49",
+      "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465",
       "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc",
-      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "a7dfaa568b5ab071f62edd9ab67cace16cd0f381bb1c13afd7a8a2b1393d1509",
+      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "c0d4c9c68da4779c0d5e6c9e44998f27dc5c4edc0108e396790394c43d5675c3",
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
       "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
@@ -950,7 +950,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-40-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-44-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -961,7 +961,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-44-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-35-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

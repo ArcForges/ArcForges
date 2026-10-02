@@ -156,7 +156,7 @@
     },
     {
       "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
-      "blob": "c73a7c272fd739d6382ac8746dbede1eadc789ee"
+      "blob": "07ac7b5e863508036dbdb6d29b4d216e650136dd"
     },
     {
       "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
@@ -176,7 +176,7 @@
     },
     {
       "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
-      "blob": "f681897b3411396b1f3453a4e0599ca3e9e16752"
+      "blob": "899e2fbedae1aed9313b64be132152318a27497f"
     },
     {
       "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
