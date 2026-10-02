@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <Import Project="../../../eng/build/desktop-aot.props" />
+  <Import Project="../../../eng/build/desktop-rids.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ArcForges.ReleaseArtifactTests.GrpcWeb</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.PublicApi" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="Grpc.Net.Client.Web" />
+  </ItemGroup>
+</Project>
