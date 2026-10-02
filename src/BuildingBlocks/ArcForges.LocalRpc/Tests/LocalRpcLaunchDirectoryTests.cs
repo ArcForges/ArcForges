@@ -17,7 +17,7 @@ public sealed class LocalRpcLaunchDirectoryTests
     private const string UnixOnly = "Unix file mode check.";
     private static readonly LocalRpcLaunchIdentity Standard = Launches.Identity();
 
-    private static readonly string[] LookalikeNames = ["zzzzzzzzzzzz", "0123456789AB"];
+    private static readonly string[] LookalikeNames = ["zzzzzzzzzzzz", "0123456789ag"];
 
     public static bool IsWindows => OperatingSystem.IsWindows();
 
@@ -134,17 +134,22 @@ public sealed class LocalRpcLaunchDirectoryTests
     {
         using var world = new LaunchWorld();
         _ = Directory.CreateDirectory(Path.GetDirectoryName(world.Root)!);
-        // The target is itself owner-only, so only the link guard can refuse the root.
-        var target = Path.Combine(Path.GetDirectoryName(world.Root)!, "target");
+        // The link lives in an owner-only container (so the link's own access list is clean on Windows) and points at an
+        // owner-only target (so a mode or access-list check on the resolved directory passes): only the link guard can refuse it.
+        var container = Path.Combine(Path.GetDirectoryName(world.Root)!, "owned");
+        LaunchDirectory.CreateOwnerOnly(container);
+        var target = Path.Combine(container, "target");
         LaunchDirectory.CreateOwnerOnly(target);
-        LaunchDirectory.RequireOwnerOnly(target);
-        if (!TestLinks.TryCreateDirectoryLink(world.Root, target))
+        var link = Path.Combine(container, "rt");
+        if (!TestLinks.TryCreateDirectoryLink(link, target))
         {
-            Assert.Skip("This account can create neither a symbolic link nor a junction.");
+            Assert.Skip("This account can create neither a symbolic link nor a junction: " + TestLinks.LastFailure);
             return;
         }
 
-        Assert.Throws<UnauthorizedAccessException>(() => LocalRpcLaunchAuthority.Create(world.Root));
+        var error = Assert.Throws<UnauthorizedAccessException>(() => LocalRpcLaunchAuthority.Create(link));
+
+        Assert.Contains("link", error.Message, StringComparison.Ordinal);
     }
 
     // ---- launch directory contents ----
@@ -537,6 +542,11 @@ public sealed class LocalRpcLaunchDirectoryTests
         await File.WriteAllTextAsync(Path.Combine(target, "precious"), "keep", TestContext.Current.CancellationToken);
         var link = Path.Combine(world.Root, "0123456789ab");
         var linked = TestLinks.TryCreateDirectoryLink(link, target);
+        if (!linked)
+        {
+            Assert.Skip("This account can create neither a symbolic link nor a junction: " + TestLinks.LastFailure);
+            return;
+        }
 
         world.Clock.Advance(TimeSpan.FromHours(1));
         Assert.Equal(0, authority.SweepStale());
@@ -545,8 +555,8 @@ public sealed class LocalRpcLaunchDirectoryTests
         Assert.All(lookalikes, lookalike => Assert.True(Directory.Exists(lookalike)));
         Assert.True(File.Exists(foreignFile));
         Assert.True(File.Exists(Path.Combine(target, "precious")));
-        Assert.True(!linked || Directory.Exists(link));
-        Assert.Equal(linked, new DirectoryInfo(link).LinkTarget is not null || (new DirectoryInfo(link).Attributes & FileAttributes.ReparsePoint) != 0);
+        Assert.True(Directory.Exists(link));
+        Assert.True(new DirectoryInfo(link).LinkTarget is not null || (new DirectoryInfo(link).Attributes & FileAttributes.ReparsePoint) != 0);
     }
 
 

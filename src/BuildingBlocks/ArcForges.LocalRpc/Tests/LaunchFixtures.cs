@@ -128,6 +128,9 @@ internal static class Launches
 
 internal static class TestLinks
 {
+    /// <summary>Why the last attempt to create a link failed, for skip messages.</summary>
+    internal static string LastFailure { get; private set; } = string.Empty;
+
     /// <summary>Creates a directory link: a symbolic link, or on Windows without that privilege a junction. False when neither can be made.</summary>
     internal static bool TryCreateDirectoryLink(string link, string target)
     {
@@ -138,6 +141,7 @@ internal static class TestLinks
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
         {
+            LastFailure = exception.GetType().Name + ": " + exception.Message;
             if (!OperatingSystem.IsWindows())
             {
                 return false;
@@ -157,9 +161,14 @@ internal static class TestLinks
             return false;
         }
 
-        _ = process.StandardOutput.ReadToEnd();
-        _ = process.StandardError.ReadToEnd();
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
         process.WaitForExit();
-        return process.ExitCode == 0 && Directory.Exists(link);
+        if (process.ExitCode != 0 || !Directory.Exists(link))
+        {
+            LastFailure += " | mklink: " + output.Trim();
+            return false;
+        }
+
+        return true;
     }
 }
