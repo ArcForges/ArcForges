@@ -34,8 +34,8 @@ No `.gitleaks.toml`, Contracts, Cloud or other dependency change was made.
 
 - Locked-mode-compatible restore and Release build of the probe: 0 warnings, 0 errors.
 - `dotnet publish -c Release -r win-x64` (Native AOT, IL2026 and IL3050 as errors): no warning or error output; the
-  executable is 8,371,712 bytes.
-- `GrpcWebAotProbe.exe --self-test` as the published Native AOT executable: all checks passed, including the verifier
+  executable of the final source is 8,439,296 bytes.
+- `GrpcWebAotProbe.exe --self-test` as the published Native AOT executable: exit code 0 (the process reports PASS only when every check passed), including the verifier
   against 21 fixture and client misbehaviors. This is a test of the probe, not of any ingress.
 - One `--live https://arcforges.com/api` run of the published Native AOT executable while holding the lease
   `RES-cloud-deployment` (released immediately afterwards): 23 of 23 checks passed. The health endpoint reported Native AOT
