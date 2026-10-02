@@ -24,7 +24,7 @@ checked.
 ## Self-test (no network)
 
 `--self-test` runs the option guards, the verifier against an in-process stand-in for the ingress, and the verifier
-against eleven deliberate misbehaviors of that stand-in, each of which must be caught by a named check. It is a test of
+against 21 deliberate misbehaviors (17 of that stand-in, 4 of the client's own request), each of which must be caught by a named check, plus a stale-target check of `--expect-revision`. It is a test of
 the probe itself. Its result says nothing about any real ingress.
 
 ## Opt-in runs (local only, never CI)

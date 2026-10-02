@@ -36,7 +36,7 @@ No `.gitleaks.toml`, Contracts, Cloud or other dependency change was made.
 - `dotnet publish -c Release -r win-x64` (Native AOT, IL2026 and IL3050 as errors): no warning or error output; the
   executable is 8,371,712 bytes.
 - `GrpcWebAotProbe.exe --self-test` as the published Native AOT executable: all checks passed, including the verifier
-  against eleven fixture misbehaviors. This is a test of the probe, not of any ingress.
+  against 21 fixture and client misbehaviors. This is a test of the probe, not of any ingress.
 - One `--live https://arcforges.com/api` run of the published Native AOT executable while holding the lease
   `RES-cloud-deployment` (released immediately afterwards): 23 of 23 checks passed. The health endpoint reported Native AOT
   and the revision of the Cloud merge commit of PR 31 (`1a001eae...`), and the worker revision response header matched it.
