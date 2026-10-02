@@ -833,4 +833,36 @@ public sealed class LocalRpcLaunchTests
     {
         Assert.False(ProcessStart.TryParseLinuxStat(line, out _, out _));
     }
+
+
+    [Fact]
+    public async Task ABootstrapResourceCannotBeHandedOffOnceTheSecretIsSpentOrTheLaunchNoLongerAuthorizes()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+
+        var consumed = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        Assert.Equal(1, consumed.ConsumeSecret(1, static (state, _) => state));
+        Assert.Throws<InvalidOperationException>(consumed.HandoffBootstrapResource);
+
+        var revoked = authority.Launch("slot-b", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        revoked.Revoke();
+        Assert.Throws<InvalidOperationException>(revoked.HandoffBootstrapResource);
+
+        var childless = authority.Launch("slot-c", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var child = world.SpawnFake(5401);
+        childless.BindChild(child);
+        world.Processes.Set(child, ProcessLiveness.Dead);
+        Assert.Throws<InvalidOperationException>(childless.HandoffBootstrapResource);
+
+        var parentless = authority.Launch("slot-d", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        world.Processes.Set(world.Parent, ProcessLiveness.Dead);
+        Assert.Throws<InvalidOperationException>(parentless.HandoffBootstrapResource);
+        world.Processes.Set(world.Parent, ProcessLiveness.Live);
+
+        var expired = authority.Launch("slot-e", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        world.Clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.Throws<InvalidOperationException>(expired.HandoffBootstrapResource);
+        Assert.False(expired.SecretIsZeroed());
+    }
 }

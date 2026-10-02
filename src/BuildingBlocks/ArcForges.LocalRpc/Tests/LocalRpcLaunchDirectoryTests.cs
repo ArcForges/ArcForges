@@ -17,6 +17,8 @@ public sealed class LocalRpcLaunchDirectoryTests
     private const string UnixOnly = "Unix file mode check.";
     private static readonly LocalRpcLaunchIdentity Standard = Launches.Identity();
 
+    private static readonly string[] LookalikeNames = ["zzzzzzzzzzzz", "0123456789AB"];
+
     public static bool IsWindows => OperatingSystem.IsWindows();
 
     public static bool IsUnix => !OperatingSystem.IsWindows();
@@ -521,6 +523,12 @@ public sealed class LocalRpcLaunchDirectoryTests
         using var world = new LaunchWorld();
         await using var authority = world.Authority();
         var foreignDirectory = Path.Combine(world.Root, "someone-elses-directory");
+        var lookalikes = LookalikeNames.Select(name => Path.Combine(world.Root, name)).ToArray();
+        foreach (var lookalike in lookalikes)
+        {
+            LaunchDirectory.CreateOwnerOnly(lookalike);
+        }
+
         var foreignFile = Path.Combine(world.Root, "0123456789ab.txt");
         LaunchDirectory.CreateOwnerOnly(foreignDirectory);
         await File.WriteAllTextAsync(foreignFile, "keep", TestContext.Current.CancellationToken);
@@ -534,6 +542,7 @@ public sealed class LocalRpcLaunchDirectoryTests
         Assert.Equal(0, authority.SweepStale());
 
         Assert.True(Directory.Exists(foreignDirectory));
+        Assert.All(lookalikes, lookalike => Assert.True(Directory.Exists(lookalike)));
         Assert.True(File.Exists(foreignFile));
         Assert.True(File.Exists(Path.Combine(target, "precious")));
         Assert.True(!linked || Directory.Exists(link));
@@ -614,5 +623,42 @@ public sealed class LocalRpcLaunchDirectoryTests
         Assert.True(Directory.Exists(destination));
         LaunchDirectory.Remove(destination);
         Assert.False(Directory.Exists(destination));
+    }
+
+
+    [Fact]
+    public void AnOwnerOnlyDirectoryIsNeverCreatedOverAnExistingOne()
+    {
+        using var world = new LaunchWorld();
+        _ = Directory.CreateDirectory(Path.GetDirectoryName(world.Root)!);
+        LaunchDirectory.CreateOwnerOnly(world.Root);
+
+        Assert.Throws<IOException>(() => LaunchDirectory.CreateOwnerOnly(world.Root));
+        Assert.Throws<IOException>(() => LaunchDirectory.CreateOwnerOnly(Path.GetDirectoryName(world.Root)!));
+    }
+
+    [Fact(Skip = WindowsOnly, SkipUnless = nameof(IsWindows))]
+    [SupportedOSPlatform("windows")]
+    public async Task OnWindowsARootThatNamesOnlyTheUserSystemAndAdministratorsIsAccepted()
+    {
+        using var world = new LaunchWorld();
+        _ = Directory.CreateDirectory(Path.GetDirectoryName(world.Root)!);
+        var user = WindowsIdentity.GetCurrent().User!;
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        foreach (var identity in new SecurityIdentifier[]
+        {
+            user,
+            new(WellKnownSidType.LocalSystemSid, null),
+            new(WellKnownSidType.BuiltinAdministratorsSid, null),
+        })
+        {
+            security.AddAccessRule(new FileSystemAccessRule(identity, FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        }
+
+        new DirectoryInfo(world.Root).Create(security);
+
+        await using var authority = LocalRpcLaunchAuthority.Create(world.Root);
+        Assert.Equal(1UL, authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams).Descriptor.Epoch);
     }
 }
