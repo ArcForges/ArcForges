@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Observability</AssemblyName>
     <RootNamespace>ArcForges.Observability</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Observability</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Typed signal emission, correlation propagation, redaction by construction, bounded metric cardinality, trace sampling policy and health probes for ArcForges applications.</Description>
   </PropertyGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>
@@ -11,6 +15,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Tests/**/*.cs" />
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
     <ProjectReference Include="../ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
   </ItemGroup>

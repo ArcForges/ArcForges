@@ -216,6 +216,44 @@
         "NOTICE.md",
         "build-identity.json"
       ]
+    },
+    {
+      "id": "ArcForges.Observability",
+      "project": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Capabilities",
+        "ArcForges.Foundation"
+      ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Observability.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
+    },
+    {
+      "id": "ArcForges.Observability.Desktop",
+      "project": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Observability",
+        "ArcForges.Foundation"
+      ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Observability.Desktop.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
     }
   ]
 }

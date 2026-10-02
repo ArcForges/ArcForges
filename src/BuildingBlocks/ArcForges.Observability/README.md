@@ -1,7 +1,7 @@
 # ArcForges.Observability
 
-This non-packable DesktopPlatform library is the shared emission surface for metrics, traces, and
-typed structured events. Install an `ObservabilityContext` with `ObservabilityScope.Push` around an
+This DesktopPlatform library, published as the NuGet package `ArcForges.Observability`, is the shared emission
+surface for metrics, traces, and typed structured events. Install an `ObservabilityContext` with `ObservabilityScope.Push` around an
 operation, then emit events with `SignalEmitter`. The context always requires the application ID,
 FND instance ID, build-policy build ID, and environment. Optional dimensions are attached only when
 provided; `FromApplicationAssembly` reads the actual `ArcForges.BuildId` assembly stamp and refuses
@@ -11,12 +11,12 @@ Each emission creates an OpenTelemetry-compatible `ActivitySource` span when a l
 increments a `Meter` counter, records duration when available, and writes one typed `StructuredSignal`
 through a host-provided sink. The same dimensions go to traces and structured events. Each emitter is
 bound on first use to one application/build/instance/environment identity; those required identities
-are attached to its Meter instrumentation scope, not to measurement point labels. Measurement points have
-no labels. Actor, workspace, command, run, attempt, resource, and correlation identifiers remain trace/log
+are attached to its Meter instrumentation scope, not to measurement point labels. A measurement point carries
+at most one label, the closed `service.name` dimension, and none when no service is set. Actor, workspace, command, run, attempt, resource, and correlation identifiers remain trace/log
 dimensions so they do not create high-cardinality metric series.
 
-The emitter has no caller-supplied event-property bag or free-form event-name overload: event names and
-operational dimensions use finite enums, and reason codes use the product's registered `ReasonCode` values.
+The emitter has no caller-supplied event-property bag or free-form event-name overload: event names and the
+categorical dimensions use finite enums (the other dimensions are typed or validated values), and reason codes use the product's registered `ReasonCode` values.
 `SignalApplicationDimension` is only a telemetry vocabulary, not the product identity authority; application
 composition maps its already-trusted product identity to one of the closed values. Build identity is read from
 the actual assembly stamp and checked against the build-policy format. Actor and resource references must be
@@ -31,7 +31,7 @@ tests keep it identical to what this library enforces.
 
 - **No logging representation.** The emission surface has no text, object, exception or property-bag parameter, so a
   secret reference, token, prompt, note or path has nothing to be passed through. The only public members that accept
-  such input are the named boundaries in `PublicSurfaceTests`, each of which validates, maps or discards it. A type that
+  such input are the named boundaries in `PublicSurfaceTests`, each of which validates, maps or discards it (the dependency identifiers of a health probe are only checked to be non-empty and trimmed, and are returned on the probe result). A type that
   holds secret or user content is declared with `[SensitiveContent]`; the reference structural audit in this project's
   tests (`SensitiveTypeAudit`) fails any such type that is a record, is unsealed, implements a formatting interface,
   exposes text, bytes, spans, streams or `object`, converts to such a type, or overrides `ToString` with anything but
@@ -40,7 +40,7 @@ tests keep it identical to what this library enforces.
   `Func<>`, `IEnumerable` carriers, `StringBuilder`, `TextReader` and `TextWriter` of text or bytes as text. It does
   not follow members transitively into other types, inspect inherited members (a base type other than `object` is
   itself a finding), or recognise carriers it does not list. The audit uses reflection, which production AOT code may
-  not, so it lives in the tests; an owner of a content type runs the same check over its own assembly.
+  not, so it lives in this repository's tests and is not part of the package.
 - **Scrubbing processor.** `RedactionProcessor` removes every field that is not in the reviewed export vocabulary, is a
   known-sensitive header or field name (authorization, cookie, API key, token, prompt, note, path, raw URL, exception
   text, and so on), or has a value that is not exactly the reviewed shape of its field. `SignalEmitter` runs every
@@ -49,11 +49,14 @@ tests keep it identical to what this library enforces.
   exporter exports the `ScrubbedSpan`, never the live `Activity`. Span events recorded with `Activity.AddException`
   cannot be removed from the live activity, which is why exporters copy through the processor.
 - **URLs.** `RouteTemplateSet` records a request target as a registered route template plus opaque identifiers.
-  Scheme, host, user information, query and fragment are discarded unread, a slot accepts only a canonical UUID, and a
-  target that matches no template is recorded as `{unmatched}`, never as text. Identifiers are trace and log fields,
-  never metric labels. An exporter accepts an `http.route` value only if a `RouteTemplateSet` registered it.
+  The scheme (which must be http or https), authority, query and fragment are stripped and never recorded; a target
+  with control, whitespace or backslash characters, a `%` or `;` in its path, or more than 2048 characters matches nothing.
+  A slot accepts only a non-nil UUID (32 hex digits, or hyphenated; it is recorded as lowercase 32 hex), and a target
+  that matches no template is recorded as `{unmatched}`, never as text. Identifiers are trace and log fields, never
+  metric labels. An exporter accepts an `http.route` value only if it is `{unmatched}` or a `RouteTemplateSet` in this
+  process registered it.
 - **Exceptions.** `ExceptionReasonMapper` and `ObservabilityContext.WithFailure` map an exception to a registered
-  `ReasonCode` by its runtime type alone. The message, data and stack are never read, and an unknown type is
+  `ReasonCode` by its runtime type, or by the type of the single exception a wrapper holds. The message, data and stack are never read, and an unknown type is
   `internal.unexpected`. A cancellation is recorded as cancelled with no reason code.
 
 ## Cardinality and sampling (WP-12.03)
@@ -74,17 +77,17 @@ CC-01 to CC-03).
 - **Bounded diagnostic buffer.** Spans of unselected traces are copied through `RedactionProcessor` and held for at most
   30 seconds per trace in a buffer of 8 MiB by default and never more than 16 MiB. An error or slow span promotes only the
   spans still held, plus the rest of that trace as it arrives. Cost is an accounting model, not a process-memory
-  measurement. The window is logical: it is applied when a span arrives or statistics are read, with no timer, so on an
+  measurement. The window is logical: it is applied when a span arrives, statistics are read or an instrument is read, with no timer, so on an
   idle process held spans stay in memory (within the budget, never exported) until the next call. There is no promise
   that every error trace is retained, and promotion export is not rate-capped: the bound is on the buffer, not on what
   an error storm exports.
-- **Loss is counted.** `TracePolicy.Statistics` holds these counters: head-sampled, promoted, expired-unpromoted, overflow,
+- **Loss is counted.** `TracePolicy.Statistics` holds these counters: head-sampled, promoted-trace, promoted-span, expired-unpromoted, overflow,
   evicted-trace, late, oversize, not-retained error, consent-suppressed, purged and export-failure counts, the error-fact
   count, and the current buffered-span, buffered-byte and closed-trace-marker readings. Only some of them are instruments, all without point labels: six counters (`arcf_trace_span_head_sampled`,
   `arcf_trace_span_promoted`, `arcf_trace_span_lost_overflow`, `arcf_trace_span_lost_late`, `arcf_trace_span_lost_oversize`
-  and `arcf_trace_error_span_not_retained`) and the `arcf_trace_buffer_bytes` gauge. Expired-unpromoted, evicted-trace,
+  and `arcf_trace_error_span_not_retained`) and the `arcf_trace_buffer_bytes` gauge; the same meter also has the `arcf_span_error_count` counter, which can carry the `service.name` label. Expired-unpromoted, evicted-trace,
   consent-suppressed, purged and export-failure counts are in `Statistics` only.
-- **Mandatory error facts.** Every span with error status records one redacted `trace.error` structured event and one
+- **Mandatory error facts.** Every error-status span that the policy processes while consent is granted records one redacted `trace.error` structured event and one
   `arcf_span_error_count` increment, whether or not its trace was sampled or retained. The increment follows the event
   write, so while the structured event sink is throwing, neither the event nor that increment is recorded; the failure is
   counted in `ExportFailures` only.
@@ -100,5 +103,27 @@ CC-01 to CC-03).
   forces recording and export here whatever the ratio; a Cloud ingress host decides whether to honour it. Sinks are called
   concurrently from arbitrary threads and must be thread-safe.
 
-This project is not currently an admitted package. See the [repository README](../../../README.md)
-for ownership and publication policy.
+## Package and published surface
+
+- **Package.** `ArcForges.Observability` (net10.0, AGPL-3.0-only) is admitted in `eng/packaging/packages.json` and is
+  published by the repository's main-push pipeline together with every other admitted package at one prerelease
+  version; consumers pin that exact version. It depends on `ArcForges.Capabilities` and `ArcForges.Foundation` at the
+  same version and on `ArcForges.Contracts.Foundation` (exact pin recorded in the catalogue); `Capabilities` in turn brings
+  the Contracts SDK packages and, through them, `Google.Protobuf` and `Grpc.Core.Api`. It has no OpenTelemetry or exporter
+  dependency and no direct third-party package reference; those transitive packages are the only third-party packages.
+- **What is and is not wired.** `SignalEmitter` runs its dimensions through `RedactionProcessor` and builds its metric
+  labels with `MetricLabelPolicy.CreateTags`, and writes to a sink the host supplies. Everything else is a callable the
+  host must wire: `RedactionProcessor.Scrub(Activity)` and `MetricLabelPolicy.ScrubLabels` for an exporter, and
+  `TracePolicy`, which this package attaches to nothing. The package installs no exporter and no listener, and nothing
+  in this repository calls `TracePolicy.PurgeBuffer` or `MetricLabelPolicy.ScrubLabels`. Wiring a host, a telemetry
+  transport or a backend belongs to the host.
+- **Not a supported API.** The assembly declares `InternalsVisibleTo("ArcForges.Observability.Tests")` for this
+  repository's tests; internal members are not part of the package contract and may change without notice.
+- **Name overlap.** `ArcForges.Observability.TelemetryConsent` (a static class) and
+  `ArcForges.Observability.Desktop.TelemetryConsent` (the desktop consent record) share a simple name; a file that
+  imports both namespaces must qualify one.
+- **Verification boundary.** Tests here are offline. A cross-owner trace through a real Cloud hop and health that
+  distinguishes real backend, model and object-store failures are not covered by this package's tests, because those
+  owners do not exist yet.
+
+See the [repository README](https://github.com/ArcForges/DesktopPlatform/blob/main/README.md) for ownership and publication policy.
