@@ -29,7 +29,10 @@ public sealed class StructuredSignal
     public IReadOnlyDictionary<string, object?> Properties { get; }
 }
 
-/// <summary>Host-owned bridge to its structured logging provider.</summary>
+/// <summary>
+/// Host-owned bridge to its structured logging provider. <see cref="Write"/> may be called concurrently from arbitrary
+/// threads, so an implementation must be thread-safe.
+/// </summary>
 public interface IStructuredEventSink
 {
     void Write(StructuredSignal signal);

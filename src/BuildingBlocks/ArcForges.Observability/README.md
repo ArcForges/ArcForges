@@ -56,5 +56,42 @@ tests keep it identical to what this library enforces.
   `ReasonCode` by its runtime type alone. The message, data and stack are never read, and an unknown type is
   `internal.unexpected`. A cancellation is recorded as cancelled with no reason code.
 
+## Cardinality and sampling (WP-12.03)
+
+`eng/policy/telemetry-policy.json` records the metric label allowlist, the sampling configuration and the retention
+configuration, and tests keep it identical to what this library enforces (observability architecture SG-02, SG-03,
+CC-01 to CC-03).
+
+- **Metric labels.** `MetricLabelPolicy` is the only place a metric point label is built. `CreateTags` can express only
+  the closed `service.name` dimension, so a metric has at most `MaximumSeriesPerInstrument` series; every identifier
+  (workspace, actor, task, run, resource, correlation, route parameter) is a span or event field. `ScrubLabels` is the
+  exporter-side second line of defence for metric points from any meter: it removes every label that is not reviewed.
+- **Head sample.** `TracePolicy.Attach` listens to the activity sources the host selects and records every span. A root
+  span is selected when its trace identifier falls under its ratio (route rule, then signal rule, then default ratio); a
+  child follows its parent's sampled flag, so a trace is exported whole or not at all at the head. The default ratio and
+  the slow-span threshold are required constructor arguments of `TracePolicyOptions`: Design leaves them to deployment
+  and the library has no default for either.
+- **Bounded diagnostic buffer.** Spans of unselected traces are copied through `RedactionProcessor` and held for at most
+  30 seconds per trace in a buffer of 8 MiB by default and never more than 16 MiB. An error or slow span promotes only the
+  spans still held, plus the rest of that trace as it arrives. Cost is an accounting model, not a process-memory
+  measurement. The window is logical: it is applied when a span arrives or statistics are read, with no timer, so on an
+  idle process held spans stay in memory (within the budget, never exported) until the next call. There is no promise
+  that every error trace is retained, and promotion export is not rate-capped: the bound is on the buffer, not on what
+  an error storm exports.
+- **Loss is counted.** Overflow evictions, late spans, oversize spans, error spans that were not retained, consent-suppressed
+  and purged spans are in `TracePolicy.Statistics` and, without point labels, in the `arcf_trace_*` instruments.
+- **Mandatory error facts.** Every span with error status records one redacted `trace.error` structured event and one
+  `arcf_span_error_count` increment, whether or not its trace was sampled or retained.
+- **Consent.** `ITelemetryConsent` is read live on every span. With consent absent nothing is exported or held, and no
+  fact or instrument measurement is produced; statistics stay readable locally. Consent has no change notification, so held
+  spans are purged when the next span ends, or an instrument is read, while consent is absent, or when the host calls
+  `PurgeBuffer`: the host (PLT.52) must call `PurgeBuffer` when consent is revoked, or spans collected before a revocation
+  could be exported after a re-grant. The attached listener keeps recording spans and keeps setting the head-sampled flag
+  that propagates on outgoing context while consent is absent, and `SignalEmitter`'s own sink and instruments are not
+  consent-gated by this library. A Cloud host passes `TelemetryConsent.NotRequired`.
+- **Trust and concurrency.** A remote parent's sampled flag is trusted, so a caller that sends a sampled trace context
+  forces recording and export here whatever the ratio; a Cloud ingress host decides whether to honour it. Sinks are called
+  concurrently from arbitrary threads and must be thread-safe.
+
 This project is not currently an admitted package. See the [repository README](../../../README.md)
 for ownership and publication policy.
