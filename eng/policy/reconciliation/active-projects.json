@@ -96,7 +96,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
-      "blob": "159619187ecadb16055b46e02b6b57540bbe56a6"
+      "blob": "3bdc80df121ba6c75003cc1f75f018e2c66670b1"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
@@ -200,7 +200,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
-      "blob": "9dc28f27d3ed7da26fa8fd464d0d5a3646adb117"
+      "blob": "58eeab8ad47ce070b49f3d5da923a7891a63b470"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",

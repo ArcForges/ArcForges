@@ -492,7 +492,6 @@
     "src/BuildingBlocks/ArcForges.Observability.Desktop/VerboseDiagnosticSession.cs",
     "src/BuildingBlocks/ArcForges.Observability.Desktop/packages.lock.json",
     "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
-    "src/BuildingBlocks/ArcForges.Observability/AssemblyPlaceholder.cs",
     "src/BuildingBlocks/ArcForges.Observability/CorrelationPropagation.cs",
     "src/BuildingBlocks/ArcForges.Observability/DiagnosticSpanBuffer.cs",
     "src/BuildingBlocks/ArcForges.Observability/ExceptionReasonMapper.cs",
@@ -717,7 +716,8 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/ApprovalGuardrailTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/SqliteApprovalStoreTests.cs",
     "eng/policy/dependency-reviews/plt-39-r1.json",
-    "eng/policy/dependency-reviews/plt-35-r1.json"
+    "eng/policy/dependency-reviews/plt-35-r1.json",
+    "eng/policy/dependency-reviews/plt-53-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

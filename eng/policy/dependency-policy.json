@@ -19,7 +19,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "2be15c9fe37a4ced07948a821f5837edd71582ee480ede0091d5a080b55da5d2",
+    "eng/packaging/packages.json": "d0d7d9edcea99e14befd64e0f921e481748b434b913c697b70c689c049176c31",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -207,11 +207,11 @@
     "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164",
     "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
     "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj": "36539c5aac18de096f4956a48d832c2566068409a7c39b99a8f0254597ea7255",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj": "33f6707a0b23250af70690211ee31ad4ff762bb68ae1b42ef26671a8f41af8a4",
     "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj": "f530a19cd569d1291e8593a07232a5d30ad41ec966d659f5deb522905a32ebb6",
     "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/packages.lock.json": "041d44c07cced9649ead71a03bf645210c4f7ce105f2667539400dbd85362238",
     "src/BuildingBlocks/ArcForges.Observability.Desktop/packages.lock.json": "65a20afa293666592531d349f51b909d3a26327991444dfade78b881d9318252",
-    "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "81a817317a9ec179503d64ea597c2d17b9d349705fc7a6a8495935b78ae0fcf8",
+    "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "5d3cda9047f57949fd6af419054ae287278533daf02ea825f31c90b9e9af2df0",
     "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
     "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "c2bb444ba5d39e0d920b203aa02ccc36512d3d941b9568ddb6a3dc6cb86accd2",
     "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "03ee63c6a4335b1c141cef2016983cd9064532846d582ee6fe03dce8ccf866f5",
@@ -701,19 +701,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261002-plt52",
+    "owner": "w-c20261002-plt53",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-10-02",
-    "baselineCommit": "348492fcb882a192417946bc50d47917986676b9",
-    "maintenanceAssessment": "PLT.52 adds the non-packable ArcForges.Observability.Desktop project (local diagnostic store, consent, report approval and verbose session) and its offline test project. Both reference only the same-repository ArcForges.Observability and ArcForges.Foundation projects and no package; their two project files and two exact lock files are bound in this successor review, and the complete NuGet closure remains exactly the existing admitted coordinates with identical versions and content hashes (no coordinate is added). Two exact MSBuildProjectName-conditioned central-version rows bind only ArcForges.Observability.Desktop and ArcForges.Observability.Desktop.Tests to the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1 (the Foundation edge of ArcForges.Observability requires it); the default 1.0.0-ci.113.1 and every other condition are unchanged. No package identity, packages.json entry, runtime, framework or SDK setting changes; the project stays non-packable until PLT.53.",
+    "baselineCommit": "de31658f9519a8a31025b6f33b30c6df6ce680d3",
+    "maintenanceAssessment": "PLT.53 activates the two already-delivered libraries ArcForges.Observability and ArcForges.Observability.Desktop as NuGet packages in the existing single-version release set. It sets IsPackable, PackageId, the package readme and the licence and notice pack items on the two production projects (mirroring ArcForges.Capabilities), deletes the unreferenced public placeholder type from ArcForges.Observability (the repository policy test refuses a packable project directory that contains one), appends two entries to eng/packaging/packages.json, and corrects the two package readmes. ArcForges.Observability depends on ArcForges.Capabilities and ArcForges.Foundation at the same release version plus the already-admitted ArcForges.Contracts.Foundation 1.0.0-ci.216.1 pin; ArcForges.Observability.Desktop depends on ArcForges.Observability and ArcForges.Foundation plus the same pin. No source behavior, package reference, project reference, central package selector, lockfile or test changes, and the locked NuGet closure keeps identical coordinates, versions and content hashes. This immutable successor only re-binds the changed dependency inputs (packages.json and the two project files) and chains from the active plt-52-r1 receipt, preserving all prior receipts and unrelated dependency policy.",
     "upgradeChecks": {
-      "compilation": "Release build of the full DesktopPlatform.slnx with compiler-generated files and the offline Observability.Desktop suite pass locally on SDK 10.0.401 (the pinned 10.0.400 is not installed; the two new lock files carry the ILLink 10.0.11 entry of the pinned SDK). Locked restore on the pinned SDK is evaluated by hosted CI only.",
-      "aot-trim": "The library sets IsAotCompatible with IL2026/IL3050 as errors and uses no reflection or serializer; the architecture gate classifies it AOT-compatible. No Native AOT publish of this library was run locally and none runs in CI for it.",
-      "compatibility": "No wire type, schema or external dependency is added; the local log, consent record and report text are private on-disk and in-memory formats of this library.",
-      "licence-provenance": "No new external coordinate; provenance adds first-party classification for the task-owned sources, projects, tests, README, locks and this receipt.",
-      "security-sbom": "The complete locked graph is the already-admitted one and CI retains NuGet audit; no claim of absent current advisories is made.",
-      "runtime-performance-migration": "Offline tests use temporary directories and a manual time provider; no real exporter, backend, UI or product host was exercised. No performance or migration claim.",
-      "framework-runtime-posture": "global.json stays on .NET SDK 10.0.400; no framework major, native ABI, Android or toolchain change."
+      "compilation": "With the installed SDK 10.0.401 substituted for the pinned 10.0.400 in an uncommitted global.json (the pinned SDK is not installed here), a restore and dotnet pack of ArcForges.Foundation, ArcForges.Capabilities, ArcForges.Observability and ArcForges.Observability.Desktop at the throwaway version 1.0.0-ci.local.1 succeeded. The generated nuspec dependency set of both new packages equals the new catalogue entries exactly (checked with packages.validate_generated_dependencies). The substituted global.json and the lock files that restore rewrote were reverted before any commit; the locked restore on the pinned SDK and the full catalogue pack and verify run only in the hosted managed-packages job and remain required on the exact head.",
+      "aot-trim": "No AOT, trim, SDK, framework or native toolchain setting changed; both projects are already classified AOT-compatible by the existing architecture gate. As a one-time explicit local opt-in outside the repository, a throwaway consumer referencing only the locally packed ArcForges.Observability.Desktop package was built, run under the JIT, published with Native AOT for win-x64 with warnings as errors, and the published executable ran; the consumer's own 24 checks passed in both runs. The first AOT publish attempt failed on a toolchain environment error (vswhere.exe not on PATH) and the successful run followed a PATH fix only. This is not a hosted gate and not a claim for any other RID.",
+      "compatibility": "Public APIs, schemas and package coordinates of every existing package are unchanged. Two new package identities are added to the release set; the only public API removed is the unreferenced ArcForges.Observability.AssemblyPlaceholder constant. Consumers pin the new packages explicitly and no existing consumer pin or lock changes.",
+      "licence-provenance": "No external source or package is introduced. Both packages declare AGPL-3.0-only and carry LICENSE, NOTICE.md and README.md as the existing managed packages do. Provenance adds this receipt as a firstParty row and removes the deleted placeholder row; the licence boundary, runtime ownership and architecture inventories already list both projects.",
+      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no package closure expansion occurs. The restored runtime closure of a consumer that references only ArcForges.Observability.Desktop is Observability.Desktop, Observability, Foundation, Capabilities, Contracts.Foundation, Contracts.PublicApi, Sdk.Contracts, Google.Protobuf and Grpc.Core.Api, plus the Native AOT publish-time tooling packages taken from the offline cache. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
+      "runtime-performance-migration": "No schema, migration, runtime behavior or performance claim is introduced. Package publication of these libraries does not by itself prove any application composition, exporter or telemetry transport, Cloud hop, or real backend, model or object-store health behavior.",
+      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400 with net10.0 targets; no framework major, runtime, Android, native ABI or toolchain version changed."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -733,7 +733,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "2be15c9fe37a4ced07948a821f5837edd71582ee480ede0091d5a080b55da5d2",
+      "eng/packaging/packages.json": "d0d7d9edcea99e14befd64e0f921e481748b434b913c697b70c689c049176c31",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -921,11 +921,11 @@
       "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164",
       "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj": "e62c58cd27cbef29eb9ad0761618fb68fed64ec8e46b03e1e5fd7b57d15c7850",
       "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj": "36539c5aac18de096f4956a48d832c2566068409a7c39b99a8f0254597ea7255",
+      "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj": "33f6707a0b23250af70690211ee31ad4ff762bb68ae1b42ef26671a8f41af8a4",
       "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj": "f530a19cd569d1291e8593a07232a5d30ad41ec966d659f5deb522905a32ebb6",
       "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/packages.lock.json": "041d44c07cced9649ead71a03bf645210c4f7ce105f2667539400dbd85362238",
       "src/BuildingBlocks/ArcForges.Observability.Desktop/packages.lock.json": "65a20afa293666592531d349f51b909d3a26327991444dfade78b881d9318252",
-      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "81a817317a9ec179503d64ea597c2d17b9d349705fc7a6a8495935b78ae0fcf8",
+      "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj": "5d3cda9047f57949fd6af419054ae287278533daf02ea825f31c90b9e9af2df0",
       "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj": "e6a49e4f207fcbb3e10fc956a7f4bfbc5c816656dab85f23d28fe2ea1c7cb585",
       "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json": "c2bb444ba5d39e0d920b203aa02ccc36512d3d941b9568ddb6a3dc6cb86accd2",
       "src/BuildingBlocks/ArcForges.Observability/packages.lock.json": "03ee63c6a4335b1c141cef2016983cd9064532846d582ee6fe03dce8ccf866f5",
@@ -980,7 +980,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-09-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-52-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -991,7 +991,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-52-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-53-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
