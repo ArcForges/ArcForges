@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Connections;
 namespace ArcForges.LocalRpc;
 
 /// <summary>Describes one accepted connection to the authorization decision, before any byte is read from it.</summary>
-public sealed record LocalRpcConnectionInfo(LocalRpcTransport Transport, long Sequence);
+public sealed record LocalRpcConnectionInfo(LocalRpcTransport Transport, long Sequence, LocalRpcEndpoint? Endpoint = null);
 
 /// <summary>The Kestrel endpoint that selects this transport. It carries the owner's listener recipe.</summary>
 internal sealed class LocalRpcListenEndPoint : EndPoint
@@ -16,7 +16,7 @@ internal sealed class LocalRpcListenEndPoint : EndPoint
         LocalRpcEndpoint? endpoint,
         LocalRpcStreamSupplier? supplier,
         LocalRpcLimits limits,
-        Func<LocalRpcConnectionInfo, bool>? authorizer)
+        Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? authorizer)
     {
         Endpoint = endpoint;
         Supplier = supplier;
@@ -30,7 +30,7 @@ internal sealed class LocalRpcListenEndPoint : EndPoint
 
     internal LocalRpcLimits Limits { get; }
 
-    internal Func<LocalRpcConnectionInfo, bool>? Authorizer { get; }
+    internal Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? Authorizer { get; }
 
     internal LocalRpcTransport Transport => Endpoint?.Transport ?? (OperatingSystem.IsWindows()
         ? LocalRpcTransport.NamedPipe : LocalRpcTransport.UnixDomainSocket);
@@ -124,7 +124,19 @@ internal sealed class LocalRpcConnectionListener : IConnectionListener
                     }
 
                     var sequence = Interlocked.Increment(ref _sequence);
-                    if (!Authorize(new LocalRpcConnectionInfo(_endPoint.Transport, sequence)))
+                    bool allowed;
+                    try
+                    {
+                        allowed = await AuthorizeAsync(new LocalRpcConnectionInfo(_endPoint.Transport, sequence, _endPoint.Endpoint), linked.Token).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // The server is stopping: the accepted stream is dropped unread.
+                        await stream.DisposeAsync().ConfigureAwait(false);
+                        throw;
+                    }
+
+                    if (!allowed)
                     {
                         // Fail closed: an unauthorized peer receives no byte and its stream is dropped without being read.
                         await stream.DisposeAsync().ConfigureAwait(false);
@@ -179,17 +191,33 @@ internal sealed class LocalRpcConnectionListener : IConnectionListener
         }
     }
 
+    /// <summary>
+    /// Asks the decision for one connection. A decision that throws, ignores its token past
+    /// <see cref="LocalRpcLimits.AuthorizationTimeout"/> or is cancelled by anything but the server stopping denies the connection.
+    /// </summary>
     [SuppressMessage("Design", "CA1031", Justification = "A throwing authorizer must deny rather than expose an unauthenticated connection.")]
-    private bool Authorize(LocalRpcConnectionInfo connection)
+    private async ValueTask<bool> AuthorizeAsync(LocalRpcConnectionInfo connection, CancellationToken cancellationToken)
     {
         if (_endPoint.Authorizer is not { } authorizer)
         {
             return true;
         }
 
+        using var decision = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        decision.CancelAfter(_endPoint.Limits.AuthorizationTimeout);
         try
         {
-            return authorizer(connection);
+            var pending = authorizer(connection, decision.Token).AsTask();
+            _ = pending.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return await pending.WaitAsync(_endPoint.Limits.AuthorizationTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

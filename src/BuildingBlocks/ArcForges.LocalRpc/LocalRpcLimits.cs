@@ -16,6 +16,9 @@ public sealed record LocalRpcLimits
     /// <summary>Longest wait for an OS stream to connect before a client call sees a transport failure.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Longest time one connection decision may take before the connection is denied.</summary>
+    public TimeSpan AuthorizationTimeout { get; init; } = TimeSpan.FromSeconds(2);
+
     /// <summary>Longest wait for in-flight calls to finish when a server stops.</summary>
     public TimeSpan ShutdownTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
@@ -34,6 +37,11 @@ public sealed record LocalRpcLimits
         if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout > TimeSpan.FromMinutes(1))
         {
             throw new ArgumentOutOfRangeException(nameof(ConnectTimeout), ConnectTimeout, "The connect timeout is positive and at most one minute.");
+        }
+
+        if (AuthorizationTimeout <= TimeSpan.Zero || AuthorizationTimeout > TimeSpan.FromSeconds(30))
+        {
+            throw new ArgumentOutOfRangeException(nameof(AuthorizationTimeout), AuthorizationTimeout, "The authorization timeout is positive and at most 30 seconds.");
         }
 
         if (ShutdownTimeout < TimeSpan.Zero || ShutdownTimeout > TimeSpan.FromMinutes(1))

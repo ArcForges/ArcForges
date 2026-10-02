@@ -31,7 +31,7 @@ public sealed class LocalRpcServerBuilder
     private readonly List<ServiceRegistration> _services = [];
     private readonly HashSet<Type> _registered = [];
     private LocalRpcLimits _limits = new();
-    private Func<LocalRpcConnectionInfo, bool>? _authorizer;
+    private Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? _authorizer;
     private bool _built;
 
     internal LocalRpcServerBuilder(LocalRpcEndpoint? endpoint, LocalRpcStreamSupplier? supplier)
@@ -69,6 +69,19 @@ public sealed class LocalRpcServerBuilder
     /// A decision that throws denies the connection.
     /// </summary>
     public LocalRpcServerBuilder AuthorizeConnections(Func<LocalRpcConnectionInfo, bool> authorizer)
+    {
+        ArgumentNullException.ThrowIfNull(authorizer);
+        EnsureNotBuilt();
+        _authorizer = (connection, _) => ValueTask.FromResult(authorizer(connection));
+        return this;
+    }
+
+    /// <summary>
+    /// Decides asynchronously for every accepted connection, before HTTP/2 reads a byte. The decision receives a token that
+    /// is cancelled after <see cref="LocalRpcLimits.AuthorizationTimeout"/> and when the server stops; a decision that throws, times out or
+    /// is cancelled denies the connection. This replaces any earlier decision set on the builder.
+    /// </summary>
+    public LocalRpcServerBuilder AuthorizeConnectionsAsync(Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>> authorizer)
     {
         ArgumentNullException.ThrowIfNull(authorizer);
         EnsureNotBuilt();
