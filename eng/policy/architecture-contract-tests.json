@@ -2008,5 +2008,100 @@
     "apiSymbol": "ArcForges.Observability.Desktop.DesktopDiagnostics.DismissPendingCrashReport()",
     "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
     "testMethod": "ArcForges.Observability.Desktop.Tests.ReportTests.ADismissedCrashReportIsDiscardedWithoutAnythingBeingSent()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.AuthorizeConnectionAsync(ArcForges.LocalRpc.LocalRpcConnectionInfo, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.AnEndpointLaunchAdmitsOnlyConnectionsOnItsOwnEndpoint()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.BindChild(ArcForges.LocalRpc.LocalRpcProcessIdentity)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.BindingAChildRefusesTheParentANonRunningProcessADoubleBindAndARevokedLaunch()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.ConsumeSecret<TState, TResult>(TState, ArcForges.LocalRpc.LocalRpcSecretUse<TState, TResult>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.TheSecretIsConsumedOnceAndDestroyedWhateverTheOutcome()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchDirectoryTests.DisposingALaunchRemovesItsWholeDirectoryByOneRenameAndLeavesNothingBehind()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.HandoffBootstrapResource()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.TheBootstrapResourceIsHandedOffOnceAndCarriesTheDescriptorAndTheSecret()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.Revoke()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.ARevokedLaunchHasNoSecretLeft()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.Status()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.ABoundChildIsRequiredToKeepRunning()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunch.Verify(ArcForges.LocalRpc.LocalRpcLaunchClaim)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.AForgedNonceIsRefusedWhateverElseIsCorrect()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchAuthority.Create(string, System.TimeSpan?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchDirectoryTests.TheRootIsCreatedOnceAndAnExistingOwnerOnlyRootIsReused()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchAuthority.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchDirectoryTests.AuthorityDisposalRemovesEveryIssuedLaunchDirectoryIncludingSupersededOnes()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchAuthority.Launch(string, ArcForges.LocalRpc.LocalRpcLaunchIdentity, ArcForges.LocalRpc.LocalRpcLaunchTransport)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.EpochsIncreaseWithinASlotAndAreIndependentAcrossSlots()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchAuthority.SweepStale()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchDirectoryTests.TheSweepRemovesOnlyDirectoriesOfDeadParents()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchAuthority.Verify(ArcForges.LocalRpc.LocalRpcLaunchClaim)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.ANewerLaunchRevokesTheOlderAndTheOlderDescriptorNeverAuthorizesAgain()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchDescriptor.Decode(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.EveryTruncationAndEveryTrailingByteOfADescriptorIsRefused()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchDescriptor.DecodeBootstrapResource(System.ReadOnlySpan<byte>, System.Span<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.ABootstrapResourceIsTheDescriptorFollowedByExactlyTheSecret()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchDescriptor.Encode()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.ADescriptorRoundTripsEveryFieldIncludingEachEndpointKind()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcLaunchDescriptor.ToClaim()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.ADescriptorClaimCarriesExactlyTheDescriptorIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcProcessIdentity.FromProcess(System.Diagnostics.Process)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTests.TheRealProbeSeesTheRunningProcessAndRefusesARecycledIdOrAMissingProcess()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.AuthorizeConnectionsAsync(System.Func<ArcForges.LocalRpc.LocalRpcConnectionInfo, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcLaunchTransportTests.AnAsynchronousDecisionSeesTheConnectionAndAdmitsIt()"
   }
 ]

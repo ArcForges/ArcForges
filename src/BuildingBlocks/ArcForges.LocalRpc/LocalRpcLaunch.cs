@@ -41,6 +41,7 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, SlotState> _slots = new(StringComparer.Ordinal);
+    private readonly HashSet<LocalRpcLaunch> _issued = [];
     private readonly LaunchEnvironment _environment;
     private readonly string _root;
     private readonly TimeSpan _bootstrapWindow;
@@ -101,7 +102,7 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
                 var descriptor = new LocalRpcLaunchDescriptor(
                     launchId, slot, epoch, endpoint, _environment.Parent, identity,
                     RandomNumberGenerator.GetBytes(LocalRpcLaunchDescriptor.NonceLength), now, now + _bootstrapWindow);
-                launch = new LocalRpcLaunch(descriptor, directory, _environment);
+                launch = new LocalRpcLaunch(descriptor, directory, _environment, Forget);
             }
             catch
             {
@@ -114,6 +115,7 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
             }
 
             _slots[slot] = new SlotState(epoch, launch);
+            _ = _issued.Add(launch);
             previous?.Revoke();
             return launch;
         }
@@ -160,7 +162,7 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
         return LaunchDirectory.SweepStale(_root, _environment.Probe, _environment.Clock, _environment.AbandonedGrace);
     }
 
-    /// <summary>Revokes and disposes every launch this authority issued.</summary>
+    /// <summary>Revokes and disposes every launch this authority issued and has not seen disposed, superseded ones included.</summary>
     public async ValueTask DisposeAsync()
     {
         LocalRpcLaunch[] launches;
@@ -172,12 +174,20 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
             }
 
             _disposed = true;
-            launches = [.. _slots.Values.Select(state => state.Current)];
+            launches = [.. _issued];
         }
 
         foreach (var launch in launches)
         {
             await launch.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private void Forget(LocalRpcLaunch launch)
+    {
+        lock (_gate)
+        {
+            _ = _issued.Remove(launch);
         }
     }
 
@@ -221,6 +231,7 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     private readonly object _gate = new();
     private readonly CancellationTokenSource _revoked = new();
     private readonly CancellationToken _revokedToken;
+    private readonly Action<LocalRpcLaunch>? _disposedCallback;
     private readonly byte[] _secret = RandomNumberGenerator.GetBytes(LocalRpcLaunchDescriptor.SecretLength);
     private LocalRpcProcessIdentity? _child;
     private bool _handedOff;
@@ -228,8 +239,9 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     private int _revocation;
     private int _disposed;
 
-    internal LocalRpcLaunch(LocalRpcLaunchDescriptor descriptor, string? directory, LaunchEnvironment environment)
+    internal LocalRpcLaunch(LocalRpcLaunchDescriptor descriptor, string? directory, LaunchEnvironment environment, Action<LocalRpcLaunch>? disposed = null)
     {
+        _disposedCallback = disposed;
         Descriptor = descriptor;
         _directory = directory;
         _environment = environment;
@@ -246,6 +258,15 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     public CancellationToken Revoked => _revokedToken;
 
     internal string? DirectoryPath => _directory;
+
+    /// <summary>True when every byte of the launch secret is zero (after consumption, revocation or disposal).</summary>
+    internal bool SecretIsZeroed()
+    {
+        lock (_gate)
+        {
+            return _secret.All(value => value == 0);
+        }
+    }
 
     /// <summary>
     /// Records the verified child process of this launch (its handle's id and start time, from the launcher). It must be
@@ -439,6 +460,7 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
             }
 
             _revoked.Dispose();
+            _disposedCallback?.Invoke(this);
         }
 
         return ValueTask.CompletedTask;

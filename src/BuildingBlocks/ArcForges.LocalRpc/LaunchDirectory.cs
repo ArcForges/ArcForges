@@ -110,7 +110,7 @@ internal static class LaunchDirectory
             try
             {
                 WriteRecord(Path.Combine(temporary, RecordName), launchId, parent, epoch, address ?? string.Empty);
-                Directory.Move(temporary, final);
+                MoveWithRetry(temporary, final);
                 return final;
             }
             catch (IOException) when (Directory.Exists(final))
@@ -139,7 +139,7 @@ internal static class LaunchDirectory
         var doomed = Path.Combine(root, DeletedPrefix + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)));
         try
         {
-            Directory.Move(directory, doomed);
+            MoveWithRetry(directory, doomed);
             DeleteQuietly(doomed);
         }
         catch (IOException)
@@ -181,8 +181,10 @@ internal static class LaunchDirectory
                 continue;
             }
 
-            var parent = ReadRecord(Path.Combine(entry, RecordName));
             var old = clock.GetUtcNow() - new DateTimeOffset(info.CreationTimeUtc, TimeSpan.Zero) > grace;
+            // A directory still being created is renamed into place by its creator; the sweep never opens anything inside
+            // it (an open handle would make that rename fail on Windows) and leaves it until it is clearly abandoned.
+            var parent = isNew ? null : ReadRecord(Path.Combine(entry, RecordName));
             var stale = parent is { } identity ? probe(identity) == ProcessLiveness.Dead : old;
             if (stale)
             {
@@ -192,6 +194,27 @@ internal static class LaunchDirectory
         }
 
         return removed;
+    }
+
+    /// <summary>
+    /// Renames a directory. On Windows a rename fails while anything holds a handle inside the directory, and a sweep in
+    /// another process reads records for a moment, so a failure that leaves the source in place is retried briefly.
+    /// </summary>
+    private static void MoveWithRetry(string source, string destination)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(source, destination);
+                return;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                && attempt < 8 && Directory.Exists(source) && !Directory.Exists(destination))
+            {
+                Thread.Sleep(10 * (attempt + 1));
+            }
+        }
     }
 
     private static bool IsLaunchDirectoryName(string name) =>

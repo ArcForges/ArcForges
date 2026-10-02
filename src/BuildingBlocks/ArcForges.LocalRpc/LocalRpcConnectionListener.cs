@@ -223,5 +223,10 @@ internal sealed class LocalRpcConnectionListener : IConnectionListener
         {
             return false;
         }
+        finally
+        {
+            // Whatever ended the wait (a timeout included), a decision still running is told to stop.
+            await decision.CancelAsync().ConfigureAwait(false);
+        }
     }
 }

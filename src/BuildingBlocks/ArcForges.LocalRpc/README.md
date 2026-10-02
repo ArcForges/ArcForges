@@ -3,10 +3,10 @@
 Generated gRPC over HTTP/2 between a parent and the helper or extension children it owns, carried only by
 a Windows Named Pipe or a Unix domain socket. The project is non-packable until its package task admits it.
 
-This is transport and framing (WP-08.00). It has no endpoint descriptor, nonce, registration lease, routing,
-call queue, retry or brokered-resource logic; those are the later local RPC tasks. It does not define a
-contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*` bindings, registered
-explicitly by their owner.
+This is transport and framing (WP-08.00) and the parent-owned launch identity (WP-08.01). It has no LocalBootstrap
+authentication, registration lease, routing, call queue, retry or brokered-resource logic; those are the later local
+RPC tasks. It does not define a contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*`
+bindings, registered explicitly by their owner.
 
 ## What it provides
 
@@ -18,8 +18,12 @@ explicitly by their owner.
   scanning. The host is a generic web host; it does read `ASPNETCORE_*` settings into host configuration,
   but its only Kestrel endpoint is the explicit private one, which overrides any URL or port setting, so no address
   results, and `ASPNETCORE_PREFERHOSTINGURLS=true` makes startup fail. The other connection listener factories are
-  removed, and `StartAsync` fails closed if any non-local address is bound. An optional `AuthorizeConnections` decision runs
-  on every accepted connection before HTTP/2 reads a byte.
+  removed, and `StartAsync` fails closed if any non-local address is bound. An optional connection decision
+  (`AuthorizeConnections`, or `AuthorizeConnectionsAsync` with a cancellable asynchronous decision) runs on every
+  accepted connection before HTTP/2 reads a byte. A decision that throws, ignores its token past
+  `LocalRpcLimits.AuthorizationTimeout` (default 2 s) or is cancelled denies the connection; stopping the server cancels a
+  pending decision and drops the stream unread. The decision sees the transport, a sequence number and, for a listening
+  endpoint, that endpoint; it does not see the peer process or user.
 - At most `MaxConnections` connections are served at once. The listener waits for a free slot before it accepts, so
   an extra peer waits in the OS backlog (16) and is served when a slot frees; it is not reset.
 - `LocalRpcStreamSupplier` is the launcher's hand-over of already-connected OS streams. A server built over a
@@ -30,6 +34,49 @@ explicitly by their owner.
 - gRPC messages are limited to 4 MiB in both directions (`LocalRpcLimits`). Compression is refused: a request that
   names any `grpc-encoding` other than `identity` is answered `UNIMPLEMENTED` before routing and before any
   decompression, so the bound holds for the decoded size as well. Detailed error text is off.
+
+## Parent-owned launch identity (WP-08.01)
+
+A parent creates one `LocalRpcLaunchAuthority` (`Create(runtimeRoot)`), and each child it starts is one
+`Launch(slot, identity, transport)`:
+
+- **Descriptor.** `LocalRpcLaunchDescriptor` is the parent's immutable record of the launch: launch id, slot, epoch,
+  endpoint (or none when the launcher supplies streams), the parent process (id and start time), the expected child kind,
+  build id and digest, protocol version and contract-set digest, a random 32-byte nonce, the issue time and the bootstrap
+  deadline (default 30 s). `Encode`/`Decode` are one canonical versioned binary form that refuses truncation, trailing
+  bytes and every malformed value as `FormatException`. The descriptor holds no secret.
+- **Epoch fencing.** A slot is one logical child. Launching a slot again gives the next epoch and revokes the previous
+  launch, so a descriptor of an older epoch is stale and `Verify` refuses it whatever else it carries. Epochs are per
+  authority and in memory: they do not survive a parent restart (a new parent has a new process identity and random launch
+  ids, so an old descriptor matches nothing; registration freshness after a restart belongs to the registration task).
+- **Claims.** A child makes a `LocalRpcLaunchClaim` from its descriptor. `Verify` checks, in order: the launch is not
+  revoked, the descriptor was issued by this running process, a bound child process still runs, the bootstrap window has not
+  passed, the launch id/slot/epoch, the nonce (fixed-time), the child kind/build id/build digest, and the protocol version
+  and contract-set digest. Each failure has its own `LocalRpcLaunchRefusal`; callers must not reveal which one to a child.
+- **One-use secret.** Each launch holds a random 32-byte secret. `HandoffBootstrapResource()` returns the descriptor
+  followed by the secret once, for the launcher to write into a private inherited resource (never argv, environment or a
+  file) and clear. `ConsumeSecret` runs a callback over the secret exactly once, destroys it whatever the outcome and ends the
+  bootstrap window. The secret is zeroed in managed memory only: it is not pinned, locked or protected from a debugger. The
+  HMAC transcript that uses it is the registration task's.
+- **Child process.** `BindChild` records the launcher's verified child process (id and start time); from then on the launch
+  authorizes only while that process runs. The check happens when a claim or connection is decided; no watcher runs, so a
+  child that exits is noticed at the next decision. Process start times are compared within 2 s.
+- **Endpoint files.** A private endpoint on Linux/macOS is a socket inside a per-launch directory of an owner-only root. The
+  root and each launch directory are created with owner-only access in the same call (mode 0700 on Unix, a protected DACL
+  naming only the current user on Windows), a launch directory is built under a temporary name with its record and renamed into
+  place, and it is removed by renaming it away and then deleting it. The record names the launch id, parent process, epoch and
+  endpoint and no nonce or secret. Existing roots must be owner-only (on Windows any allow rule for a principal other than the
+  current user, SYSTEM or Administrators is refused) and must not be links. On Windows the private endpoint is a Named Pipe with
+  an unguessable per-launch name and no file.
+- **Parent death.** A killed parent runs no cleanup. `Create` and `SweepStale` remove launch directories whose recorded
+  parent is not running (id and start time compared, so a recycled id counts as gone), at once for leftover removals and after
+  60 s for directories that never got a readable record or were never renamed into place. A directory of a running or unverifiable
+  parent, a link, or anything this library did not create is never touched. Launches abandoned in memory are not detected;
+  an owner disposes each launch (`DisposeAsync`), and disposing the authority disposes every launch it issued.
+- **Connections.** `launch.AuthorizeConnectionAsync` is the decision for a server built over the launch's endpoint or streams. It
+  admits a connection only while the launch authorizes and only when the connection arrived on the launch's own endpoint.
+  Revoking a launch cancels `Revoked`; the owner closes its server connections then, since an HTTP/2 connection admitted earlier
+  stays open until the owner closes it.
 
 ## OS user boundary
 
@@ -42,12 +89,13 @@ permission bits, is never created over an existing file, is set to mode 0600 and
 unbound; the client refuses a symbolic link.
 
 This package does not read the peer process or user of an accepted connection and does not authenticate the
-child: that is the parent-owned launch identity of the endpoint-identity task (PRF.04 read the peer PID with
-platform calls; `Socket.GetRawSocketOption` could read `SO_PEERCRED` without a native binding, but neither is
-used here). The authorizer is a synchronous decision over `(Transport, Sequence)` that runs on the accept loop; the
-endpoint-identity task is expected to change it to carry peer identity and to be asynchronous. Pipe-name squatting
-by another process of the same user is contained by unguessable per-launch names (that task) and the client's
-owner check; the owner check against a foreign pipe is not tested.
+child. A same-user process that learns an endpoint's address can connect to it: the launch descriptor, the nonce and the
+one-use secret decide what a claim may do, and the proof that uses the secret is the registration task's (WP-08.02); until that
+task exists nothing here proves who is on the other end of a connection. Reading the peer would need a native binding on
+Windows (the repository restricts those) and, for the launch-bound streams the design prefers, names the creating parent rather
+than the child (see annex 09); `Socket.GetRawSocketOption` could read `SO_PEERCRED` on Linux without a native binding but is
+not used. Pipe-name squatting by another process of the same user is contained by the unguessable per-launch names and the
+client's owner check; the owner check against a foreign pipe is not tested.
 
 ## Validation
 
@@ -60,5 +108,11 @@ listener for the process:
 $env:ARCFORGES_LOCALRPC_OS_STREAMS = '1'
 dotnet test --project src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj -c Release
 ```
+
+The launch directory, owner-only and sweep checks are ordinary file-system tests that also run in hosted CI; the Windows
+access-control and the Unix mode checks each run only on their own platform. A second opt-in class
+(`LocalRpcLaunchProcessChecks`, same variable) starts real helper processes from the test assembly through
+`DOTNET_STARTUP_HOOKS`: concurrent launches from four processes, a parent killed without cleanup followed by a sweep, and a
+launch-authorized server over a real endpoint whose bound child is killed.
 
 Hosted CI never executes those checks and a successful run on one OS says nothing about the others.
