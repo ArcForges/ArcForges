@@ -1873,5 +1873,40 @@
     "apiSymbol": "ArcForges.Observability.RouteTemplateSet.Record(string?)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
     "testMethod": "ArcForges.Observability.Tests.RouteTemplateTests.AUrlIsRecordedAsItsTemplateAndTheOpaqueIdentifiersThatFilledItsSlots()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.IScrubbedSpanSink.Write(ArcForges.Observability.ScrubbedSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.TracePolicyTests.AnErrorSpanPromotesOnlyTheSpansStillHeldAndThenTheRestOfItsTrace()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.MetricLabelPolicy.CreateTags(ArcForges.Observability.SignalService?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.MetricLabelPolicyTests.TheTypedLabelBuilderCanExpressOnlyTheClosedServiceDimension()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.MetricLabelPolicy.ScrubLabels(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, object?>>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.MetricLabelPolicyTests.AnUnboundedIdentifierUsedAsALabelNeverSurvivesTheLabelPolicy()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TracePolicy.Attach(System.Func<System.Diagnostics.ActivitySource, bool>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.TracePolicyTests.TheHeadRatioSelectsRootSpansAndAChildFollowsItsParent()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TracePolicy.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.TracePolicyTests.DisposingThePolicyStopsEveryListenerItCreatedAndRefusesNewWork()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TracePolicy.OnSpanEnded(System.Diagnostics.Activity)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.TracePolicyTests.AnErrorSpanPromotesOnlyTheSpansStillHeldAndThenTheRestOfItsTrace()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TracePolicy.PurgeBuffer()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Tests.TracePolicyTests.ThePurgeCommandDiscardsEverythingHeldAtOnce()"
   }
 ]

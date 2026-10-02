@@ -40,6 +40,8 @@ public sealed class PublicSurfaceTests
         // RD-05: the scrubbing processor itself receives arbitrary fields precisely to remove them.
         "RedactionProcessor.IsSensitiveFieldName(String)",
         "RedactionProcessor.ScrubFields(IEnumerable<KeyValuePair<String, Object>>)",
+        // CC-01, SG-02: the metric label filter receives arbitrary labels precisely to remove every one that is not reviewed.
+        "MetricLabelPolicy.ScrubLabels(IEnumerable<KeyValuePair<String, Object>>)",
         // RD-08: a request target is reduced to a registered template and opaque identifiers; the text is never kept.
         "RouteIdentifier..ctor(String, Guid)",
         "RouteIdentifier.set_Slot(String)",

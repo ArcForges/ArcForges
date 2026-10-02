@@ -7,7 +7,7 @@
   "owners": {
     "dimensions": "PLT.47 vocabulary; PLT.49 records it here and extends it only with the route dimensions of RD-08",
     "redaction": "PLT.49",
-    "samplingAndRetention": "PLT.50 supplies the values Design leaves open; this file records only what Design fixes"
+    "samplingAndRetention": "PLT.50 enforces the sampling, buffer and cardinality rules recorded here; the values Design leaves open are named in notFixedByDesign and are supplied by the deploying host, never defaulted by the library"
   },
   "dimensions": [
     {
@@ -224,7 +224,9 @@
       "build.id",
       "deployment.environment"
     ],
-    "unboundedIdentifiersAreNeverLabels": true
+    "unboundedIdentifiersAreNeverLabels": true,
+    "pointLabelRule": "A metric point carries only the labels in pointLabels, each with a value from its closed vocabulary; every other dimension, including every identifier, is a span or structured-event field and is removed from a metric point by MetricLabelPolicy.ScrubLabels.",
+    "maximumSeriesPerInstrument": 9
   },
   "redaction": {
     "exportRule": "A field is exported only if its name is in dimensions or routeParameters, is not a known-sensitive name, and its value has exactly the kind recorded for it. Every other field is removed, including every header, cookie, token, prompt, note, path, raw URL and exception text.",
@@ -334,16 +336,64 @@
         "signal",
         "route"
       ],
+      "strategy": "parent-based trace-identifier ratio: a root span is selected when its trace identifier falls under its ratio and a child span follows the sampled flag of its parent; every span is recorded so that an unselected trace can still be promoted",
+      "ratioRange": [
+        0,
+        1
+      ],
+      "precedence": [
+        "route",
+        "signal",
+        "default"
+      ],
       "defaultRatio": null
     },
     "diagnosticBuffer": {
       "defaultBytes": 8388608,
       "hardLimitBytes": 16777216,
-      "perTraceRetentionSeconds": 30
+      "minimumBytes": 1024,
+      "perTraceRetentionSeconds": 30,
+      "maximumClosedTraces": 1024,
+      "contents": "finished spans of unselected traces, already copied through the scrubbing processor",
+      "accounting": "a deterministic cost model charged for every retained span, trace entry, promotion state and closed-trace marker; it is not a measurement of process memory",
+      "evictionOrder": [
+        "closed-trace markers",
+        "whole held traces, oldest first",
+        "oldest spans of the trace being extended",
+        "promotion state, oldest first"
+      ]
     },
     "promotion": {
       "errorAndSlow": "spans-still-recorded-only",
-      "everyErrorTraceRetained": false
+      "everyErrorTraceRetained": false,
+      "slowSpanThresholdMs": null
+    },
+    "errorFacts": {
+      "recordedForEverySpanWithErrorStatus": true,
+      "independentOfSampling": true,
+      "eventName": "trace.error",
+      "counter": "arcf_span_error_count",
+      "fields": "the reviewed fields of the scrubbed span plus the application, instance, build and environment identity"
+    },
+    "consent": {
+      "gate": "ITelemetryConsent, read live on every span",
+      "whenAbsent": "no span is exported or held, no error fact or instrument measurement is produced, and held spans are purged; statistics stay readable locally",
+      "cloudHosts": "TelemetryConsent.NotRequired"
+    },
+    "loss": {
+      "countedAndVisible": true,
+      "counters": [
+        "arcf_trace_span_head_sampled",
+        "arcf_trace_span_promoted",
+        "arcf_trace_span_lost_overflow",
+        "arcf_trace_span_lost_late",
+        "arcf_trace_span_lost_oversize",
+        "arcf_trace_error_span_not_retained"
+      ],
+      "gauges": [
+        "arcf_trace_buffer_bytes"
+      ],
+      "pointLabels": "none"
     },
     "lossIsCountedAndVisible": true
   },
@@ -353,12 +403,15 @@
       "traces": "short-sampled",
       "logs": "short-to-medium"
     },
+    "traceBufferSeconds": 30,
     "durationsByClassAndEnvironment": null,
     "productionAndNonProductionBudgetedSeparately": true,
-    "auditRetentionIsIndependent": true
+    "auditRetentionIsIndependent": true,
+    "enforcedByLibrary": "only the in-process trace buffer window; retention at a telemetry backend is deployment configuration"
   },
   "notFixedByDesign": [
     "sampling.head.defaultRatio",
+    "sampling.promotion.slowSpanThresholdMs",
     "retention.durationsByClassAndEnvironment"
   ]
 }

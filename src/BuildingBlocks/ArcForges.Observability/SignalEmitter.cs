@@ -60,11 +60,8 @@ public sealed class SignalEmitter : IDisposable
                 }
             }
 
-            TagList metricTags = default;
-            if (context.Service is { } service)
-            {
-                metricTags.Add("service.name", service.ToString());
-            }
+            // The reviewed label policy is the only place a metric point label is built (SG-02, CC-01).
+            TagList metricTags = MetricLabelPolicy.CreateTags(context.Service);
 
             metrics.SignalCount.Add(1, in metricTags);
             if (context.Duration is { } duration)
@@ -111,13 +108,7 @@ public sealed class SignalEmitter : IDisposable
 
     private static Meter CreateMeter(SignalIdentity identity) => new(new MeterOptions(MeterName)
     {
-        Tags = new KeyValuePair<string, object?>[]
-        {
-            new("application.id", identity.ApplicationId),
-            new("instance.id", identity.InstanceId),
-            new("build.id", identity.BuildId),
-            new("deployment.environment", identity.Environment.ToString()),
-        },
+        Tags = MetricLabelPolicy.ScopeTags(identity.ApplicationId, identity.InstanceId, identity.BuildId, identity.Environment),
     });
 
     private sealed class Metrics : IDisposable
@@ -153,7 +144,7 @@ public sealed class SignalEmitter : IDisposable
             context.Environment);
     }
 
-    private static string EventName(SignalEventName eventName) => eventName switch
+    internal static string EventName(SignalEventName eventName) => eventName switch
     {
         SignalEventName.ApplicationStarted => "application.started",
         SignalEventName.StorageCommitted => "storage.commit",

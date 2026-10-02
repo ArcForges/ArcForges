@@ -64,25 +64,10 @@ public sealed class TelemetryPolicyTests
         foreach (JsonElement entry in policy.RootElement.GetProperty("dimensions").EnumerateArray())
         {
             string name = entry.GetProperty("name").GetString()!;
-            string kind = entry.GetProperty("kind").GetString()!;
             string[] members = entry.TryGetProperty("members", out JsonElement list)
                 ? list.EnumerateArray().Select(member => member.GetString()!).ToArray()
                 : [];
-            object valid = kind switch
-            {
-                "application-id" or "enum" or "http-method" => members[0],
-                "guid-32" => "0123456789abcdef0123456789abcdef",
-                "build-id" => "local.local",
-                "sha256-reference" => "sha256:" + new string('a', 64),
-                "unsigned-integer" => 5UL,
-                "duration-ms" => 1.5d,
-                "reason-code" => "state.gone",
-                "native-abi-version" => "1.2",
-                "count" => 3,
-                "route-template" => template,
-                "http-status-code" => 200,
-                _ => throw new InvalidOperationException("Unreviewed kind " + kind),
-            };
+            object valid = SampleValue(entry, template);
 
             Assert.Equal(valid, Assert.Single(RedactionProcessor.ScrubFields([new(name, valid)])).Value);
             Assert.Empty(RedactionProcessor.ScrubFields([new(name, Invalid)]));
@@ -157,7 +142,7 @@ public sealed class TelemetryPolicyTests
     }
 
     [Fact]
-    public void SamplingAndRetentionRecordOnlyWhatDesignFixesAndNameWhatItLeavesOpen()
+    public void SamplingAndRetentionRecordWhatDesignFixesAndNameWhatItLeavesOpen()
     {
         using JsonDocument policy = Load();
         JsonElement sampling = policy.RootElement.GetProperty("sampling");
@@ -169,14 +154,18 @@ public sealed class TelemetryPolicyTests
         Assert.Equal("spans-still-recorded-only", sampling.GetProperty("promotion").GetProperty("errorAndSlow").GetString());
         Assert.False(sampling.GetProperty("promotion").GetProperty("everyErrorTraceRetained").GetBoolean());
         Assert.True(sampling.GetProperty("lossIsCountedAndVisible").GetBoolean());
+        Assert.True(sampling.GetProperty("loss").GetProperty("countedAndVisible").GetBoolean());
         Assert.Equal(["signal", "route"], Strings(sampling.GetProperty("head").GetProperty("configurablePer")));
+        Assert.Equal(["route", "signal", "default"], Strings(sampling.GetProperty("head").GetProperty("precedence")));
 
         JsonElement retention = policy.RootElement.GetProperty("retention");
         Assert.Equal(["metrics", "traces", "logs"], retention.GetProperty("signalClassPosture").EnumerateObject().Select(property => property.Name));
         Assert.True(retention.GetProperty("auditRetentionIsIndependent").GetBoolean());
+        Assert.True(retention.GetProperty("productionAndNonProductionBudgetedSeparately").GetBoolean());
+        Assert.Equal(30, retention.GetProperty("traceBufferSeconds").GetInt32());
 
         string[] open = Strings(policy.RootElement.GetProperty("notFixedByDesign"));
-        Assert.Equal(["sampling.head.defaultRatio", "retention.durationsByClassAndEnvironment"], open);
+        Assert.Equal(["sampling.head.defaultRatio", "sampling.promotion.slowSpanThresholdMs", "retention.durationsByClassAndEnvironment"], open);
         foreach (string path in open)
         {
             JsonElement value = policy.RootElement;
@@ -190,6 +179,52 @@ public sealed class TelemetryPolicyTests
     }
 
     [Fact]
+    public void TheSamplingAndBufferValuesInThePolicyFileAreTheOnesTheLibraryEnforces()
+    {
+        using JsonDocument policy = Load();
+        JsonElement sampling = policy.RootElement.GetProperty("sampling");
+        JsonElement buffer = sampling.GetProperty("diagnosticBuffer");
+
+        Assert.Equal(TracePolicyOptions.DefaultBufferBytes, buffer.GetProperty("defaultBytes").GetInt64());
+        Assert.Equal(TracePolicyOptions.HardBufferLimitBytes, buffer.GetProperty("hardLimitBytes").GetInt64());
+        Assert.Equal(TracePolicyOptions.MinimumBufferBytes, buffer.GetProperty("minimumBytes").GetInt64());
+        Assert.Equal(DiagnosticSpanBuffer.Retention, TimeSpan.FromSeconds(buffer.GetProperty("perTraceRetentionSeconds").GetInt32()));
+        Assert.Equal(DiagnosticSpanBuffer.Retention, TimeSpan.FromSeconds(policy.RootElement.GetProperty("retention").GetProperty("traceBufferSeconds").GetInt32()));
+        Assert.Equal(DiagnosticSpanBuffer.MaximumClosedTraces, buffer.GetProperty("maximumClosedTraces").GetInt32());
+        Assert.Equal([0, 1], sampling.GetProperty("head").GetProperty("ratioRange").EnumerateArray().Select(value => value.GetInt32()));
+
+        JsonElement facts = sampling.GetProperty("errorFacts");
+        Assert.Equal(TracePolicy.ErrorFactEventName, facts.GetProperty("eventName").GetString());
+        Assert.Equal(TracePolicy.ErrorCounterName, facts.GetProperty("counter").GetString());
+        Assert.True(facts.GetProperty("recordedForEverySpanWithErrorStatus").GetBoolean());
+        Assert.True(facts.GetProperty("independentOfSampling").GetBoolean());
+
+        JsonElement loss = sampling.GetProperty("loss");
+        Assert.Equal(TracePolicy.CounterNames, Strings(loss.GetProperty("counters")));
+        Assert.Equal([TracePolicy.BufferBytesGaugeName], Strings(loss.GetProperty("gauges")));
+        Assert.Equal("none", loss.GetProperty("pointLabels").GetString());
+        Assert.Contains("ITelemetryConsent", sampling.GetProperty("consent").GetProperty("gate").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryValueLeftOpenByDesignIsARequiredParameterWithNoLibraryDefault()
+    {
+        using JsonDocument policy = Load();
+
+        // The head ratio and the slow-span threshold are null in the policy file, so the library must not invent them.
+        System.Reflection.ConstructorInfo[] constructors = typeof(TracePolicyOptions).GetConstructors();
+        System.Reflection.ConstructorInfo constructor = Assert.Single(constructors);
+        System.Reflection.ParameterInfo[] parameters = constructor.GetParameters();
+        Assert.Equal(["defaultTraceRatio", "slowSpanThreshold"], parameters.Select(parameter => parameter.Name));
+        Assert.All(parameters, parameter => Assert.False(parameter.HasDefaultValue));
+
+        // Retention durations at a backend are not modelled by the library at all: only the trace buffer window is.
+        Assert.DoesNotContain(typeof(TracePolicyOptions).GetProperties(), property => property.Name.Contains("Retention", StringComparison.Ordinal));
+        Assert.Null(typeof(TracePolicyOptions).GetProperty("DefaultTraceRatio")!.GetSetMethod());
+        Assert.Equal(JsonValueKind.Null, policy.RootElement.GetProperty("retention").GetProperty("durationsByClassAndEnvironment").ValueKind);
+    }
+
+    [Fact]
     public void TheRedactionSectionStatesTheExportRule()
     {
         using JsonDocument policy = Load();
@@ -200,6 +235,29 @@ public sealed class TelemetryPolicyTests
     }
 
     private static string[] Strings(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToArray();
+
+    /// <summary>A value of exactly the reviewed shape of one policy dimension.</summary>
+    internal static object SampleValue(JsonElement dimension, string routeTemplate)
+    {
+        string kind = dimension.GetProperty("kind").GetString()!;
+        return kind switch
+        {
+            "application-id" or "enum" or "http-method" => dimension.GetProperty("members")[0].GetString()!,
+            "guid-32" => new string('7', 32),
+            "build-id" => "local.local",
+            "sha256-reference" => "sha256:" + new string('a', 64),
+            "unsigned-integer" => 5UL,
+            "duration-ms" => 1.5d,
+            "reason-code" => "state.gone",
+            "native-abi-version" => "1.2",
+            "count" => 3,
+            "route-template" => routeTemplate,
+            "http-status-code" => 200,
+            _ => throw new InvalidOperationException("Unreviewed kind " + kind),
+        };
+    }
+
+    internal static JsonDocument LoadPolicy() => Load();
 
     private static JsonDocument Load()
     {
