@@ -35,6 +35,27 @@ internal static class SelfTest
         (FixtureFault.UnknownMethodSucceeds, ["target.unknown-method"]),
         (FixtureFault.HealthReportsJit, ["identity.health"]),
         (FixtureFault.HttpFailureAsSuccess, ["boundary.http-413", "boundary.http-415", "boundary.http-429", "boundary.http-503"]),
+        (FixtureFault.EmptyNameWrongCode, ["error.empty-name"]),
+        (FixtureFault.EmptyNameNoMessage, ["error.empty-name"]),
+        (FixtureFault.HealthServerError, ["identity.health"]),
+        (FixtureFault.UnknownMethodForbidden, ["target.unknown-method"]),
+        (FixtureFault.WrongResponseMediaType, ["unary.success.response-headers"]),
+        (FixtureFault.BrokenAfterCancel, ["cancel.channel-recovers"]),
+    ];
+
+    /// <summary>Damage done to the client's own request, which a correct verifier must notice on the transport.</summary>
+    private static readonly (string Name, Action<HttpRequestMessage> Mutate, string[] MustFail)[] ClientFaults =
+    [
+        ("DropPathBase", request => request.RequestUri = new UriBuilder(request.RequestUri!)
+            { Path = request.RequestUri!.AbsolutePath.Replace("/api", string.Empty, StringComparison.Ordinal) }.Uri,
+            ["unary.success.request-shape"]),
+        ("WrongMethod", request => request.Method = HttpMethod.Put, ["unary.success.request-shape"]),
+        ("WrongRequestMediaType", request => request.Content!.Headers.ContentType = new("text/plain"), ["unary.success.request-shape"]),
+        ("OversizedTimeout", request =>
+        {
+            request.Headers.Remove("grpc-timeout");
+            request.Headers.TryAddWithoutValidation("grpc-timeout", "99999S");
+        }, ["deadline.header-format"]),
     ];
 
     public static async Task<CheckRecorder> RunAsync()
@@ -42,26 +63,90 @@ internal static class SelfTest
         var meta = new CheckRecorder();
         CheckOptionGuards(meta);
         CheckTimeoutParser(meta);
+        CheckRecorderGuards(meta);
         var baseline = await RunFixtureAsync(FixtureFault.None).ConfigureAwait(false);
         string[] failing = [.. baseline.Results.Where(result => !result.Passed).Select(result => result.Name + ": " + result.Detail)];
         meta.Expect("fixture.baseline-passes", baseline.AllPassed,
             "The verifier accepts the well-behaved fixture" + (failing.Length == 0 ? "." : "; failing: " + string.Join(" | ", failing)));
-        string[] recorded = [.. baseline.Results.Select(result => result.Name).Order(StringComparer.Ordinal)];
-        meta.Expect("fixture.baseline-records-every-check", recorded.SequenceEqual(ExpectedCheckNames.Order(StringComparer.Ordinal)),
+        meta.Expect("fixture.baseline-records-every-check", RecordedExactly(baseline),
             $"The fixture run recorded exactly the {ExpectedCheckNames.Length} expected checks, none skipped and none extra.");
-        var runs = await Task.WhenAll(Mutants.Select(async mutant => (mutant, Recorder: await RunFixtureAsync(mutant.Fault).ConfigureAwait(false))))
-            .ConfigureAwait(false);
-        foreach (var ((fault, mustFail), recorder) in runs)
+        var serverRuns = Task.WhenAll(Mutants.Select(async mutant => (mutant.Fault.ToString(), mutant.MustFail,
+            Recorder: await RunFixtureAsync(mutant.Fault).ConfigureAwait(false))));
+        var clientRuns = Task.WhenAll(ClientFaults.Select(async fault => ("client-" + fault.Name, fault.MustFail,
+            Recorder: await RunFixtureAsync(FixtureFault.None, fault.Mutate, failureInjection: false).ConfigureAwait(false))));
+        var staleRuns = Task.WhenAll(RunStaleTargetAsync(matching: true), RunStaleTargetAsync(matching: false));
+        foreach ((string name, string[] mustFail, var recorder) in (await serverRuns.ConfigureAwait(false))
+            .Concat(await clientRuns.ConfigureAwait(false)))
         {
-            bool caught = mustFail.All(recorder.Failed) && !recorder.AllPassed;
-            meta.Expect("mutant." + fault, caught,
-                $"The verifier fails {string.Join(" and ", mustFail)} when the fixture misbehaves as {fault}.");
+            meta.Expect("mutant." + name, Caught(recorder, mustFail),
+                $"The verifier fails {string.Join(" and ", mustFail)} when the fixture or client misbehaves as {name}.");
         }
 
+        var stale = await staleRuns.ConfigureAwait(false);
+        meta.Expect("stale-target.matching-revision-passes", stale[0].Passed("identity.expected-revision"),
+            "A deployment whose revision equals the expected revision passes.");
+        meta.Expect("stale-target.other-revision-fails", stale[1].Failed("identity.expected-revision"),
+            "A deployment whose revision differs from the expected revision fails as a stale target.");
+        CheckVerdictHelpers(meta);
         return meta;
     }
 
-    private static async Task<CheckRecorder> RunFixtureAsync(FixtureFault fault)
+    internal static bool Caught(CheckRecorder recorder, string[] mustFail) => mustFail.All(recorder.Failed) && !recorder.AllPassed;
+
+    internal static bool RecordedExactly(CheckRecorder recorder) =>
+        recorder.Results.Select(result => result.Name).Order(StringComparer.Ordinal).SequenceEqual(ExpectedCheckNames.Order(StringComparer.Ordinal));
+
+    private static void CheckVerdictHelpers(CheckRecorder meta)
+    {
+        var onlyOne = new CheckRecorder();
+        onlyOne.Expect("x", false, "bad");
+        onlyOne.Expect("y", true, "ok");
+        var allPass = new CheckRecorder();
+        allPass.Expect("x", true, "ok");
+        var both = new CheckRecorder();
+        both.Expect("x", false, "bad");
+        both.Expect("y", false, "bad");
+        meta.Expect("verdict.a-mutant-is-caught-only-when-every-named-check-fails",
+            Caught(both, ["x", "y"]) && !Caught(onlyOne, ["x", "y"]) && !Caught(allPass, ["x"]) && Caught(onlyOne, ["x"]),
+            "A misbehavior counts as caught only when every named check failed.");
+        var missing = new CheckRecorder();
+        foreach (string name in ExpectedCheckNames.Skip(1))
+        {
+            missing.Expect(name, true, "ok");
+        }
+
+        var extra = new CheckRecorder();
+        foreach (string name in ExpectedCheckNames.Append("unexpected"))
+        {
+            extra.Expect(name, true, "ok");
+        }
+
+        var exact = new CheckRecorder();
+        foreach (string name in ExpectedCheckNames)
+        {
+            exact.Expect(name, true, "ok");
+        }
+
+        meta.Expect("verdict.a-skipped-or-extra-check-is-detected", RecordedExactly(exact) && !RecordedExactly(missing) && !RecordedExactly(extra),
+            "A run that skips or adds a check does not match the expected check list.");
+    }
+
+    private static async Task<CheckRecorder> RunStaleTargetAsync(bool matching)
+    {
+        var state = new FixtureState(FixtureFault.None);
+        var target = new ScenarioTarget
+        {
+            BaseAddress = FixtureAddress,
+            CreateTransport = () => new IngressFixtureHandler(state),
+            Fixture = state,
+            ExpectedRevision = matching ? state.Revision : new string('e', 40),
+        };
+        var recorder = new CheckRecorder();
+        await HelloScenarios.CheckIdentityAsync(target, recorder).ConfigureAwait(false);
+        return recorder;
+    }
+
+    private static async Task<CheckRecorder> RunFixtureAsync(FixtureFault fault, Action<HttpRequestMessage>? mutate = null, bool failureInjection = true)
     {
         var state = new FixtureState(fault);
         var target = new ScenarioTarget
@@ -69,12 +154,42 @@ internal static class SelfTest
             BaseAddress = FixtureAddress,
             CreateTransport = () => new IngressFixtureHandler(state),
             Fixture = state,
+            MutateRequest = mutate,
         };
         var recorder = new CheckRecorder();
         await HelloScenarios.RunCommonAsync(target, recorder).ConfigureAwait(false);
-        await HelloScenarios.RunFixtureOnlyAsync(target, recorder).ConfigureAwait(false);
+        if (failureInjection)
+        {
+            await HelloScenarios.RunFixtureOnlyAsync(target, recorder).ConfigureAwait(false);
+        }
+
         CodecPrimitives.Run(recorder);
         return recorder;
+    }
+
+    private static void CheckRecorderGuards(CheckRecorder meta)
+    {
+        var empty = new CheckRecorder();
+        var failed = new CheckRecorder();
+        failed.Expect("a", true, "ok");
+        failed.Expect("b", false, "bad");
+        var twice = new CheckRecorder();
+        twice.Expect("a", true, "ok");
+        bool refusedRepeat = false;
+        try
+        {
+            twice.Expect("a", true, "again");
+        }
+        catch (InvalidOperationException)
+        {
+            refusedRepeat = true;
+        }
+
+        meta.Expect("recorder.empty-run-is-not-a-pass", !empty.AllPassed, "A run that recorded no check is not a pass.");
+        meta.Expect("recorder.one-failure-fails-the-run",
+            !failed.AllPassed && failed.Passed("a") && failed.Failed("b") && !failed.Passed("b") && !failed.Failed("a"),
+            "One failed check fails the run and is reported as failed, not as passed.");
+        meta.Expect("recorder.refuses-a-repeated-name", refusedRepeat, "Recording the same check name twice is refused.");
     }
 
     private static void CheckTimeoutParser(CheckRecorder meta)
@@ -151,6 +266,12 @@ internal static class SelfTest
         meta.Expect("options.revision-applies-only-to-live",
             ProbeOptionsParser.Parse(["--self-test", "--expect-revision", revision], NoEnvironment).Error is not null,
             "--expect-revision with --self-test is refused.");
+        meta.Expect("options.flag-value-is-not-another-flag",
+            ProbeOptionsParser.Parse(["--self-test", "--evidence", "--live"], NoEnvironment).Error is not null,
+            "A flag cannot take another flag as its value.");
+        meta.Expect("options.address-refuses-an-at-sign-anywhere",
+            ProbeOptionsParser.ValidateBaseAddress("https://ingress.example/@x/").Uri is null,
+            "An at sign anywhere in the base address is refused, whether or not it parses as user information.");
         meta.Expect("options.evidence-needs-a-name",
             ProbeOptionsParser.Parse(["--self-test", "--evidence", " "], NoEnvironment).Error is not null &&
             ProbeOptionsParser.Parse(["--self-test", "--evidence", "out.json"], NoEnvironment).Options?.EvidencePath == "out.json",

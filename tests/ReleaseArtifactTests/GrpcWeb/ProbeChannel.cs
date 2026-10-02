@@ -99,14 +99,15 @@ internal sealed class ProbeChannel : IDisposable
     private const int MaximumMessageBytes = 64 * 1024;
 
     [SuppressMessage("Reliability", "CA2000", Justification = "The handler chain is owned by the HttpClient (disposeHandler), which the channel disposes (DisposeHttpClient).")]
-    public ProbeChannel(Uri address, HttpMessageHandler transport)
+    public ProbeChannel(Uri address, HttpMessageHandler transport, Action<HttpRequestMessage>? mutateRequest = null)
     {
         ArgumentNullException.ThrowIfNull(address);
         ArgumentNullException.ThrowIfNull(transport);
         Tap = new RequestTap(transport);
         // Grpc.Net.Client sends "/<service>/<method>" and drops any path of the channel address, so the ingress path
         // base (for example /api) is applied by a handler between the gRPC-Web handler and the tap.
-        var pathBase = new PathBaseHandler(address.AbsolutePath.TrimEnd('/'), Tap);
+        var mutator = new MutateRequestHandler(mutateRequest, Tap);
+        var pathBase = new PathBaseHandler(address.AbsolutePath.TrimEnd('/'), mutator);
         var http = new HttpClient(new GrpcWebHandler(GrpcWebMode.GrpcWeb, pathBase), disposeHandler: true)
         {
             Timeout = Timeout.InfiniteTimeSpan,
@@ -153,6 +154,20 @@ internal sealed class PathBaseHandler(string pathBase, HttpMessageHandler inner)
             request.RequestUri = new UriBuilder(uri) { Path = pathBase + uri.AbsolutePath }.Uri;
         }
 
+        return base.SendAsync(request, cancellationToken);
+    }
+}
+
+/// <summary>
+/// Test seam: lets the self-test damage the request just before the tap sees it, to show that the verifier notices a
+/// wrong path, method, media type or timeout. It does nothing when no mutation is given.
+/// </summary>
+internal sealed class MutateRequestHandler(Action<HttpRequestMessage>? mutate, HttpMessageHandler inner) : DelegatingHandler(inner)
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        mutate?.Invoke(request);
         return base.SendAsync(request, cancellationToken);
     }
 }

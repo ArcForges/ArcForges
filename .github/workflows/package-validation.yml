@@ -48,6 +48,27 @@ jobs:
       - run: dotnet restore tests/LocalRpcAotTests/LocalRpcAotTests.csproj --locked-mode
       - name: Publish the process probe with Native AOT (compile only)
         run: dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r ${{ matrix.rid }} --no-restore
+  grpc-web-aot:
+    name: Generated gRPC-Web AOT compile (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - run: dotnet restore tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj --locked-mode
+      - name: Publish the generated gRPC-Web probe with Native AOT (compile only; never executed, no endpoint contacted)
+        run: dotnet publish tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj -c Release -r ${{ matrix.rid }} --no-restore
   aot-probe:
     name: Avalonia TableView Native AOT probe (compile only)
     runs-on: windows-latest

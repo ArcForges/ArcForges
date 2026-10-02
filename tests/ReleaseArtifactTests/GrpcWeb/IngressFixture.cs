@@ -25,12 +25,19 @@ internal enum FixtureFault
     UnknownMethodSucceeds,
     HealthReportsJit,
     HttpFailureAsSuccess,
+    EmptyNameWrongCode,
+    EmptyNameNoMessage,
+    HealthServerError,
+    UnknownMethodForbidden,
+    WrongResponseMediaType,
+    BrokenAfterCancel,
 }
 
 /// <summary>Shared by every handler instance of one fixture so counters survive channel disposal.</summary>
 internal sealed class FixtureState
 {
     private int _dropNext;
+    private int _cancelled;
     private int _failNextStatus;
 
     public FixtureState(FixtureFault fault) => Fault = fault;
@@ -64,6 +71,10 @@ internal sealed class FixtureState
         }
     }
 
+    public void MarkCancelled() => Volatile.Write(ref _cancelled, 1);
+
+    public bool TakeCancelled() => Interlocked.Exchange(ref _cancelled, 0) == 1;
+
     public int TakeFailStatus() => Interlocked.Exchange(ref _failNextStatus, 0);
 }
 
@@ -88,7 +99,21 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
             throw new HttpRequestException("Fixture: connection lost.", new IOException("Fixture: connection reset."));
         }
 
-        await Task.Delay(state.Latency, cancellationToken).ConfigureAwait(false);
+        if (state.Fault == FixtureFault.BrokenAfterCancel && state.TakeCancelled())
+        {
+            return PlainFailure(HttpStatusCode.ServiceUnavailable);
+        }
+
+        try
+        {
+            await Task.Delay(state.Latency, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            state.MarkCancelled();
+            throw;
+        }
+
         string path = request.RequestUri?.AbsolutePath ?? string.Empty;
         int failure = state.TakeFailStatus();
         if (failure != 0)
@@ -103,16 +128,19 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
             bool aot = state.Fault != FixtureFault.HealthReportsJit;
             string json = "{\"service\":\"fixture\",\"revision\":\"" + state.Revision + "\",\"nativeAot\":" +
                 (aot ? "true" : "false") + ",\"artifact\":{},\"build\":{}}";
-            var health = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+            var health = new HttpResponseMessage(state.Fault == FixtureFault.HealthServerError ? HttpStatusCode.InternalServerError : HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
             health.Headers.Add("x-arcforges-worker-revision", state.Revision);
             return health;
         }
 
         if (request.Method != HttpMethod.Post || !path.EndsWith(HelloPath, StringComparison.Ordinal))
         {
-            return state.Fault == FixtureFault.UnknownMethodSucceeds
-                ? Grpc(new SayHelloResponse(), GrpcOk, state.Revision)
-                : PlainFailure(HttpStatusCode.NotFound);
+            return state.Fault switch
+            {
+                FixtureFault.UnknownMethodSucceeds => Grpc(new SayHelloResponse(), GrpcOk, state.Revision),
+                FixtureFault.UnknownMethodForbidden => PlainFailure(HttpStatusCode.Forbidden),
+                _ => PlainFailure(HttpStatusCode.NotFound),
+            };
         }
 
         string? mediaType = request.Content?.Headers.ContentType?.MediaType;
@@ -137,7 +165,8 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
         int length = state.Fault == FixtureFault.CountUtf8BytesNotUtf16Units ? Encoding.UTF8.GetByteCount(name) : name.Length;
         if (name.Length == 0 && state.Fault != FixtureFault.EmptyNameSucceeds)
         {
-            return ApplicationError(3, "Name must not be empty.");
+            return ApplicationError(state.Fault == FixtureFault.EmptyNameWrongCode ? 2 : 3,
+                state.Fault == FixtureFault.EmptyNameNoMessage ? null : "Name must not be empty.");
         }
 
         if (length > MaximumNameUtf16Units && state.Fault != FixtureFault.TooLongSucceeds)
@@ -149,7 +178,7 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
             state.Fault == FixtureFault.WorkerRevisionMismatch ? new string('d', 40) : state.Revision);
     }
 
-    private HttpResponseMessage ApplicationError(int code, string message)
+    private HttpResponseMessage ApplicationError(int code, string? message)
     {
         if (state.Fault == FixtureFault.ApplicationErrorAsHttp400)
         {
@@ -159,7 +188,7 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
         return RpcError(code, message);
     }
 
-    private HttpResponseMessage RpcError(int code, string message)
+    private HttpResponseMessage RpcError(int code, string? message)
     {
         byte[] trailer = Trailers(code, message);
         return Respond(Frame(0x80, trailer), state.Revision);
@@ -179,7 +208,8 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
     private HttpResponseMessage Respond(byte[] content, string revision)
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(content) };
-        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/grpc-web");
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            state.Fault == FixtureFault.WrongResponseMediaType ? "text/plain" : "application/grpc-web");
         response.Headers.TryAddWithoutValidation("cache-control", "no-store");
         response.Headers.TryAddWithoutValidation("x-content-type-options", "nosniff");
         if (state.Fault != FixtureFault.NoWorkerRevisionHeader)

@@ -22,6 +22,11 @@ internal sealed class ScenarioTarget
     public string? ExpectedRevision { get; init; }
 
     public FixtureState? Fixture { get; init; }
+
+    /// <summary>Self-test seam that damages each request before it reaches the transport.</summary>
+    public Action<HttpRequestMessage>? MutateRequest { get; init; }
+
+    public ProbeChannel Open() => new(BaseAddress, CreateTransport(), MutateRequest);
 }
 
 /// <summary>What a call looked like to the caller, whether it succeeded or failed.</summary>
@@ -56,7 +61,7 @@ internal static partial class HelloScenarios
         ArgumentNullException.ThrowIfNull(checks);
         var state = target.Fixture ?? throw new InvalidOperationException("Failure injection needs the fixture.");
 
-        using (var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport()))
+        using (var channel = target.Open())
         {
             var client = new HelloService.HelloServiceClient(channel.Channel);
             state.DropNext(1);
@@ -76,7 +81,7 @@ internal static partial class HelloScenarios
             (413, StatusCode.Unknown), (415, StatusCode.Unknown), (429, StatusCode.Unavailable), (503, StatusCode.Unavailable),
         })
         {
-            using var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport());
+            using var channel = target.Open();
             var client = new HelloService.HelloServiceClient(channel.Channel);
             state.FailNextWith(status);
             var outcome = await CallAsync(client, "ArcForges", Deadline(15)).ConfigureAwait(false);
@@ -103,7 +108,7 @@ internal static partial class HelloScenarios
         }
     }
 
-    private static async Task<string?> CheckIdentityAsync(ScenarioTarget target, CheckRecorder checks)
+    internal static async Task<string?> CheckIdentityAsync(ScenarioTarget target, CheckRecorder checks)
     {
         string? revision = null;
         bool nativeAot = false;
@@ -143,7 +148,7 @@ internal static partial class HelloScenarios
 
     private static async Task CheckUnaryAsync(ScenarioTarget target, CheckRecorder checks, string? healthRevision)
     {
-        using var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport());
+        using var channel = target.Open();
         var client = new HelloService.HelloServiceClient(channel.Channel);
         var outcome = await CallAsync(client, "ArcForges", Deadline(15)).ConfigureAwait(false);
         checks.Expect("unary.success.message", outcome.Code == StatusCode.OK && outcome.Response?.Message == "Hello, ArcForges!",
@@ -167,7 +172,7 @@ internal static partial class HelloScenarios
 
     private static async Task CheckExactValuesAsync(ScenarioTarget target, CheckRecorder checks)
     {
-        using var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport());
+        using var channel = target.Open();
         var client = new HelloService.HelloServiceClient(channel.Channel);
         int exact = 0;
         foreach (string name in Exactness.Names)
@@ -193,7 +198,7 @@ internal static partial class HelloScenarios
 
     private static async Task CheckScopedErrorsAsync(ScenarioTarget target, CheckRecorder checks)
     {
-        using var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport());
+        using var channel = target.Open();
         var client = new HelloService.HelloServiceClient(channel.Channel);
         var empty = await CallAsync(client, string.Empty, Deadline(15)).ConfigureAwait(false);
         var emptyEntry = channel.Tap.Last;
@@ -211,7 +216,7 @@ internal static partial class HelloScenarios
 
     private static async Task CheckCancellationAsync(ScenarioTarget target, CheckRecorder checks)
     {
-        using var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport());
+        using var channel = target.Open();
         var client = new HelloService.HelloServiceClient(channel.Channel);
         using var cancellation = new CancellationTokenSource();
         channel.Tap.BeforeSend = () => cancellation.Cancel();
@@ -228,7 +233,7 @@ internal static partial class HelloScenarios
 
     private static async Task CheckDeadlineAsync(ScenarioTarget target, CheckRecorder checks)
     {
-        using var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport());
+        using var channel = target.Open();
         var client = new HelloService.HelloServiceClient(channel.Channel);
         var expired = await CallAsync(client, "ArcForges", DateTime.UtcNow.AddMilliseconds(1)).ConfigureAwait(false);
         checks.Expect("deadline.expired", expired.Code == StatusCode.DeadlineExceeded && expired.Response is null,
@@ -242,7 +247,7 @@ internal static partial class HelloScenarios
 
     private static async Task CheckWrongTargetAsync(ScenarioTarget target, CheckRecorder checks)
     {
-        using (var channel = new ProbeChannel(target.BaseAddress, target.CreateTransport()))
+        using (var channel = target.Open())
         {
             var method = new Method<SayHelloRequest, SayHelloResponse>(MethodType.Unary, ServiceName, "NoSuchMethod",
                 Marshallers.Create<SayHelloRequest>(message => message.ToByteArray(), bytes => SayHelloRequest.Parser.ParseFrom(bytes)),
