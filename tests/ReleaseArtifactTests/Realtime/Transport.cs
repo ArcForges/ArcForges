@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using ArcForges.Contracts.Events.V1;
 using ArcForges.Contracts.Foundation.V1;
@@ -96,10 +97,11 @@ internal static class RealtimeChannel
     internal const int MaximumReceiveBytes = 512 * 1024;
 
     /// <summary>The public business route prefix (annex 10 section 1: <c>/api/package.Service/Method</c>).</summary>
-    internal const string ApiPrefix = "api/";
+    internal const string ApiPrefix = "api";
 
     /// <summary>Validate and normalize a base address: HTTPS (or plain HTTP to loopback), no user information, no query.</summary>
-    public static Uri NormalizeAddress(Uri address, string? authorization)
+    /// <remarks>An authorization value is only ever sent to an address that passed this check, so never over remote cleartext HTTP.</remarks>
+    public static Uri NormalizeAddress(Uri address)
     {
         ArgumentNullException.ThrowIfNull(address);
         if (!address.IsAbsoluteUri)
@@ -119,24 +121,33 @@ internal static class RealtimeChannel
             throw new ArgumentException("The base address must not carry user information, a query or a fragment.", nameof(address));
         }
 
-        if (authorization is not null && !https && !loopbackHttp)
-        {
-            throw new ArgumentException("An authorization value is never sent over cleartext HTTP.", nameof(address));
-        }
-
         string path = address.AbsolutePath.EndsWith('/') ? address.AbsolutePath : address.AbsolutePath + "/";
-        return new UriBuilder(address) { Path = path + ApiPrefix }.Uri;
+        return new UriBuilder(address) { Path = path }.Uri;
     }
 
+    /// <summary>The path every generated call is placed under: the base path followed by <c>api</c>.</summary>
+    /// <remarks>The gRPC client replaces the path of a channel address with the method path, so the prefix is applied by a handler.</remarks>
+    internal static string ApiPath(Uri normalized)
+    {
+        ArgumentNullException.ThrowIfNull(normalized);
+        return normalized.AbsolutePath.TrimEnd('/') + "/" + ApiPrefix;
+    }
+
+    /// <summary>The default transport: a redirect is never followed, so credentials never leave the validated host.</summary>
+    internal static SocketsHttpHandler NewTransportHandler() => new() { AllowAutoRedirect = false };
+
     /// <summary>Create the channel. <paramref name="inner"/> is the transport handler; the default never follows a redirect.</summary>
+    [SuppressMessage("Reliability", "CA2000", Justification = "The handlers are owned by the returned channel, which disposes its HTTP client and handler chain.")]
     public static GrpcChannel Create(Uri address, string? authorization, HttpMessageHandler? inner = null)
     {
-        Uri normalized = NormalizeAddress(address, authorization);
-        HttpMessageHandler transport = inner ?? new SocketsHttpHandler { AllowAutoRedirect = false };
+        Uri normalized = NormalizeAddress(address);
+        HttpMessageHandler transport = inner ?? NewTransportHandler();
         if (authorization is not null)
         {
             transport = new AuthorizationHandler(authorization, transport);
         }
+
+        transport = new PathPrefixHandler(ApiPath(normalized), transport);
 
         return GrpcChannel.ForAddress(normalized, new GrpcChannelOptions
         {
@@ -146,6 +157,16 @@ internal static class RealtimeChannel
             ThrowOperationCanceledOnCancellation = true,
             DisposeHttpClient = true,
         });
+    }
+
+    private sealed class PathPrefixHandler(string prefix, HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Uri original = request.RequestUri ?? throw new InvalidOperationException("The request has no address.");
+            request.RequestUri = new UriBuilder(original) { Path = prefix + original.AbsolutePath }.Uri;
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 
     private sealed class AuthorizationHandler(string authorization, HttpMessageHandler inner) : DelegatingHandler(inner)

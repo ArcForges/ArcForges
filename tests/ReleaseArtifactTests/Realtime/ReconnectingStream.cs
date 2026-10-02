@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Events.V1;
+using Google.Protobuf;
 using Grpc.Core;
 
 namespace RealtimeAotProbe;
@@ -259,6 +260,10 @@ internal static class FailureMapper
         ArgumentNullException.ThrowIfNull(exception);
         switch (exception)
         {
+            case InvalidProtocolBufferException:
+                // It derives from IOException, so it must be matched before the network failures.
+                end = ConnectionEnd.StopWith(StopReason.ProtocolViolation, "malformed message");
+                return true;
             case OperationCanceledException when cancellationToken.IsCancellationRequested:
                 end = ConnectionEnd.Cancelled();
                 return true;
