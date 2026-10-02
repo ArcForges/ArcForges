@@ -24,5 +24,7 @@ their retained compatibility disposition. No old namespace or package identity
 is renamed or repurposed.
 
 The nested `Tests` project verifies palette contrast, semantic coverage, density
-snapshots and the raw-value markup policy offline. Package publication and
-artifact evidence belong to PLT.35.
+snapshots and the raw-value markup policy offline. The library is published as
+`ArcForges.DesignSystem` in the DesktopPlatform single-version release set; it has
+no package dependencies. The owned-artifact and integration receipt is recorded
+by PLT.35 in the Plan ledger.

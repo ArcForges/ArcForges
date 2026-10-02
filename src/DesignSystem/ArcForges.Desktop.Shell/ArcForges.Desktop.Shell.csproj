@@ -4,8 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>ArcForges.Desktop.Shell</AssemblyName>
     <RootNamespace>ArcForges.Desktop.Shell</RootNamespace>
-    <IsPackable>false</IsPackable>
-    <Description>Framework-neutral window, panel and device-local layout primitives.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Desktop.Shell</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Framework-neutral desktop shell mechanisms: window and panel layout, commands, settings, attention, error presentation, lifecycle, accessibility and localisation contracts.</Description>
   </PropertyGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>
@@ -14,6 +16,9 @@
   <ItemGroup>
     <Compile Remove="Tests/**/*.cs" />
     <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
     <ProjectReference Include="../ArcForges.DesignSystem/ArcForges.DesignSystem.csproj" />
     <ProjectReference Include="../../BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
     <ProjectReference Include="../../BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj" />

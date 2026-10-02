@@ -666,7 +666,8 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/ApprovalCoordinatorTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/ApprovalGuardrailTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/SqliteApprovalStoreTests.cs",
-    "eng/policy/dependency-reviews/plt-39-r1.json"
+    "eng/policy/dependency-reviews/plt-39-r1.json",
+    "eng/policy/dependency-reviews/plt-35-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

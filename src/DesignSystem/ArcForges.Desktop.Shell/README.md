@@ -6,7 +6,9 @@ Framework-neutral state for a multi-window desktop shell: per-launch window owne
 
 Layout writes use a flushed same-directory temporary file followed by replacement, preserving the last committed layout if a write is interrupted. Invalid or truncated JSON is reported as corrupt without being overwritten. Restore filters panels no longer registered by the current application, clamps window bounds to the current display work areas, and falls back to the primary display if a saved display has disappeared.
 
-This project is non-packable. Package activation and UI-framework adapters are intentionally outside this task.
+## Package
+
+`ArcForges.Desktop.Shell` is published in the DesktopPlatform single-version release set together with `ArcForges.DesignSystem`. Its exact package dependencies are `ArcForges.DesignSystem`, `ArcForges.Capabilities` and `ArcForges.Foundation` at the same release version, plus the `ArcForges.Contracts.Foundation` coordinate pinned in `eng/packaging/packages.json`. It pulls in no UI framework, native runtime, storage engine or product package, so an application restores only the mechanisms it composes. The package contains the framework-neutral models and contracts below; UI-framework adapters, the control set they would use and every product flow stay with their own tasks and owners.
 
 ## Lifecycle, menus and shutdown
 
@@ -29,3 +31,5 @@ Both are framework-neutral contracts that a UI adapter binds; this project still
 ### What this does not verify
 
 The automated checks prove the declarations and the keyboard and localisation logic; they do not read a platform accessibility tree. The dated manual assistive-technology verification of a real UI adapter is an explicit local opt-in that cannot run until an adapter and an admitted UI control set exist. When one does, record against its exact build: the date, operating system and assistive technology with versions (for example Narrator or NVDA on Windows and Orca on Linux), and for each catalogue surface that the name, role, state and live announcements are spoken, the Tab order matches the catalogue, every action is reachable without a pointer, focus is visible, dialogs trap and restore focus, high-contrast and reduced-motion settings are honoured, and text scaled to 200 percent stays usable. Untested items stay listed as untested.
+
+Known contract gaps in this release, stated so a consumer does not assume them: the surface catalogue does not include menu contributions and declares no menu role, and the accessibility node contract carries visual state cues but no assistive-technology state (toggled, selected, expanded, disabled, busy). Both belong to a later extension before an adapter relies on them.

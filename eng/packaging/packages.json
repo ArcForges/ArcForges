@@ -183,6 +183,39 @@
         "NOTICE.md",
         "build-identity.json"
       ]
+    },
+    {
+      "id": "ArcForges.DesignSystem",
+      "project": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
+      "kind": "managed",
+      "dependencies": [],
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.DesignSystem.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
+    },
+    {
+      "id": "ArcForges.Desktop.Shell",
+      "project": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.DesignSystem",
+        "ArcForges.Capabilities",
+        "ArcForges.Foundation"
+      ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Desktop.Shell.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
     }
   ]
 }
