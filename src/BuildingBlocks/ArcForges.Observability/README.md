@@ -109,11 +109,14 @@ CC-01 to CC-03).
   published by the repository's main-push pipeline together with every other admitted package at one prerelease
   version; consumers pin that exact version. It depends on `ArcForges.Capabilities` and `ArcForges.Foundation` at the
   same version and on `ArcForges.Contracts.Foundation` (exact pin recorded in the catalogue); `Capabilities` in turn brings
-  the Contracts SDK packages. It has no OpenTelemetry, exporter or other third-party package dependency.
-- **No pipeline is installed.** `RedactionProcessor`, `TracePolicy` and `MetricLabelPolicy` are callables and
-  `SignalEmitter` writes to a sink the host supplies; this package installs no exporter, no listener and no processor
-  of its own, and nothing in this repository calls `TracePolicy.PurgeBuffer` outside this project. Wiring them into a
-  host, a telemetry transport or a backend belongs to the host.
+  the Contracts SDK packages and, through them, `Google.Protobuf` and `Grpc.Core.Api`. It has no OpenTelemetry or exporter
+  dependency and no direct third-party package reference; those transitive packages are the only third-party packages.
+- **What is and is not wired.** `SignalEmitter` runs its dimensions through `RedactionProcessor` and builds its metric
+  labels with `MetricLabelPolicy.CreateTags`, and writes to a sink the host supplies. Everything else is a callable the
+  host must wire: `RedactionProcessor.Scrub(Activity)` and `MetricLabelPolicy.ScrubLabels` for an exporter, and
+  `TracePolicy`, which this package attaches to nothing. The package installs no exporter and no listener, and nothing
+  in this repository calls `TracePolicy.PurgeBuffer` or `MetricLabelPolicy.ScrubLabels`. Wiring a host, a telemetry
+  transport or a backend belongs to the host.
 - **Not a supported API.** The assembly declares `InternalsVisibleTo("ArcForges.Observability.Tests")` for this
   repository's tests; internal members are not part of the package contract and may change without notice.
 - **Name overlap.** `ArcForges.Observability.TelemetryConsent` (a static class) and

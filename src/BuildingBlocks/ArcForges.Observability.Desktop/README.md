@@ -8,7 +8,9 @@ verbose-session surfaces. It has no UI: the shell presents `TelemetryConsent`, `
 The package (net10.0, AGPL-3.0-only) is admitted in `eng/packaging/packages.json` and published by the repository's
 main-push pipeline with every other admitted package at one prerelease version; consumers pin that exact version. It
 depends on `ArcForges.Observability` and `ArcForges.Foundation` at the same version and on `ArcForges.Contracts.Foundation`
-(exact pin recorded in the catalogue), and on no other third-party package.
+(exact pin recorded in the catalogue). `ArcForges.Observability` brings `ArcForges.Capabilities` and, through the Contracts SDK
+packages, `Google.Protobuf` and `Grpc.Core.Api`; there is no direct third-party package reference and no exporter or
+OpenTelemetry dependency.
 
 `DesktopDiagnostics.Open` takes a `DesktopDiagnosticsOptions` whose required `Directory` and `Identity` (an
 `ObservabilityContext`) name the host-owned local directory and the application identity. It holds three kinds of state
