@@ -200,6 +200,14 @@
     "aot": true
   },
   {
+    "path": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
     "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "role": "Test",
     "owner": "DesktopPlatform",

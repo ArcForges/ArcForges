@@ -218,10 +218,13 @@ public sealed class DecisionExecutionTests
     {
         var harness = new DecisionHarness();
         using var cancel = new CancellationTokenSource();
-        harness.Owner.Behavior = async (_, _) =>
+        // The owner's validation has already answered when the caller cancels, so only the check before the owner operation can see it.
+        harness.Owner.Behavior = (_, _) =>
         {
-            await cancel.CancelAsync();
-            return OwnerVerdict.Valid;
+#pragma warning disable CA1849 // The cancellation must happen synchronously, before the answer is returned.
+            cancel.Cancel();
+#pragma warning restore CA1849
+            return ValueTask.FromResult(OwnerVerdict.Valid);
         };
 
         _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>

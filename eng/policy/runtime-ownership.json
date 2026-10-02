@@ -141,6 +141,10 @@
           "role": "aot-library"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj",
+          "role": "aot-library"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
           "role": "test-or-build-tool"
         },

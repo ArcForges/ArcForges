@@ -312,8 +312,8 @@ public sealed class SecurityDecisionPipeline
 
         var verdict = transport.Value;
         var binding = verdict?.Binding;
-        if (verdict is null || verdict.Refusal != TransportRefusal.None || binding is null
-            || session.Kind == TransportKind.None || binding.Kind != session.Kind)
+        // A binding always names a real kind, so a session whose own kind is None can never match it.
+        if (verdict is null || verdict.Refusal != TransportRefusal.None || binding is null || binding.Kind != session.Kind)
         {
             return StepResult.Refuse(DecisionReason.S03TransportRefused);
         }
