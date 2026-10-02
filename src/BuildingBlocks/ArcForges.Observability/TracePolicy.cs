@@ -67,7 +67,7 @@ public readonly record struct TracePolicyStatistics(
 /// read live on every span, but <see cref="ITelemetryConsent"/> has no change notification, so held spans are purged only
 /// when the next span ends, or an instrument is read, while consent is absent, or when the host calls
 /// <see cref="PurgeBuffer"/>. A host that revokes and re-grants consent with neither in between would otherwise let spans
-/// collected before the revocation be exported after the re-grant: the host (PLT.52) must call <see cref="PurgeBuffer"/>
+/// collected before the revocation be exported after the re-grant: the host wiring must call <see cref="PurgeBuffer"/>
 /// when consent is revoked. The attached listener keeps creating and populating spans, and keeps setting the head-sampled
 /// flag that propagates on outgoing context, while consent is absent; only export, holding and facts stop. The
 /// <see cref="SignalEmitter"/>'s own sink and instruments are not gated by this class.
