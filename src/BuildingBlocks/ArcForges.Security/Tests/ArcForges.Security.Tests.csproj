@@ -14,5 +14,6 @@
     <PackageReference Include="xunit.v3" />
     <ProjectReference Include="../ArcForges.Security.csproj" />
     <ProjectReference Include="../../ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
+    <ProjectReference Include="../LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj" />
   </ItemGroup>
 </Project>
