@@ -45,7 +45,7 @@ internal static class LaunchHelperProcess
                 return await OrphanAsync(arguments[1]).ConfigureAwait(false);
             case "sleep":
                 await Say("READY").ConfigureAwait(false);
-                                await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
+                await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
                 return 0;
             default:
                 return 2;
@@ -70,7 +70,7 @@ internal static class LaunchHelperProcess
         }
 
         await Say("INTACT " + launches.Count(launch => Directory.Exists(launch.DirectoryPath)));
-                return 0;
+        return 0;
     }
 
     [SuppressMessage("Reliability", "CA2000", Justification = "The orphan helper is killed without cleanup on purpose: it keeps its authority and server alive until the process dies.")]
@@ -85,7 +85,7 @@ internal static class LaunchHelperProcess
             .Build();
         await server.StartAsync().ConfigureAwait(false);
         await Say("READY " + Convert.ToBase64String(launch.Descriptor.Encode()) + " " + launch.DirectoryPath);
-                GC.KeepAlive(authority);
+        GC.KeepAlive(authority);
         GC.KeepAlive(server);
         await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
         return 0;
