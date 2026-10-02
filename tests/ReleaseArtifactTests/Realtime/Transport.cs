@@ -53,7 +53,8 @@ internal sealed class GeneratedRealtimeTransport(ChannelBase channel, RealtimePo
             request.Cursor = cursor;
         }
 
-        return await _events.PollAsync(request, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
+        using AsyncUnaryCall<EventServicePollResponse> call = _events.PollAsync(request, cancellationToken: cancellationToken);
+        return await call.ResponseAsync.ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<StreamFrame> WatchOutputAsync(ExecutionOwner owner, string? cursor, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -79,7 +80,8 @@ internal sealed class GeneratedRealtimeTransport(ChannelBase channel, RealtimePo
             request.Cursor = cursor;
         }
 
-        return await _executions.ReadOutputAsync(request, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
+        using AsyncUnaryCall<ExecutionServiceReadOutputResponse> call = _executions.ReadOutputAsync(request, cancellationToken: cancellationToken);
+        return await call.ResponseAsync.ConfigureAwait(false);
     }
 
     private static RequestMeta NewMeta()

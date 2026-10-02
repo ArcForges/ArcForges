@@ -287,6 +287,7 @@ internal sealed class OutputWatcher(
         int restarts = 0;
         while (true)
         {
+            ulong before = _session.Tracker.NextOffset;
             ExecutionServiceReadOutputResponse response;
             try
             {
@@ -315,7 +316,8 @@ internal sealed class OutputWatcher(
 
                     break;
                 default:
-                    if (page.Chunks == 0)
+                    // Caught up: an empty page, or a page that appended nothing (a server repeating itself must not spin this loop).
+                    if (page.Chunks == 0 || _session.Tracker.NextOffset == before)
                     {
                         return null;
                     }

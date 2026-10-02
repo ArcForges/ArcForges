@@ -89,6 +89,7 @@ internal static class SelfTestStreams
         runner.Add("output: stream and authoritative terminals that disagree are an integrity failure", OutputTerminalDisagree);
         runner.Add("output: a dropped stream recovers missed chunks through ReadOutput and never completes", OutputDropRecovers);
         runner.Add("output: a gap is filled from the authoritative read, not invented", OutputGapRecovers);
+        runner.Add("output: a recovery that appends nothing ends instead of spinning", OutputRecoveryProgress);
         runner.Add("output: a reset restarts the output from offset zero through ReadOutput", OutputReset);
         runner.Add("output: a ReadOutput that keeps requiring a reset backs off", OutputResetLoop);
         runner.Add("output: conflicts, oversize chunks and foreign owners stop the stream", OutputViolations);
@@ -433,6 +434,9 @@ internal static class SelfTestStreams
 
         public CancellationTokenSource Cancel { get; } = new();
 
+        public Task PendingAsync(string what, params double[] seconds) =>
+            Check.EventuallyAsync(() => Time.Pending().SequenceEqual(seconds.Select(TimeSpan.FromSeconds)), what + " (pending timers " + string.Join(",", Time.Pending()) + ")");
+
         public OutputRig Start()
         {
             Run = Watcher.RunAsync(Cancel.Token);
@@ -547,6 +551,20 @@ internal static class SelfTestStreams
         Check.Sequence([0UL, 2UL], rig.Observer.Chunks.Select(chunk => chunk.Offset), "the gap chunk was not delivered ahead of the missing bytes");
         Check.Equal(1L, rig.Session.Tracker.Gaps, "gap counted");
         Check.Sequence([null, "o6"], rig.Transport.WatchOutputCursors, "the stream resumes from the authoritative cursor");
+        await rig.StopAsync().ConfigureAwait(false);
+    }
+
+    private static async Task OutputRecoveryProgress()
+    {
+        var rig = new OutputRig { Random = 1.0 };
+        rig.Transport.OnWatchOutput(Step.End);
+        rig.Transport.OnReadOutput(Make.ReadPage("o2", null, Make.Chunk(0, "ab")));
+        rig.Transport.OnReadOutput(Make.ReadPage("o2", null, Make.Chunk(0, "ab")));
+        rig.Start();
+        await rig.PendingAsync("the backoff after a recovery that stopped making progress", 0.5).ConfigureAwait(false);
+        Check.Equal(2, rig.Transport.ReadOutputCalls, "the repeated page ended the recovery loop");
+        Check.Equal(1L, rig.Session.Tracker.Duplicates, "the repeated chunk was discarded as a duplicate");
+        Check.Sequence([0UL], rig.Observer.Chunks.Select(chunk => chunk.Offset), "the chunk was delivered once");
         await rig.StopAsync().ConfigureAwait(false);
     }
 

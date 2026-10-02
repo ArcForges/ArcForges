@@ -26,6 +26,7 @@ internal static class SelfTestPure
         runner.Add("sequence: 64 bit boundaries and reset", () => { SequenceBoundaries(); return Task.CompletedTask; });
         runner.Add("output tracker: append, duplicate, gap, conflict and bounds", () => { OutputTrackerRules(); return Task.CompletedTask; });
         runner.Add("output tracker: owner, attempt binding, straddle and overflow", () => { OutputTrackerBinding(); return Task.CompletedTask; });
+        runner.Add("policy: the defaults are the limits annex 10 states", () => { PolicyDefaults(); return Task.CompletedTask; });
         runner.Add("backoff: ceiling ladder, cap, jitter bounds and the 30 second reset", () => { Backoff(); return Task.CompletedTask; });
         runner.Add("pacing: plus or minus 20 percent around the interval", () => { PacingBounds(); return Task.CompletedTask; });
         runner.Add("classification: ArcError categories, retry modes and retry time", () => { ArcErrors(); return Task.CompletedTask; });
@@ -247,6 +248,25 @@ internal static class SelfTestPure
 
         Check.Equal(OutputOutcome.Conflict, window.Evaluate(Make.Chunk(1, "z")).Outcome, "the oldest remembered chunk is still compared");
         Check.Equal(OutputOutcome.Duplicate, window.Evaluate(Make.Chunk(0, "z")).Outcome, "a chunk older than the window is a plain duplicate");
+    }
+
+    private static void PolicyDefaults()
+    {
+        var policy = new RealtimePolicy();
+        Check.Equal(TimeSpan.FromSeconds(45), policy.SilenceTimeout, "silence timeout");
+        Check.Equal(TimeSpan.FromMilliseconds(500), policy.ReconnectBase, "reconnect base");
+        Check.Equal(TimeSpan.FromSeconds(30), policy.ReconnectCap, "reconnect cap");
+        Check.Equal(TimeSpan.FromSeconds(30), policy.StableConnection, "stable connectivity");
+        Check.Equal(TimeSpan.FromSeconds(10), policy.PollInterval, "poll interval");
+        Check.Equal(TimeSpan.FromSeconds(5), policy.ReadOutputInterval, "ReadOutput interval");
+        Check.Equal(0.2, policy.CadenceJitter, "cadence jitter");
+        Check.Equal(TimeSpan.FromMinutes(5), policy.MaximumRetryAfter, "the probe's own retry-time bound");
+        Check.Equal(32 * 1024, policy.MaximumChunkBytes, "chunk data bound");
+        Check.Equal(100, policy.MaximumPageChunks, "page chunk bound");
+        Check.Equal(256 * 1024, policy.MaximumPageBytes, "page byte bound");
+        Check.Equal(512 * 1024, RealtimeChannel.MaximumReceiveBytes, "received message bound");
+        Check.Equal(64, EventSequenceTracker.ConflictWindow, "event conflict window");
+        Check.Equal(64, OutputTracker.ConflictWindow, "output conflict window");
     }
 
     private static void Backoff()
