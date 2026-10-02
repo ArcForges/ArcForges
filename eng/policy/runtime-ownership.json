@@ -81,6 +81,14 @@
           "role": "test-or-build-tool"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",
           "role": "aot-library"
         },

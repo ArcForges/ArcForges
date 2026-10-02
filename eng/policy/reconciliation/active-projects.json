@@ -83,6 +83,14 @@
       "blob": "d788d3fc83da121b960f1e78132b838dfc278368"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj",
+      "blob": "f55964f554e2d13acea98e025f76ed307bc09951"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+      "blob": "d238d8aa3306c58aa6857b335d547da09c10d529"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.NativeInterop/ArcForges.NativeInterop.csproj",
       "blob": "4296a8d469d84de3d133c0dd56385baf800dbf77"
     },
