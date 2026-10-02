@@ -93,6 +93,14 @@
           "role": "aot-library"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
           "role": "aot-library"
         },
