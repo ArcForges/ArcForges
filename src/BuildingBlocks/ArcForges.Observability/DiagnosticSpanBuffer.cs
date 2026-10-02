@@ -42,7 +42,8 @@ internal readonly record struct BufferCounters(
 /// <remarks>
 /// Cost is an accounting model, not a measurement of process memory: a fixed overhead per span, entry and closed-trace
 /// marker plus twice the length of each retained string, so the budget is deterministic and testable. Every retained
-/// object (held spans, trace entries, promotion state, closed-trace markers) is charged against the one budget.
+/// object (held spans, trace entries, promotion state, closed-trace markers) is charged against the one budget. The
+/// 30-second window is logical: it is applied when a span is offered or the counters are read, not by a timer.
 /// </remarks>
 internal sealed class DiagnosticSpanBuffer
 {

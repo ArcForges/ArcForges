@@ -63,6 +63,8 @@ internal sealed class CapturingEventSink : IStructuredEventSink
     private readonly List<StructuredSignal> _signals = [];
     private readonly object _gate = new();
 
+    public bool Fail { get; set; }
+
     public IReadOnlyList<StructuredSignal> Signals
     {
         get
@@ -76,6 +78,11 @@ internal sealed class CapturingEventSink : IStructuredEventSink
 
     public void Write(StructuredSignal signal)
     {
+        if (Fail)
+        {
+            throw new InvalidOperationException("the log backend is down");
+        }
+
         lock (_gate)
         {
             _signals.Add(signal);

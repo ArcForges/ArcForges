@@ -356,6 +356,7 @@
       "maximumClosedTraces": 1024,
       "contents": "finished spans of unselected traces, already copied through the scrubbing processor",
       "accounting": "a deterministic cost model charged for every retained span, trace entry, promotion state and closed-trace marker; it is not a measurement of process memory",
+      "windowApplication": "logical: applied when a span arrives or statistics are read, with no timer",
       "evictionOrder": [
         "closed-trace markers",
         "whole held traces, oldest first",
@@ -365,6 +366,7 @@
     },
     "promotion": {
       "errorAndSlow": "spans-still-recorded-only",
+      "exportVolumeCapped": false,
       "everyErrorTraceRetained": false,
       "slowSpanThresholdMs": null
     },
@@ -377,7 +379,8 @@
     },
     "consent": {
       "gate": "ITelemetryConsent, read live on every span",
-      "whenAbsent": "no span is exported or held, no error fact or instrument measurement is produced, and held spans are purged; statistics stay readable locally",
+      "whenAbsent": "no span is exported or held and no error fact or instrument measurement is produced; statistics stay readable locally. Held spans are purged when the next span ends or an instrument is read while consent is absent, or on PurgeBuffer, which the host must call at revocation",
+      "listener": "the attached listener keeps recording spans and setting the head-sampled flag while consent is absent; SignalEmitter instruments and sinks are not gated by this library",
       "cloudHosts": "TelemetryConsent.NotRequired"
     },
     "loss": {

@@ -502,6 +502,7 @@
     "src/BuildingBlocks/ArcForges.Observability/Tests/SensitiveTypeAuditTests.cs",
     "src/BuildingBlocks/ArcForges.Observability/Tests/SignalEmitterTests.cs",
     "src/BuildingBlocks/ArcForges.Observability/Tests/TelemetryPolicyTests.cs",
+    "src/BuildingBlocks/ArcForges.Observability/Tests/TracePolicyBoundTests.cs",
     "src/BuildingBlocks/ArcForges.Observability/Tests/TracePolicyRig.cs",
     "src/BuildingBlocks/ArcForges.Observability/Tests/TracePolicyTests.cs",
     "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json",

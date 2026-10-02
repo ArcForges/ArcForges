@@ -5,7 +5,11 @@ using System.Diagnostics.Metrics;
 
 namespace ArcForges.Observability;
 
-/// <summary>The host-owned bridge to its trace exporter. It receives only spans already copied through the scrubbing processor.</summary>
+/// <summary>
+/// The host-owned bridge to its trace exporter. It receives only spans already copied through the scrubbing processor.
+/// <see cref="Write"/> is called from whichever thread ends a span, concurrently and outside any lock of this library, so
+/// an implementation must be thread-safe.
+/// </summary>
 public interface IScrubbedSpanSink
 {
     void Write(ScrubbedSpan span);
@@ -23,13 +27,13 @@ public interface IScrubbedSpanSink
 /// <param name="TracesEvictedForOverflow">Traces, or promotion states, evicted because the buffer was full.</param>
 /// <param name="LateSpans">Spans dropped because their trace's window had already closed.</param>
 /// <param name="OversizeSpans">Spans dropped because one span alone costs more than the buffer.</param>
-/// <param name="ErrorSpansNotRetained">Error spans that were not exported (late or oversize); their error facts were still recorded.</param>
-/// <param name="ErrorFacts">Redacted error events and counter increments recorded, independent of sampling.</param>
+/// <param name="ErrorSpansNotRetained">Error spans that were not exported because their trace's window had already closed; their error facts were still recorded. An error or slow span is never refused for size: promotion exports it, and promotion export is not capped in volume.</param>
+/// <param name="ErrorFacts">Redacted error events written and counter increments recorded, independent of sampling; a fact whose event sink threw is not counted here.</param>
 /// <param name="ConsentSuppressedSpans">Spans that arrived, or were held, while consent was absent and were discarded.</param>
-/// <param name="PurgedSpans">Held spans discarded because consent was withdrawn.</param>
+/// <param name="PurgedSpans">Held spans discarded by <see cref="TracePolicy.PurgeBuffer"/>, by the next span or instrument read that found consent absent, or by disposal.</param>
 /// <param name="ExportFailures">Spans whose export failed inside the sink or the listener, counted and swallowed.</param>
 /// <param name="BufferedSpans">Spans held now.</param>
-/// <param name="BufferedBytes">Accounted cost of everything the buffer retains now.</param>
+/// <param name="BufferedBytes">Accounted cost of everything the buffer retains now. Windows that ended are applied when this is read or the next span arrives, never by a timer.</param>
 /// <param name="ClosedTraces">Closed-trace markers retained now.</param>
 public readonly record struct TracePolicyStatistics(
     long HeadSampledSpans,
@@ -58,10 +62,25 @@ public readonly record struct TracePolicyStatistics(
 /// and a counter increment.
 /// </summary>
 /// <remarks>
-/// With consent absent nothing is exported or held, no error fact or instrument measurement is produced, and a buffer
-/// that held spans is purged on the next decision or on <see cref="PurgeBuffer"/>. Consent is read live on every span.
+/// <para>
+/// With consent absent nothing is exported or held, and no error fact or instrument measurement is produced. Consent is
+/// read live on every span, but <see cref="ITelemetryConsent"/> has no change notification, so held spans are purged only
+/// when the next span ends, or an instrument is read, while consent is absent, or when the host calls
+/// <see cref="PurgeBuffer"/>. A host that revokes and re-grants consent with neither in between would otherwise let spans
+/// collected before the revocation be exported after the re-grant: the host (PLT.52) must call <see cref="PurgeBuffer"/>
+/// when consent is revoked. The attached listener keeps creating and populating spans, and keeps setting the head-sampled
+/// flag that propagates on outgoing context, while consent is absent; only export, holding and facts stop. The
+/// <see cref="SignalEmitter"/>'s own sink and instruments are not gated by this class.
+/// </para>
+/// <para>
 /// Head selection is parent-based: a root span is selected when its trace identifier falls under its ratio, and a child
-/// span follows the sampled flag of its parent, so one trace is exported whole or not at all at the head.
+/// span follows the sampled flag of its parent, so one trace is exported whole or not at all at the head. A remote
+/// parent's sampled flag is trusted: a caller that sends a sampled trace context forces recording and export here whatever
+/// the ratio. Retention is a logical window checked when a span arrives or statistics are read; no timer runs, so on an
+/// idle process held spans stay in memory, within the buffer budget and never exported, until the next call. Promotion
+/// exports the promoting span and the rest of its trace without a volume cap; the bound is on the buffer, not on export.
+/// Sinks are called concurrently from arbitrary threads.
+/// </para>
 /// </remarks>
 public sealed class TracePolicy : IDisposable
 {
@@ -244,7 +263,8 @@ public sealed class TracePolicy : IDisposable
             Export(released);
         }
 
-        if (failed && outcome is BufferOutcome.Late or BufferOutcome.Oversize)
+        // A promoting span is never refused for size, so the only error span that is not retained is a late one.
+        if (failed && outcome == BufferOutcome.Late)
         {
             Interlocked.Increment(ref _errorSpansNotRetained);
         }
@@ -378,10 +398,10 @@ public sealed class TracePolicy : IDisposable
             && name is string text && Enum.TryParse(text, ignoreCase: false, out SignalService parsed) && Enum.IsDefined(parsed)
             ? parsed
             : null;
+        _events.Write(new StructuredSignal(ErrorFactEventName, SignalLevel.Error, _time.GetUtcNow(), fields));
         TagList labels = MetricLabelPolicy.CreateTags(service);
         _errorCounter.Add(1, in labels);
         Interlocked.Increment(ref _errorFacts);
-        _events.Write(new StructuredSignal(ErrorFactEventName, SignalLevel.Error, _time.GetUtcNow(), fields));
     }
 
     private void Observe(string name, Func<long> read) =>
@@ -389,7 +409,16 @@ public sealed class TracePolicy : IDisposable
 
     private IEnumerable<Measurement<long>> ReadBufferBytes() => ConsentedMeasurement(_buffer.Counters().BufferedBytes);
 
-    // With consent absent an instrument reports nothing, so no measurement can leave the device.
-    private IEnumerable<Measurement<long>> ConsentedMeasurement(long value) =>
-        _consent.IsGranted ? [new Measurement<long>(value)] : [];
+    // With consent absent an instrument reports nothing, so no measurement can leave the device, and an exporter polling the
+    // instruments is also the moment a revocation is observed, so what was held is purged.
+    private IEnumerable<Measurement<long>> ConsentedMeasurement(long value)
+    {
+        if (_consent.IsGranted)
+        {
+            return [new Measurement<long>(value)];
+        }
+
+        _buffer.Purge();
+        return [];
+    }
 }
