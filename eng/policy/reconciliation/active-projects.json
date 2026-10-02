@@ -205,6 +205,10 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
       "blob": "b0ed7c0159904973534815eeaaa19505ff5028a1"
+    },
+    {
+      "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
+      "blob": "faf8bcb2c550dbd642d281f9f93845fa51c973db"
     }
   ]
 }

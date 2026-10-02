@@ -207,6 +207,10 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
+      "kind": "msbuild"
     }
   ]
 }

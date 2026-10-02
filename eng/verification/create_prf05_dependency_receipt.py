@@ -26,7 +26,7 @@ NUGET_FEED = "https://api.nuget.org/v3/index.json"
 NEW_COORDINATE = "grpc.net.client.web/2.84.0"
 NEW_EVIDENCE = {
     "licence": "Apache-2.0",
-    "nuspecSha256": "da47ce027ddbbbf7c0b1f242b1efe64a5aeaa2959da54716a100fcc6e4520ef",
+    "nuspecSha256": "da47ce027ddbbbf7c0b1f242b1efe64a5aeaa2959da54716a100fcc6e4520efb",
     "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.client.web/2.84.0/grpc.net.client.web.nuspec",
     "classification": (
         "Exact direct gRPC-Web client handler shared by PRF.05 and PRF.06; the net10.0 dependency group is empty, so "
