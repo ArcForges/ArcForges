@@ -657,4 +657,180 @@ public sealed class LocalRpcLaunchTests
         await using var healthy = world.Authority();
         Assert.Equal(1UL, healthy.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams).Descriptor.Epoch);
     }
+
+
+    // ---- secret consumption is gated by the launch status (review finding 1)
+
+    [Fact]
+    public async Task AnExpiredLaunchCannotConsumeItsSecretAndStaysExpired()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var ran = false;
+        world.Clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+
+        var error = Assert.Throws<InvalidOperationException>(() => launch.ConsumeSecret(0, (_, _) =>
+        {
+            ran = true;
+            return 0;
+        }));
+
+        Assert.Contains("Expired", error.Message, StringComparison.Ordinal);
+        Assert.False(ran);
+        Assert.True(launch.SecretIsZeroed());
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, authority.Verify(launch.Descriptor.ToClaim()));
+        Assert.False(await launch.AuthorizeConnectionAsync(new LocalRpcConnectionInfo(LocalRpcTransport.NamedPipe, 1), CancellationToken.None));
+        Assert.Throws<InvalidOperationException>(launch.HandoffBootstrapResource);
+    }
+
+    [Fact]
+    public async Task ALaunchWhoseChildOrParentIsGoneCannotConsumeItsSecret()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var orphaned = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var child = world.SpawnFake(5301);
+        orphaned.BindChild(child);
+        world.Processes.Set(child, ProcessLiveness.Dead);
+        var ran = false;
+
+        var gone = Assert.Throws<InvalidOperationException>(() => orphaned.ConsumeSecret(0, (_, _) => ran = true));
+
+        Assert.Contains("ChildGone", gone.Message, StringComparison.Ordinal);
+        Assert.False(ran);
+        Assert.True(orphaned.SecretIsZeroed());
+        var parentless = authority.Launch("slot-b", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        world.Processes.Set(world.Parent, ProcessLiveness.Dead);
+        var parent = Assert.Throws<InvalidOperationException>(() => parentless.ConsumeSecret(0, (_, _) => ran = true));
+        Assert.Contains("ParentMismatch", parent.Message, StringComparison.Ordinal);
+        Assert.False(ran);
+    }
+
+    [Fact]
+    public async Task AProofThatFinishesAfterTheDeadlineDoesNotExtendTheLaunch()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        var late = Assert.Throws<InvalidOperationException>(() => launch.ConsumeSecret(0, (_, _) =>
+        {
+            world.Clock.Advance(TimeSpan.FromSeconds(11));
+            return 1;
+        }));
+
+        Assert.Contains("Expired", late.Message, StringComparison.Ordinal);
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+        world.Clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, authority.Verify(launch.Descriptor.ToClaim()));
+    }
+
+    [Fact]
+    public async Task ARejectedProofSpendsTheSecretAndLeavesTheLaunchToExpire()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority(window: TimeSpan.FromSeconds(10));
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        Assert.Throws<FormatException>(() => launch.ConsumeSecret<int, int>(0, (_, _) => throw new FormatException("proof rejected")));
+
+        Assert.Equal(LocalRpcLaunchRefusal.None, launch.Status());
+        world.Clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.Equal(LocalRpcLaunchRefusal.Expired, launch.Status());
+    }
+
+    [Fact]
+    public async Task TheSecretCallbackRunsOutsideTheLaunchLock()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var launch = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var consuming = Task.Run(() => launch.ConsumeSecret(0, (_, _) =>
+        {
+            entered.Set();
+            return release.Wait(TimeSpan.FromSeconds(30));
+        }), TestContext.Current.CancellationToken);
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken));
+
+        var decision = Task.Run(async () => await launch.AuthorizeConnectionAsync(new LocalRpcConnectionInfo(LocalRpcTransport.NamedPipe, 1), CancellationToken.None), TestContext.Current.CancellationToken);
+        var status = Task.Run(launch.Status, TestContext.Current.CancellationToken);
+        var finishedWhileTheCallbackBlocks = true;
+        try
+        {
+            await Task.WhenAll(decision, status).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            finishedWhileTheCallbackBlocks = false;
+        }
+
+        release.Set();
+
+        Assert.True(finishedWhileTheCallbackBlocks, "a blocked secret callback must not stall connection decisions");
+        Assert.True(await consuming);
+        Assert.True(await decision);
+        Assert.Equal(LocalRpcLaunchRefusal.None, await status);
+    }
+
+    [Fact]
+    public async Task RevokedCallbacksRunOutsideTheAuthorityLock()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var old = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+        var claim = old.Descriptor.ToClaim();
+        var completed = false;
+        using var registration = old.Revoked.Register(() => completed = Task.Run(() => authority.Verify(claim)).Wait(TimeSpan.FromSeconds(10)));
+
+        _ = authority.Launch("slot-a", Standard, LocalRpcLaunchTransport.SuppliedStreams);
+
+        Assert.True(completed, "a Revoked callback that uses the authority must not deadlock with the launch that revoked it");
+    }
+
+    [Fact]
+    public void ARealProcessProbeAgreesWithItselfAcrossPlatforms()
+    {
+        using var self = Process.GetCurrentProcess();
+        var identity = LocalRpcProcessIdentity.FromProcess(self);
+
+        Assert.Equal(ProcessLiveness.Live, ProcessProbe.Probe(identity));
+        Assert.Equal(identity, LocalRpcProcessIdentity.Current);
+        Assert.True(identity.StartTimeUtcTicks > 0);
+    }
+
+    [Theory]
+    [InlineData("4242 (bash) S", 1234L, 'S')]
+    [InlineData("4242 (we ird) name) R", 99L, 'R')]
+    [InlineData("1 (a b c d) Z", 7L, 'Z')]
+    public void ALinuxStatLineGivesItsStateAndStartTicksWhateverTheCommandName(string head, long ticks, char state)
+    {
+        // Fields 4..52 follow the state; the start time is field 22 and every other field here is a distinct decoy.
+        var fields = Enumerable.Range(4, 49).Select(number => number == 22 ? ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) : (1000 + number).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var line = head + " " + string.Join(' ', fields) + "\n";
+
+        Assert.True(ProcessStart.TryParseLinuxStat(line, out var parsedState, out var parsedTicks));
+
+        Assert.Equal(state, parsedState);
+        Assert.Equal(ticks, parsedTicks);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("4242 bash S 1 2 3")]
+    [InlineData("4242 (bash)")]
+    [InlineData("4242 (bash) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 x")]
+    [InlineData("4242 (bash) SS 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19")]
+    [InlineData("4242 (bash) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18")]
+    [InlineData("4242 (bash) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 -5")]
+    [InlineData("4242 (bash) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 99999999999999999999")]
+    [InlineData("4242 (bash) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 9223372036854775807")]
+    public void AMalformedLinuxStatLineIsRefused(string line)
+    {
+        Assert.False(ProcessStart.TryParseLinuxStat(line, out _, out _));
+    }
 }

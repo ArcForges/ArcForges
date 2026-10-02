@@ -100,12 +100,12 @@ internal static class LaunchDirectory
     /// Creates a private launch directory under the root holding the record of the launch, and returns its final path.
     /// The directory is built under a temporary name and renamed into place, so it never exists without its record.
     /// </summary>
-    internal static string Publish(string root, Guid launchId, LocalRpcProcessIdentity parent, ulong epoch, string? address)
+    internal static string Publish(string root, Guid launchId, LocalRpcProcessIdentity parent, ulong epoch, string? address, Func<string>? nameSource = null)
     {
         for (var attempt = 0; attempt < 8; attempt++)
         {
             var temporary = Path.Combine(root, NewPrefix + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)));
-            var final = Path.Combine(root, Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)));
+            var final = Path.Combine(root, nameSource?.Invoke() ?? Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)));
             CreateOwnerOnly(temporary);
             try
             {
@@ -184,8 +184,25 @@ internal static class LaunchDirectory
             var old = clock.GetUtcNow() - new DateTimeOffset(info.CreationTimeUtc, TimeSpan.Zero) > grace;
             // A directory still being created is renamed into place by its creator; the sweep never opens anything inside
             // it (an open handle would make that rename fail on Windows) and leaves it until it is clearly abandoned.
-            var parent = isNew ? null : ReadRecord(Path.Combine(entry, RecordName));
-            var stale = parent is { } identity ? probe(identity) == ProcessLiveness.Dead : old;
+            // A directory is removed only when its creator is proven gone: a record naming a parent that is not running,
+            // or no record at all and old. A record that exists but cannot be read or understood (a newer format, damage, a
+            // handle held by another program) proves nothing, so that directory is left alone.
+            bool stale;
+            if (isNew)
+            {
+                stale = old;
+            }
+            else
+            {
+                var record = ReadRecordState(Path.Combine(entry, RecordName), out var identity);
+                stale = record switch
+                {
+                    RecordState.Valid => probe(identity) == ProcessLiveness.Dead,
+                    RecordState.Missing => old,
+                    _ => false,
+                };
+            }
+
             if (stale)
             {
                 Remove(entry);
@@ -200,7 +217,7 @@ internal static class LaunchDirectory
     /// Renames a directory. On Windows a rename fails while anything holds a handle inside the directory, and a sweep in
     /// another process reads records for a moment, so a failure that leaves the source in place is retried briefly.
     /// </summary>
-    private static void MoveWithRetry(string source, string destination)
+    internal static void MoveWithRetry(string source, string destination)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -244,9 +261,14 @@ internal static class LaunchDirectory
         stream.Flush(flushToDisk: true);
     }
 
-    /// <summary>The issuing parent named by a record, or null when the record is missing, short, foreign or malformed.</summary>
-    internal static LocalRpcProcessIdentity? ReadRecord(string path)
+    /// <summary>The issuing parent named by a record, or null when the record is missing, unreadable, short, foreign or malformed.</summary>
+    internal static LocalRpcProcessIdentity? ReadRecord(string path) =>
+        ReadRecordState(path, out var identity) == RecordState.Valid ? identity : null;
+
+    /// <summary>Reads a record and says why it could not be used: not there, not readable right now, or not understood.</summary>
+    internal static RecordState ReadRecordState(string path, out LocalRpcProcessIdentity identity)
     {
+        identity = default;
         try
         {
             var bytes = File.ReadAllBytes(path);
@@ -254,16 +276,34 @@ internal static class LaunchDirectory
                 || BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(4)) != 1
                 || bytes.Length != 44 + BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(42)))
             {
-                return null;
+                return RecordState.Invalid;
             }
 
             var processId = BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(22));
-            return processId > 0 ? new LocalRpcProcessIdentity(processId, BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(26))) : null;
+            if (processId <= 0)
+            {
+                return RecordState.Invalid;
+            }
+
+            identity = new LocalRpcProcessIdentity(processId, BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(26)));
+            return RecordState.Valid;
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return RecordState.Missing;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return RecordState.Unreadable;
         }
+    }
+
+    internal enum RecordState
+    {
+        Missing,
+        Unreadable,
+        Invalid,
+        Valid,
     }
 
     internal static string RecordPath(string directory) => Path.Combine(directory, RecordName);

@@ -25,7 +25,11 @@ public enum LocalRpcChildKind
 /// recycled id does not match the new process.
 /// </summary>
 /// <param name="ProcessId">The OS process id.</param>
-/// <param name="StartTimeUtcTicks">The UTC start time of the process in <see cref="DateTime.Ticks"/>.</param>
+/// <param name="StartTimeUtcTicks">
+/// The process start value. On Windows and macOS it is the UTC start time in <see cref="DateTime.Ticks"/>. On Linux it is the
+/// process start in clock ticks since boot (field 22 of <c>/proc/&lt;pid&gt;/stat</c>, USER_HZ taken as 100) in 100 ns units,
+/// because the start time .NET reports on Linux is derived from the wall clock and moves when the clock is stepped.
+/// </param>
 public readonly record struct LocalRpcProcessIdentity(int ProcessId, long StartTimeUtcTicks)
 {
     /// <summary>
@@ -43,7 +47,7 @@ public readonly record struct LocalRpcProcessIdentity(int ProcessId, long StartT
     public static LocalRpcProcessIdentity FromProcess(Process process)
     {
         ArgumentNullException.ThrowIfNull(process);
-        return new LocalRpcProcessIdentity(process.Id, process.StartTime.ToUniversalTime().Ticks);
+        return new LocalRpcProcessIdentity(process.Id, ProcessStart.Read(process));
     }
 
     internal bool Names(LocalRpcProcessIdentity other) =>
@@ -65,6 +69,75 @@ internal enum ProcessLiveness
     Unknown = 2,
 }
 
+/// <summary>Reads the start value of a process; see <see cref="LocalRpcProcessIdentity"/>.</summary>
+internal static class ProcessStart
+{
+    /// <summary>100 ns units in one USER_HZ=100 clock tick of Linux.</summary>
+    private const long LinuxTickUnits = 100_000;
+
+    internal static long Read(Process process)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return process.StartTime.ToUniversalTime().Ticks;
+        }
+
+        return TryReadLinux(process.Id, out var start, out _)
+            ? start
+            : throw new InvalidOperationException("The process start time is not readable.");
+    }
+
+    /// <summary>Reads <c>/proc/&lt;pid&gt;/stat</c>: true with the start value, false when the file is not there or not readable.</summary>
+    internal static bool TryReadLinux(int processId, out long start, out bool runnable)
+    {
+        start = 0;
+        runnable = false;
+        try
+        {
+            var stat = File.ReadAllText("/proc/" + processId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/stat");
+            if (!TryParseLinuxStat(stat, out var state, out var ticks))
+            {
+                return false;
+            }
+
+            start = ticks * LinuxTickUnits;
+            runnable = state is not ('Z' or 'X' or 'x');
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Parses a <c>/proc/&lt;pid&gt;/stat</c> line: the state is the first field after the command name, which can itself hold
+    /// spaces and parentheses (so the last closing parenthesis ends it), and the start time is field 22.
+    /// </summary>
+    internal static bool TryParseLinuxStat(string stat, out char state, out long startTicks)
+    {
+        state = default;
+        startTicks = 0;
+        var close = stat.LastIndexOf(')');
+        if (close < 0 || close + 2 >= stat.Length)
+        {
+            return false;
+        }
+
+        var fields = stat[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // fields[0] is field 3 (the state), so field 22 is fields[19].
+        if (fields.Length < 20 || fields[0].Length != 1
+            || !long.TryParse(fields[19], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out startTicks)
+            || startTicks > long.MaxValue / LinuxTickUnits)
+        {
+            return false;
+        }
+
+        state = fields[0][0];
+        return true;
+    }
+}
+
 internal static class ProcessProbe
 {
     internal static ProcessLiveness Probe(LocalRpcProcessIdentity identity)
@@ -74,6 +147,33 @@ internal static class ProcessProbe
             return ProcessLiveness.Dead;
         }
 
+        return OperatingSystem.IsLinux() ? ProbeLinux(identity) : ProbePortable(identity);
+    }
+
+    private static ProcessLiveness ProbeLinux(LocalRpcProcessIdentity identity)
+    {
+        if (!Directory.Exists("/proc/" + identity.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+        {
+            return ProcessLiveness.Dead;
+        }
+
+        if (!ProcessStart.TryReadLinux(identity.ProcessId, out var start, out var runnable))
+        {
+            // The directory is there but the file is not understood or not readable (or the process vanished meanwhile): not proof.
+            return Directory.Exists("/proc/" + identity.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                ? ProcessLiveness.Unknown : ProcessLiveness.Dead;
+        }
+
+        if (!runnable)
+        {
+            return ProcessLiveness.Dead;
+        }
+
+        return new LocalRpcProcessIdentity(identity.ProcessId, start).Names(identity) ? ProcessLiveness.Live : ProcessLiveness.Dead;
+    }
+
+    private static ProcessLiveness ProbePortable(LocalRpcProcessIdentity identity)
+    {
         try
         {
             using var process = Process.GetProcessById(identity.ProcessId);

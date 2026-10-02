@@ -87,15 +87,16 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(transport));
         }
 
+        LocalRpcLaunch launch;
+        LocalRpcLaunch? previous;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _ = _slots.TryGetValue(slot, out var state);
-            var previous = state?.Current;
+            previous = state?.Current;
             var epoch = (state?.Epoch ?? 0) + 1;
             var launchId = Guid.NewGuid();
             var (endpoint, directory) = CreateEndpoint(launchId, epoch, transport);
-            LocalRpcLaunch launch;
             try
             {
                 var now = _environment.Clock.GetUtcNow();
@@ -116,9 +117,11 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
 
             _slots[slot] = new SlotState(epoch, launch);
             _ = _issued.Add(launch);
-            previous?.Revoke();
-            return launch;
         }
+
+        // Revoking runs the owner's Revoked callbacks, so it happens outside the lock: the new launch is already registered.
+        previous?.Revoke();
+        return launch;
     }
 
     /// <summary>
@@ -248,6 +251,8 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     private LocalRpcProcessIdentity? _child;
     private bool _handedOff;
     private bool _consumed;
+    private bool _bootstrapped;
+    private bool _expired;
     private int _revocation;
     private int _disposed;
 
@@ -320,7 +325,7 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
     {
         lock (_gate)
         {
-            if (_revocation != 0 || _consumed)
+            if (_revocation != 0 || _consumed || StatusLocked() != LocalRpcLaunchRefusal.None)
             {
                 throw new InvalidOperationException("The launch secret is no longer available.");
             }
@@ -337,11 +342,16 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
 
     /// <summary>
     /// Runs <paramref name="use"/> over the launch secret exactly once for the life of the launch, then destroys the secret
-    /// whatever the outcome. Consuming it ends the bootstrap window: the lease and renewal of the registration task govern from then on.
+    /// whatever the outcome. The launch must authorize when the call starts and still authorize when the callback returns
+    /// (otherwise the secret is destroyed and an <see cref="InvalidOperationException"/> is thrown, and an expired launch stays expired).
+    /// A callback that returns ends the bootstrap window: the lease and renewal of the registration task govern from then on. The result
+    /// is not interpreted, so a caller that rejects the proof revokes the launch. A callback that throws leaves the window running,
+    /// but the secret is spent, so the launch can only expire. The callback runs outside the launch lock, over a copy that is zeroed afterwards.
     /// </summary>
     public TResult ConsumeSecret<TState, TResult>(TState state, LocalRpcSecretUse<TState, TResult> use)
     {
         ArgumentNullException.ThrowIfNull(use);
+        byte[] secret;
         lock (_gate)
         {
             if (_revocation != 0 || _consumed)
@@ -350,31 +360,53 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
             }
 
             _consumed = true;
-            try
+            var status = StatusLocked();
+            secret = (byte[])_secret.Clone();
+            CryptographicOperations.ZeroMemory(_secret);
+            if (status != LocalRpcLaunchRefusal.None)
             {
-                return use(state, _secret);
+                CryptographicOperations.ZeroMemory(secret);
+                throw new InvalidOperationException("The launch no longer authorizes: " + status + ".");
             }
-            finally
+        }
+
+        try
+        {
+            var result = use(state, secret);
+            lock (_gate)
             {
-                CryptographicOperations.ZeroMemory(_secret);
+                var status = StatusLocked();
+                if (status != LocalRpcLaunchRefusal.None)
+                {
+                    throw new InvalidOperationException("The launch no longer authorizes: " + status + ".");
+                }
+
+                _bootstrapped = true;
             }
+
+            return result;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secret);
         }
     }
 
     /// <summary>Why this launch would refuse right now, ignoring any claim. <see cref="LocalRpcLaunchRefusal.None"/> means it authorizes.</summary>
     public LocalRpcLaunchRefusal Status()
     {
-        LocalRpcProcessIdentity? child;
-        bool bootstrapped;
         lock (_gate)
         {
-            if (_revocation != 0)
-            {
-                return LocalRpcLaunchRefusal.Revoked;
-            }
+            return StatusLocked();
+        }
+    }
 
-            child = _child;
-            bootstrapped = _consumed;
+    /// <summary>The launch status; the caller holds the lock. Expiry is latched: once seen, no later event can undo it.</summary>
+    private LocalRpcLaunchRefusal StatusLocked()
+    {
+        if (_revocation != 0)
+        {
+            return LocalRpcLaunchRefusal.Revoked;
         }
 
         if (!Descriptor.Parent.Names(_environment.Parent) || _environment.Probe(Descriptor.Parent) != ProcessLiveness.Live)
@@ -382,14 +414,18 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
             return LocalRpcLaunchRefusal.ParentMismatch;
         }
 
-        if (child is { } bound && _environment.Probe(bound) != ProcessLiveness.Live)
+        if (_child is { } bound && _environment.Probe(bound) != ProcessLiveness.Live)
         {
             return LocalRpcLaunchRefusal.ChildGone;
         }
 
-        return !bootstrapped && _environment.Clock.GetUtcNow() >= Descriptor.BootstrapDeadlineUtc
-            ? LocalRpcLaunchRefusal.Expired
-            : LocalRpcLaunchRefusal.None;
+        if (_expired || (!_bootstrapped && _environment.Clock.GetUtcNow() >= Descriptor.BootstrapDeadlineUtc))
+        {
+            _expired = true;
+            return LocalRpcLaunchRefusal.Expired;
+        }
+
+        return LocalRpcLaunchRefusal.None;
     }
 
     /// <summary>Verifies a claim against this launch: its status first, then the launch id, epoch, nonce, build and protocol.</summary>

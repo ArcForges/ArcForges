@@ -207,7 +207,8 @@ internal sealed class LocalRpcConnectionListener : IConnectionListener
         decision.CancelAfter(_endPoint.Limits.AuthorizationTimeout);
         try
         {
-            var pending = authorizer(connection, decision.Token).AsTask();
+            // Off the accept loop: a decision that blocks its thread instead of yielding is still bounded by the timeout.
+            var pending = Task.Run(async () => await authorizer(connection, decision.Token).ConfigureAwait(false), CancellationToken.None);
             _ = pending.ContinueWith(
                 static task => _ = task.Exception,
                 CancellationToken.None,

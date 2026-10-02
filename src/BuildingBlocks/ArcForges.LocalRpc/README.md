@@ -20,9 +20,10 @@ bindings, registered explicitly by their owner.
   results, and `ASPNETCORE_PREFERHOSTINGURLS=true` makes startup fail. The other connection listener factories are
   removed, and `StartAsync` fails closed if any non-local address is bound. An optional connection decision
   (`AuthorizeConnections`, or `AuthorizeConnectionsAsync` with a cancellable asynchronous decision) runs on every
-  accepted connection before HTTP/2 reads a byte. A decision that throws, ignores its token past
-  `LocalRpcLimits.AuthorizationTimeout` (default 2 s) or is cancelled denies the connection; stopping the server cancels a
-  pending decision and drops the stream unread. The decision sees the transport, a sequence number and, for a listening
+  accepted connection before HTTP/2 reads a byte. The decision runs on the thread pool, off the accept loop; a decision that
+  throws, does not finish within `LocalRpcLimits.AuthorizationTimeout` (default 2 s, whether it yields or blocks its thread, in
+  either overload) or is cancelled denies the connection. A decision that ignores its token and never returns keeps its
+  pool thread. Stopping the server cancels a pending decision and drops the stream unread. The decision sees the transport, a sequence number and, for a listening
   endpoint, that endpoint; it does not see the peer process or user.
 - At most `MaxConnections` connections are served at once. The listener waits for a free slot before it accepts, so
   an extra peer waits in the OS backlog (16) and is served when a slot frees; it is not reset.
@@ -53,30 +54,43 @@ A parent creates one `LocalRpcLaunchAuthority` (`Create(runtimeRoot)`), and each
   revoked, the descriptor was issued by this running process, a bound child process still runs, the bootstrap window has not
   passed, the launch id/slot/epoch, the nonce (fixed-time), the child kind/build id/build digest, and the protocol version
   and contract-set digest. Each failure has its own `LocalRpcLaunchRefusal`; callers must not reveal which one to a child.
+  Build id, build digest, kind and protocol are compared with what the child claims: nothing here measures the child's binary,
+  so a matching claim is not an attestation of the executable (the launcher's signed-inventory check owns that).
 - **One-use secret.** Each launch holds a random 32-byte secret. `HandoffBootstrapResource()` returns the descriptor
   followed by the secret once, for the launcher to write into a private inherited resource (never argv, environment or a
-  file) and clear. `ConsumeSecret` runs a callback over the secret exactly once, destroys it whatever the outcome and ends the
-  bootstrap window. The secret is zeroed in managed memory only: it is not pinned, locked or protected from a debugger. The
+  file) and clear. `ConsumeSecret` runs a callback over the secret exactly once, destroys it whatever the outcome and, when the callback
+  returns and the launch still authorizes, ends the bootstrap window. It refuses (the secret is destroyed, the callback does not run,
+  `InvalidOperationException`) when the launch does not authorize at the start: expired, revoked, issuing parent gone or bound child
+  gone. A callback that finishes after the deadline does not extend the launch (expiry is latched), and a callback that throws leaves
+  the window running with the secret spent. The callback runs outside the launch lock, over a copy that is zeroed afterwards. The secret is zeroed in managed memory only: it is not pinned, locked or protected from a debugger. The
   HMAC transcript that uses it is the registration task's.
 - **Child process.** `BindChild` records the launcher's verified child process (id and start time); from then on the launch
   authorizes only while that process runs. The check happens when a claim or connection is decided; no watcher runs, so a
-  child that exits is noticed at the next decision. Process start times are compared within 2 s.
+  child that exits is noticed at the next decision. Process start values are compared within 2 s. On Windows and macOS the start
+  value is the UTC start time. On Linux it is the start in clock ticks since boot read from `/proc/<pid>/stat` (USER_HZ taken as 100),
+  because the start time .NET reports on Linux follows the wall clock; a process that is gone or a zombie counts as dead, an unreadable
+  `/proc` entry as unknown. That Linux path, and a reboot that reuses a process id at the same tick, were not exercised locally.
 - **Endpoint files.** A private endpoint on Linux/macOS is a socket inside a per-launch directory of an owner-only root. The
   root and each launch directory are created with owner-only access in the same call (mode 0700 on Unix, a protected DACL
   naming only the current user on Windows), a launch directory is built under a temporary name with its record and renamed into
-  place, and it is removed by renaming it away and then deleting it. The record names the launch id, parent process, epoch and
-  endpoint and no nonce or secret. Existing roots must be owner-only (on Windows any allow rule for a principal other than the
-  current user, SYSTEM or Administrators is refused) and must not be links. On Windows the private endpoint is a Named Pipe with
+  place, and it is removed by renaming it away and then deleting it. The record names the launch id, parent process and epoch
+  (its endpoint-address field is written empty) and no nonce or secret. Existing roots must not be links and must be owner-only: on
+  Windows the owner must be the current user or Administrators and any allow rule for another principal than the current user, SYSTEM or
+  Administrators is refused; on Unix the check is the mode only (no group or other bits), with no ownership check, so a directory owned by
+  someone else with mode 0700 fails closed for an ordinary user but a root parent is not protected. On Windows the private endpoint is a Named Pipe with
   an unguessable per-launch name and no file.
-- **Parent death.** A killed parent runs no cleanup. `Create` and `SweepStale` remove launch directories whose recorded
-  parent is not running (id and start time compared, so a recycled id counts as gone), at once for leftover removals and after
-  60 s for directories that never got a readable record or were never renamed into place. A directory of a running or unverifiable
-  parent, a link, or anything this library did not create is never touched. Launches abandoned in memory are not detected;
-  an owner disposes each launch (`DisposeAsync`), and disposing the authority disposes every launch it issued.
+- **Parent death.** A killed parent runs no cleanup. `Create` and `SweepStale` remove a launch directory only when its creator is proven
+  gone: its record names a parent that is not running (id and start value compared, so a recycled id counts as gone), or it has no record at
+  all and is older than 60 s; leftover removals go at once and a temporary directory that was never renamed into place after 60 s (the sweep
+  never opens anything inside it). A record that exists but cannot be read or understood (a newer format, damage, a handle held by another
+  program) proves nothing, so that directory is never removed and accumulates until someone clears it. A directory of a running or unverifiable
+  parent, a link, or anything this library did not create is never touched. Launches abandoned in memory are not detected; an owner disposes each
+  launch (`DisposeAsync`), and disposing the authority disposes every launch it issued.
 - **Connections.** `launch.AuthorizeConnectionAsync` is the decision for a server built over the launch's endpoint or streams. It
   admits a connection only while the launch authorizes and only when the connection arrived on the launch's own endpoint.
   Revoking a launch cancels `Revoked`; the owner closes its server connections then, since an HTTP/2 connection admitted earlier
-  stays open until the owner closes it.
+  stays open until the owner closes it. `Revoked` callbacks run synchronously on the thread that revoked, outside the authority's lock, so
+  they may call the authority.
 
 ## OS user boundary
 

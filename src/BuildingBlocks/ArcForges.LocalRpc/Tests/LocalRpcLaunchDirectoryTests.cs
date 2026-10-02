@@ -132,8 +132,11 @@ public sealed class LocalRpcLaunchDirectoryTests
     {
         using var world = new LaunchWorld();
         _ = Directory.CreateDirectory(Path.GetDirectoryName(world.Root)!);
-        var target = Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(world.Root)!, "target"));
-        if (!TestLinks.TryCreateDirectoryLink(world.Root, target.FullName))
+        // The target is itself owner-only, so only the link guard can refuse the root.
+        var target = Path.Combine(Path.GetDirectoryName(world.Root)!, "target");
+        LaunchDirectory.CreateOwnerOnly(target);
+        LaunchDirectory.RequireOwnerOnly(target);
+        if (!TestLinks.TryCreateDirectoryLink(world.Root, target))
         {
             Assert.Skip("This account can create neither a symbolic link nor a junction.");
             return;
@@ -329,6 +332,9 @@ public sealed class LocalRpcLaunchDirectoryTests
         }
 
         Assert.Null(LaunchDirectory.ReadRecord(path));
+        Assert.Equal(
+            damage == "missing" ? LaunchDirectory.RecordState.Missing : LaunchDirectory.RecordState.Invalid,
+            LaunchDirectory.ReadRecordState(path, out _));
     }
 
     // ---- sweep ----
@@ -408,24 +414,78 @@ public sealed class LocalRpcLaunchDirectoryTests
     }
 
     [Fact]
-    public async Task ADirectoryWithoutAReadableRecordIsKeptUntilItIsOldThenRemoved()
+    public async Task ADirectoryWithNoRecordIsRemovedOnlyOnceItIsOld()
     {
         using var world = new LaunchWorld();
         await using var authority = world.Authority();
         var recordless = Path.Combine(world.Root, "0123456789ab");
-        var corrupt = Path.Combine(world.Root, "ba9876543210");
         LaunchDirectory.CreateOwnerOnly(recordless);
-        LaunchDirectory.CreateOwnerOnly(corrupt);
-        await File.WriteAllBytesAsync(LaunchDirectory.RecordPath(corrupt), [1, 2, 3], TestContext.Current.CancellationToken);
 
         Assert.Equal(0, authority.SweepStale());
         world.Clock.Advance(TimeSpan.FromSeconds(59));
         Assert.Equal(0, authority.SweepStale());
         world.Clock.Advance(TimeSpan.FromSeconds(2));
-        Assert.Equal(2, authority.SweepStale());
+        Assert.Equal(1, authority.SweepStale());
 
         Assert.False(Directory.Exists(recordless));
-        Assert.False(Directory.Exists(corrupt));
+    }
+
+    [Theory]
+    [InlineData("garbage")]
+    [InlineData("short")]
+    [InlineData("newer-version")]
+    [InlineData("newer-version-dead-parent")]
+    public async Task ARecordThatExistsButIsNotUnderstoodNeverMakesADirectoryStale(string kind)
+    {
+        using var world = new LaunchWorld();
+        var dead = world.SpawnFake(7301, ProcessLiveness.Dead);
+        await using var authority = world.Authority();
+        var parent = kind == "newer-version-dead-parent" ? dead : world.Parent;
+        var directory = LaunchDirectory.Publish(world.Root, Guid.NewGuid(), parent, 1, null);
+        var record = LaunchDirectory.RecordPath(directory);
+        var bytes = await File.ReadAllBytesAsync(record, TestContext.Current.CancellationToken);
+        switch (kind)
+        {
+            case "garbage":
+                bytes = [9, 9, 9, 9, 9, 9, 9, 9];
+                break;
+            case "short":
+                bytes = bytes[..20];
+                break;
+            default:
+                bytes[5] = 2;
+                break;
+        }
+
+        await File.WriteAllBytesAsync(record, bytes, TestContext.Current.CancellationToken);
+        world.Clock.Advance(TimeSpan.FromHours(1));
+
+        Assert.Equal(0, authority.SweepStale());
+        Assert.Equal(0, authority.SweepStale());
+
+        Assert.True(Directory.Exists(directory));
+        Assert.Equal(LaunchDirectory.RecordState.Invalid, LaunchDirectory.ReadRecordState(record, out _));
+    }
+
+    [Fact(Skip = WindowsOnly, SkipUnless = nameof(IsWindows))]
+    public async Task OnWindowsARecordAnotherProgramHoldsOpenNeverMakesADirectoryStale()
+    {
+        using var world = new LaunchWorld();
+        var dead = world.SpawnFake(7401, ProcessLiveness.Dead);
+        await using var authority = world.Authority();
+        var directory = LaunchDirectory.Publish(world.Root, Guid.NewGuid(), dead, 1, null);
+        var record = LaunchDirectory.RecordPath(directory);
+        world.Clock.Advance(TimeSpan.FromHours(1));
+
+        await using (new FileStream(record, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Equal(LaunchDirectory.RecordState.Unreadable, LaunchDirectory.ReadRecordState(record, out _));
+            Assert.Equal(0, authority.SweepStale());
+            Assert.True(Directory.Exists(directory));
+        }
+
+        Assert.Equal(1, authority.SweepStale());
+        Assert.False(Directory.Exists(directory));
     }
 
     [Fact]
@@ -478,5 +538,81 @@ public sealed class LocalRpcLaunchDirectoryTests
         Assert.True(File.Exists(Path.Combine(target, "precious")));
         Assert.True(!linked || Directory.Exists(link));
         Assert.Equal(linked, new DirectoryInfo(link).LinkTarget is not null || (new DirectoryInfo(link).Attributes & FileAttributes.ReparsePoint) != 0);
+    }
+
+
+    // ---- paths that only a race or a held handle reaches (review finding 7)
+
+    [Fact]
+    public void ConcurrentCreationOfTheSameRootBySeveralThreadsAlwaysSucceeds()
+    {
+        using var world = new LaunchWorld();
+        var parent = Path.GetDirectoryName(world.Root)!;
+        _ = Directory.CreateDirectory(parent);
+
+        for (var round = 0; round < 40; round++)
+        {
+            var root = Path.Combine(parent, "race-" + round);
+            var results = Enumerable.Range(0, 8).AsParallel().WithDegreeOfParallelism(8).Select(_ => LaunchDirectory.EnsureRoot(root)).ToArray();
+
+            Assert.All(results, result => Assert.Equal(root, result));
+            LaunchDirectory.RequireOwnerOnly(root);
+        }
+    }
+
+    [Fact]
+    public async Task APublishedNameThatAlreadyExistsIsSkippedAndGivingUpIsAnError()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var taken = Path.Combine(world.Root, "aaaaaaaaaaaa");
+        LaunchDirectory.CreateOwnerOnly(taken);
+        await File.WriteAllTextAsync(Path.Combine(taken, "mine"), "must survive", TestContext.Current.CancellationToken);
+        var names = new Queue<string>(["aaaaaaaaaaaa", "aaaaaaaaaaaa", "bbbbbbbbbbbb"]);
+
+        var published = LaunchDirectory.Publish(world.Root, Guid.NewGuid(), world.Parent, 1, null, names.Dequeue);
+
+        Assert.Equal(Path.Combine(world.Root, "bbbbbbbbbbbb"), published);
+        Assert.Empty(names);
+        Assert.Equal("must survive", await File.ReadAllTextAsync(Path.Combine(taken, "mine"), TestContext.Current.CancellationToken));
+        Assert.Throws<IOException>(() => LaunchDirectory.Publish(world.Root, Guid.NewGuid(), world.Parent, 1, null, () => "aaaaaaaaaaaa"));
+        Assert.Equal(
+            ["aaaaaaaaaaaa", "bbbbbbbbbbbb"],
+            Directory.EnumerateDirectories(world.Root).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact(Skip = WindowsOnly, SkipUnless = nameof(IsWindows))]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000", Justification = "The second handle is disposed by the task that releases it.")]
+    public async Task OnWindowsARenameThatAHandleBlocksIsRetriedThenGivenUpAndRemoveLeavesTheFilesForALaterSweep()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var source = Path.Combine(world.Root, "0000000000a1");
+        var destination = Path.Combine(world.Root, "0000000000a2");
+        LaunchDirectory.CreateOwnerOnly(source);
+        var held = Path.Combine(source, "held");
+
+        await using (new FileStream(held, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            Assert.Throws<IOException>(() => LaunchDirectory.MoveWithRetry(source, destination));
+            Assert.True(Directory.Exists(source));
+            LaunchDirectory.Remove(source);
+            Assert.True(Directory.Exists(source), "a directory that cannot be removed yet is left in place, not half-deleted");
+        }
+
+        // The handle is released while a rename is being retried: the retry succeeds.
+        var again = new FileStream(held, FileMode.Open, FileAccess.Write, FileShare.None);
+        var releasing = Task.Run(async () =>
+        {
+            await Task.Delay(60, TestContext.Current.CancellationToken);
+            await again.DisposeAsync();
+        }, TestContext.Current.CancellationToken);
+        LaunchDirectory.MoveWithRetry(source, destination);
+        await releasing;
+
+        Assert.False(Directory.Exists(source));
+        Assert.True(Directory.Exists(destination));
+        LaunchDirectory.Remove(destination);
+        Assert.False(Directory.Exists(destination));
     }
 }

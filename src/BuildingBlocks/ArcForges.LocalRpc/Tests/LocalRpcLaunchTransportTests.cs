@@ -76,6 +76,38 @@ public sealed class LocalRpcLaunchTransportTests
         Assert.Equal(1, harness.Service.Dispatched);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ADecisionThatBlocksItsThreadIsStillDeniedAtTheTimeout(bool useAsync)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var harness = await SuppliedHarness.StartAsync(b =>
+        {
+            b.Limits = new LocalRpcLimits { AuthorizationTimeout = TimeSpan.FromMilliseconds(300) };
+            _ = useAsync
+                ? b.AuthorizeConnectionsAsync((connection, _) => ValueTask.FromResult(BlockFirst(connection)))
+                : b.AuthorizeConnections(BlockFirst);
+        }, ct);
+
+        await using var blocked = harness.NewClientStream();
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var frames = await RawFrames.ReadUntilClosedAsync(blocked, Patience, ct);
+
+        Assert.Empty(frames);
+        Assert.InRange(started.Elapsed, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(2500));
+    }
+
+    private static bool BlockFirst(LocalRpcConnectionInfo connection)
+    {
+        if (connection.Sequence == 1)
+        {
+            Thread.Sleep(3000);
+        }
+
+        return true;
+    }
+
     [Fact]
     public async Task ADecisionThatHonorsItsTokenIsCancelledAtTheTimeoutAndDenies()
     {
