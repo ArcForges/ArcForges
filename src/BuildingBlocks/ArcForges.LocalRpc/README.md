@@ -3,10 +3,10 @@
 Generated gRPC over HTTP/2 between a parent and the helper or extension children it owns, carried only by
 a Windows Named Pipe or a Unix domain socket. The project is non-packable until its package task admits it.
 
-This is transport and framing (WP-08.00) and the parent-owned launch identity (WP-08.01). It has no LocalBootstrap
-authentication, registration lease, routing, call queue, retry or brokered-resource logic; those are the later local
-RPC tasks. It does not define a contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*`
-bindings, registered explicitly by their owner.
+This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01) and the call bounds on top of
+them (WP-08.04). It has no LocalBootstrap authentication, registration lease, routing, retry or brokered-resource logic; those
+are the later local RPC tasks. It does not define a contract: the services it serves are the generated
+`ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner.
 
 ## What it provides
 
@@ -26,7 +26,8 @@ bindings, registered explicitly by their owner.
   pool thread. Stopping the server cancels a pending decision and drops the stream unread. The decision sees the transport, a sequence number and, for a listening
   endpoint, that endpoint; it does not see the peer process or user.
 - At most `MaxConnections` connections are served at once. The listener waits for a free slot before it accepts, so
-  an extra peer waits in the OS backlog (16) and is served when a slot frees; it is not reset.
+  an extra peer waits in the OS backlog (16) and is served when a slot frees; it is not reset. A peer that holds a slot
+  without calling is closed by the handshake and idle limits below.
 - `LocalRpcStreamSupplier` is the launcher's hand-over of already-connected OS streams. A server built over a
   supplier accepts only those streams.
 - `LocalRpcClientChannel` is a `GrpcChannel` over `http://arcforges.invalid` whose `ConnectCallback` returns
@@ -35,6 +36,58 @@ bindings, registered explicitly by their owner.
 - gRPC messages are limited to 4 MiB in both directions (`LocalRpcLimits`). Compression is refused: a request that
   names any `grpc-encoding` other than `identity` is answered `UNIMPLEMENTED` before routing and before any
   decompression, so the bound holds for the decoded size as well. Detailed error text is off.
+
+## Call bounds (WP-08.04)
+
+Every connected peer (one connection) has its own lanes; a peer that saturates its lanes does not slow another.
+
+- **Data lane: 16 active, 64 queued.** A call that is routed to a registered gRPC method (an unknown service is
+  answered `UNIMPLEMENTED` before admission) takes one of 16 active slots or waits for one in arrival order in a queue
+  of 64. Inside the gate the queue is strictly first in, first out and a freed slot is handed to the oldest waiter; that is
+  order of arrival at the admission gate, not order on the wire (the server starts concurrent requests on the thread pool,
+  so calls submitted back to back can reach the gate slightly out of submission order). A call over the
+  bounds is refused before dispatch and before its body is read. `LocalRpcLimits` may lower the numbers, never raise them.
+- **Two reserved control slots.** Methods the owner declares with `RegisterControl` (bootstrap, lease renewal,
+  cancellation, health) run in two slots of their own, outside the data budget, so 16 data calls and 2 control calls run at
+  the same time. A control call never waits: a third concurrent control call is refused at once. `StartAsync` fails when a
+  declared control method is not served by a registered service, so a misspelled name cannot silently run as a data
+  call. Nothing is declared by default: the library names no contract method, the owner of each service declares its own.
+- **Deadlines.** A data call without a deadline gets 10 s, a declared deadline is shortened to at most 30 s, and a control
+  call is held to 5 s. Time spent waiting for a slot counts: a call whose deadline passes in the queue is refused
+  `DEADLINE_EXCEEDED` without dispatch, and an admitted call is handed the time that remains. The slot is held until the
+  handler actually returns, so the active bound counts running code even for a handler that ignores its deadline;
+  that handler pins its slot, and the control slots exist so that cancellation and lease renewal still get through.
+- **Typed refusal.** A refused call fails with `RESOURCE_EXHAUSTED` (data lane full, control slots busy, callback with no
+  free slot) or `DEADLINE_EXCEEDED`, plus the trailers `x-af-refusal` and `x-af-dispatched: 0`;
+  `LocalRpcRefusal.TryRead` reads them. Any other failure may or may not have dispatched.
+- **Memory.** Two different amounts, stated separately. *Not yet dispatched:* a waiting call costs one queue node and at
+  most the HTTP/2 stream window it was granted, which the host pins to 64 KiB (Kestrel's minimum); the worst case for the
+  100 streams of one connection is 6.25 MiB of unread request body, 50 MiB across the 8 connections. *Dispatched:* the 16
+  admitted calls of a connection may each hold a request and a response of up to 4 MiB, about 128 MiB per connection and
+  about 1 GiB across 8 connections. The connection window is flow-control credit, not memory, and it is pinned to 3 x 100 x
+  64 KiB (18.75 MiB). Kestrel returns connection credit in half-window steps, so progress needs a free pool of at least half
+  the window while every other stream's body sits unread (2 x the 6.25 MiB the streams can hold, plus margin). Smaller
+  windows were wrong twice and each failure was reproduced: at 128 KiB two queued 64 KiB bodies stopped every other call on
+  the connection, and at 6.25 MiB a burst of 80 concurrent calls with 256 KiB bodies left 16 admitted calls waiting for body
+  credit that never came and a health call on the same connection timed out.
+- **Silent and idle peers.** A connection that does not begin a call within 10 s of being accepted is closed, and so is a
+  connection with no call in flight for 60 s (twice the 30 s lease; a live peer renews every 10 s). A closed connection frees
+  its connection slot. A call that is in flight, even one waiting in the queue, keeps its connection open. The limits are about silence, not
+  lifetime: a peer that makes one cheap call every 59 s keeps its slot, and nothing accounts per caller. The clock starts when
+  a connection is accepted, so a launcher that supplies a stream before its child is ready must raise `HandshakeTimeout`.
+  A timer that fires slightly before the clock agrees is re-armed for the remainder rather than dropped.
+- **Callbacks.** The reverse direction is a second server and client channel over a separately provisioned, parent-created
+  stream, with its own lanes, so callbacks are never queued behind the other direction's data calls. A call made from inside
+  a handler carries a marker; the receiving server never queues a marked call (a marked call that finds no free slot is
+  refused at once), and a call made from inside such a callback handler is refused by the client before it is sent. Two
+  saturated lanes therefore cannot wait on each other. The marker is cooperative and protects first-party endpoints;
+  a hostile peer that omits it is still held to the data bounds, the deadlines and the connection limits.
+- **Not done here:** there is no client-side limit on outgoing calls (the server refuses the excess), no per-caller
+  fairness inside one connection, and the 16/64 bound is per connection, so several connections each have their own
+  (the connection bound of 8 limits the total). A call to an unknown service is answered `UNIMPLEMENTED` without admission,
+  so a flood of them is limited only by the stream and connection caps. No streaming method exists in the pinned contracts and
+  streaming calls are untested (they would hold a slot until they end). The library has not been published with Native AOT by
+  this task; only the static trim and AOT analyzers ran.
 
 ## Parent-owned launch identity (WP-08.01)
 
@@ -135,5 +188,11 @@ access-control and the Unix mode checks each run only on their own platform. A s
 (`LocalRpcLaunchProcessChecks`, same variable) starts real helper processes from the test assembly through
 `DOTNET_STARTUP_HOOKS`: concurrent launches from four processes, a parent killed without cleanup followed by a sweep, and a
 launch-authorized server over a real endpoint whose bound child is killed.
+
+The call-bounds tests run offline in CI over real Kestrel HTTP/2 and Grpc.Net.Client on in-memory streams, with a manual
+clock for queue deadlines and the handshake and idle limits and a hand-written test-only service (`BoundsProbe`) standing in
+for the cancellation and health methods, which the pinned Platform contract does not have (`CancelSession` is in the Sandbox
+contract, which this repository does not admit). Bootstrap and lease renewal use the real generated `LocalBootstrapService`.
+One opt-in check runs the 16/64 saturation, a typed refusal, a health call and a cancel over a real Named Pipe and AF_UNIX.
 
 Hosted CI never executes those checks and a successful run on one OS says nothing about the others.

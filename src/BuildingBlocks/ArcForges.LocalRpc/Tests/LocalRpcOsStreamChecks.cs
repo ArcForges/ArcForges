@@ -133,6 +133,80 @@ public sealed class LocalRpcOsStreamChecks
         }
     }
 
+    [Fact(Skip = OptIn, SkipUnless = nameof(Enabled))]
+    public async Task TheCallBoundsAndTheControlSlotsHoldOnTheRealOsStream()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("afrpc-");
+        try
+        {
+            await RunBoundsScenarioAsync(OperatingSystem.IsWindows()
+                ? LocalRpcEndpoint.NamedPipe("af-os-bounds-" + Guid.NewGuid().ToString("N"))
+                : LocalRpcEndpoint.UnixDomainSocket(Path.Combine(directory.FullName, "c.sock")), ct);
+            await RunBoundsScenarioAsync(LocalRpcEndpoint.CreateForVerification(LocalRpcTransport.UnixDomainSocket, Path.Combine(directory.FullName, "u.sock")), ct);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static async Task RunBoundsScenarioAsync(LocalRpcEndpoint endpoint, CancellationToken ct)
+    {
+        var probe = new ProbeService();
+        await using var server = LocalRpcServer.CreateBuilder(endpoint)
+            .AddService(probe)
+            .RegisterControl(LocalRpcControlOperation.Health, BoundsProbe.Health)
+            .RegisterControl(LocalRpcControlOperation.Cancellation, BoundsProbe.Cancel)
+            .Build();
+        await server.StartAsync(ct);
+        await using var channel = LocalRpcClientChannel.Create(endpoint);
+        var client = new ProbeClient(channel.CallInvoker);
+        var calls = new List<AsyncUnaryCall<byte[]>>();
+        var total = LocalRpcLimits.DefaultMaxActiveCalls + LocalRpcLimits.DefaultMaxQueuedCalls;
+        for (var id = 0; id < total; id++)
+        {
+            calls.Add(client.Work(id, deadline: DateTime.UtcNow + Patience));
+            if (id < LocalRpcLimits.DefaultMaxActiveCalls)
+            {
+                await BoundsHarness.WaitUntilAsync(() => probe.Running == id + 1, "an active call", ct);
+            }
+            else
+            {
+                var queued = id - LocalRpcLimits.DefaultMaxActiveCalls + 1;
+                await BoundsHarness.WaitUntilAsync(() => server.GetBoundsSnapshot().DataQueued == queued, "a queued call", ct);
+            }
+        }
+
+        var refused = await ProbeClient.FailureAsync(client.Work(total, deadline: DateTime.UtcNow + Patience));
+        var health = await client.Health().ResponseAsync.WaitAsync(Patience, ct);
+        var cancelled = await client.Cancel(0).ResponseAsync.WaitAsync(Patience, ct);
+
+        Assert.Equal(StatusCode.ResourceExhausted, refused.StatusCode);
+        Assert.True(LocalRpcRefusal.TryRead(refused, out var refusal));
+        Assert.Equal(LocalRpcRefusalReason.DataQueueFull, refusal!.Reason);
+        Assert.Equal(LocalRpcLimits.DefaultMaxActiveCalls, health[0]);
+        Assert.Equal(new byte[] { 1 }, cancelled);
+        await BoundsHarness.WaitUntilAsync(() => probe.Started.Count == LocalRpcLimits.DefaultMaxActiveCalls + 1, "the oldest queued call to start", ct);
+        Assert.Equal(LocalRpcLimits.DefaultMaxActiveCalls, probe.Started[LocalRpcLimits.DefaultMaxActiveCalls]);
+        for (var id = 0; id < total + 8; id++)
+        {
+            _ = probe.Release(id);
+        }
+
+        using var drained = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        drained.CancelAfter(Patience);
+        while (calls.Any(call => !call.ResponseAsync.IsCompleted))
+        {
+            for (var id = 0; id < total + 8; id++)
+            {
+                _ = probe.Release(id);
+            }
+
+            await Task.Delay(10, drained.Token);
+        }
+    }
+
     [Fact(Skip = OptIn, SkipUnless = nameof(PipeEnabled))]
     public async Task ABoundPipeNameCannotBeBoundAgainWhileItIsAlive()
     {

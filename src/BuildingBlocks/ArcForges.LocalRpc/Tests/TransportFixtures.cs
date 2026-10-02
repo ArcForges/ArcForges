@@ -17,10 +17,40 @@ internal static class LocalRpcCollection
 internal sealed class RecordingBootstrapService : LocalBootstrapService.LocalBootstrapServiceBase
 {
     private int _dispatched;
+    private int _confirmed;
+    private int _renewed;
 
     internal int Dispatched => Volatile.Read(ref _dispatched);
 
     internal TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal int Confirmed => Volatile.Read(ref _confirmed);
+
+    internal int Renewed => Volatile.Read(ref _renewed);
+
+    public override Task<LocalBootstrapServiceConfirmResponse> Confirm(
+        LocalBootstrapServiceConfirmRequest request,
+        ServerCallContext context)
+    {
+        Interlocked.Increment(ref _confirmed);
+        return Task.FromResult(new LocalBootstrapServiceConfirmResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+            Value = new LocalBootstrapServiceConfirmValue { PeerNonce = request.Proof },
+        });
+    }
+
+    public override Task<LocalBootstrapServiceRenewResponse> Renew(
+        LocalBootstrapServiceRenewRequest request,
+        ServerCallContext context)
+    {
+        Interlocked.Increment(ref _renewed);
+        return Task.FromResult(new LocalBootstrapServiceRenewResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+            Value = new LocalBootstrapServiceRenewValue(),
+        });
+    }
 
     public override async Task<LocalBootstrapServiceChallengeResponse> Challenge(
         LocalBootstrapServiceChallengeRequest request,
@@ -94,6 +124,18 @@ internal static class Requests
         message.CopyTo(frame, 5);
         return frame;
     }
+
+    internal static LocalBootstrapServiceConfirmRequest Confirm() => new()
+    {
+        Meta = new RequestMeta { CorrelationId = NewId(), CommandId = NewId() },
+        ChallengeId = NewId(),
+        Proof = ByteString.CopyFrom(new byte[32]),
+    };
+
+    internal static LocalBootstrapServiceRenewRequest Renew() => new()
+    {
+        Meta = new RequestMeta { CorrelationId = NewId(), CommandId = NewId() },
+    };
 
     internal static string ChallengePath => $"/{LocalBootstrapService.Descriptor.FullName}/Challenge";
 

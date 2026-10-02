@@ -4,6 +4,7 @@ using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Security.Principal;
 using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Grpc.Net.Client;
 using Grpc.Net.Compression;
 
@@ -23,7 +24,7 @@ public sealed class LocalRpcClientChannel : IAsyncDisposable
     private LocalRpcClientChannel(GrpcChannel channel)
     {
         _channel = channel;
-        CallInvoker = channel.CreateCallInvoker();
+        CallInvoker = channel.CreateCallInvoker().Intercept(new LocalRpcCallbackInterceptor());
     }
 
     /// <summary>The invoker generated clients are constructed over.</summary>
