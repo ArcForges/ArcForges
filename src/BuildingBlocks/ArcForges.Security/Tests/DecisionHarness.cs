@@ -474,5 +474,5 @@ internal sealed class RequestBuilder
         Actors, Capability, Scope, CommandId, Resource, Effect, Origin, Transport, Facts, EgressDestination,
         SecretUseKey, ApprovalId, Proof, Operation);
 
-    internal static implicit operator DecisionRequest(RequestBuilder builder) => builder.Build();
+    public static implicit operator DecisionRequest(RequestBuilder builder) => builder.Build();
 }

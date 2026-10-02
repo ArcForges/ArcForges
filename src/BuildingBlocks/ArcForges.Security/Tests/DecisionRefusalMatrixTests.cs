@@ -25,18 +25,13 @@ public sealed class DecisionRefusalMatrixTests
     public async Task EveryRefusalNamesItsStepAndReasonAndReachesNoOwner(string name)
     {
         var item = Cases.Single(candidate => candidate.Name == name);
-        var harness = new DecisionHarness();
-        var builder = harness.Request();
-        await item.Arrange(harness, builder);
-        var request = builder.Build();
-        var pipeline = harness.Pipeline();
-
-        var decision = await pipeline.EvaluateAsync(EnforcementPoint.ServiceDecision, request, TestContext.Current.CancellationToken);
+        var (harness, request, decision) = await RunAsync(item);
+        var point = item.Reason >= DecisionReason.S11OwnerRefused ? EnforcementPoint.OwnerFinalValidation : EnforcementPoint.ServiceDecision;
 
         var expected = DecisionReasons.Describe(item.Reason);
         Assert.False(decision.Allowed);
         Assert.True(decision.IsAuthority);
-        Assert.Equal(EnforcementPoint.ServiceDecision, decision.Point);
+        Assert.Equal(point, decision.Point);
         Assert.Equal(expected.Step, decision.FailedStep);
         Assert.Equal(item.Reason, decision.Reason);
         Assert.Equal(expected.Code, decision.ReasonCode);
@@ -72,7 +67,7 @@ public sealed class DecisionRefusalMatrixTests
         Assert.Equal(DecisionAuditStatus.Written, decision.Audit);
         var audit = Assert.Single(harness.Audit.Records);
         Assert.Equal(SecurityAuditKind.Refused, audit.Kind);
-        Assert.Equal(EnforcementPoint.ServiceDecision, audit.Point);
+        Assert.Equal(point, audit.Point);
         Assert.Equal(expected.Step, audit.FailedStep);
         Assert.Equal(expected.Code, audit.ReasonCode);
         Assert.Equal(expected.RegisteredCode, audit.RegisteredCode);
@@ -82,9 +77,8 @@ public sealed class DecisionRefusalMatrixTests
         Assert.Equal(request.CommandId, audit.Correlation);
         Assert.Empty(harness.Recorder.Records);
         Assert.Equal(0, harness.OwnerOperation.Calls);
-        Assert.Equal(0, harness.Owner.Last is null ? 0 : 1);
         Assert.Equal(0, harness.Log.Count("owner-op"));
-        Assert.Equal(0, harness.Log.Count("owner"));
+        Assert.Equal(point == EnforcementPoint.OwnerFinalValidation ? 1 : 0, harness.Log.Count("owner"));
         Assert.Equal(0, harness.Log.Count("record"));
 
         // The same request through the executing route is refused with the same typed failure and runs nothing.
@@ -124,10 +118,7 @@ public sealed class DecisionRefusalMatrixTests
         var codes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Cases)
         {
-            var harness = new DecisionHarness();
-            var builder = harness.Request();
-            await item.Arrange(harness, builder);
-            var decision = await harness.Pipeline().EvaluateAsync(EnforcementPoint.ServiceDecision, builder.Build(), TestContext.Current.CancellationToken);
+            var (_, _, decision) = await RunAsync(item);
             Assert.False(decision.Allowed, item.Name);
             _ = codes.Add(decision.ReasonCode);
             if (!seen.TryGetValue(decision.FailedStep, out var set))
@@ -144,6 +135,23 @@ public sealed class DecisionRefusalMatrixTests
         {
             Assert.All(codeSet, code => Assert.Equal(1, seen.Values.Count(other => other.Contains(code))));
         }
+    }
+
+    private static async Task<(DecisionHarness Harness, DecisionRequest Request, SecurityDecision Decision)> RunAsync(RefusalCase item)
+    {
+        var harness = new DecisionHarness();
+        var builder = harness.Request();
+        await item.Arrange(harness, builder);
+        var request = builder.Build();
+        var pipeline = harness.Pipeline();
+        if (item.Reason >= DecisionReason.S11OwnerRefused)
+        {
+            // The owner's validation is the last decision step and is reached only through the executing route.
+            var execution = await pipeline.ExecuteAsync(request, harness.OwnerOperation.Operation, TestContext.Current.CancellationToken);
+            return (harness, request, execution.Decision);
+        }
+
+        return (harness, request, await pipeline.EvaluateAsync(EnforcementPoint.ServiceDecision, request, TestContext.Current.CancellationToken));
     }
 
     private static RefusalCase[] BuildCases()
@@ -600,6 +608,7 @@ public sealed class DecisionRefusalMatrixTests
         Add("s11 owner throws", DecisionReason.S11Unavailable, (h, _) =>
         {
             h.Owner.Behavior = (_, _) => throw new InvalidOperationException("owner offline");
+            return Task.CompletedTask;
         });
 
         return [.. cases];
