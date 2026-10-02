@@ -587,6 +587,7 @@ public sealed class LocalRpcLaunchTests
         await authority.DisposeAsync();
         await authority.DisposeAsync();
 
+        Assert.Equal(0, authority.IssuedCount);
         Assert.True(launch.Revoked.IsCancellationRequested);
         Assert.Equal(LocalRpcLaunchRefusal.Revoked, launch.Status());
         Assert.Throws<ObjectDisposedException>(() => authority.Launch("slot-a", Standard));
@@ -627,6 +628,21 @@ public sealed class LocalRpcLaunchTests
         }
 
         Assert.Empty(Directory.EnumerateFileSystemEntries(world.Root));
+    }
+
+    [Fact]
+    public async Task TheAuthorityForgetsALaunchOnceItIsDisposed()
+    {
+        using var world = new LaunchWorld();
+        await using var authority = world.Authority();
+        var launches = Enumerable.Range(0, 3).Select(index => authority.Launch("slot-" + index, Standard, LocalRpcLaunchTransport.SuppliedStreams)).ToArray();
+
+        Assert.Equal(3, authority.IssuedCount);
+        await launches[0].DisposeAsync();
+        await launches[0].DisposeAsync();
+        await launches[1].DisposeAsync();
+
+        Assert.Equal(1, authority.IssuedCount);
     }
 
     [Fact]

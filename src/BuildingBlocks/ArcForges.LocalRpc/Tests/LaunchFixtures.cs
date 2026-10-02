@@ -125,3 +125,41 @@ internal static class Launches
             new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 10, 2, 12, 0, 30, TimeSpan.Zero));
 }
+
+internal static class TestLinks
+{
+    /// <summary>Creates a directory link: a symbolic link, or on Windows without that privilege a junction. False when neither can be made.</summary>
+    internal static bool TryCreateDirectoryLink(string link, string target)
+    {
+        try
+        {
+            _ = Directory.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+        }
+
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        {
+            ArgumentList = { "/c", "mklink", "/J", link, target },
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        });
+        if (process is null)
+        {
+            return false;
+        }
+
+        _ = process.StandardOutput.ReadToEnd();
+        _ = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode == 0 && Directory.Exists(link);
+    }
+}

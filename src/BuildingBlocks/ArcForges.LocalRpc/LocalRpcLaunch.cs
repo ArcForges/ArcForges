@@ -183,6 +183,18 @@ public sealed class LocalRpcLaunchAuthority : IAsyncDisposable
         }
     }
 
+    /// <summary>How many launches this authority still tracks for disposal.</summary>
+    internal int IssuedCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _issued.Count;
+            }
+        }
+    }
+
     private void Forget(LocalRpcLaunch launch)
     {
         lock (_gate)

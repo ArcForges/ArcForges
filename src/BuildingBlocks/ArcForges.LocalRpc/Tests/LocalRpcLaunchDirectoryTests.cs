@@ -133,13 +133,9 @@ public sealed class LocalRpcLaunchDirectoryTests
         using var world = new LaunchWorld();
         _ = Directory.CreateDirectory(Path.GetDirectoryName(world.Root)!);
         var target = Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(world.Root)!, "target"));
-        try
+        if (!TestLinks.TryCreateDirectoryLink(world.Root, target.FullName))
         {
-            _ = Directory.CreateSymbolicLink(world.Root, target.FullName);
-        }
-        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
-        {
-            Assert.Skip("This account cannot create symbolic links: " + exception.GetType().Name);
+            Assert.Skip("This account can create neither a symbolic link nor a junction.");
             return;
         }
 
@@ -472,15 +468,7 @@ public sealed class LocalRpcLaunchDirectoryTests
         _ = Directory.CreateDirectory(target);
         await File.WriteAllTextAsync(Path.Combine(target, "precious"), "keep", TestContext.Current.CancellationToken);
         var link = Path.Combine(world.Root, "0123456789ab");
-        var linked = true;
-        try
-        {
-            _ = Directory.CreateSymbolicLink(link, target);
-        }
-        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
-        {
-            linked = false;
-        }
+        var linked = TestLinks.TryCreateDirectoryLink(link, target);
 
         world.Clock.Advance(TimeSpan.FromHours(1));
         Assert.Equal(0, authority.SweepStale());
@@ -489,5 +477,6 @@ public sealed class LocalRpcLaunchDirectoryTests
         Assert.True(File.Exists(foreignFile));
         Assert.True(File.Exists(Path.Combine(target, "precious")));
         Assert.True(!linked || Directory.Exists(link));
+        Assert.Equal(linked, new DirectoryInfo(link).LinkTarget is not null || (new DirectoryInfo(link).Attributes & FileAttributes.ReparsePoint) != 0);
     }
 }
