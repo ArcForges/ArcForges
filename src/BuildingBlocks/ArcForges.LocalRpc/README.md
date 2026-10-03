@@ -5,7 +5,7 @@ a Windows Named Pipe or a Unix domain socket. The project is non-packable until 
 
 This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01), the call bounds on top of
 them (WP-08.04), the child registration lifecycle (WP-08.02), static routing with version refusal (WP-08.03) and the disconnect,
-cancel and retry semantics of commands (WP-08.05). It has no brokered-resource logic; that is a later local RPC task. It does not define a
+cancel and retry semantics of commands (WP-08.05) and the brokered large-data mechanism (WP-08.06). It does not define a
 contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The library
 references no contract package: the registration code works on bytes, ids and the generated service's method names, and the owner's generated
 `LocalBootstrapService` implementation is the thin mapping between its messages and the registration (the tests contain one).
@@ -297,6 +297,73 @@ declaration says nothing about what a child binary really serves (nothing measur
 entries stay in the router until their slot is added again, and nothing here was run with Native AOT, on Linux or macOS beyond the hosted offline
 suite, or over a real OS stream.
 
+## Brokered large data (WP-08.06)
+
+Bulk bytes never travel as gRPC messages. A parser result larger than a message goes through a slot: shared memory the
+launcher provisioned before the helper started (annex 09 section 4), and only small control records cross the stream. This
+library is the slot protocol, independent of any contract and of how the memory is created: the launcher hands each slot to the
+broker as an `ILocalRpcBufferMapping`, and the generated sandbox bindings (owned by the helper task) carry the records below.
+
+- **The parent is the only authority.** `LocalRpcBrokerSession` is the parent's side of one invocation: one to three slots, each of
+  1 byte through 64 MiB, a parent-minted invocation, lease and generation. `LocalRpcBrokerChild` is the helper's side. There is
+  no ticket, handle or address that a helper or a product could pass to another product: a seal or acknowledgement of one session
+  is refused by every other session (`WrongSession`), and nothing here exposes a mapping to a second reader.
+- **Slot order: free, writing, sealed, reading, free.** `Grant(slot, capacity)` gives a free slot its next sequence (1, then one
+  more after each acknowledgement; a sequence never wraps) and the capacity the helper may fill. The helper's `Accept` takes only
+  a free slot, a sequence higher than any it accepted before and a capacity inside its mapping, and `Seal` returns the digest
+  of exactly the bytes written, inside the granted range. The parent's `Seal` checks, in this order, the session (invocation,
+  lease and generation), the slot, the slot state, the sequence, that the range is non-empty and inside the *granted* capacity
+  (not the mapping's), and, when the parent passes the layout it expects, that the declared row stride fits the length
+  (`stride >= rowBytes` and `(rows-1)*stride + rowBytes <= length <= rows*stride`); a seal without a layout may not declare a stride.
+  A refused seal changes nothing, so the grant stays outstanding.
+- **Private copy, digest on the copy.** `CopyAsync` copies the sealed range into a buffer only the parent owns, in chunks of at
+  most `ChunkBytes` (default 256 KiB, 4 KiB through 4 MiB), digests that private copy and compares it with the sealed digest.
+  Bytes the helper writes during or after the copy cannot change the returned buffer; a digest that does not match ends the
+  invocation (`IntegrityViolation`). At most one copy, with its undisposed `LocalRpcVerifiedBuffer`, exists per session. Between
+  chunks the copy checks cancellation, the lease and the caller's token; the caller's own cancellation only abandons that attempt
+  (the slot stays sealed and the copy may be retried). A mapping that fails or returns the wrong number of bytes ends the invocation.
+  Disposing the buffer zeroes it. The session's mappings are released only once no copy is still reading one.
+- **Acknowledgement.** `Acknowledge` is accepted only after a copy was verified; it returns the digest of the parent's private copy,
+  frees the slot and raises its next sequence. The helper's `Acknowledge` frees a sealed slot only when invocation, lease, generation,
+  slot, sequence and digest all match. The same acknowledgement again is harmless (the last one per slot is remembered); any
+  other sequence is stale and a different digest is refused.
+- **Cancellation, expiry, loss of the pair.** `Cancel` withdraws every slot in use for the rest of the invocation (a slot is never
+  recycled after it), stops a copy in progress within one chunk and refuses everything after it. The owner closes the session when the
+  helper has confirmed; if it has not within `CancelGrace` (5 s) the session closes itself with `CancelUnresponsive`, which asks the
+  owner to terminate the helper. The 30 s lease is renewed with `Renew` (every 10 s by the owner), and an expired session closes by itself,
+  is never revived and reports `Expired`. A timer that fires a little early waits out the remainder. `PairGone` (a cancellation token,
+  for example a launch's `Revoked`) and a `PairLives` check on every renewal close the session. Closing releases every mapping
+  once, ends the session once through `Ended` (called outside every lock, its failures swallowed) and removes it from the registry; an
+  `Ended` reason other than `Closed` and `RegistryDisposed` asks the owner to terminate the helper. The helper side cancels with
+  `LocalRpcBrokerChild.Cancel`, which also cancels its `Cancelled` token for the parser. Nothing here notices a dead connection by
+  itself: the owner calls `Cancel`/`Close` (parent) or `Cancel` (helper) when its stream ends, and the lease is the backstop
+  (at most 30 s without renewal).
+- **Cancellation under load uses the reserved control slots.** The broker does not declare any method: the owner declares its
+  cancellation and lease-renewal methods with `RegisterControl`, and only then do they bypass a full data lane (the tests show the same
+  cancel refused behind 16 active and 64 queued calls when it is not declared).
+- **Input check.** `LocalRpcBrokerChild.VerifyInputAsync` reads the helper's read-only input in bounded chunks and compares its
+  length and SHA-256 with the parent-minted ones before any parser sees it.
+- **Bounds.** A registry admits at most `MaxSessions` sessions (default 8, the connection bound) and one session per invocation. The
+  private copies are therefore bounded by that many times 64 MiB; the slot mappings are the launcher's.
+  These are limits, not measurements.
+
+**A peer that stops reading is a known limit of the bounds layer, not solved here.** The 16/64 bounds count a call only while its
+handler runs. A test (`AReaderThatStopsReadingMultiMegabyteResponses...`) made 16 calls whose responses were about 4 MiB each to a client that
+stopped reading: the handlers returned at once (no admission slot stayed pinned, another peer was served normally), the server wrote
+about 60 KB to the stalled connection, and the in-process managed heap grew by about 69 MB (claimant-reported local figure from one
+run on Windows; the test bounds it at one response per call) until the client read again, after which all 16 responses arrived intact.
+Those buffered responses are therefore outside the 16 active / 64 queued bounds and are limited only by the 100-stream cap of a
+connection and the 8 connections: by reasoning, not measured, about 400 MiB per connection and about 3.2 GiB in all, so the memory model of the call-bounds section (128 MiB per connection, about 1 GiB over 8) understates the worst case. This is an open follow-up against the call-bounds layer. Brokered transfers avoid it by design, since
+their calls carry descriptors, but any large unary response of another service does not. Streaming calls were not tested.
+
+Not done here, so nothing above claims it: creating or handing over the OS mappings and the launch allowlist (the helper host
+task); the generated `ContentSandboxService` bindings (the package is not admitted in this repository, so the mapping of
+`SandboxSlotGrant`, `SandboxBufferDescriptor` and `SandboxBufferAck` onto these records is untested here and the tests use a
+hand-written service); validation of the format, kind and pixel geometry of a buffer beyond the stride rule, and tile coverage
+across a whole frame (no missing or overlapping tiles); the `ResourceAccess` `OpenRead`/`ReadChunk` transfer ticket for extension
+children (this library provides no ticket of any kind); reading the peer's OS identity; zeroing a verified buffer the owner still
+holds when a session ends; and any run with a real helper process, a real shared mapping or an OS other than Windows.
+
 ## OS user boundary
 
 A Named Pipe is created with `CurrentUserOnly` (a DACL granting only the current user); the first instance also
@@ -349,6 +416,26 @@ Kestrel HTTP/2 with the generated `LocalBootstrapService` and connector services
 under saturation, and real-clock tests with short leases. One opt-in class (same variable) runs registration over a real Named Pipe
 (Windows) and a real Unix-socket path, and with a real child process that reads its bootstrap resource from its inherited standard input,
 registers, renews, and is killed (`LocalRpcRegistrationOsChecks`, helper mode `register`).
+
+The brokered-transfer tests (`LocalRpcBroker*Tests`) run offline in CI: the slot protocol against in-process stand-ins for the shared
+mappings (a byte array a test can change between chunk reads, make short or failing, or watch for being disposed while read), a manual
+clock for the lease, the cancel grace and the early timer, a clock whose timers never fire for the lazy expiry checks, real-clock cases
+(60 short leases, a renewed session, a many-thread run that checks one copy at a time, a mapping never disposed while read, and an
+end-once, release-once invariant), and an end-to-end case over real Kestrel HTTP/2 with a hand-written test-only helper service. That
+case moves 6 MiB through grants, seals and acknowledgements with no message larger than a descriptor, shows a cancel taking a reserved
+control slot behind 16 active and 64 queued data calls (and, as a control, the same cancel refused when it is not declared a control
+method), and characterizes the stalled-reader limit above. The helper service is not the generated `ContentSandboxService`; its wire
+layout is invented for the test. Claimant-reported local results (Windows, one workstation, every heavy step through the build slot):
+the whole `ArcForges.LocalRpc.Tests` project 654 tests, 25 skipped (opt-in and platform checks), 0 failed in three consecutive full runs
+on the final tree. 196 hand-written one-at-a-time mutants of the broker (guards, bounds, state transitions, clocks, cleanup) were built
+and run against the broker test classes in a scratch copy: in the first pass 177 failed a test (one by hanging), 9 survived and 10 were rejected by the
+compiler or analyzers. Of the survivors, two were equivalent (a stride check implied by the length interval, which was removed, and a
+copy that still copied) and two were redundant clauses that were removed; the other five exposed missing tests (an acknowledgement for
+slot 3 of 3, timer disposal after a close, the refusal counter of the copy call, an empty input, a repeated cancel after dispose), which were added,
+and their mutants fail now. The rejected edits were re-expressed so that they compile and fail a test. No log of the runs is stored in the repository.
+One timing-sensitive Windows test of an earlier task (`OnWindowsARenameThatAHandleBlocksIsRetried...`, a 60 ms handle release against a
+360 ms retry window) failed in 4 of 5 full runs while the new tests ran at full load and passed 3 of 3 once the new many-thread case was
+made lighter and the heavier classes joined the shared heavy-test collection; it is unchanged by this task.
 
 Hosted CI never executes those checks and a successful run on one OS says nothing about the others.
 
