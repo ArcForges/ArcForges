@@ -2323,5 +2323,125 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcPeerGeneration.From(ArcForges.LocalRpc.LocalRpcLaunchDescriptor)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandTests.AGenerationIsTheLaunchIdAndEpochOfADescriptor()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.ICapabilityCatalogue.FindAsync(string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IProductPolicy.EvaluateAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IActorIdentityVerifier.VerifyAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IScopeAuthority.ValidateAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.ITrustEvaluator.EvaluateAsync(ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Decisions.TransportBinding?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IPermissionSource.FindAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IResourceAuthorizer.AuthorizeAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IDataBoundaryAuthorizer.AuthorizeSecretUseAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.AnEscalatedRequestAlsoRunsTheDataBoundaryAndApprovalAndStepUpSteps()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IDataBoundaryAuthorizer.AuthorizeEgressAsync(ArcForges.Security.Decisions.DecisionRequest, string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.AnEscalatedRequestAlsoRunsTheDataBoundaryAndApprovalAndStepUpSteps()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.ISensitiveOperationSource.FindAsync(string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IOwnerValidator.ValidateAsync(ArcForges.Security.Decisions.OwnerValidationRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.IDecisionRecorder.RecordAsync(ArcForges.Security.Decisions.DecisionRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.ISecurityAuditSink.WriteAsync(ArcForges.Security.Decisions.SecurityAuditRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.ITransportSession.VerifyCurrentAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.DecisionReasons.Describe(ArcForges.Security.Decisions.DecisionReason)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionReasonTests.EachReasonHasItsOwnStepStableCodeAndRegisteredMapping(ArcForges.Security.Decisions.DecisionReason)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.DecisionProfiles.StepsFor(ArcForges.Security.Decisions.EnforcementPoint)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EachPointOwnsAnOrderedSetOfDecisionSteps()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.SecurityDecision.ToAuthorizationOutcome()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionExecutionTests.AuthorizationOutcomeMapsServiceAndOwnerDecisionsAndRefusesEarlierPoints()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.PermissionConstraints.DeviceBound(ArcForges.Contracts.Foundation.Values.DeviceId)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPermissionTests.ADeviceConstraintNamesTheDeviceInCanonicalForm()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.SecurityDecisionPipeline.EvaluateAsync(ArcForges.Security.Decisions.EnforcementPoint, ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.TheServiceDecisionRunsTenStepsAndDoesNotRunTheOwnerOrExecute()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.SecurityDecisionPipeline.ExecuteAsync<TResult>(ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Decisions.OwnerOperation<TResult>, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPipelineTests.EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.SecurityDecisionPipeline.ExecuteDecidedAsync<TResult>(ArcForges.Security.Decisions.SecurityDecision, ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Decisions.OwnerOperation<TResult>, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionExecutionTests.AServiceDecisionContinuesToTheOwnerOnceWithTheSameRequest()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Decisions.SecurityDecisionPipeline.ProjectPermissionAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.DecisionPermissionTests.TheProjectionPreservesPrincipalCapabilityScopeConstraintsAndLifetime()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.LocalRpcBoundary.LocalRpcTransportSession.Establish<TProofState>(ArcForges.LocalRpc.LocalRpcLaunchAuthority, ArcForges.LocalRpc.LocalRpcLaunch, ArcForges.LocalRpc.LocalRpcLaunchClaim, TProofState, ArcForges.LocalRpc.LocalRpcSecretUse<TProofState, bool>, ArcForges.Contracts.Foundation.Values.InstanceId?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LocalRpcBoundaryTests.AVerifiedClaimWithAnAcceptedProofEstablishesASessionTheDecisionCanSee()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.LocalRpcBoundary.LocalRpcTransportSession.VerifyCurrentAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LocalRpcBoundaryTests.ARevokedLaunchStopsVouchingAtTheNextBoundary()"
   }
 ]

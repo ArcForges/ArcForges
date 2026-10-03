@@ -205,9 +205,16 @@ public sealed class ApprovalCoordinatorTests
         private readonly Dictionary<Guid, ApprovalSnapshot> entries = [];
         private readonly object gate = new();
 
+        internal bool FailReads { get; set; }
+
         public ValueTask<ApprovalSnapshot?> ReadAsync(Guid approvalId, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (FailReads)
+            {
+                throw new InvalidOperationException("approval store offline");
+            }
+
             lock (gate)
             {
                 entries.TryGetValue(approvalId, out var snapshot);
