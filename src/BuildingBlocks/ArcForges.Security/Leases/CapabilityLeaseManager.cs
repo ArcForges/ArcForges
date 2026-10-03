@@ -434,14 +434,16 @@ public sealed class CapabilityLeaseManager : ILeaseUseValidator
         var ended = 0;
         var recorded = 0;
         var owed = 0;
-        var seen = new HashSet<(CapabilityLeaseId Id, long Version)>();
+        var seen = new HashSet<CapabilityLeaseId>();
         for (var page = 0; page < MaximumSweepPages; page++)
         {
-            var batch = await _store.ListUnsettledAsync(task, dueOnly ? Now() : null, SweepPageSize, cancellationToken).ConfigureAwait(false);
+            // Leases already handled stay listed when their fact is still owed, so the page grows by what was seen to reach the rest.
+            var limit = SweepPageSize + seen.Count;
+            var batch = await _store.ListUnsettledAsync(task, dueOnly ? Now() : null, limit, cancellationToken).ConfigureAwait(false);
             var progressed = false;
             foreach (var lease in batch)
             {
-                if (!seen.Add((lease.Id, lease.Version)))
+                if (!seen.Add(lease.Id))
                 {
                     continue;
                 }
@@ -472,7 +474,7 @@ public sealed class CapabilityLeaseManager : ILeaseUseValidator
                 }
             }
 
-            if (!progressed || batch.Count < SweepPageSize)
+            if (!progressed || batch.Count < limit)
             {
                 break;
             }

@@ -956,6 +956,25 @@ public sealed class LeaseManagerTests
     }
 
     [Fact]
+    public async Task ASweepOverMoreOwedFactsThanOnePageCountsEachOnceAndStops()
+    {
+        var h = new LeaseHarness();
+        h.Ceilings.Until = TimeSpan.FromHours(2);
+        for (var index = 0; index < 70; index++)
+        {
+            _ = await h.IssueAsync(h.Request(resources: [$"resource/{index}"]));
+        }
+
+        h.Sink.Fail = true;
+        var sweep = await h.Manager.EndTaskAsync(h.Task, Token);
+
+        Assert.Equal(new LeaseSweep(70, 0, 70), sweep);
+        h.Sink.Fail = false;
+        Assert.Equal(new LeaseSweep(0, 70, 0), await h.Manager.EndTaskAsync(h.Task, Token));
+        Assert.Equal(70, h.Sink.Kinds.Count(kind => kind == LeaseEventKind.TaskEnded));
+    }
+
+    [Fact]
     public async Task ASweepThatCannotAdvanceTheStoreStopsInsteadOfLooping()
     {
         var h = new LeaseHarness();
