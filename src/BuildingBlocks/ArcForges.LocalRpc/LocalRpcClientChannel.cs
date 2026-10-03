@@ -76,7 +76,7 @@ public sealed class LocalRpcClientChannel : IAsyncDisposable
             PooledConnectionLifetime = Timeout.InfiniteTimeSpan,
             PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan,
             ConnectTimeout = limits.ConnectTimeout,
-            ConnectCallback = async (_, cancellationToken) => await openStream(cancellationToken).ConfigureAwait(false),
+            ConnectCallback = async (_, cancellationToken) => await OpenAsync(openStream, cancellationToken).ConfigureAwait(false),
         };
         return GrpcChannel.ForAddress(Authority, new GrpcChannelOptions
         {
@@ -88,6 +88,22 @@ public sealed class LocalRpcClientChannel : IAsyncDisposable
             ServiceConfig = null,
             CompressionProviders = new List<ICompressionProvider>(),
         });
+    }
+
+    /// <summary>
+    /// Opens the stream for one HTTP/2 connection. A failure is wrapped in <see cref="LocalRpcConnectException"/>, which proves
+    /// that no stream existed for the call and so nothing was sent (a command that fails with it certainly had no effect).
+    /// </summary>
+    private static async ValueTask<Stream> OpenAsync(Func<CancellationToken, ValueTask<Stream>> openStream, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await openStream(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not LocalRpcConnectException)
+        {
+            throw new LocalRpcConnectException("The private stream could not be opened.", exception);
+        }
     }
 
     private static async ValueTask<Stream> ConnectAsync(LocalRpcEndpoint endpoint, TimeSpan timeout, CancellationToken cancellationToken)

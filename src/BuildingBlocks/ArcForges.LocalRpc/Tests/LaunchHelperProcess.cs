@@ -45,6 +45,8 @@ internal static class LaunchHelperProcess
                 return await OrphanAsync(arguments[1]).ConfigureAwait(false);
             case "register":
                 return await RegistrationHelperProcess.RunAsync().ConfigureAwait(false);
+            case "command":
+                return await CommandHelperProcess.RunAsync(arguments).ConfigureAwait(false);
             case "sleep":
                 await Say("READY").ConfigureAwait(false);
                 await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
