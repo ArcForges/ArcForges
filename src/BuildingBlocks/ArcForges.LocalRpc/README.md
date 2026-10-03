@@ -4,10 +4,10 @@ Generated gRPC over HTTP/2 between a parent and the helper or extension children
 a Windows Named Pipe or a Unix domain socket. The project is non-packable until its package task admits it.
 
 This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01), the call bounds on top of
-them (WP-08.04), the child registration lifecycle (WP-08.02) and static routing with version refusal (WP-08.03). It has no
-retry or brokered-resource logic; those are the later local RPC tasks. It does not define a contract: the services it serves are the generated
-`ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The library references no contract package:
-the registration code works on bytes, ids and the generated service's method names, and the owner's generated
+them (WP-08.04), the child registration lifecycle (WP-08.02), static routing with version refusal (WP-08.03) and the disconnect,
+cancel and retry semantics of commands (WP-08.05). It has no brokered-resource logic; that is a later local RPC task. It does not define a
+contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The library
+references no contract package: the registration code works on bytes, ids and the generated service's method names, and the owner's generated
 `LocalBootstrapService` implementation is the thin mapping between its messages and the registration (the tests contain one).
 
 ## What it provides
@@ -90,6 +90,59 @@ Every connected peer (one connection) has its own lanes; a peer that saturates i
   so a flood of them is limited only by the stream and connection caps. No streaming method exists in the pinned contracts and
   streaming calls are untested (they would hold a slot until they end). The library has not been published with Native AOT by
   this task; only the static trim and AOT analyzers ran.
+
+## Disconnect, cancel and retry (WP-08.05)
+
+Everything in this section is **in memory**: a restart of the parent or of a helper loses it. Durable receipts and exactly-once effects across
+a process restart belong to the persistence tasks (WP-07/21/52); here a command whose helper died resolves to a typed *unknown effect*, and the owner's
+own durable record resolves it.
+
+- **Effect certainty.** `LocalRpcEffect` is `DidNotHappen`, `Happened` or `Unknown`, with the same numbers as the published `EffectCertainty`
+  (the library does not reference the Foundation packages, so the test project asserts the equality). `LocalRpcCommandOutcome<T>` mirrors
+  `Outcome<T>`: a success, a failure or a cancellation, each with an effect and a typed `LocalRpcFailureReason`. An unknown effect is a failure or a
+  cancellation whose effect is `Unknown`; the owner maps it onto its own typed failure.
+- **Command identity.** `LocalRpcCommand` is the owner-minted command id, the wire operation (`full.service.Name/Method`), a 32-byte digest of the
+  canonical input and the idempotency class: `Query` (read; retried, never recorded), `DuplicateSafe` (the owner's handler returns the recorded result
+  for the same id and input within one helper launch) or `NonIdempotent`. The same id always names the same operation, input and class; anything else is
+  a `CommandConflict` and nothing is sent. `ReplayAfterUnknown` is the owner's explicit permission to send a command again after an unknown effect, and only a
+  `DuplicateSafe` command may carry it.
+- **What proves an effect did not happen.** Exactly three things: a typed refusal the peer attached before dispatch (`x-af-refusal` with `x-af-dispatched: 0`),
+  a failure to open the stream (`LocalRpcConnectException`, which `LocalRpcClientChannel` now raises from its connect callback, so a call that fails with it was
+  never sent) and an effect trailer from the helper's receipt table (`x-af-effect`). Anything else after a request may have been sent (a broken stream, a deadline, a
+  cancelled call, any other status) leaves the effect `Unknown`. A later attempt that is refused or finds no connection proves only itself: it cannot turn an earlier
+  unknown attempt of the same command into `DidNotHappen`; only the helper's own report can.
+- **`LocalRpcCommandExecutor`** keeps a bounded journal of commands by id (default 4096; a command in flight or unknown is never forgotten, a settled one is kept
+  for 10 minutes so a duplicate submission is answered from the record, and a full journal refuses a new command with `JournalFull` rather than evicting an old one). A call
+  runs the `send` delegate the owner supplies (the generated stub call), with the caller's token linked to the loss of the launch, and then:
+  - *Success*: recorded with its response. A response can report its own effect through the `interpret` delegate (for example from an `ArcError`); a response that reports
+    anything but `Happened` is a typed `ReportedByPeer` failure that keeps the response.
+  - *Refusal or no connection* (effect `DidNotHappen`): retried after a full-jitter wait (250 ms doubling to 30 s, `LocalRpcBackoff`) up to `MaxAttempts` (default 3), whatever the
+    class, because nothing happened. A refusal that will repeat itself (`RecursiveCallback`, `CommandConflict`) is not retried. The command may be started again later under the same id.
+  - *Unknown effect*: recorded as `Unknown` and **not sent again**. A call sends it again only when its command allows replay, it is `DuplicateSafe`, the failure was a lost
+    stream, a deadline, a refusal or a missing connection, the launch is the one the command was first sent to (the generation is fixed per call; a later call to another launch is refused
+    with `ReplayNotAllowed`, because the new launch has no receipts and a replay would run the effect twice) and the replay window (5 minutes from the first attempt, shorter than the
+    helper's 10-minute receipt retention) has not passed.
+  - *The caller's token*: abandons the call. Before the first send nothing is recorded and the effect is `DidNotHappen`; after it the effect stays `Unknown` and the command is not replayed
+    on its own.
+  - *`PeerLost` / `WatchPeer`*: the owner declares a launch lost (its process exited, its lease lapsed, its `Revoked` token fired). Every command in flight on it is aborted: an attempt that may
+    have been sent is `Unknown`, a command that was only waiting to retry stays `DidNotHappen`.
+  - *`ReconcileAsync`*: the owner asks where the effect lives (its durable store, or a contract query such as a read of the object the command changed) and the answer settles an unknown command:
+    `Happened` is a success without a response, `DidNotHappen` allows the command to start again under the same id.
+  - *`CancelAsync`*: records the cancel intent first (it survives the loss of the helper and stops every retry and replay of that command), then carries it to the helper through a delegate the
+    owner supplies. The helper's report settles it: `DidNotHappen` (stopped before the commit point), `Happened` (too late) or `Unknown`. A cancel that cannot be delivered leaves the command cancelled with an unknown effect
+    and can be sent again when the helper is back.
+- **`LocalRpcCommandReceipts`** is the helper's side. It records each command by id in the helper's memory and runs its effect at most once per helper launch however often the command arrives: a duplicate
+  with the same input joins the running effect or is answered from the record, the same id with another input is refused `command-conflict` and a full table `receipts-full`, both before the effect runs (typed refusals).
+  The effect runs under a token the call does not own, so **a disconnect does not stop it**: a parent that lost the answer can ask again and get it. The effect names its commit point with
+  `LocalRpcCommandContext.Commit()`: before it an explicit cancel (or the effect timeout, 30 s, or shutdown) stops the effect and nothing happened, after it the effect counts as having happened even if it throws
+  afterwards, and `Commit()` throws if a cancel came first. An effect must change nothing durable before it commits. A failed command is reported as an `RpcException` carrying `x-af-effect`
+  (`LocalRpcCommandReceipts.TryReadEffect`). Responses are kept for replay within a byte budget (32 MiB; the caller states each response's size); a response that is no longer kept is reported as
+  `FAILED_PRECONDITION` with the effect `happened`. A helper that dies takes the table with it.
+- **Cancellation uses the reserved control slots.** The owner declares its cancel method with `RegisterControl(LocalRpcControlOperation.Cancellation, ...)` and its handler calls
+  `LocalRpcCommandReceipts.CancelAsync`; the call then runs in one of the peer's two control slots outside the 16/64 data budget (`LocalRpcServer.GetBoundsSnapshot().ControlAdmitted` counts it). The library
+  names no contract method. The pinned Platform contract has no cancel and no health method; the Sandbox contract's `CancelSession` exists but this repository does not admit that package, so the tests'
+  cancel wire is a hand-written test-only service (`CommandProbe`), as the call-bounds tests' was (`BoundsProbe`). Admitting the Sandbox package, and proving cancellation through `CancelSession`, belongs to
+  the tasks that consume it (PLT.15, PLT.45).
 
 ## Parent-owned launch identity (WP-08.01)
 
