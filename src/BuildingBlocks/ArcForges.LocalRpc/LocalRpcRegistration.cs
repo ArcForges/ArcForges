@@ -502,6 +502,29 @@ public sealed class LocalRpcRegistration : IAsyncDisposable
     }
 
     /// <summary>
+    /// Whether the child is registered and callable right now, as the parent itself asks (no credentials involved): registered, the
+    /// launch still authorizes and the lease holds. A launch or lease found over ends the registration, exactly as a call would.
+    /// </summary>
+    internal LocalRpcRegistrationRefusal CheckLive()
+    {
+        LocalRpcRegistrationRefusal refusal;
+        var endWith = LocalRpcRegistrationEnd.None;
+        lock (_gate)
+        {
+            refusal = _state == LocalRpcRegistrationState.Registered
+                ? LiveLocked(_registered!.ConnectionId, out endWith)
+                : _state == LocalRpcRegistrationState.Ended ? LocalRpcRegistrationRefusal.Ended : LocalRpcRegistrationRefusal.NotRegistered;
+        }
+
+        if (endWith != LocalRpcRegistrationEnd.None)
+        {
+            End(endWith);
+        }
+
+        return refusal;
+    }
+
+    /// <summary>
     /// Renews the lease to 30 seconds from now. The caller is the gate, which has already verified the credentials of this call. A command
     /// id seen before returns its recorded expiry without extending again; an ended or expired registration is never renewed.
     /// </summary>

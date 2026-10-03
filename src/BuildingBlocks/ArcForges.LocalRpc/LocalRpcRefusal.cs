@@ -43,6 +43,12 @@ public enum LocalRpcRefusalReason
 
     /// <summary>A callback handler tried to call again; callbacks do not nest (<c>FAILED_PRECONDITION</c>, raised by the caller).</summary>
     RecursiveCallback = 5,
+
+    /// <summary>A call named a service other than the one its resolved route is for; the route guard refused it before the wire (<c>UNIMPLEMENTED</c>, raised by the caller).</summary>
+    UnroutedService = 6,
+
+    /// <summary>The child behind a resolved route is no longer registered (lease over, launch superseded or revoked, process gone); the route guard refused the call before the wire (<c>FAILED_PRECONDITION</c>, raised by the caller).</summary>
+    RouteNotLive = 7,
 }
 
 /// <summary>The typed refusal a peer attaches to a call that was refused before dispatch.</summary>
@@ -59,6 +65,8 @@ public sealed record LocalRpcRefusal(LocalRpcRefusalReason Reason)
         [LocalRpcRefusalReason.DeadlineBeforeDispatch] = "deadline-before-dispatch",
         [LocalRpcRefusalReason.CallbackNotQueued] = "callback-not-queued",
         [LocalRpcRefusalReason.RecursiveCallback] = "recursive-callback",
+        [LocalRpcRefusalReason.UnroutedService] = "unrouted-service",
+        [LocalRpcRefusalReason.RouteNotLive] = "route-not-live",
     }.ToFrozenDictionary();
 
     /// <summary>
@@ -110,7 +118,8 @@ public sealed record LocalRpcRefusal(LocalRpcRefusalReason Reason)
     internal static StatusCode StatusOf(LocalRpcRefusalReason reason) => reason switch
     {
         LocalRpcRefusalReason.DeadlineBeforeDispatch => StatusCode.DeadlineExceeded,
-        LocalRpcRefusalReason.RecursiveCallback => StatusCode.FailedPrecondition,
+        LocalRpcRefusalReason.RecursiveCallback or LocalRpcRefusalReason.RouteNotLive => StatusCode.FailedPrecondition,
+        LocalRpcRefusalReason.UnroutedService => StatusCode.Unimplemented,
         _ => StatusCode.ResourceExhausted,
     };
 }

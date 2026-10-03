@@ -4,8 +4,8 @@ Generated gRPC over HTTP/2 between a parent and the helper or extension children
 a Windows Named Pipe or a Unix domain socket. The project is non-packable until its package task admits it.
 
 This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01), the call bounds on top of
-them (WP-08.04) and the child registration lifecycle (WP-08.02). It has no routing, retry or brokered-resource logic; those
-are the later local RPC tasks. It does not define a contract: the services it serves are the generated
+them (WP-08.04), the child registration lifecycle (WP-08.02) and static routing with version refusal (WP-08.03). It has no
+retry or brokered-resource logic; those are the later local RPC tasks. It does not define a contract: the services it serves are the generated
 `ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The library references no contract package:
 the registration code works on bytes, ids and the generated service's method names, and the owner's generated
 `LocalBootstrapService` implementation is the thin mapping between its messages and the registration (the tests contain one).
@@ -202,6 +202,47 @@ launch with a wrong proof (the specified behavior: the launch is revoked and rel
 only. The lease watchdog and connection loss end the registration but this library neither kills the child process nor stops the server:
 the owner does that when `Ended` is cancelled.
 
+## Static routing and version refusal (WP-08.03)
+
+A parent routes only to children it launched and registered itself, and only to the generated services those children declared.
+Nothing is discovered: there is no search by service name, no registry, path or installed-product lookup, and a refusal never
+falls back to another slot, another child or another product.
+
+- **Declarations.** `LocalRpcServiceDeclaration` is one generated service of a child: its full protobuf service name, the contract
+  majors it serves (one to eight, never 0) and the capability names it offers (at most 32, compared exactly, case included).
+  `LocalRpcChildDeclaration` is the closed set of services of one child kind (one to sixteen, each name once). The parent writes
+  both from what it knows statically about the child it launches (its signed inventory); the child's wire claims never create a route,
+  and the library names no contract: the owner passes the generated service's name.
+- **Router.** `LocalRpcRouter.Add(registration, declaration)` adds one launched child explicitly, under the slot its launch fixed; the
+  declaration's kind must be the launch's kind. A slot holds one child while its registration lives (adding to it is refused) and an
+  ended registration is replaced, so a relaunch (the next epoch, which revokes the earlier launch at once) is routable only after its
+  own registration is added. `TryResolve(request, out route)` takes one slot, one service, the contract major the caller was built
+  against and the capabilities it needs, and answers in a fixed order, the first failure being the answer: `InvalidRequest`, `UnknownChild`
+  (never added; a launch the authority issued is not a route), `ChildNotRegistered`, `ChildEnded` (lease passed, launch superseded or
+  revoked, process gone, disposed: never revived), `ServiceNotDeclared` (no other child is consulted, whatever it declares),
+  `VersionUnsupported` (the major is not one the child serves), `CapabilityUnsupported`. Resolving touches nothing: it does not
+  extend a lease or change a registration, though a lease found over ends the registration, as any call would.
+- **Route guard.** `LocalRpcResolvedRoute.CreateGuard()` is a client interceptor for the channel to that child. It refuses every kind of
+  call to a service other than the route's (`UNIMPLEMENTED`, `LocalRpcRefusalReason.UnroutedService`) and every call once the child's
+  registration is not live (`FAILED_PRECONDITION`, `RouteNotLive`), by throwing an `RpcException` before the call reaches the channel;
+  `LocalRpcRefusal.TryRead` reads it and says nothing was dispatched. A route to the old epoch of a relaunched slot, or to a child whose
+  lease passed, therefore calls nothing. The guard has no map from methods to capabilities: the capability check is the resolution.
+- **Declared services of a server.** `LocalRpcServerBuilder.RequireDeclaredServices(declaration)` makes `StartAsync` fail, with nothing
+  listening, unless the services added with `AddService` are exactly the declared ones: a served service that was not declared and a
+  declared service that is not served are both named. With `RequireRegistration` the declaration must be for the launch's child kind and
+  must name the LocalBootstrap service. A call to a service that is not registered is answered `UNIMPLEMENTED` by the server before
+  admission and dispatch (as before this task; the registration gate answers an unregistered caller first).
+- **Version evidence.** What a caller's contract set must equal is fixed by the launch (WP-08.01/08.02): a child claiming another
+  protocol version or contract-set digest is refused at bootstrap, and a call presenting another `x-af-contract-set` is refused by the
+  gate with the single `UNAUTHENTICATED` answer. This task adds the per-service contract major the router checks against the
+  declaration. The router does not derive a service's majors from the launch's protocol version, and the `contract_majors` a child puts
+  in its endpoint manifest are not consulted (the registration API takes none): the declaration is the parent's own knowledge.
+
+Known limits, stated exactly: the guard does not follow channels that bypass it (a caller can still build a client without it), a
+declaration says nothing about what a child binary really serves (nothing measures it; the signed-inventory check owns that), ended
+entries stay in the router until their slot is added again, and nothing here was run with Native AOT, on Linux or macOS beyond the hosted offline
+suite, or over a real OS stream.
+
 ## OS user boundary
 
 A Named Pipe is created with `CurrentUserOnly` (a DACL granting only the current user); the first instance also
@@ -256,3 +297,8 @@ under saturation, and real-clock tests with short leases. One opt-in class (same
 registers, renews, and is killed (`LocalRpcRegistrationOsChecks`, helper mode `register`).
 
 Hosted CI never executes those checks and a successful run on one OS says nothing about the others.
+
+The routing tests (`LocalRpcRoutingTests`, `LocalRpcRoutingWireTests`) run offline in CI: the declarations and the router on the
+registration fixtures' fake clock and process table, the guard on every kind of call over a counting invoker, and the guard and a
+server's declared service set over real Kestrel HTTP/2 with the generated `LocalBootstrapService` and `ConnectorBrokerService` on
+in-memory streams (no Sandbox contract is admitted, so the sandbox service name in them is data only).
