@@ -623,7 +623,7 @@ public sealed class SecurityDecisionPipeline
             return StepResult.Refuse(DecisionReason.S10StepUpOperationUnspecified);
         }
 
-        var stepUpRequired = requiredOperation != SensitiveOperation.None || request.SensitiveOperation != SensitiveOperation.None || effective == RiskLevel.R4;
+        var stepUpRequired = request.SensitiveOperation != SensitiveOperation.None || effective == RiskLevel.R4;
         if (!approvalRequired && !stepUpRequired)
         {
             return StepResult.NotRequired;
