@@ -744,6 +744,28 @@ public sealed class LocalRpcCommandRecoveryTests
         Assert.Equal(LocalRpcFailureReason.CancelledByCaller, c.Reason);
     }
 
+    [Theory]
+    [InlineData(LocalRpcEffect.Unspecified)]
+    [InlineData((LocalRpcEffect)9)]
+    [InlineData((LocalRpcEffect)(-1))]
+    public async Task AnEffectThatIsNotOneOfTheThreeCertaintiesIsUnknownWhetherItComesFromAResponseOrACancelReport(LocalRpcEffect odd)
+    {
+        var rig = new ExecutorRig();
+        var viaResponse = ExecutorRig.Command();
+
+        var outcome = await rig.RunAsync(viaResponse, rig.Script(ExecutorRig.Ok("odd")), interpret: _ => odd, cancellationToken: Ct);
+
+        Assert.Equal(LocalRpcEffect.Unknown, outcome.Effect);
+        Assert.Equal(LocalRpcCommandState.Unknown, rig.Executor.GetRecord(viaResponse.CommandId)!.State);
+
+        var viaCancel = await UnknownAsync(rig);
+        var result = await rig.Executor.CancelAsync(viaCancel.CommandId, (_, _) => Task.FromResult(odd), Ct);
+
+        Assert.Equal(LocalRpcCancelDisposition.Requested, result.Disposition);
+        Assert.Equal(LocalRpcCommandState.Unknown, result.Record!.State);
+        Assert.Equal(LocalRpcEffect.Unknown, result.Record.Effect);
+    }
+
     // Concurrency.
     [Fact]
     public async Task ManyCommandsRacingEachOtherLaunchLossesAndDuplicatesNeverRunTwiceAtOnceAndAllSettle()

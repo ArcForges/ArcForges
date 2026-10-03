@@ -455,8 +455,9 @@ internal sealed class LocalRpcCommandJournal
     }
 
     /// <summary>Applies what the helper reported for a cancel (null when the request was not delivered).</summary>
-    internal (LocalRpcCancelDisposition Disposition, JournalSnapshot? Snapshot) ApplyCancelReport(Guid commandId, LocalRpcEffect? report)
+    internal (LocalRpcCancelDisposition Disposition, JournalSnapshot? Snapshot) ApplyCancelReport(Guid commandId, LocalRpcEffect? delivered)
     {
+        var report = delivered is { } value ? Known(value) : (LocalRpcEffect?)null;
         lock (_sync)
         {
             if (!_entries.TryGetValue(commandId, out var entry))
@@ -564,9 +565,13 @@ internal sealed class LocalRpcCommandJournal
         }
     }
 
+    /// <summary>An owner-supplied or helper-supplied effect that is not one of the three certainties (unspecified, or a value outside the enum) is unknown, never a settlement.</summary>
+    private static LocalRpcEffect Known(LocalRpcEffect effect) =>
+        effect is LocalRpcEffect.DidNotHappen or LocalRpcEffect.Happened ? effect : LocalRpcEffect.Unknown;
+
     private void SettleResponse(JournalEntry entry, AttemptResult result)
     {
-        var effect = result.ResponseEffect;
+        var effect = Known(result.ResponseEffect);
         if (effect == LocalRpcEffect.Happened)
         {
             Settle(entry, LocalRpcOutcomeKind.Success, effect, LocalRpcFailureReason.None, null, null, result.Response, hasResponse: true);
