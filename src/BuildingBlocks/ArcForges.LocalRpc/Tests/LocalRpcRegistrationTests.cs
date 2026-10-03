@@ -686,6 +686,29 @@ public sealed class LocalRpcRegistrationTests
     }
 
     [Fact]
+    public void AnEarlyWatchdogReArmsForTheNearerOfTheTwoClocksRemainders()
+    {
+        // The wall clock is 20 s ahead, the monotonic clock has not moved: the wall deadline is the nearer one.
+        using var wall = new RegWorld();
+        var onWall = wall.Start();
+        _ = onWall.Register();
+        wall.Clock.StepWallClock(TimeSpan.FromSeconds(20));
+        wall.Clock.FireNextEarly();
+        Assert.Equal(LocalRpcRegistrationState.Registered, onWall.Registration.State);
+        Assert.Equal(TimeSpan.FromSeconds(10), wall.Clock.NextDueIn());
+
+        // The monotonic clock is 20 s ahead, the wall clock has not moved: the monotonic deadline is the nearer one.
+        using var monotonic = new RegWorld();
+        var onMonotonic = monotonic.Start();
+        _ = onMonotonic.Register();
+        monotonic.Clock.SuspendTimers = true;
+        monotonic.Clock.AdvanceMonotonic(TimeSpan.FromSeconds(20));
+        monotonic.Clock.FireNextEarly();
+        Assert.Equal(LocalRpcRegistrationState.Registered, onMonotonic.Registration.State);
+        Assert.Equal(TimeSpan.FromSeconds(10), monotonic.Clock.NextDueIn());
+    }
+
+    [Fact]
     public void ARenewalMovesTheWatchdogToThirtySecondsFromTheRenewal()
     {
         using var world = new RegWorld();
