@@ -16,8 +16,9 @@ internal static class SelfTest
         "identity.health", "unary.success.message", "unary.success.trailers", "unary.success.request-shape",
         "unary.success.response-headers", "exact.unicode", "exact.boundary-256", "exact.boundary-256-utf16-pairs",
         "error.empty-name", "error.application-status-in-http-200", "error.too-long", "error.too-long-utf16-pairs",
-        "cancel.in-flight", "cancel.reached-transport", "cancel.channel-recovers", "deadline.expired",
-        "deadline.header-format", "target.unknown-method", "target.unreachable", "loss.single-attempt",
+        "cancel.at-handoff", "cancel.at-handoff-no-response", "cancel.channel-recovers", "cancel.after-response-headers",
+        "cancel.channel-recovers-after-response", "deadline.expired",
+        "deadline.header-format", "target.unknown-method", "local.closed-port-unavailable", "loss.single-attempt",
         "loss.explicit-retry-succeeds", "boundary.http-413", "boundary.http-415", "boundary.http-429", "boundary.http-503",
         "codec.int64-extremes", "codec.uint64-maximum", "codec.signed-and-unsigned-pair", "codec.decimal-string",
     ];
@@ -41,6 +42,8 @@ internal static class SelfTest
         (FixtureFault.UnknownMethodForbidden, ["target.unknown-method"]),
         (FixtureFault.WrongResponseMediaType, ["unary.success.response-headers"]),
         (FixtureFault.BrokenAfterCancel, ["cancel.channel-recovers"]),
+        (FixtureFault.HealthBadRevision, ["identity.health"]),
+        (FixtureFault.CountCodePointsNotUtf16Units, ["error.too-long-utf16-pairs"]),
     ];
 
     /// <summary>Damage done to the client's own request, which a correct verifier must notice on the transport.</summary>
@@ -64,6 +67,7 @@ internal static class SelfTest
         CheckOptionGuards(meta);
         CheckTimeoutParser(meta);
         CheckRecorderGuards(meta);
+        CheckCodecAndTransportGuards(meta);
         var baseline = await RunFixtureAsync(FixtureFault.None).ConfigureAwait(false);
         string[] failing = [.. baseline.Results.Where(result => !result.Passed).Select(result => result.Name + ": " + result.Detail)];
         meta.Expect("fixture.baseline-passes", baseline.AllPassed,
@@ -165,6 +169,25 @@ internal static class SelfTest
 
         CodecPrimitives.Run(recorder);
         return recorder;
+    }
+
+    private static void CheckCodecAndTransportGuards(CheckRecorder meta)
+    {
+        var revision = new ArcForges.Contracts.Foundation.V1.Revision { Value = 7 };
+        byte[] correct = [0x08, 0x07];
+        meta.Expect("codec.verifier-accepts-the-exact-encoding-only",
+            CodecPrimitives.Exact(revision, correct, ArcForges.Contracts.Foundation.V1.Revision.Parser) &&
+            !CodecPrimitives.Exact(revision, [0x08, 0x08], ArcForges.Contracts.Foundation.V1.Revision.Parser) &&
+            !CodecPrimitives.Exact(revision, [0x08, 0x07, 0x00], ArcForges.Contracts.Foundation.V1.Revision.Parser) &&
+            !CodecPrimitives.Exact(new ArcForges.Contracts.Foundation.V1.Revision { Value = 8 }, correct, ArcForges.Contracts.Foundation.V1.Revision.Parser),
+            "The codec verifier rejects a wrong wire value, trailing bytes and a decoded value that differs.");
+        using var real = ProbeChannel.CreateRealTransport(useSystemProxy: false);
+        meta.Expect("transport.real-handler-never-redirects-stores-cookies-or-decompresses",
+            !real.AllowAutoRedirect && !real.UseCookies && real.AutomaticDecompression == System.Net.DecompressionMethods.None && !real.UseProxy,
+            "The real socket transport follows no redirect, keeps no cookie and decompresses nothing (a proxy is used only when asked).");
+        using var proxied = ProbeChannel.CreateRealTransport(useSystemProxy: true);
+        meta.Expect("transport.system-proxy-only-when-requested", proxied.UseProxy,
+            "The live transport uses the system proxy settings as they are, and the closed-port transport does not.");
     }
 
     private static void CheckRecorderGuards(CheckRecorder meta)

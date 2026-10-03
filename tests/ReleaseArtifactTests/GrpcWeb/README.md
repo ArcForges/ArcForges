@@ -12,9 +12,11 @@ Against an ingress (`--live`): the health identity of the deployed revision, a u
 media type, worker revision header, terminal status in the trailer frame), exact text values (a surrogate pair,
 surrounding whitespace, precomposed and decomposed forms, controls, and the 256 UTF-16 unit boundary measured in UTF-16
 units), scoped errors (`INVALID_ARGUMENT`, `RESOURCE_EXHAUSTED`, carried as HTTP 200 with a status frame), a
-cancellation made while the request is in flight and the same channel serving the next call, an expired deadline and the
-emitted `grpc-timeout` header, an unknown method (`UNIMPLEMENTED` from HTTP 404) and an unreachable target
-(`UNAVAILABLE`). In process, without any wire: exact 64-bit extremes and a decimal string through the generated
+client-side cancellation at the hand-off to the transport (the real socket handler refuses an already cancelled request
+before writing anything, so no server sees that request), a cancellation after the ingress has answered (response headers
+received), the same channel serving the next call after each, an expired deadline and the emitted `grpc-timeout` header,
+and an unknown method (`UNIMPLEMENTED` from HTTP 404). `local.closed-port-unavailable` calls a closed loopback port (no
+ingress is involved). A cancellation observed by the server is not checked. In process, without any wire: exact 64-bit extremes and a decimal string through the generated
 Foundation messages (`codec.*`).
 
 The Hello service only carries strings, so 64-bit integers and decimals are never sent over a wire to an ingress by this
@@ -24,7 +26,7 @@ checked.
 ## Self-test (no network)
 
 `--self-test` runs the option guards, the verifier against an in-process stand-in for the ingress, and the verifier
-against 21 deliberate misbehaviors (17 of that stand-in, 4 of the client's own request), each of which must be caught by a named check, plus a stale-target check of `--expect-revision`. It is a test of
+against 23 deliberate misbehaviors (19 of that stand-in, 4 of the client's own request), each of which must be caught by a named check, plus a stale-target check of `--expect-revision`. It is a test of
 the probe itself. Its result says nothing about any real ingress.
 
 ## Opt-in runs (local only, never CI)

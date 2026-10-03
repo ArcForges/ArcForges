@@ -34,6 +34,9 @@ internal sealed class RequestTap(HttpMessageHandler inner) : DelegatingHandler(i
 
     public Action? BeforeSend { get; set; }
 
+    /// <summary>Runs when the transport has returned the response headers, before the caller reads the body.</summary>
+    public Action? AfterResponse { get; set; }
+
     public IReadOnlyList<TapEntry> Entries
     {
         get
@@ -67,6 +70,7 @@ internal sealed class RequestTap(HttpMessageHandler inner) : DelegatingHandler(i
         try
         {
             response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            AfterResponse?.Invoke();
             return response;
         }
         finally

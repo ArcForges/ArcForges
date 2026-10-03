@@ -31,6 +31,8 @@ internal enum FixtureFault
     UnknownMethodForbidden,
     WrongResponseMediaType,
     BrokenAfterCancel,
+    HealthBadRevision,
+    CountCodePointsNotUtf16Units,
 }
 
 /// <summary>Shared by every handler instance of one fixture so counters survive channel disposal.</summary>
@@ -126,7 +128,7 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
         if (request.Method == HttpMethod.Get && path.EndsWith(HealthPath, StringComparison.Ordinal))
         {
             bool aot = state.Fault != FixtureFault.HealthReportsJit;
-            string json = "{\"service\":\"fixture\",\"revision\":\"" + state.Revision + "\",\"nativeAot\":" +
+            string json = "{\"service\":\"fixture\",\"revision\":\"" + (state.Fault == FixtureFault.HealthBadRevision ? "not-a-revision" : state.Revision) + "\",\"nativeAot\":" +
                 (aot ? "true" : "false") + ",\"artifact\":{},\"build\":{}}";
             var health = new HttpResponseMessage(state.Fault == FixtureFault.HealthServerError ? HttpStatusCode.InternalServerError : HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
             health.Headers.Add("x-arcforges-worker-revision", state.Revision);
@@ -162,7 +164,12 @@ internal sealed class IngressFixtureHandler(FixtureState state) : HttpMessageHan
             name = name.Replace(Exactness.Precomposed, Exactness.Decomposed, StringComparison.Ordinal);
         }
 
-        int length = state.Fault == FixtureFault.CountUtf8BytesNotUtf16Units ? Encoding.UTF8.GetByteCount(name) : name.Length;
+        int length = state.Fault switch
+        {
+            FixtureFault.CountUtf8BytesNotUtf16Units => Encoding.UTF8.GetByteCount(name),
+            FixtureFault.CountCodePointsNotUtf16Units => name.EnumerateRunes().Count(),
+            _ => name.Length,
+        };
         if (name.Length == 0 && state.Fault != FixtureFault.EmptyNameSucceeds)
         {
             return ApplicationError(state.Fault == FixtureFault.EmptyNameWrongCode ? 2 : 3,

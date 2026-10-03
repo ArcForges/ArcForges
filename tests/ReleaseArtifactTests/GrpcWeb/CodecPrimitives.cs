@@ -36,7 +36,7 @@ internal static class CodecPrimitives
 
     private static byte[] Repeat(byte value, int count) => [.. Enumerable.Repeat(value, count)];
 
-    private static bool Exact<T>(T message, byte[] wire, MessageParser<T> parser)
+    internal static bool Exact<T>(T message, byte[] wire, MessageParser<T> parser)
         where T : class, IMessage<T>
     {
         byte[] encoded = message.ToByteArray();

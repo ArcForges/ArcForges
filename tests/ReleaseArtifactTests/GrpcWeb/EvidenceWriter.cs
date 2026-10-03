@@ -26,7 +26,7 @@ internal static class EvidenceWriter
             json.WriteString("schema", Schema);
             json.WriteString("mode", options.Mode == ProbeMode.Live ? "live" : "self-test");
             json.WriteString("scope", options.Mode == ProbeMode.Live
-                ? "A real ingress at baseAddress. Only the checks named identity, unary, exact, error, cancel, deadline and target describe it; codec checks are in-process."
+                ? "Checks named identity, unary, exact, error, cancel, deadline and target.unknown-method describe the ingress at baseAddress. local.closed-port-unavailable talks only to a closed loopback port, and codec checks run in process."
                 : "In-process fixture only. This is the verifier's own test and says nothing about any real ingress.");
             if (options.BaseAddress is not null)
             {

@@ -216,19 +216,41 @@ internal static partial class HelloScenarios
 
     private static async Task CheckCancellationAsync(ScenarioTarget target, CheckRecorder checks)
     {
-        using var channel = target.Open();
-        var client = new HelloService.HelloServiceClient(channel.Channel);
-        using var cancellation = new CancellationTokenSource();
-        channel.Tap.BeforeSend = () => cancellation.Cancel();
-        var cancelled = await CallAsync(client, "ArcForges", Deadline(15), cancellation.Token).ConfigureAwait(false);
-        channel.Tap.BeforeSend = null;
-        checks.Expect("cancel.in-flight", cancelled.Code == StatusCode.Cancelled && cancelled.Response is null,
-            "A cancellation requested while the request was handed to the transport surfaced as CANCELLED.");
-        checks.Expect("cancel.reached-transport", channel.Tap.Entries.Count == 1,
-            "The cancelled request had reached the transport, so it was cancelled in flight and not before dispatch.");
-        var recovered = await CallAsync(client, "ArcForges", Deadline(15)).ConfigureAwait(false);
-        checks.Expect("cancel.channel-recovers", recovered.Code == StatusCode.OK && recovered.Response?.Message == "Hello, ArcForges!",
-            "The same channel served the next call after the cancellation.");
+        // Cancellation at the hand-off to the transport. The real socket handler refuses an already cancelled request
+        // before writing anything, so this is client-side cancellation and says nothing about a server.
+        using (var channel = target.Open())
+        {
+            var client = new HelloService.HelloServiceClient(channel.Channel);
+            using var cancellation = new CancellationTokenSource();
+            channel.Tap.BeforeSend = () => cancellation.Cancel();
+            var cancelled = await CallAsync(client, "ArcForges", Deadline(15), cancellation.Token).ConfigureAwait(false);
+            channel.Tap.BeforeSend = null;
+            checks.Expect("cancel.at-handoff", cancelled.Code == StatusCode.Cancelled && cancelled.Response is null,
+                "A cancellation requested as the request was handed to the transport surfaced as CANCELLED (client side; no claim that a server saw the request).");
+            checks.Expect("cancel.at-handoff-no-response", channel.Tap.Entries.Count == 1 && channel.Tap.Last?.Status is null,
+                "The tap saw exactly one hand-off and no response ever arrived for it.");
+            var recovered = await CallAsync(client, "ArcForges", Deadline(15)).ConfigureAwait(false);
+            checks.Expect("cancel.channel-recovers", recovered.Code == StatusCode.OK && recovered.Response?.Message == "Hello, ArcForges!",
+                "The same channel served the next call after the hand-off cancellation.");
+        }
+
+        // Cancellation after the ingress has answered: the response headers prove it had the request.
+        using (var channel = target.Open())
+        {
+            var client = new HelloService.HelloServiceClient(channel.Channel);
+            using var cancellation = new CancellationTokenSource();
+            channel.Tap.AfterResponse = () => cancellation.Cancel();
+            var cancelled = await CallAsync(client, "ArcForges", Deadline(15), cancellation.Token).ConfigureAwait(false);
+            channel.Tap.AfterResponse = null;
+            var answered = channel.Tap.Last;
+            checks.Expect("cancel.after-response-headers",
+                cancelled.Code == StatusCode.Cancelled && cancelled.Response is null && answered?.Status == 200 &&
+                answered.ResponseHeaders.ContainsKey("x-arcforges-worker-revision"),
+                "The ingress answered (HTTP 200 with the worker revision header, so it had the request); a cancellation made then surfaced as CANCELLED.");
+            var recovered = await CallAsync(client, "ArcForges", Deadline(15)).ConfigureAwait(false);
+            checks.Expect("cancel.channel-recovers-after-response", recovered.Code == StatusCode.OK && recovered.Response?.Message == "Hello, ArcForges!",
+                "The same channel served the next call after the cancellation of an answered call.");
+        }
     }
 
     private static async Task CheckDeadlineAsync(ScenarioTarget target, CheckRecorder checks)
@@ -272,8 +294,8 @@ internal static partial class HelloScenarios
         int port = ClosedLoopbackPort();
         using var closed = ProbeChannel.CreateReal(new Uri("http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture) + "/api/"), useSystemProxy: false);
         var unreachable = await CallAsync(new HelloService.HelloServiceClient(closed.Channel), "ArcForges", Deadline(15)).ConfigureAwait(false);
-        checks.Expect("target.unreachable", unreachable.Code == StatusCode.Unavailable && unreachable.Response is null,
-            "A target nobody listens on surfaced as UNAVAILABLE over the real transport.");
+        checks.Expect("local.closed-port-unavailable", unreachable.Code == StatusCode.Unavailable && unreachable.Response is null,
+            "A closed loopback port (no ingress involved) surfaced as UNAVAILABLE over the real socket transport.");
     }
 
     internal static double? ParseGrpcTimeout(string? header)
