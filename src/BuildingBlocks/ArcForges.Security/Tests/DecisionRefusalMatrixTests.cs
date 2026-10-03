@@ -506,6 +506,15 @@ public sealed class DecisionRefusalMatrixTests
             b.ApprovalId = await h.ApproveAsync(b.Build(), RiskLevel.R1);
             _ = b.WithActors();
         });
+        Add("s10 approval requested by another owner but decided by this one", DecisionReason.S10ApprovalMismatch, async (h, b) =>
+        {
+            h.Descriptor = DecisionHarness.Describe(Capability, "R1", "perOperation", "none");
+            var requester = b.Build();
+            var decider = DecisionHarness.Chain();
+            b.ApprovalId = await h.ApproveAsync(requester, RiskLevel.R1, decidedBy: decider.Owner);
+            b.Actors = decider;
+            b.Scope = new DecisionScope(decider.Owner.Realm, b.Scope.Workspace);
+        });
         Sync("s10 approval store throws", DecisionReason.S10Unavailable, (h, b) =>
         {
             h.Descriptor = DecisionHarness.Describe(Capability, "R1", "perOperation", "none");

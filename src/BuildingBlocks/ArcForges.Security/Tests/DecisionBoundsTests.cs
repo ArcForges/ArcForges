@@ -14,7 +14,7 @@ public sealed class DecisionBoundsTests
 {
     private static DecisionPipelineOptions Short => new() { StepTimeout = TimeSpan.FromMilliseconds(200) };
 
-    [Fact]
+    [Fact(Timeout = 60_000)]
     public async Task ASourceThatNeverAnswersRefusesItsStepAndIsCancelled()
     {
         var harness = new DecisionHarness();
@@ -36,7 +36,7 @@ public sealed class DecisionBoundsTests
         Assert.Equal(["catalogue", "policy", "audit"], harness.Log.Entries);
     }
 
-    [Fact]
+    [Fact(Timeout = 60_000)]
     public async Task ASourceThatIgnoresItsTokenIsStillBoundedAndALateFailureIsObserved()
     {
         var harness = new DecisionHarness();
@@ -50,7 +50,7 @@ public sealed class DecisionBoundsTests
         await Task.Yield();
     }
 
-    [Fact]
+    [Fact(Timeout = 60_000)]
     public async Task ASlowSourceThatAnswersInTimeIsNotRefused()
     {
         var harness = new DecisionHarness();
@@ -66,7 +66,7 @@ public sealed class DecisionBoundsTests
         Assert.True(decision.Allowed);
     }
 
-    [Fact]
+    [Fact(Timeout = 60_000)]
     public async Task ASinkThatNeverAnswersFailsItsBookkeepingStepAndTheOtherSinkStillRuns()
     {
         var harness = new DecisionHarness();
@@ -86,7 +86,7 @@ public sealed class DecisionBoundsTests
         Assert.Single(harness.Audit.Records);
     }
 
-    [Fact]
+    [Fact(Timeout = 60_000)]
     public async Task AnAuditSinkThatNeverAnswersLeavesARefusalRefusedAndReportsTheFailure()
     {
         var harness = new DecisionHarness();

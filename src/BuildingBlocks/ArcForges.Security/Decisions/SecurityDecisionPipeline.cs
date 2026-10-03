@@ -226,7 +226,6 @@ public sealed class SecurityDecisionPipeline
 
     private static bool IsApprovalRequired(CapabilityDescriptor descriptor, RiskLevel effective) =>
         effective >= RiskLevel.R3
-        || !descriptor.HasApproval
         || !string.Equals(descriptor.Approval, "none", StringComparison.Ordinal);
 
     private static EgressClass EgressOf(CapabilityDescriptor descriptor)
