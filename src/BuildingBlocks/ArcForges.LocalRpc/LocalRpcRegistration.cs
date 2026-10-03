@@ -411,6 +411,16 @@ public sealed class LocalRpcRegistration : IAsyncDisposable
             // The launch no longer authorizes (or its secret is gone): nothing can register on it.
             consumed = false;
         }
+        catch
+        {
+            // Anything else (a failing process probe) must not leave the registration stuck in a confirmation that never ends.
+            lock (_gate)
+            {
+                _confirming = false;
+            }
+
+            throw;
+        }
 
         var endWith = LocalRpcRegistrationEnd.None;
         LocalRpcRegistrationRefusal refusal;

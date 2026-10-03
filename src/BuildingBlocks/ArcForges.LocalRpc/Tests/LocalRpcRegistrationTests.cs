@@ -570,6 +570,31 @@ public sealed class LocalRpcRegistrationTests
     }
 
     [Fact]
+    public void AConfirmationThatFailsUnexpectedlyDoesNotLeaveTheRegistrationStuckInIt()
+    {
+        using var world = new RegWorld();
+        var session = world.Start();
+        var challenge = session.Challenge();
+        var proof = session.Proof(challenge);
+        var fail = 1;
+        world.ProbeHook = identity =>
+        {
+            if (Interlocked.Exchange(ref fail, 0) == 1)
+            {
+                throw new IOException("the process table failed");
+            }
+
+            _ = identity;
+        };
+
+        _ = Assert.Throws<IOException>(() => session.Confirm(challenge, proof));
+
+        // The challenge was spent and the secret may be gone, but the registration is not wedged in a running confirmation.
+        Assert.True(session.Registration.AdmitsBootstrapCalls);
+        Assert.Equal(LocalRpcRegistrationRefusal.None, session.TryChallenge());
+    }
+
+    [Fact]
     public async Task TwoChildrenConfirmingAtOnceNeverBothRegisterAndNeverRevokeTheWinner()
     {
         for (var round = 0; round < 60; round++)
