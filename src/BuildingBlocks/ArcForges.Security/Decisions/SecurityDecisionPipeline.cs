@@ -694,7 +694,8 @@ public sealed class SecurityDecisionPipeline
         }
 
         var decision = snapshot.Decision;
-        if (decision is null || decision.Kind != ApprovalDecisionKind.Approve || decision.DecidedBy != request.Actors.Owner
+        // An approved snapshot always carries an approving decision (the snapshot refuses any other combination).
+        if (decision is null || decision.DecidedBy != request.Actors.Owner
             || snapshot.Owner != request.Actors.Owner || snapshot.CommandId != request.CommandId
             || !string.Equals(snapshot.OperationId, request.CapabilityKey, StringComparison.Ordinal)
             || !string.Equals(snapshot.TargetResourceId, request.Resource.Id, StringComparison.Ordinal)

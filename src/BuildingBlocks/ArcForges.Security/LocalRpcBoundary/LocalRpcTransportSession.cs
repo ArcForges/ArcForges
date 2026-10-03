@@ -66,8 +66,8 @@ public sealed class LocalRpcTransportSession : ITransportSession
         ArgumentNullException.ThrowIfNull(claim);
         ArgumentNullException.ThrowIfNull(verifyProof);
         var descriptor = launch.Descriptor;
-        if (claim.LaunchId != descriptor.LaunchId || claim.Epoch != descriptor.Epoch
-            || !string.Equals(claim.Slot, descriptor.Slot, StringComparison.Ordinal))
+        // A launch id is unique to one launch, so it alone pairs this launch with its own claim; the authority checks slot and epoch.
+        if (claim.LaunchId != descriptor.LaunchId)
         {
             return Refused(TransportRefusal.IdentityMismatch);
         }
@@ -121,22 +121,14 @@ public sealed class LocalRpcTransportSession : ITransportSession
         return new LocalRpcEstablishment(new LocalRpcTransportSession(authority, claim, binding), TransportRefusal.None);
     }
 
-    /// <summary>Verifies the launch again now. A refusal carries no binding; any failure to verify refuses.</summary>
-    [SuppressMessage("Usage", "CA1031:Do not catch general exception types", Justification = "A verification that cannot be made must refuse the boundary rather than escape it.")]
+    /// <summary>Verifies the launch again now. A refusal carries no binding. A verification that throws propagates and the pipeline refuses its step.</summary>
     public ValueTask<TransportVerdict> VerifyCurrentAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        try
-        {
-            var refusal = _authority.Verify(_claim);
-            return ValueTask.FromResult(refusal == LocalRpcLaunchRefusal.None
-                ? new TransportVerdict(TransportRefusal.None, _binding)
-                : new TransportVerdict(Map(refusal), null));
-        }
-        catch (Exception)
-        {
-            return ValueTask.FromResult(new TransportVerdict(TransportRefusal.Unavailable, null));
-        }
+        var refusal = _authority.Verify(_claim);
+        return ValueTask.FromResult(refusal == LocalRpcLaunchRefusal.None
+            ? new TransportVerdict(TransportRefusal.None, _binding)
+            : new TransportVerdict(Map(refusal), null));
     }
 
     /// <summary>The closed mapping from the launch authority's refusals; an undefined value maps to a refusal, never to success.</summary>

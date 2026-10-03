@@ -87,6 +87,21 @@ public sealed class DecisionBoundsTests
     }
 
     [Fact(Timeout = 60_000)]
+    public async Task ASinkThatIgnoresItsTokenIsStillBoundedAndFailsItsBookkeepingStep()
+    {
+        var harness = new DecisionHarness();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Recorder.Behavior = (_, _) => new ValueTask(release.Task);
+
+        var execution = await harness.Pipeline(Short).ExecuteAsync(harness.Request().Build(), harness.OwnerOperation.Operation, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExecutionStatus.BookkeepingFailed, execution.Status);
+        Assert.Equal(DecisionReason.S13RecordFailed, execution.Decision.Steps[12].Reason);
+        release.SetException(new InvalidOperationException("late failure"));
+        await Task.Yield();
+    }
+
+    [Fact(Timeout = 60_000)]
     public async Task AnAuditSinkThatNeverAnswersLeavesARefusalRefusedAndReportsTheFailure()
     {
         var harness = new DecisionHarness();
