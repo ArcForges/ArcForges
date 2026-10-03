@@ -15,7 +15,11 @@ public sealed class EgressDestinationTests
     [InlineData("https://api.example.com:8443", "https://api.example.com:8443", "api.example.com", 8443)]
     [InlineData("https://api.example.com:1", "https://api.example.com:1", "api.example.com", 1)]
     [InlineData("https://api.example.com:65535/", "https://api.example.com:65535", "api.example.com", 65535)]
-    [InlineData("https://xn--bcher-kva.example", "https://xn--bcher-kva.example", "xn--bcher-kva.example", 443)]
+    [InlineData("https://xn--bcher-kva.com", "https://xn--bcher-kva.com", "xn--bcher-kva.com", 443)]
+    [InlineData("https://example.xn--p1ai", "https://example.xn--p1ai", "example.xn--p1ai", 443)]
+    [InlineData("https://myexample.com", "https://myexample.com", "myexample.com", 443)]
+    [InlineData("https://test.com", "https://test.com", "test.com", 443)]
+    [InlineData("https://home.example.org", "https://home.example.org", "home.example.org", 443)]
     [InlineData("https://a-b.c-d.example.co.uk", "https://a-b.c-d.example.co.uk", "a-b.c-d.example.co.uk", 443)]
     [InlineData("https://1password.com", "https://1password.com", "1password.com", 443)]
     public void AnExactHttpsOriginIsCanonicalisedToLowerCaseWithTheDefaultPortImplied(string text, string origin, string host, int port)
@@ -73,7 +77,7 @@ public sealed class EgressDestinationTests
     [InlineData("https://api.example.com\t")]
     [InlineData("https://api.example.com\n")]
     [InlineData("https://api.example.com\0")]
-    [InlineData("https://bücher.example")]
+    [InlineData("https://bücher.com")]
     [InlineData("https://аpi.example.com")]
     [InlineData("https://localhost")]
     [InlineData("https://localhost:8443")]
@@ -92,6 +96,25 @@ public sealed class EgressDestinationTests
     [InlineData("https://[::1]")]
     [InlineData("https://[2001:db8::1]:443")]
     [InlineData("https://example.123")]
+    [InlineData("https://0x7f.0x1")]
+    [InlineData("https://0x7f.0.0.0x1")]
+    [InlineData("https://1.0x1")]
+    [InlineData("https://0xa9.0xfe.0xa9.0xfe")]
+    [InlineData("https://0XA9.0XFE.0XA9.0XFE")]
+    [InlineData("https://127.1")]
+    [InlineData("https://0177.0.0.1")]
+    [InlineData("https://1e3.1e3")]
+    [InlineData("https://0b1.0b1")]
+    [InlineData("https://example.c0m")]
+    [InlineData("https://example.com1")]
+    [InlineData("https://a.b.test")]
+    [InlineData("https://a.b.example")]
+    [InlineData("https://a.b.invalid")]
+    [InlineData("https://a.b.corp")]
+    [InlineData("https://a.b.intranet")]
+    [InlineData("https://a.b.private")]
+    [InlineData("https://a.b.home")]
+    [InlineData("https://A.B.TEST")]
     public void AnythingThatIsNotAnExactPublicHttpsNameIsNotADestination(string? text)
     {
         Assert.False(EgressDestinationIdentity.TryParse(text, out var identity));
@@ -131,15 +154,15 @@ public sealed class EgressDestinationTests
     {
         var label63 = new string('a', 63);
         var label64 = new string('a', 64);
-        Assert.True(EgressDestinationIdentity.TryParse($"https://{label63}.example", out _));
-        Assert.False(EgressDestinationIdentity.TryParse($"https://{label64}.example", out _));
+        Assert.True(EgressDestinationIdentity.TryParse($"https://{label63}.com", out _));
+        Assert.False(EgressDestinationIdentity.TryParse($"https://{label64}.com", out _));
 
         // 253 characters: three 63-character labels, one 61-character label and the final "com" label with its dots.
         var host253 = string.Join('.', label63, label63, label63, new string('b', 57), "com");
         Assert.Equal(253, host253.Length);
         Assert.True(EgressDestinationIdentity.TryParse($"https://{host253}", out _));
         Assert.False(EgressDestinationIdentity.TryParse($"https://{host253}x", out _));
-        Assert.False(EgressDestinationIdentity.TryParse("https://" + new string('a', 400) + ".example", out _));
+        Assert.False(EgressDestinationIdentity.TryParse("https://" + new string('a', 400) + ".com", out _));
     }
 
     [Fact]

@@ -199,7 +199,7 @@ public sealed class EgressDecision
 /// <summary>
 /// Proof that this transfer was decided and audited. It has no public constructor or factory: only the authority's transfer route
 /// creates one, immediately before it calls the owner's send operation, so an operation that requires it as its parameter cannot be
-/// reached without an egress decision. It is a per-call value, not a credential: not serializable and valid for the one call.
+/// reached without an egress decision. It is proof of one decision, not a credential: it is not serializable and carries no single-use or expiry state, so a send operation must use only the destination it names and must not keep it for a later transfer, which is decided again anyway.
 /// </summary>
 public sealed class AuthorizedEgress
 {

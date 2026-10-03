@@ -498,6 +498,67 @@ public sealed class EgressDecisionTests
         Assert.Equal(EgressReason.GrantMismatch, (await authority.DecideAsync(request, EgressHarness.Destination, TestContext.Current.CancellationToken)).Reason);
     }
 
+    private sealed class LiveGrantList(EgressGrantRecord grant) : IReadOnlyList<EgressGrantRecord>
+    {
+        private int _reads;
+
+        internal int Reads => Volatile.Read(ref _reads);
+
+        public int Count => Reads == 0 ? 1 : 0;
+
+        public EgressGrantRecord this[int index] => Reads == 0 ? grant : throw new ArgumentOutOfRangeException(nameof(index));
+
+        public IEnumerator<EgressGrantRecord> GetEnumerator()
+        {
+            // Only the first read sees the grant; any later read (Count, indexer or another pass) sees an emptied list.
+            if (Interlocked.Increment(ref _reads) == 1)
+            {
+                yield return grant;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    [Fact]
+    public async Task ALiveGrantListIsCopiedOnceSoItCannotChangeBetweenTheChecks()
+    {
+        var h = new EgressHarness();
+        var request = h.Request();
+        h.Permit(request);
+        var live = new LiveGrantList(h.Grant(request));
+        h.Grants.Behavior = (_, _, _) => ValueTask.FromResult<IReadOnlyList<EgressGrantRecord>>(live);
+
+        var decision = await h.Authority().DecideAsync(request, EgressHarness.Destination, TestContext.Current.CancellationToken);
+
+        Assert.True(decision.Allowed);
+        Assert.Equal(1, live.Reads);
+    }
+
+    [Fact]
+    public async Task AGrantListThatThrowsWhileItIsReadIsAFailingSource()
+    {
+        var h = new EgressHarness();
+        var request = h.Request();
+        h.Permit(request);
+        h.Grants.Behavior = (_, _, _) => ValueTask.FromResult<IReadOnlyList<EgressGrantRecord>>(new ThrowingGrantList());
+
+        var decision = await h.Authority().DecideAsync(request, EgressHarness.Destination, TestContext.Current.CancellationToken);
+
+        Assert.Equal(EgressReason.GrantSourceUnavailable, decision.Reason);
+    }
+
+    private sealed class ThrowingGrantList : IReadOnlyList<EgressGrantRecord>
+    {
+        public int Count => 1;
+
+        public EgressGrantRecord this[int index] => throw new InvalidOperationException("list failed");
+
+        public IEnumerator<EgressGrantRecord> GetEnumerator() => throw new InvalidOperationException("list failed");
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     [Fact]
     public async Task OnlyTheCallersOwnCancellationPropagates()
     {

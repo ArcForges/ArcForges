@@ -74,7 +74,7 @@ public sealed record EgressDestinationIdentity
     public const int MaximumLength = 300;
 
     private const string Scheme = "https://";
-    private static readonly string[] InternalSuffixes = [".localhost", ".local", ".internal", ".localdomain", ".lan", ".home.arpa"];
+    private static readonly string[] InternalSuffixes = [".localhost", ".local", ".internal", ".localdomain", ".lan", ".home.arpa", ".test", ".example", ".invalid", ".corp", ".intranet", ".private", ".home"];
 
     private EgressDestinationIdentity(string origin, string host, int port)
     {
@@ -172,7 +172,7 @@ public sealed record EgressDestinationIdentity
         }
 
         var labels = 0;
-        var lastLabelHasLetter = false;
+        var lastLabelIsAlphabetic = false;
         var start = 0;
         for (var index = 0; index <= host.Length; index++)
         {
@@ -193,20 +193,28 @@ public sealed record EgressDestinationIdentity
             }
 
             labels++;
-            lastLabelHasLetter = false;
-            foreach (var character in label)
+            // A label is a name part when it is letters only or an internationalised (xn--) label. Digits anywhere in the last label
+            // would admit decimal, octal, hexadecimal and short-form IPv4 literals (0x7f.0x1, 1.0x1), which address resolvers read as
+            // 127.0.0.1 and the like, so none of them is a name.
+            lastLabelIsAlphabetic = label.StartsWith("xn--", StringComparison.OrdinalIgnoreCase);
+            if (!lastLabelIsAlphabetic)
             {
-                if (character is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z'))
+                lastLabelIsAlphabetic = true;
+                foreach (var character in label)
                 {
-                    lastLabelHasLetter = true;
+                    if (character is not ((>= 'a' and <= 'z') or (>= 'A' and <= 'Z')))
+                    {
+                        lastLabelIsAlphabetic = false;
+                        break;
+                    }
                 }
             }
 
             start = index + 1;
         }
 
-        // A name with a single label (localhost, an intranet host) or whose last label is numeric (an IPv4 literal) is not a public name.
-        if (labels < 2 || !lastLabelHasLetter)
+        // A name with a single label (localhost, an intranet host) or whose last label is not alphabetic (an address literal) is not a public name.
+        if (labels < 2 || !lastLabelIsAlphabetic)
         {
             return false;
         }

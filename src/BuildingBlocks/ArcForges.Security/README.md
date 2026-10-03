@@ -165,8 +165,12 @@ A transfer is allowed only when all of these hold, checked in this order, and th
 when a source cannot answer):
 
 1. The destination is an exact destination identity (`EgressDestinationIdentity`): one lower-case HTTPS origin, written as a name.
-   A wildcard, category, path, query, userinfo, address literal, single-label or internal name (`localhost`, `.local`, `.internal`,
-   ...), invalid port or non-ASCII host is not an identity, and two identities are equal only when their canonical
+   A wildcard, category, path, query, userinfo, single-label name, invalid port or non-ASCII host is not an identity, and neither is
+   an address literal: the last label must be letters only or an `xn--` label, so decimal, octal, hexadecimal and short-form IPv4
+   literals (`127.1`, `0x7f.0x1`, `0xa9.0xfe.0xa9.0xfe`) are refused. Names that are not public are refused too: `localhost`,
+   `.local`, `.internal`, `.localdomain`, `.lan`, `.home.arpa`, and the reserved or conventionally private suffixes `.test`,
+   `.example`, `.invalid`, `.corp`, `.intranet`, `.private` and `.home` (a private suffix not on that list still passes; the
+   allowlist, not the parser, is what makes a destination reachable). Two identities are equal only when their canonical
    origins are equal (so `api.example.com.evil.net` or `api.example.com:8443` is another destination). It must also be the
    destination the invocation declared (`DecisionRequest.EgressDestination`).
 2. The content is classified by the host's `IEgressContentClassifier` (data class, and whether the knowledge policy makes it
@@ -180,9 +184,12 @@ when a source cannot answer):
 5. The decision is durable in the `IEgressAuditSink`. An allowed decision whose record cannot be written is refused
    (`AuditUnavailable`), so nothing is authorized without its audit event; a refusal is audited best effort and never changes.
 
-Every decision, allowed or refused, writes exactly one `EgressAuditRecord` before it is returned: kind, reason, time, the
+Every decision, allowed or refused, attempts one `EgressAuditRecord` write before it is returned (one attempt per decision; an allowed
+decision whose write fails becomes the `AuditUnavailable` refusal, and that refusal is not written a second time). The record holds: kind, reason, time, the
 complete actor chain, executor, capability, resource reference, scope, origin, device, correlation, the destination identity and
-class, the data class, the authority and its reference, and the grant and allowlist generations. It carries classes, identities and
+class, the data class, the authority and its reference, and the grant and allowlist generations. A write that times out may still
+land in the sink after the caller was refused, so the durable log can show `Authorized` for a transfer that was refused (over-audit,
+which is safe for the transfer); an audit adapter (PLT.44) must treat that pair as possible. The record carries classes, identities and
 references only; no payload, content or secret, and the text of a malformed destination is not echoed.
 
 Source failures fail closed: a classifier, allowlist or grant source that returns nothing, throws, or does not answer within
@@ -199,7 +206,8 @@ Two integration shapes, both with no permissive default:
 - **The send itself.** `TransferAsync(AuthorizedExecution ticket, destination, operation, ct)` decides again for every transfer
   (a revocation or an expiry is seen at the next one), refuses any destination other than the one the invocation declared, writes
   the audit record, and only then calls the owner's `EgressOperation` with a sealed `AuthorizedEgress` ticket (no public
-  constructor or factory) naming the exact destination, classes and authority. A refusal returns a typed failure with the
+  constructor or factory) naming the exact destination, classes and authority. The ticket proves one decision; it has no single-use
+  or expiry state, so the send operation must use only the destination it names and not keep it for a later transfer. A refusal returns a typed failure with the
   registered code and the operation is never called.
 
 Not provided here and not claimed:

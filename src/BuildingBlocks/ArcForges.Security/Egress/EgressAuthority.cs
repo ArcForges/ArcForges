@@ -159,12 +159,14 @@ public sealed class EgressAuthority
         var found = await CallAsync(token => _grants.FindAsync(request, identity, token), cancellationToken).ConfigureAwait(false);
         // The instant is read after the source answered, so a slow source cannot make an expired grant look current.
         var now = _clock.GetCurrentInstant();
-        if (!found.Ok || found.Value is null || found.Value.Count > MaximumGrantRecords || found.Value.Any(static record => record is null))
+        var snapshot = found.Ok ? Snapshot(found.Value) : null;
+        if (snapshot is null)
         {
             return Refused(EgressReason.GrantSourceUnavailable);
         }
 
-        var records = found.Value;
+        // Everything below reads this one private copy, so a source that hands out a live list cannot change it between checks.
+        var records = snapshot;
         var principal = request.PrincipalKey;
         var matching = records
             .Where(record => string.Equals(record.PrincipalKey, principal, StringComparison.Ordinal)
@@ -174,7 +176,7 @@ public sealed class EgressAuthority
             .ToArray();
         if (matching.Length == 0)
         {
-            return Refused(records.Count == 0 ? EgressReason.NoGrant : EgressReason.GrantMismatch);
+            return Refused(records.Length == 0 ? EgressReason.NoGrant : EgressReason.GrantMismatch);
         }
 
         if (matching.Any(static record => record.State == EgressGrantState.Denied))
@@ -221,6 +223,26 @@ public sealed class EgressAuthority
         }
 
         return Decision(verdict, record);
+    }
+
+    /// <summary>Copies the source's answer once, bounded. Returns null for no answer, too many records, a null record or a list that fails while read.</summary>
+    [SuppressMessage("Usage", "CA1031:Do not catch general exception types", Justification = "A list that throws while it is read is a failing source and refuses the transfer.")]
+    private static EgressGrantRecord[]? Snapshot(IReadOnlyList<EgressGrantRecord>? source)
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var copy = source.Take(MaximumGrantRecords + 1).ToArray();
+            return copy.Length > MaximumGrantRecords || copy.Any(static record => record is null) ? null : copy;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static EgressDecision Decision(Verdict verdict, EgressAuditRecord audit) => new(
