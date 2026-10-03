@@ -11,12 +11,37 @@ namespace ArcForges.LocalRpc.Tests;
 /// and every helper process see, standing in for the durable record an owner reconciles against.
 /// </summary>
 [Collection(LocalRpcCollection.Name)]
-public sealed class LocalRpcCommandProcessChecks
+public sealed class LocalRpcCommandProcessChecks : IDisposable
 {
     private const string OptIn = "Explicit local process checks only (ARCFORGES_LOCALRPC_OS_STREAMS=1).";
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(60);
 
+    private readonly List<Process> _started = [];
+
     public static bool Enabled => LocalRpcOsStreamChecks.Enabled;
+
+    /// <summary>Whatever a check leaves running, including when it fails before it kills its helper, is killed when the check ends.</summary>
+    public void Dispose()
+    {
+        foreach (var process in _started)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Already gone.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+    }
 
     [Fact(Skip = OptIn, SkipUnless = nameof(Enabled))]
     public async Task AHelperProcessKilledBeforeItsCommitPointLeavesAnUnknownEffectThatReconcilesToDidNotHappenAndRunsOnceOnTheNextHelper()
@@ -28,11 +53,11 @@ public sealed class LocalRpcCommandProcessChecks
         var command = CommandClient.CompleteCommand(id);
         var firstGeneration = new LocalRpcPeerGeneration(Guid.NewGuid(), 1);
         var first = world.Endpoint("a");
-        using var helper = StartHelper(first, world.Root, "before");
+        var helper = StartHelper(first, world.Root, "before");
         await ReadAsync(helper, "READY", ct);
         await using var channel = LocalRpcClientChannel.Create(first.Endpoint);
         var running = CommandClient.CompleteAsync(executor, channel, firstGeneration, command, cancellationToken: ct);
-        Assert.Equal("before", (await ReadAsync(helper, "REACHED", ct)).Split(' ')[1]);
+        _ = await ReadAsync(helper, "REACHED before", ct);
 
         helper.Kill(entireProcessTree: true);
         await helper.WaitForExitAsync(ct);
@@ -44,7 +69,7 @@ public sealed class LocalRpcCommandProcessChecks
 
         var second = world.Endpoint("b");
         var secondGeneration = new LocalRpcPeerGeneration(Guid.NewGuid(), 2);
-        using var next = StartHelper(second, world.Root, "run");
+        var next = StartHelper(second, world.Root, "run");
         await ReadAsync(next, "READY", ct);
         await using var secondChannel = LocalRpcClientChannel.Create(second.Endpoint);
         var refused = await CommandClient.CompleteAsync(executor, secondChannel, secondGeneration, command, cancellationToken: ct);
@@ -67,11 +92,11 @@ public sealed class LocalRpcCommandProcessChecks
         var id = Guid.NewGuid();
         var command = CommandClient.CompleteCommand(id);
         var first = world.Endpoint("a");
-        using var helper = StartHelper(first, world.Root, "after");
+        var helper = StartHelper(first, world.Root, "after");
         await ReadAsync(helper, "READY", ct);
         await using var channel = LocalRpcClientChannel.Create(first.Endpoint);
         var running = CommandClient.CompleteAsync(executor, channel, new LocalRpcPeerGeneration(Guid.NewGuid(), 1), command, cancellationToken: ct);
-        Assert.Equal("after", (await ReadAsync(helper, "REACHED", ct)).Split(' ')[1]);
+        _ = await ReadAsync(helper, "REACHED after", ct);
         Assert.Equal(1, world.Store.Commits(id));
 
         helper.Kill(entireProcessTree: true);
@@ -81,7 +106,7 @@ public sealed class LocalRpcCommandProcessChecks
 
         var second = world.Endpoint("b");
         var secondGeneration = new LocalRpcPeerGeneration(Guid.NewGuid(), 2);
-        using var next = StartHelper(second, world.Root, "run");
+        var next = StartHelper(second, world.Root, "run");
         await ReadAsync(next, "READY", ct);
         await using var secondChannel = LocalRpcClientChannel.Create(second.Endpoint);
         var refused = await CommandClient.CompleteAsync(executor, secondChannel, secondGeneration, command, cancellationToken: ct);
@@ -101,7 +126,7 @@ public sealed class LocalRpcCommandProcessChecks
         using var world = new ProcessWorld();
         var executor = new LocalRpcCommandExecutor();
         var first = world.Endpoint("a");
-        using var helper = StartHelper(first, world.Root, "before");
+        var helper = StartHelper(first, world.Root, "before");
         await ReadAsync(helper, "READY", ct);
         await using var channel = LocalRpcClientChannel.Create(first.Endpoint);
         var generation = new LocalRpcPeerGeneration(Guid.NewGuid(), 1);
@@ -112,7 +137,7 @@ public sealed class LocalRpcCommandProcessChecks
         var reached = new List<string>();
         for (var index = 0; index < LocalRpcLimits.DefaultMaxActiveCalls; index++)
         {
-            reached.Add((await ReadAsync(helper, "REACHED", ct)).Split(' ')[2]);
+            reached.Add((await ReadAsync(helper, "REACHED before", ct)).Split(' ')[2]);
         }
 
         var victim = Guid.ParseExact(reached[0], "N");
@@ -132,7 +157,7 @@ public sealed class LocalRpcCommandProcessChecks
         _ = await Task.WhenAll(calls).WaitAsync(Patience, ct);
     }
 
-    private static Process StartHelper((LocalRpcEndpoint Endpoint, string Kind, string Address) endpoint, string store, string mode)
+    private Process StartHelper((LocalRpcEndpoint Endpoint, string Kind, string Address) endpoint, string store, string mode)
     {
         var host = Environment.ProcessPath ?? throw new InvalidOperationException("The test executable path is unknown.");
         var start = new ProcessStartInfo(host)
@@ -149,7 +174,9 @@ public sealed class LocalRpcCommandProcessChecks
         }
 
         start.Environment[LaunchHelperProcess.Variable] = string.Join('|', "command", endpoint.Kind, endpoint.Address, store, mode);
-        return Process.Start(start) ?? throw new InvalidOperationException("The helper process did not start.");
+        var process = Process.Start(start) ?? throw new InvalidOperationException("The helper process did not start.");
+        _started.Add(process);
+        return process;
     }
 
     /// <summary>Reads helper output lines until one starts with <paramref name="prefix"/> and returns it.</summary>
