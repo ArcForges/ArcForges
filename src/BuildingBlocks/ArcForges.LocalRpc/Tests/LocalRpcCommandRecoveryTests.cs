@@ -623,6 +623,127 @@ public sealed class LocalRpcCommandRecoveryTests
         Assert.Equal(0, rig.Executor.RecordedCommands);
     }
 
+    // Guards that only a sharper test can see.
+    [Fact]
+    public async Task AReplayThatIsRefusedCannotTurnTheEarlierUnknownIntoDidNotHappen()
+    {
+        var rig = new ExecutorRig(maxAttempts: 1);
+        var id = Guid.NewGuid();
+        _ = await rig.RunAsync(ExecutorRig.Command(id, LocalRpcIdempotency.DuplicateSafe), rig.Script(ExecutorRig.Fail(ExecutorRig.Unavailable())), cancellationToken: Ct);
+
+        var replay = await rig.RunAsync(ExecutorRig.Command(id, LocalRpcIdempotency.DuplicateSafe, replay: true), rig.Script(ExecutorRig.Fail(ExecutorRig.DataQueueFull())), cancellationToken: Ct);
+
+        // The replayed attempt was refused before dispatch, but the first attempt may have run on that launch.
+        Assert.True(replay.Sent);
+        Assert.Equal(LocalRpcFailureReason.Refused, replay.Reason);
+        Assert.Equal(LocalRpcEffect.Unknown, replay.Effect);
+        Assert.Equal(LocalRpcCommandState.Unknown, rig.Executor.GetRecord(id)!.State);
+    }
+
+    [Fact]
+    public async Task TheReplayWindowRunsFromTheFirstAttemptAndNotFromTheLatestOne()
+    {
+        var rig = new ExecutorRig(maxAttempts: 2);
+        var id = Guid.NewGuid();
+        _ = await rig.RunAsync(ExecutorRig.Command(id, LocalRpcIdempotency.DuplicateSafe), rig.Script(ExecutorRig.Fail(ExecutorRig.Unavailable())), cancellationToken: Ct);
+        rig.Time.Advance(TimeSpan.FromMinutes(4));
+        var second = await rig.RunAsync(ExecutorRig.Command(id, LocalRpcIdempotency.DuplicateSafe, replay: true), rig.Script(ExecutorRig.Fail(ExecutorRig.Unavailable())), cancellationToken: Ct);
+        Assert.True(second.Sent);
+        rig.Time.Advance(TimeSpan.FromMinutes(2));
+
+        var third = await rig.RunAsync(ExecutorRig.Command(id, LocalRpcIdempotency.DuplicateSafe, replay: true), rig.Script(ExecutorRig.Ok()), cancellationToken: Ct);
+
+        // Six minutes since the first send, two since the latest: the helper may already have forgotten the command.
+        Assert.False(third.Sent);
+        Assert.Equal(LocalRpcFailureReason.ReplayNotAllowed, third.Reason);
+        Assert.Equal(2, rig.Sends);
+    }
+
+    [Fact]
+    public async Task ACancelSettledByTheHelpersReportIsNotOverwrittenByTheLateEndOfTheCallThatWasRunning()
+    {
+        var rig = new ExecutorRig();
+        var command = ExecutorRig.Command();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = rig.RunAsync(command, rig.Script(ExecutorRig.Gated(gate, "late answer")), cancellationToken: Ct);
+        await BoundsHarness.WaitUntilAsync(() => rig.Sends == 1, "the send", Ct);
+        _ = await rig.Executor.CancelAsync(command.CommandId, (_, _) => Task.FromResult(LocalRpcEffect.DidNotHappen), Ct);
+
+        gate.SetResult();
+        var outcome = await running.WaitAsync(Patience, Ct);
+
+        // The first settlement stands: the command was cancelled before its commit point, whatever the call that was still running returns.
+        Assert.Equal(LocalRpcOutcomeKind.Cancelled, outcome.Kind);
+        Assert.Equal(LocalRpcEffect.DidNotHappen, outcome.Effect);
+        Assert.False(outcome.HasResponse);
+        Assert.Equal(LocalRpcOutcomeKind.Cancelled, rig.Executor.GetRecord(command.CommandId)!.Kind);
+    }
+
+    [Fact]
+    public async Task ReconcilingACancelRequestedCommandToDidNotHappenReadsAsCancelled()
+    {
+        var rig = new ExecutorRig();
+        var command = await UnknownAsync(rig);
+        _ = await rig.Executor.CancelAsync(command.CommandId, (_, _) => Task.FromException<LocalRpcEffect>(ExecutorRig.Unavailable()), Ct);
+
+        var record = await rig.Executor.ReconcileAsync(command.CommandId, (_, _) => Resolves(LocalRpcEffect.DidNotHappen), Ct);
+
+        Assert.Equal(LocalRpcCommandState.Resolved, record!.State);
+        Assert.Equal(LocalRpcOutcomeKind.Cancelled, record.Kind);
+        Assert.Equal(LocalRpcEffect.DidNotHappen, record.Effect);
+        Assert.Equal(LocalRpcFailureReason.CancelRequested, record.Reason);
+        Assert.True(record.CancelRequested);
+    }
+
+    [Fact]
+    public async Task AQueryIsToldItsAttemptNumber()
+    {
+        var rig = new ExecutorRig(maxAttempts: 3);
+        var seen = new List<int>();
+        var running = rig.RunAsync(ExecutorRig.Command(null, LocalRpcIdempotency.Query), rig.Script((attempt, _) =>
+        {
+            seen.Add(attempt);
+            return Task.FromException<string>(ExecutorRig.Unavailable());
+        }), cancellationToken: Ct);
+
+        await rig.AfterWaitingAdvanceAsync(ExecutorRig.FirstWait, Ct);
+        await BoundsHarness.WaitUntilAsync(() => rig.Sends == 2 && rig.Time.ArmedTimers == 1, "the second wait", Ct);
+        rig.Time.Advance(TimeSpan.FromMilliseconds(200));
+        _ = await running.WaitAsync(Patience, Ct);
+
+        Assert.Equal([1, 2, 3], seen);
+    }
+
+    [Fact]
+    public void ACommandThatIsCancelledOrLostBeforeItsFirstAttemptDidNotHappenBecauseNothingWasSent()
+    {
+        var journal = new LocalRpcCommandJournal(new ManualTimeProvider(), 16, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(5));
+
+        var cancelled = journal.Begin(ExecutorRig.Command(), ExecutorRig.Gen).Entry!;
+        _ = journal.RequestCancel(cancelled.Id);
+        Assert.Null(journal.StartAttempt(cancelled, callerCancelled: false));
+        var a = journal.SettleWithoutAttempt(cancelled, callerCancelled: false);
+        Assert.Equal(LocalRpcOutcomeKind.Cancelled, a.Kind);
+        Assert.Equal(LocalRpcEffect.DidNotHappen, a.Effect);
+        Assert.Equal(LocalRpcCommandState.Resolved, a.State);
+        Assert.Equal(0, a.Attempts);
+
+        var lost = journal.Begin(ExecutorRig.Command(), ExecutorRig.Gen).Entry!;
+        Assert.Equal(1, journal.PeerLost(ExecutorRig.Gen));
+        Assert.Null(journal.StartAttempt(lost, callerCancelled: false));
+        var b = journal.SettleWithoutAttempt(lost, callerCancelled: false);
+        Assert.Equal(LocalRpcOutcomeKind.Failure, b.Kind);
+        Assert.Equal(LocalRpcEffect.DidNotHappen, b.Effect);
+        Assert.Equal(LocalRpcFailureReason.PeerLost, b.Reason);
+
+        var abandoned = journal.Begin(ExecutorRig.Command(), ExecutorRig.Gen).Entry!;
+        Assert.Null(journal.StartAttempt(abandoned, callerCancelled: true));
+        var c = journal.SettleWithoutAttempt(abandoned, callerCancelled: true);
+        Assert.Equal(LocalRpcOutcomeKind.Cancelled, c.Kind);
+        Assert.Equal(LocalRpcEffect.DidNotHappen, c.Effect);
+        Assert.Equal(LocalRpcFailureReason.CancelledByCaller, c.Reason);
+    }
+
     // Concurrency.
     [Fact]
     public async Task ManyCommandsRacingEachOtherLaunchLossesAndDuplicatesNeverRunTwiceAtOnceAndAllSettle()
