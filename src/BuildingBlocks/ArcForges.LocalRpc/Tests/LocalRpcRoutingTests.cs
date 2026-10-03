@@ -180,7 +180,7 @@ public sealed class LocalRpcRoutingTests
         Assert.Equal(LocalRpcRouteRefusal.ServiceNotDeclared, router.TryResolve(RouteFixtures.Request("slot-a", RouteFixtures.OtherService), out var route));
         Assert.Null(route);
         Assert.Equal(LocalRpcRouteRefusal.ServiceNotDeclared, router.TryResolve(RouteFixtures.Request("slot-b", RouteFixtures.SandboxService), out _));
-        Assert.Equal(LocalRpcRouteRefusal.ServiceNotDeclared, router.TryResolve(RouteFixtures.Request("slot-a", RouteFixtures.SandboxService.ToLowerInvariant()), out _));
+        Assert.Equal(LocalRpcRouteRefusal.ServiceNotDeclared, router.TryResolve(RouteFixtures.Request("slot-a", RouteFixtures.SandboxService.ToUpperInvariant()), out _));
         Assert.Equal(LocalRpcRouteRefusal.ServiceNotDeclared, router.TryResolve(RouteFixtures.Request("slot-a", RouteFixtures.SandboxService[..^1]), out _));
         Assert.Equal(LocalRpcRouteRefusal.ServiceNotDeclared, router.TryResolve(RouteFixtures.Request("slot-a", RouteFixtures.BootstrapService), out _));
         Assert.Equal(LocalRpcRouteRefusal.None, router.TryResolve(RouteFixtures.Request("slot-a", RouteFixtures.SandboxService), out _));
@@ -318,7 +318,7 @@ public sealed class LocalRpcRoutingTests
     }
 
     [Fact]
-    public void ARevokedLaunchAndADisposedRegistrationEndTheRoute()
+    public async Task ARevokedLaunchAndADisposedRegistrationEndTheRoute()
     {
         using var world = new RegWorld();
         var router = new LocalRpcRouter();
@@ -326,7 +326,7 @@ public sealed class LocalRpcRoutingTests
         var disposed = RouteFixtures.AddRegistered(world, router, "slot-d");
 
         revoked.Launch.Revoke();
-        disposed.Registration.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        await disposed.Registration.DisposeAsync();
 
         Assert.Equal(LocalRpcRouteRefusal.ChildEnded, router.TryResolve(RouteFixtures.Request("slot-r"), out _));
         Assert.Equal(LocalRpcRouteRefusal.ChildEnded, router.TryResolve(RouteFixtures.Request("slot-d"), out _));
@@ -448,8 +448,18 @@ internal sealed class ReachedInvoker : CallInvoker
 
 internal sealed class ReachedException : Exception
 {
-    internal ReachedException()
+    public ReachedException()
         : base("The call reached the invoker.")
+    {
+    }
+
+    public ReachedException(string message)
+        : base(message)
+    {
+    }
+
+    public ReachedException(string message, Exception innerException)
+        : base(message, innerException)
     {
     }
 }
