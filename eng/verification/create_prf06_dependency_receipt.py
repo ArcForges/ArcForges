@@ -106,6 +106,8 @@ def main() -> None:
     for coordinate, (expected_licence, classification, internal) in NEW_COORDINATES.items():
         if coordinate not in locked:
             raise SystemExit(f"Expected PRF.06 coordinate missing from the locked graph: {coordinate}")
+        if coordinate in policy["nugetClosure"]:
+            continue  # already admitted by an earlier receipt (Grpc.Net.Client.Web by PRF.05): reuse, never duplicate
         sha, licence = nuspec(coordinate)
         if licence != expected_licence:
             raise SystemExit(f"Unexpected licence {licence} for {coordinate}")
@@ -142,11 +144,11 @@ def main() -> None:
             "baselineCommit": args.baseline,
             "maintenanceAssessment": (
                 "PRF.06 adds one non-packable Native AOT probe, tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj, "
-                "that consumes the generated annex 10 EventService and ExecutionService clients. It admits exactly four new "
+                "that consumes the generated annex 10 EventService and ExecutionService clients. It admits exactly three new "
                 "locked coordinates: ArcForges.Contracts.Events, ArcForges.Contracts.PublicApi and ArcForges.Contracts.Foundation "
                 "at the CON.11 candidate 1.0.0-ci.270.1 (Contracts source 4047930, all Apache-2.0, each pinned only for the project "
-                "named RealtimeAotProbe so no other project's resolution changes), and the single Grpc.Net.Client.Web 2.84.0 pin "
-                "shared with PRF.05 (Apache-2.0, no net10.0 dependency). Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0, Grpc.Net.Client "
+                "named RealtimeAotProbe so no other project's resolution changes), and reuses the single Grpc.Net.Client.Web 2.84.0 pin "
+                "and closure row already admitted by PRF.05 (Apache-2.0, no net10.0 dependency). Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0, Grpc.Net.Client "
                 "2.84.0, Grpc.Net.Common 2.84.0 and the Microsoft.Extensions 8.0.1 abstractions are unchanged admitted rows. This "
                 "immutable successor chains from the active receipt on main, preserves every earlier receipt and changes no other "
                 "dependency coordinate, version, framework, native or Android posture."
@@ -167,7 +169,7 @@ def main() -> None:
                     "any deployed server implements them."
                 ),
                 "licence-provenance": (
-                    "All four new coordinates have exact locked content hashes and Apache-2.0 nuspec expressions; the three Contracts "
+                    "All three new coordinates have exact locked content hashes and Apache-2.0 nuspec expressions; the three Contracts "
                     "packages record source commit 4047930ef2207e8a4c6de9e7ef679f0d9359a8e4 from their nuspec repository element. "
                     "Apache-2.0 is permitted inside the AGPL repository and the probe is non-packable."
                 ),

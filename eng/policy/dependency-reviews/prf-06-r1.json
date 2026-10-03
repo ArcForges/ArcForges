@@ -3,13 +3,13 @@
     "owner": "w-c20261002-prf06",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-10-02",
-    "baselineCommit": "d4e874374a737012b174904e25d49c8fdf05714c",
-    "maintenanceAssessment": "PRF.06 adds one non-packable Native AOT probe, tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj, that consumes the generated annex 10 EventService and ExecutionService clients. It admits exactly four new locked coordinates: ArcForges.Contracts.Events, ArcForges.Contracts.PublicApi and ArcForges.Contracts.Foundation at the CON.11 candidate 1.0.0-ci.270.1 (Contracts source 4047930, all Apache-2.0, each pinned only for the project named RealtimeAotProbe so no other project's resolution changes), and the single Grpc.Net.Client.Web 2.84.0 pin shared with PRF.05 (Apache-2.0, no net10.0 dependency). Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0, Grpc.Net.Client 2.84.0, Grpc.Net.Common 2.84.0 and the Microsoft.Extensions 8.0.1 abstractions are unchanged admitted rows. This immutable successor chains from the active receipt on main, preserves every earlier receipt and changes no other dependency coordinate, version, framework, native or Android posture.",
+    "baselineCommit": "4d4552c84ddb6c3dddd192bb8c7e7634b2c1f07b",
+    "maintenanceAssessment": "PRF.06 adds one non-packable Native AOT probe, tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj, that consumes the generated annex 10 EventService and ExecutionService clients. It admits exactly three new locked coordinates: ArcForges.Contracts.Events, ArcForges.Contracts.PublicApi and ArcForges.Contracts.Foundation at the CON.11 candidate 1.0.0-ci.270.1 (Contracts source 4047930, all Apache-2.0, each pinned only for the project named RealtimeAotProbe so no other project's resolution changes), and reuses the single Grpc.Net.Client.Web 2.84.0 pin and closure row already admitted by PRF.05 (Apache-2.0, no net10.0 dependency). Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0, Grpc.Net.Client 2.84.0, Grpc.Net.Common 2.84.0 and the Microsoft.Extensions 8.0.1 abstractions are unchanged admitted rows. This immutable successor chains from the active receipt on main, preserves every earlier receipt and changes no other dependency coordinate, version, framework, native or Android posture.",
     "upgradeChecks": {
       "compilation": "Locked restore on the pinned .NET SDK 10.0.400 (the user-level installation, not the machine SDK) and Release build with warnings as errors pass locally; hosted CI repeats restore, build and format on the exact head.",
       "aot-trim": "The project imports the shared full-trim/AOT posture with IL2026 and IL3050 as errors and suppresses nothing. The Native AOT publish is run locally on win-x64 and compiled for win-x64 and linux-x64 by the locked realtime-aot package-validation job; the job never executes the binary.",
       "compatibility": "Only generated Contracts records and clients are used; no wire DTO is copied. The CON.11 candidate contains the published EventService.Watch/Poll and ExecutionService.WatchOutput/ReadOutput contract. Nothing here claims that any deployed server implements them.",
-      "licence-provenance": "All four new coordinates have exact locked content hashes and Apache-2.0 nuspec expressions; the three Contracts packages record source commit 4047930ef2207e8a4c6de9e7ef679f0d9359a8e4 from their nuspec repository element. Apache-2.0 is permitted inside the AGPL repository and the probe is non-packable.",
+      "licence-provenance": "All three new coordinates have exact locked content hashes and Apache-2.0 nuspec expressions; the three Contracts packages record source commit 4047930ef2207e8a4c6de9e7ef679f0d9359a8e4 from their nuspec repository element. Apache-2.0 is permitted inside the AGPL repository and the probe is non-packable.",
       "security-sbom": "The complete locked graph is admitted and CI retains NuGet audit. No claim of absent advisories is made beyond what the hosted audit reports.",
       "runtime-performance-migration": "The probe's offline self-test covers its own client logic and the replayed binary gRPC-Web wire; it is not a performance benchmark and not a deployed-service result. The live mode against a deployed Worker is local opt-in and has never been run.",
       "framework-runtime-posture": "No framework major, native ABI or Android posture change; global.json stays on .NET SDK 10.0.400."
@@ -275,13 +275,16 @@
       "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
       "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
       "tests/PersistenceTests/packages.lock.json": "c94488ff2560372433bf2ca0d6f04a69429d10cde23265edca24ea6f798b6778",
+      "tests/ReleaseArtifactTests/GrpcWeb/Directory.Packages.props": "75389a85362198cb44500b21765fda9a7a83ce13a17e6fbeb5b5ec9d9f8b68c7",
+      "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj": "51a16e4d5b8f0370359b0eaed5677866f656e6dab53f079138b3f5d9b3c68b04",
+      "tests/ReleaseArtifactTests/GrpcWeb/packages.lock.json": "fb32043eec1ecd8f2ec860466523722bd3f5ae68a60e38d4d8a62140448f68d8",
       "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj": "a99e35c36a3e4a19b446d2d2deebff6e60945ed68688c207d23fdfb691c7f2bb",
       "tests/ReleaseArtifactTests/Realtime/packages.lock.json": "0dbb97585be8af174a773fe14e3a8a216e54f66a3694ab7c9de3870e50971525"
     },
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-53-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/prf-05-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -365,6 +368,32 @@
         "feed": "https://api.nuget.org/v3/index.json"
       }
     },
+    "arcforges.contracts.publicapi/1.0.0-ci.216.1": {
+      "licence": "Apache-2.0",
+      "nuspecSha256": "2001724ed917f3754749a16ff5cd458ec50ae6d8a26025456ad21732f4954fad",
+      "classification": "Exact published Contracts candidate. It is a transitive dependency of ArcForges.Sdk.Contracts 1.0.0-ci.216.1 in the existing Capabilities and Contributions graphs, and the non-packable PRF.05 probe also references it directly for the generated HelloService client at the same version. Apache-2.0 is permitted inside AGPL consumers.",
+      "contentHash": "cj1wcu/v8bSGL0pGbKYMcJGFFs7SGF3jsG6GXm49cpj3Cal/tl2orj5jdoDBweOH0LeWZisNfFhfXkvnKR9wfQ==",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.publicapi/1.0.0-ci.216.1/arcforges.contracts.publicapi.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.contracts.publicapi/1.0.0-ci.270.1": {
+      "contentHash": "0dz653V64rZFFKgDDfEKbH2lqzJ5GVeRMd1dK7ZOr156pEPQMqZL89RQY//WZ9JiSVWSxWemX2JI6JyKKjmibQ==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "f18f43b539a1ad039c3f11e7a5eddeb3463836186b4f28c7eafb50636015fdd6",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.publicapi/1.0.0-ci.270.1/arcforges.contracts.publicapi.nuspec",
+      "classification": "Exact CON.11 PublicApi candidate (Contracts source 4047930), a direct reference of the non-packable PRF.06 realtime AOT probe for ExecutionOwner and the shared annex 10 records; project-conditioned pin.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "4047930ef2207e8a4c6de9e7ef679f0d9359a8e4",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
     "arcforges.foundation/1.0.0-ci.29.1": {
       "contentHash": "P5FRjzq8/DOhNS4bI4PAtjjnkIN2XPufXV0vnfyRFyDN12A/QcV1nteBCu4q/Kxg9R0Enlftut9QxYNtMPzDTg==",
       "licence": "AGPL-3.0-only",
@@ -377,6 +406,40 @@
         "feed": "https://api.nuget.org/v3/index.json"
       },
       "classification": "Exact existing DesktopPlatform publication consumed only by the local FND.07 acceptance runner; same AGPL boundary."
+    },
+    "arcforges.sdk.contracts/1.0.0-ci.216.1": {
+      "licence": "Apache-2.0",
+      "nuspecSha256": "c7de5c36751d21de28171308dd99c25ec6a451baaf08a0a824534a73260c8a12",
+      "classification": "Exact published CON producer required to consume generated Invocation from ArcForges.Sdk.Contracts 1.0.0-ci.216.1; direct consumer ArcForges.Capabilities, transitively locked for the existing Capabilities and Contributions production/test projects. Apache-2.0 is permitted inside AGPL consumers.",
+      "contentHash": "aN/9J61hb7TTPnOBugNHD4Ic3aBc/3zTIsmseTdaCNO/RiaOTwFnsteg7UKg4pYAfuiL3AkTjjSrxmZ3rNIPMg==",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.sdk.contracts/1.0.0-ci.216.1/arcforges.sdk.contracts.nuspec",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "avalonia.buildservices/11.3.2": {
+      "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
+      "licence": "MIT",
+      "nuspecSha256": "a8846537f7d074b8f9ed753c03678128c36bd046939ee245fad8c575a7cd3e9b",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.buildservices/11.3.2/avalonia.buildservices.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia.remote.protocol/12.1.3": {
+      "contentHash": "HcF69DKyihgg5coLOSp7GTqxQvWAy58LMKauwcHA28uSBJVwu0h5+gTNdJA8Sn/nqJVTRDU98zYsk6i1QSwDVQ==",
+      "licence": "MIT",
+      "nuspecSha256": "4c0cd5ec137d2a376bab20e62bb2cbbdc9b71ffcb044acf41adeaf25cf5025b1",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.remote.protocol/12.1.3/avalonia.remote.protocol.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
+    },
+    "avalonia/12.1.3": {
+      "contentHash": "l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==",
+      "licence": "MIT",
+      "nuspecSha256": "8fd64a84c229548a71e61390f4a310219f50529af0ee53162ffd39e7874ff4dc",
+      "source": "https://api.nuget.org/v3-flatcontainer/avalonia/12.1.3/avalonia.nuspec",
+      "classification": "Build-only verification dependency for the isolated PRF.09 Native AOT probe; not admitted to any shipped product closure or package allowlist."
     },
     "coverlet.collector/10.0.1": {
       "contentHash": "27jXSV/0DbVqF5jDrAxuQFZ9oaz6gmG03p8ttxAFk+X0M4woFYj7MoWDLCna5EGLb0CE6OE7X6ZH3Wt5smTtaA==",
@@ -411,7 +474,7 @@
       "licence": "Apache-2.0",
       "nuspecSha256": "da47ce027ddbbbf7c0b1f242b1efe64a5aeaa2959da54716a100fcc6e4520efb",
       "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.client.web/2.84.0/grpc.net.client.web.nuspec",
-      "classification": "Exact permitted gRPC-Web handler candidate for the binary gRPC-Web transport (annex 10 section 1), the single shared Grpc.Net.Client.Web pin of PRF.05/PRF.06; used only by non-packable AOT probes. It declares no net10.0 dependency."
+      "classification": "Exact direct gRPC-Web client handler shared by PRF.05 and PRF.06; the net10.0 dependency group is empty, so it adds no transitive coordinate. Used only by the non-packable PRF.05 Native AOT probe."
     },
     "grpc.net.client/2.84.0": {
       "contentHash": "My6Fms2YCyAbihTBZZ3kLS39iTY2pkMAzGDBTC6XhPOujg70eB07AEJ7tPiW3tZ70bhFzHcc3+d4j3DaIPF3aA==",
@@ -426,6 +489,13 @@
       "nuspecSha256": "f621aa566e63340b572a4f0bd2b996b934407c77b8cdf121f38578e93ee796cb",
       "source": "https://api.nuget.org/v3-flatcontainer/grpc.net.common/2.84.0/grpc.net.common.nuspec",
       "classification": "Exact shared gRPC transport dependency selected by the permitted server/client candidates; used by the non-packable PRF.04 AOT proof only."
+    },
+    "microcom.runtime/0.11.6": {
+      "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ==",
+      "licence": "MIT",
+      "nuspecSha256": "c7aeab4b73acdba3bb8e66865c2bbe67566b8593d972be2089181344adef345f",
+      "source": "https://api.nuget.org/v3-flatcontainer/microcom.runtime/0.11.6/microcom.runtime.nuspec",
+      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
     },
     "microsoft.applicationinsights/2.23.0": {
       "contentHash": "nWArUZTdU7iqZLycLKWe0TDms48KKGE6pONH2terYNa8REXiqixrMOkf1sk5DHGMaUTqONU2YkS4SAXBhLStgw==",
@@ -475,6 +545,20 @@
       "nuspecSha256": "2c16a1f000bd7a7e5c0864d2b097d5d00afc5d723770751bc6228bd463c6cc56",
       "source": "https://api.nuget.org/v3-flatcontainer/microsoft.dotnet.ilcompiler/10.0.11/microsoft.dotnet.ilcompiler.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
+    },
+    "microsoft.extensions.dependencyinjection.abstractions/8.0.1": {
+      "contentHash": "fGLiCRLMYd00JYpClraLjJTNKLmMJPnqxMaiRzEBIIvevlzxz33mXy39Lkd48hu1G+N21S7QpaO5ZzKsI6FRuA==",
+      "licence": "MIT",
+      "nuspecSha256": "1ed9fd0c77d67cc75208b3268df565762916a992f3e246973430dbd77ede2413",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.dependencyinjection.abstractions/8.0.1/microsoft.extensions.dependencyinjection.abstractions.nuspec",
+      "classification": "Transitive test-host dependency of the ArcForges.LocalRpc.Tests xUnit/Kestrel closure; consumed only by the non-packable offline test project."
+    },
+    "microsoft.extensions.logging.abstractions/8.0.1": {
+      "contentHash": "RIFgaqoaINxkM2KTOw72dmilDmTrYA0ns2KW4lDz4gZ2+o6IQ894CzmdL3StM2oh7QQq44nCWiqKqc4qUI9Jmg==",
+      "licence": "MIT",
+      "nuspecSha256": "7593932df3e935a8e6670efad230c82967bc45ea4065186d9b886670408b95cc",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.logging.abstractions/8.0.1/microsoft.extensions.logging.abstractions.nuspec",
+      "classification": "Transitive test-host dependency of the ArcForges.LocalRpc.Tests xUnit/Kestrel closure; consumed only by the non-packable offline test project."
     },
     "microsoft.net.illink.tasks/10.0.11": {
       "contentHash": "IBf7lbovvjGWVWXZX5cJ/cO0WXbId0Zq4BuSeT94mGZuOAP66oMeH9PTBZ9Jpp3Jb6jtK0qm/NyUbPRo1gC/wQ==",
@@ -678,87 +762,6 @@
       "nuspecSha256": "c0407f2bfbba8b98dfc27d55a8707c47afffa3debf66b1b562aba818159f43e8",
       "source": "https://api.nuget.org/v3-flatcontainer/xunit.v3/4.0.1/xunit.v3.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
-    },
-    "avalonia.buildservices/11.3.2": {
-      "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
-      "licence": "MIT",
-      "nuspecSha256": "a8846537f7d074b8f9ed753c03678128c36bd046939ee245fad8c575a7cd3e9b",
-      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.buildservices/11.3.2/avalonia.buildservices.nuspec",
-      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
-    },
-    "avalonia.remote.protocol/12.1.3": {
-      "contentHash": "HcF69DKyihgg5coLOSp7GTqxQvWAy58LMKauwcHA28uSBJVwu0h5+gTNdJA8Sn/nqJVTRDU98zYsk6i1QSwDVQ==",
-      "licence": "MIT",
-      "nuspecSha256": "4c0cd5ec137d2a376bab20e62bb2cbbdc9b71ffcb044acf41adeaf25cf5025b1",
-      "source": "https://api.nuget.org/v3-flatcontainer/avalonia.remote.protocol/12.1.3/avalonia.remote.protocol.nuspec",
-      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
-    },
-    "avalonia/12.1.3": {
-      "contentHash": "l0VGyGn1OwqFrhmIhIHivvrQP0DtBD4Vn2F1vLYgGA2X2qHg0DMVRAln/6xOTLBUYoTopiVAujN0jtH8MpVSeA==",
-      "licence": "MIT",
-      "nuspecSha256": "8fd64a84c229548a71e61390f4a310219f50529af0ee53162ffd39e7874ff4dc",
-      "source": "https://api.nuget.org/v3-flatcontainer/avalonia/12.1.3/avalonia.nuspec",
-      "classification": "Build-only verification dependency for the isolated PRF.09 Native AOT probe; not admitted to any shipped product closure or package allowlist."
-    },
-    "microcom.runtime/0.11.6": {
-      "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ==",
-      "licence": "MIT",
-      "nuspecSha256": "c7aeab4b73acdba3bb8e66865c2bbe67566b8593d972be2089181344adef345f",
-      "source": "https://api.nuget.org/v3-flatcontainer/microcom.runtime/0.11.6/microcom.runtime.nuspec",
-      "classification": "Build-only transitive dependency of the isolated PRF.09 verification probe; not admitted to any shipped product closure or package allowlist."
-    },
-    "arcforges.sdk.contracts/1.0.0-ci.216.1": {
-      "licence": "Apache-2.0",
-      "nuspecSha256": "c7de5c36751d21de28171308dd99c25ec6a451baaf08a0a824534a73260c8a12",
-      "classification": "Exact published CON producer required to consume generated Invocation from ArcForges.Sdk.Contracts 1.0.0-ci.216.1; direct consumer ArcForges.Capabilities, transitively locked for the existing Capabilities and Contributions production/test projects. Apache-2.0 is permitted inside AGPL consumers.",
-      "contentHash": "aN/9J61hb7TTPnOBugNHD4Ic3aBc/3zTIsmseTdaCNO/RiaOTwFnsteg7UKg4pYAfuiL3AkTjjSrxmZ3rNIPMg==",
-      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.sdk.contracts/1.0.0-ci.216.1/arcforges.sdk.contracts.nuspec",
-      "internalPublisher": {
-        "repository": "ArcForges/Contracts",
-        "workflow": "ci.yml",
-        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
-        "feed": "https://api.nuget.org/v3/index.json"
-      }
-    },
-    "arcforges.contracts.publicapi/1.0.0-ci.216.1": {
-      "licence": "Apache-2.0",
-      "nuspecSha256": "2001724ed917f3754749a16ff5cd458ec50ae6d8a26025456ad21732f4954fad",
-      "classification": "Exact transitive dependency of ArcForges.Sdk.Contracts 1.0.0-ci.216.1 in the existing Capabilities and Contributions production/test lock graphs; no direct PublicApi reference is added. Apache-2.0 is permitted inside AGPL consumers.",
-      "contentHash": "cj1wcu/v8bSGL0pGbKYMcJGFFs7SGF3jsG6GXm49cpj3Cal/tl2orj5jdoDBweOH0LeWZisNfFhfXkvnKR9wfQ==",
-      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.publicapi/1.0.0-ci.216.1/arcforges.contracts.publicapi.nuspec",
-      "internalPublisher": {
-        "repository": "ArcForges/Contracts",
-        "workflow": "ci.yml",
-        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
-        "feed": "https://api.nuget.org/v3/index.json"
-      }
-    },
-    "arcforges.contracts.publicapi/1.0.0-ci.270.1": {
-      "contentHash": "0dz653V64rZFFKgDDfEKbH2lqzJ5GVeRMd1dK7ZOr156pEPQMqZL89RQY//WZ9JiSVWSxWemX2JI6JyKKjmibQ==",
-      "licence": "Apache-2.0",
-      "nuspecSha256": "f18f43b539a1ad039c3f11e7a5eddeb3463836186b4f28c7eafb50636015fdd6",
-      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.publicapi/1.0.0-ci.270.1/arcforges.contracts.publicapi.nuspec",
-      "classification": "Exact CON.11 PublicApi candidate (Contracts source 4047930), a direct reference of the non-packable PRF.06 realtime AOT probe for ExecutionOwner and the shared annex 10 records; project-conditioned pin.",
-      "internalPublisher": {
-        "repository": "ArcForges/Contracts",
-        "workflow": "ci.yml",
-        "sourceCommit": "4047930ef2207e8a4c6de9e7ef679f0d9359a8e4",
-        "feed": "https://api.nuget.org/v3/index.json"
-      }
-    },
-    "microsoft.extensions.dependencyinjection.abstractions/8.0.1": {
-      "contentHash": "fGLiCRLMYd00JYpClraLjJTNKLmMJPnqxMaiRzEBIIvevlzxz33mXy39Lkd48hu1G+N21S7QpaO5ZzKsI6FRuA==",
-      "licence": "MIT",
-      "nuspecSha256": "1ed9fd0c77d67cc75208b3268df565762916a992f3e246973430dbd77ede2413",
-      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.dependencyinjection.abstractions/8.0.1/microsoft.extensions.dependencyinjection.abstractions.nuspec",
-      "classification": "Transitive test-host dependency of the ArcForges.LocalRpc.Tests xUnit/Kestrel closure; consumed only by the non-packable offline test project."
-    },
-    "microsoft.extensions.logging.abstractions/8.0.1": {
-      "contentHash": "RIFgaqoaINxkM2KTOw72dmilDmTrYA0ns2KW4lDz4gZ2+o6IQ894CzmdL3StM2oh7QQq44nCWiqKqc4qUI9Jmg==",
-      "licence": "MIT",
-      "nuspecSha256": "7593932df3e935a8e6670efad230c82967bc45ea4065186d9b886670408b95cc",
-      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.logging.abstractions/8.0.1/microsoft.extensions.logging.abstractions.nuspec",
-      "classification": "Transitive test-host dependency of the ArcForges.LocalRpc.Tests xUnit/Kestrel closure; consumed only by the non-packable offline test project."
     }
   },
   "pythonClosure": {
