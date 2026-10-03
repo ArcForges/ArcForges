@@ -30,23 +30,45 @@ and workflow entries use `RES-desktopplatform-build-config` (append).
 
 No `.gitleaks.toml`, Contracts, Cloud or other dependency change was made.
 
-## What was run (Windows 11 Pro for Workstations build 26300, pinned .NET SDK 10.0.400, through the build slot)
+## What was run (Windows 11 Pro for Workstations build 26300, pinned .NET SDK 10.0.400)
 
-- Locked-mode-compatible restore and Release build of the probe: 0 warnings, 0 errors.
+- Locked-mode restore, format verification and Release build of the probe: 0 warnings, 0 errors. Policy checks (dependency,
+  reconciliation, provenance, runtime ownership, licence, design) and their tests passed. The architecture tests passed 99 of
+  100 locally; the one failure is AT-09, the missing native-evidence artifact that only CI supplies. Hosted CI at the reviewed
+  head passed 17 of 17 checks, including both `grpc-web-aot` compile jobs.
 - `dotnet publish -c Release -r win-x64` (Native AOT, IL2026 and IL3050 as errors): no warning or error output; the
-  executable of the final source is 8,439,296 bytes.
-- `GrpcWebAotProbe.exe --self-test` as the published Native AOT executable: exit code 0 (the process reports PASS only when every check passed), including the verifier
-  against 21 fixture and client misbehaviors. This is a test of the probe, not of any ingress.
-- One `--live https://arcforges.com/api` run of the published Native AOT executable while holding the lease
-  `RES-cloud-deployment` (released immediately afterwards): 23 of 23 checks passed. The health endpoint reported Native AOT
-  and the revision of the Cloud merge commit of PR 31 (`1a001eae...`), and the worker revision response header matched it.
-  The target is the existing production Hello Worker/Container ingress of the Cloud repository, reached without any
-  credential. It is not the PRF.07 proof environment.
+  executable of the final source is about 8.4 MB. `GrpcWebAotProbe.exe --self-test` as the published Native AOT executable
+  exits 0 (the process reports PASS only when every check passed). It is a test of the probe, not of any ingress.
+- Live runs of the published Native AOT executable against the existing production Hello Worker/Container ingress
+  `https://arcforges.com/api`, reached without any credential. It is **not** the PRF.07 `env.proof` ingress.
+  - Run 1, 2026-10-02T22:05:20Z, lease `RES-cloud-deployment` 22:04:47Z to 22:05:35Z, executable built from commit
+    `ad21244` (an earlier state of this branch; the cancellation checks of that build had the weaker meaning corrected below).
+    23 checks passed. Evidence file sha256 `44be6aed6997f4e67d586236475c98d45c02d71eb8f5d6160f37ad07bb4244ed`.
+  - Run 2, 2026-10-03T09:20:46Z to 09:20:59Z, lease 09:09:26Z to its release after the run, executable built from the code
+    of commit `856163db` (the later commits only change documentation). `--expect-revision` was passed with the
+    revision run 1 had observed. 26 checks passed. Evidence file sha256
+    `82eace9de45ddea90eabc3a631f675080224d7e8634c521d834f77f767c09a2d`. The evidence files are not committed (they live in the
+    ignored `artifacts/prf-05` folder of the claimant's worktree); the hashes and the check table are carried by the ledger record.
+  - Both runs: the health endpoint reported Native AOT and the revision of the Cloud merge commit of PR 31 (`1a001eae...`), and
+    the worker revision response header matched it. Only 21 of the 26 checks describe the ingress (identity 2, unary 4, exact
+    3, error 4, cancel 5, deadline 2, unknown method 1); `local.closed-port-unavailable` talks only to a closed loopback port
+    and the four `codec.*` checks run in process. The negotiated HTTP version of the production calls was not recorded.
+- What the cancellation checks observe: `cancel.at-handoff` cancels as the request is handed to the transport. The real
+  socket handler then refuses it before writing anything, so this is client-side cancellation and no server saw that request
+  (an independent review confirmed this on a loopback listener). `cancel.after-response-headers` cancels after the ingress
+  has answered (HTTP 200 with the worker revision header), so the ingress had the request; the caller sees CANCELLED.
+  A cancellation observed by a server is not checked.
+- Source mutation of the probe (build slot): of the first 53, 49 were caught by the self-test, 3 survived (the closed-port
+  status, and two loss-count conditions that the status checks already cover) and 1 did not build (as reconstructed from the
+  retained logs). After the review, 12 more: 7 caught, 4 survived (a dropped no-response condition that a pre-cancel mutant
+  does catch while the check is intact, two conditions that other conditions in the same check already cover, and a proxy
+  setting with no proxy on the machine) and 1 did not build. The self-test does not discriminate `RuntimeIdentity.IsNativeAot`
+  (the JIT refusal of `--live` was run by hand: exit 2, nothing contacted) or the status code of `deadline.expired`.
 
 ## Not observed
 
-- Linux and macOS: the Linux executable is only compiled in hosted CI; no Linux or macOS process was run.
-- Any deployed ingress other than the production Hello route; any exact int64, uint64 or decimal value sent over the wire
-  to an ingress (the Hello service carries strings only; the `codec.*` checks are in process); scope, permission, session
-  expiry, server-side observation of a cancellation, induced loss or boundary failures on a real ingress (those run only
-  against the fixture); native UI cases.
+- Linux and macOS: the Linux executable is only compiled in hosted CI; no Linux or macOS process was run. Other RIDs.
+- Any deployed ingress other than the production Hello route; any exact int64, uint64 or decimal value sent over a wire to an
+  ingress (the Hello service carries strings only; the `codec.*` checks are in process); scope, permission, session expiry;
+  server-side observation of a cancellation; induced loss and boundary failures on a real ingress (they run only against the
+  fixture); a stale target on a live ingress (`--expect-revision` passed with the matching revision only); native UI cases.
