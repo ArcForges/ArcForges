@@ -177,6 +177,7 @@ public sealed class LeaseManagerTests
         var h = new LeaseHarness();
 
         await AssertRefusedAsync(h, h.Request(scope: new DecisionScope(new RealmId(Guid.NewGuid()), null)), LeaseIssueRefusal.InvalidRequest, "validation.invalid_request");
+        Assert.Equal(0, h.Ceilings.Calls);
     }
 
     [Fact]

@@ -856,7 +856,19 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/EgressPipelineTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/EgressReasonTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/EgressTransferTests.cs",
-    "eng/policy/dependency-reviews/plt-16-r1.json"
+    "eng/policy/dependency-reviews/plt-16-r1.json",
+    "src/BuildingBlocks/ArcForges.Security/Leases/CapabilityLeaseId.cs",
+    "src/BuildingBlocks/ArcForges.Security/Leases/CapabilityLeaseManager.cs",
+    "src/BuildingBlocks/ArcForges.Security/Leases/LeaseModel.cs",
+    "src/BuildingBlocks/ArcForges.Security/Leases/LeasePorts.cs",
+    "src/BuildingBlocks/ArcForges.Security/Trust/TrustEvaluator.cs",
+    "src/BuildingBlocks/ArcForges.Security/Trust/TrustModel.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/LeaseHarness.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/LeaseManagerTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/LeaseModelTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/LeasePipelineTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/SqliteLeaseStoreTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/TrustTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
