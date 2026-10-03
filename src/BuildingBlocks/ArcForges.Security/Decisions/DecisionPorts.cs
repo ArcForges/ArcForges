@@ -114,6 +114,15 @@ public interface IDataBoundaryAuthorizer
     ValueTask<BoundaryVerdict> AuthorizeEgressAsync(DecisionRequest request, string destination, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Step 10 source: which enumerated sensitive operation, if any, a capability is. The caller's declared operation must equal it, so a
+/// caller cannot skip a step-up by naming no operation. <see cref="Approvals.SensitiveOperation.None"/> means the capability is not one.
+/// </summary>
+public interface ISensitiveOperationSource
+{
+    ValueTask<Approvals.SensitiveOperation> FindAsync(string capabilityKey, CancellationToken cancellationToken);
+}
+
 public enum OwnerVerdict
 {
     Unknown = 0,

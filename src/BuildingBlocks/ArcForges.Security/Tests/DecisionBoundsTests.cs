@@ -143,10 +143,10 @@ public sealed class DecisionBoundsTests
             IClock? c = null, ICapabilityCatalogue? catalogue = null, IProductPolicy? policy = null, IActorIdentityVerifier? identity = null,
             IScopeAuthority? scope = null, ITrustEvaluator? trust = null, IPermissionSource? permissions = null, IResourceAuthorizer? resources = null,
             IDataBoundaryAuthorizer? boundary = null, ApprovalCoordinator? approvals = null, StepUpCoordinator? stepUp = null,
-            IOwnerValidator? owner = null, IDecisionRecorder? recorder = null, ISecurityAuditSink? audit = null) =>
+            ISensitiveOperationSource? sensitive = null, IOwnerValidator? owner = null, IDecisionRecorder? recorder = null, ISecurityAuditSink? audit = null) =>
             new(c ?? clock, catalogue ?? h.Catalogue, policy ?? h.Policy, identity ?? h.Identity, scope ?? h.Scope, trust ?? h.Trust,
                 permissions ?? h.Permissions, resources ?? h.Resources, boundary ?? h.DataBoundary, approvals ?? h.Approvals,
-                stepUp ?? h.StepUp, owner ?? h.Owner, recorder ?? h.Recorder, audit ?? h.Audit);
+                stepUp ?? h.StepUp, sensitive ?? h.Sensitive, owner ?? h.Owner, recorder ?? h.Recorder, audit ?? h.Audit);
 
         var whole = Make();
         Assert.Same(clock, whole.Clock);
@@ -160,24 +160,26 @@ public sealed class DecisionBoundsTests
         Assert.Same(h.DataBoundary, whole.DataBoundary);
         Assert.Same(h.Approvals, whole.Approvals);
         Assert.Same(h.StepUp, whole.StepUp);
+        Assert.Same(h.Sensitive, whole.Sensitive);
         Assert.Same(h.Owner, whole.Owner);
         Assert.Same(h.Recorder, whole.Recorder);
         Assert.Same(h.Audit, whole.Audit);
 
-        Assert.Equal("clock", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(null!, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("catalogue", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, null!, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("policy", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, null!, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("identity", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, null!, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("scope", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, null!, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("trust", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, null!, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("permissions", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, null!, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("resources", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, null!, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("dataBoundary", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, null!, h.Approvals, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("clock", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(null!, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("catalogue", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, null!, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("policy", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, null!, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("identity", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, null!, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("scope", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, null!, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("trust", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, null!, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("permissions", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, null!, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("resources", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, null!, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("dataBoundary", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, null!, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
         Assert.Equal("approvals", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, null!, h.StepUp, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("stepUp", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, null!, h.Owner, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("owner", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, null!, h.Recorder, h.Audit)).ParamName);
-        Assert.Equal("recorder", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, null!, h.Audit)).ParamName);
-        Assert.Equal("audit", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Owner, h.Recorder, null!)).ParamName);
+        Assert.Equal("stepUp", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, null!, h.Sensitive, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("sensitiveOperations", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, null!, h.Owner, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("owner", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, null!, h.Recorder, h.Audit)).ParamName);
+        Assert.Equal("recorder", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, null!, h.Audit)).ParamName);
+        Assert.Equal("audit", Assert.Throws<ArgumentNullException>(() => new DecisionPipelineServices(clock, h.Catalogue, h.Policy, h.Identity, h.Scope, h.Trust, h.Permissions, h.Resources, h.DataBoundary, h.Approvals, h.StepUp, h.Sensitive, h.Owner, h.Recorder, null!)).ParamName);
     }
 
     [Fact]

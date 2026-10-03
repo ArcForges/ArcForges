@@ -47,6 +47,24 @@ public sealed class DecisionPermissionTests
     }
 
     [Fact]
+    public async Task TheLifetimeIsJudgedAfterTheSourceAnswersSoASlowSourceCannotExtendAGrant()
+    {
+        var harness = new DecisionHarness();
+        harness.Permissions.Behavior = (request, _) =>
+        {
+            var grant = harness.Grant(request, validFromOffset: TimeSpan.FromHours(-1), validUntilOffset: TimeSpan.FromMinutes(30));
+            harness.Clock.Advance(TimeSpan.FromHours(1));
+            return ValueTask.FromResult<PermissionGrantRecord?>(grant);
+        };
+
+        var decision = await EvaluateAsync(harness, harness.Request().Build());
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(DecisionReason.S06OutsideLifetime, decision.Reason);
+        Assert.Equal(harness.Clock.UtcNow, decision.Permission!.ObservedAtUtc);
+    }
+
+    [Fact]
     public async Task ConstraintsThatAreUnderstoodAndMetPassAndAreEnforcedIndependently()
     {
         var harness = new DecisionHarness();

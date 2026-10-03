@@ -86,6 +86,21 @@ What is real and what is a port:
   already holds, and it stays spent if a later step refuses. The approval store has no executed state, so a repeated command is
   prevented by the invocation record's command identity (PLT.24), not by this step.
 
+Trust boundaries and limits worth stating plainly:
+
+- Which capabilities are enumerated sensitive operations is decided by the host's `ISensitiveOperationSource`, never by the caller:
+  if the source names an operation for the capability, the request must declare exactly that operation (otherwise step 10
+  refuses with `S10StepUpOperationUnspecified`) and carry a matching step-up proof; a source that fails or answers an undefined
+  value refuses. A caller can still add an operation the source does not name, which only makes the step stricter.
+- The permission instant is read after the grant source answers, so a slow source cannot make an expired grant look current.
+- `ExecuteDecidedAsync` re-runs only step 11 (steps 1 to 10 are not repeated, because a step-up proof and an approval are consumed
+  once): a revocation inside the service decision's lifetime (default 60 s, configurable up to 10 min) is caught only if the owner
+  validator notices it. Keep the lifetime short, or have the owner validator re-check grants.
+- The step timeout bounds sources that are asynchronous or ignore their token; it cannot interrupt a source that blocks its thread
+  synchronously, which holds that thread until it returns.
+- The ticket carries no single-use or expiry state of its own and is valid for the one call it was made for: an owner operation
+  must compare the ticket's capability and resource with what it is about to touch.
+
 Unbypassable by construction: the only code that can reach an owner operation is `ExecuteAsync` and `ExecuteDecidedAsync`.
 They pass the operation an `AuthorizedExecution` ticket (sealed, no public constructor or factory, not serializable) only
 after steps 1 to 11 passed, the owner's validation being the last. An owner operation that takes the ticket as its parameter

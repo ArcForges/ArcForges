@@ -515,6 +515,18 @@ public sealed class DecisionRefusalMatrixTests
             b.Actors = decider;
             b.Scope = new DecisionScope(decider.Owner.Realm, b.Scope.Workspace);
         });
+        Sync("s10 sensitive-operation source throws", DecisionReason.S10Unavailable, (h, _) =>
+            h.Sensitive.Behavior = (_, _) => throw new InvalidOperationException("catalogue offline"));
+        Sync("s10 sensitive-operation source answers an undefined value", DecisionReason.S10Unavailable, (h, _) =>
+            h.Sensitive.Behavior = (_, _) => ValueTask.FromResult((SensitiveOperation)99));
+        Sync("s10 caller names no operation for a capability that is a sensitive operation", DecisionReason.S10StepUpOperationUnspecified, (h, _) =>
+            h.Sensitive.Behavior = (_, _) => ValueTask.FromResult(SensitiveOperation.DeleteAccount));
+        Add("s10 caller names another operation than the capability is", DecisionReason.S10StepUpOperationUnspecified, async (h, b) =>
+        {
+            h.Sensitive.Behavior = (_, _) => ValueTask.FromResult(SensitiveOperation.DeleteAccount);
+            b.Operation = SensitiveOperation.ChangeEmail;
+            b.Proof = await h.ProofAsync(b.Build(), SensitiveOperation.ChangeEmail, RiskLevel.R1);
+        });
         Sync("s10 approval store throws", DecisionReason.S10Unavailable, (h, b) =>
         {
             h.Descriptor = DecisionHarness.Describe(Capability, "R1", "perOperation", "none");

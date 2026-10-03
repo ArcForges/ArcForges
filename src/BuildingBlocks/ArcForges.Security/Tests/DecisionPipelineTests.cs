@@ -13,7 +13,7 @@ namespace ArcForges.Security.Tests;
 public sealed class DecisionPipelineTests
 {
     private static readonly string[] FullRoute =
-        ["catalogue", "policy", "transport", "identity", "scope", "trust", "permission", "resource", "owner", "owner-op", "record", "audit"];
+        ["catalogue", "policy", "transport", "identity", "scope", "trust", "permission", "resource", "sensitive", "owner", "owner-op", "record", "audit"];
 
     [Fact]
     public async Task EveryOfTheFourteenStepsRunsInOrderForAnAllowedExecution()
@@ -101,7 +101,7 @@ public sealed class DecisionPipelineTests
 
         Assert.Equal(ExecutionStatus.Succeeded, execution.Status);
         Assert.Equal(
-            ["catalogue", "policy", "transport", "identity", "scope", "trust", "permission", "resource", "secret", "egress", "owner", "owner-op", "record", "audit"],
+            ["catalogue", "policy", "transport", "identity", "scope", "trust", "permission", "resource", "secret", "egress", "sensitive", "owner", "owner-op", "record", "audit"],
             harness.Log.Entries);
         Assert.Equal(StepDisposition.Passed, execution.Decision.Steps[7].Disposition);
         Assert.Equal(StepDisposition.Passed, execution.Decision.Steps[9].Disposition);
@@ -196,7 +196,7 @@ public sealed class DecisionPipelineTests
         Assert.Equal(EnforcementPoint.ServiceDecision, decision.Point);
         Assert.True(decision.Allowed);
         Assert.True(decision.IsAuthority);
-        Assert.Equal(FullRoute.Take(8), harness.Log.Entries);
+        Assert.Equal(FullRoute.Take(9), harness.Log.Entries);
         AssertRan(decision, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
         Assert.Equal(StepDisposition.NotRequired, decision.Steps[7].Disposition);
         Assert.Equal(StepDisposition.NotRequired, decision.Steps[9].Disposition);

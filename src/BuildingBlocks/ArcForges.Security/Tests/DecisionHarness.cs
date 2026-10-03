@@ -163,6 +163,17 @@ internal sealed class FakeDataBoundary(CallLog log) : IDataBoundaryAuthorizer
     }
 }
 
+internal sealed class FakeSensitiveOperations(CallLog log) : ISensitiveOperationSource
+{
+    internal Func<string, CancellationToken, ValueTask<SensitiveOperation>> Behavior { get; set; } = (_, _) => ValueTask.FromResult(SensitiveOperation.None);
+
+    public ValueTask<SensitiveOperation> FindAsync(string capabilityKey, CancellationToken cancellationToken)
+    {
+        log.Add("sensitive");
+        return Behavior(capabilityKey, cancellationToken);
+    }
+}
+
 internal sealed class FakeOwnerValidator(CallLog log) : IOwnerValidator
 {
     internal OwnerValidationRequest? Last { get; private set; }
@@ -278,6 +289,7 @@ internal sealed class DecisionHarness
         Permissions = new FakePermissions(Log) { Behavior = (request, _) => ValueTask.FromResult<PermissionGrantRecord?>(Grant(request)) };
         Resources = new FakeResources(Log);
         DataBoundary = new FakeDataBoundary(Log);
+        Sensitive = new FakeSensitiveOperations(Log);
         Owner = new FakeOwnerValidator(Log);
         Recorder = new FakeRecorder(Log);
         Audit = new FakeAudit(Log);
@@ -312,6 +324,8 @@ internal sealed class DecisionHarness
 
     internal FakeDataBoundary DataBoundary { get; }
 
+    internal FakeSensitiveOperations Sensitive { get; }
+
     internal FakeOwnerValidator Owner { get; }
 
     internal FakeRecorder Recorder { get; }
@@ -334,7 +348,7 @@ internal sealed class DecisionHarness
 
     internal DecisionPipelineServices Services() => new(
         Clock.Clock, Catalogue, Policy, Identity, Scope, Trust, Permissions, Resources, DataBoundary,
-        Approvals, StepUp, Owner, Recorder, Audit);
+        Approvals, StepUp, Sensitive, Owner, Recorder, Audit);
 
     internal SecurityDecisionPipeline Pipeline(DecisionPipelineOptions? options = null) => new(Services(), options);
 

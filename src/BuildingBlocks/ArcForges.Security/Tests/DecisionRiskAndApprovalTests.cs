@@ -230,6 +230,24 @@ public sealed class DecisionRiskAndApprovalTests
     }
 
     [Fact]
+    public async Task ASourcedSensitiveOperationNeedsItsStepUpWhenTheCallerNamesItAndTheProofIsSpent()
+    {
+        var harness = new DecisionHarness();
+        harness.Sensitive.Behavior = (_, _) => ValueTask.FromResult(SensitiveOperation.DeleteAccount);
+        var builder = harness.Request();
+        builder.Operation = SensitiveOperation.DeleteAccount;
+        builder.Proof = await harness.ProofAsync(builder.Build(), SensitiveOperation.DeleteAccount, RiskLevel.R1);
+        var request = builder.Build();
+
+        var decision = await ServiceAsync(harness, request);
+
+        Assert.True(decision.Allowed);
+        Assert.Equal(StepDisposition.Passed, decision.Steps[9].Disposition);
+        Assert.False(harness.StepUp.TryConsume(request.StepUpProof!, request.Actors.Owner, request.CommandId, SensitiveOperation.DeleteAccount, DecisionHarness.AssessmentOf(RiskLevel.R1)));
+        Assert.Contains("sensitive", harness.Log.Entries);
+    }
+
+    [Fact]
     public async Task AnEnumeratedOperationNeedsAStepUpEvenWhenNoApprovalIsRequired()
     {
         var harness = new DecisionHarness();

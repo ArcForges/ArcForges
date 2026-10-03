@@ -23,6 +23,7 @@ public sealed class DecisionPipelineServices
         IDataBoundaryAuthorizer dataBoundary,
         ApprovalCoordinator approvals,
         StepUpCoordinator stepUp,
+        ISensitiveOperationSource sensitiveOperations,
         IOwnerValidator owner,
         IDecisionRecorder recorder,
         ISecurityAuditSink audit)
@@ -38,6 +39,7 @@ public sealed class DecisionPipelineServices
         DataBoundary = dataBoundary ?? throw new ArgumentNullException(nameof(dataBoundary));
         Approvals = approvals ?? throw new ArgumentNullException(nameof(approvals));
         StepUp = stepUp ?? throw new ArgumentNullException(nameof(stepUp));
+        SensitiveOperations = sensitiveOperations ?? throw new ArgumentNullException(nameof(sensitiveOperations));
         Owner = owner ?? throw new ArgumentNullException(nameof(owner));
         Recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
         Audit = audit ?? throw new ArgumentNullException(nameof(audit));
@@ -64,6 +66,8 @@ public sealed class DecisionPipelineServices
     public ApprovalCoordinator Approvals { get; }
 
     public StepUpCoordinator StepUp { get; }
+
+    public ISensitiveOperationSource SensitiveOperations { get; }
 
     public IOwnerValidator Owner { get; }
 
@@ -399,13 +403,16 @@ public sealed class SecurityDecisionPipeline
         var principal = request.PrincipalKey;
         var scope = request.ScopeKey;
         var capability = request.CapabilityKey;
-        var observed = _services.Clock.GetCurrentInstant();
-        var observedUtc = ToUtc(observed);
+        Instant observed = default;
+        DateTimeOffset observedUtc = default;
 
         (DecisionReason, PermissionAvailabilityEvidence) Result(DecisionReason reason, PermissionDisposition disposition, PermissionGrantRecord? grant) =>
             (reason, new PermissionAvailabilityEvidence(principal, capability, scope, disposition, reason, grant, observedUtc));
 
         var found = await CallAsync(token => _services.Permissions.FindAsync(request, token), cancellationToken).ConfigureAwait(false);
+        // The instant is read after the source answered, so a slow source cannot make an expired grant look current.
+        observed = _services.Clock.GetCurrentInstant();
+        observedUtc = ToUtc(observed);
         if (!found.Ok)
         {
             return Result(DecisionReason.S06Unavailable, PermissionDisposition.Unknown, null);
@@ -603,7 +610,20 @@ public sealed class SecurityDecisionPipeline
         var request = run.Request;
         var effective = run.Risk!.EffectiveRisk;
         var approvalRequired = IsApprovalRequired(run.Descriptor!, effective);
-        var stepUpRequired = request.SensitiveOperation != SensitiveOperation.None || effective == RiskLevel.R4;
+        // The operation that needs a step-up comes from the authoritative source, never from the caller alone.
+        var sourced = await CallAsync(token => _services.SensitiveOperations.FindAsync(request.CapabilityKey, token), cancellationToken).ConfigureAwait(false);
+        if (!sourced.Ok || !Enum.IsDefined(sourced.Value))
+        {
+            return StepResult.Refuse(DecisionReason.S10Unavailable);
+        }
+
+        var requiredOperation = sourced.Value;
+        if (requiredOperation != SensitiveOperation.None && request.SensitiveOperation != requiredOperation)
+        {
+            return StepResult.Refuse(DecisionReason.S10StepUpOperationUnspecified);
+        }
+
+        var stepUpRequired = requiredOperation != SensitiveOperation.None || request.SensitiveOperation != SensitiveOperation.None || effective == RiskLevel.R4;
         if (!approvalRequired && !stepUpRequired)
         {
             return StepResult.NotRequired;
