@@ -31,6 +31,42 @@ public static class PermissionConstraints
     /// <summary>The permission applies only on the named device.</summary>
     public static string DeviceBound(DeviceId device) =>
         string.Create(CultureInfo.InvariantCulture, $"device:{device.Value:N}");
+
+    /// <summary>
+    /// Judges every constraint against the request's device and origin. A constraint that cannot be read is never ignored (the
+    /// constraints are then not understood), and a constraint that can be read but does not hold leaves them unmet.
+    /// </summary>
+    internal static (bool Understood, bool Met) Evaluate(IEnumerable<string> constraints, DeviceId requestDevice, DecisionOrigin origin)
+    {
+        var device = DeviceBound(requestDevice);
+        var understood = true;
+        var met = true;
+        foreach (var constraint in constraints)
+        {
+            if (string.Equals(constraint, LocalOriginOnly, StringComparison.Ordinal))
+            {
+                met &= origin == DecisionOrigin.Local;
+            }
+            else if (constraint.StartsWith("device:", StringComparison.Ordinal))
+            {
+                met &= string.Equals(constraint, device, StringComparison.Ordinal);
+            }
+            else
+            {
+                understood = false;
+            }
+        }
+
+        return (understood, met);
+    }
+}
+
+/// <summary>The canonical keys under which permission records and leases name a principal.</summary>
+internal static class PermissionKeys
+{
+    internal static string Principal(HumanPrincipal owner) => string.Create(
+        CultureInfo.InvariantCulture,
+        $"principal:{owner.Realm.Value:N}/{owner.Id.Value:N}");
 }
 
 /// <summary>

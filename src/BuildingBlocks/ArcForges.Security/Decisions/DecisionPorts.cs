@@ -199,7 +199,8 @@ public sealed record SecurityAuditRecord(
     ArcForges.Contracts.Foundation.Values.DeviceId Device,
     DecisionScope Scope,
     ArcForges.Contracts.Foundation.Values.CommandId Correlation,
-    EffectCertainty Effect);
+    EffectCertainty Effect,
+    ArcForges.Security.Leases.CapabilityLeaseId? Lease = null);
 
 /// <summary>Step 14 sink. It owns audit durability; Security never references the audit store.</summary>
 public interface ISecurityAuditSink

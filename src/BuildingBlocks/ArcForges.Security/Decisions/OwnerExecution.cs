@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Foundation.Errors;
+using ArcForges.Security.Leases;
 
 namespace ArcForges.Security.Decisions;
 
@@ -29,6 +30,12 @@ public sealed class AuthorizedExecution
     public ResourceReference Resource => Request.Resource;
 
     public RiskAssessment Risk { get; }
+
+    /// <summary>
+    /// What the request's lease covers (null when it carried none). A long operation hands it to the lease validator at each security
+    /// boundary, so a revocation or an expiry reaches it mid-operation (RA-03, RA-04); a verdict other than Valid stops the operation.
+    /// </summary>
+    public LeaseUse? Lease => Request.ToLeaseUse();
 
     internal DecisionRequest Request { get; }
 }

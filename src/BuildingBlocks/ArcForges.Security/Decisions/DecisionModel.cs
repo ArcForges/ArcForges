@@ -125,6 +125,11 @@ public enum DecisionReason
     S06ConstraintUnmet = 605,
     S06ConstraintUnknown = 606,
     S06Unavailable = 607,
+    S06LeaseRequired = 608,
+    S06LeaseExpired = 609,
+    S06LeaseRevoked = 610,
+    S06LeaseOutOfScope = 611,
+    S06LeaseUnavailable = 612,
 
     S07ResourceDenied = 701,
     S07Unavailable = 702,
@@ -153,6 +158,11 @@ public enum DecisionReason
     S11ServiceDecisionInvalid = 1103,
     S11ServiceDecisionStale = 1104,
     S11Unavailable = 1105,
+    S11LeaseRequired = 1106,
+    S11LeaseExpired = 1107,
+    S11LeaseRevoked = 1108,
+    S11LeaseOutOfScope = 1109,
+    S11LeaseUnavailable = 1110,
 
     S12OwnerFailed = 1201,
 
@@ -194,6 +204,11 @@ public static class DecisionReasons
         Info(DecisionReason.S06ConstraintUnmet, DecisionStep.CapabilityPermission, "decision.s06.constraint_unmet", "perm.capability_denied"),
         Info(DecisionReason.S06ConstraintUnknown, DecisionStep.CapabilityPermission, "decision.s06.constraint_unknown", "perm.capability_denied"),
         Info(DecisionReason.S06Unavailable, DecisionStep.CapabilityPermission, "decision.s06.unavailable", "resource.unavailable"),
+        Info(DecisionReason.S06LeaseRequired, DecisionStep.CapabilityPermission, "decision.s06.lease_required", "perm.capability_denied"),
+        Info(DecisionReason.S06LeaseExpired, DecisionStep.CapabilityPermission, "decision.s06.lease_expired", "perm.lease_expired"),
+        Info(DecisionReason.S06LeaseRevoked, DecisionStep.CapabilityPermission, "decision.s06.lease_revoked", "perm.capability_denied"),
+        Info(DecisionReason.S06LeaseOutOfScope, DecisionStep.CapabilityPermission, "decision.s06.lease_out_of_scope", "perm.capability_denied"),
+        Info(DecisionReason.S06LeaseUnavailable, DecisionStep.CapabilityPermission, "decision.s06.lease_unavailable", "resource.unavailable"),
 
         Info(DecisionReason.S07ResourceDenied, DecisionStep.ResourceAuthorization, "decision.s07.resource_denied", "perm.resource_denied"),
         Info(DecisionReason.S07Unavailable, DecisionStep.ResourceAuthorization, "decision.s07.unavailable", "resource.unavailable"),
@@ -222,6 +237,11 @@ public static class DecisionReasons
         Info(DecisionReason.S11ServiceDecisionInvalid, DecisionStep.OwnerValidation, "decision.s11.service_decision_invalid", "perm.capability_denied"),
         Info(DecisionReason.S11ServiceDecisionStale, DecisionStep.OwnerValidation, "decision.s11.service_decision_stale", "perm.capability_denied"),
         Info(DecisionReason.S11Unavailable, DecisionStep.OwnerValidation, "decision.s11.unavailable", "resource.unavailable"),
+        Info(DecisionReason.S11LeaseRequired, DecisionStep.OwnerValidation, "decision.s11.lease_required", "perm.capability_denied"),
+        Info(DecisionReason.S11LeaseExpired, DecisionStep.OwnerValidation, "decision.s11.lease_expired", "perm.lease_expired"),
+        Info(DecisionReason.S11LeaseRevoked, DecisionStep.OwnerValidation, "decision.s11.lease_revoked", "perm.capability_denied"),
+        Info(DecisionReason.S11LeaseOutOfScope, DecisionStep.OwnerValidation, "decision.s11.lease_out_of_scope", "perm.capability_denied"),
+        Info(DecisionReason.S11LeaseUnavailable, DecisionStep.OwnerValidation, "decision.s11.lease_unavailable", "resource.unavailable"),
 
         Info(DecisionReason.S12OwnerFailed, DecisionStep.Execution, "decision.s12.owner_failed", "internal.unexpected"),
 
