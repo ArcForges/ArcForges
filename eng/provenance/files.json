@@ -844,7 +844,18 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/DecisionRefusalMatrixTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/DecisionRiskAndApprovalTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/LocalRpcBoundaryTests.cs",
-    "eng/policy/dependency-reviews/plt-38-r1.json"
+    "eng/policy/dependency-reviews/plt-38-r1.json",
+    "src/BuildingBlocks/ArcForges.Security/Egress/EgressAuthority.cs",
+    "src/BuildingBlocks/ArcForges.Security/Egress/EgressDecision.cs",
+    "src/BuildingBlocks/ArcForges.Security/Egress/EgressModel.cs",
+    "src/BuildingBlocks/ArcForges.Security/Egress/EgressPorts.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressAuditTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressDecisionTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressDestinationTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressHarness.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressPipelineTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressReasonTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressTransferTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

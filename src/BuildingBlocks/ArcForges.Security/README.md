@@ -153,3 +153,73 @@ to 11), step coverage, point profiles, bypass, execution, bookkeeping, service-d
 and LocalRpc boundary tests. The last run against real launch authorities and launches (no child process and no OS stream).
 The matrix proves a distinct stable code per reason and a refusal at the failing step through both `EvaluateAsync` and
 `ExecuteAsync`. Timeout tests use the real clock.
+
+## Egress control (PLT.41)
+
+`ArcForges.Security.Egress` makes every outbound data transfer its own authorization, distinct from the read access that let a
+caller see the data (EG-01, I-254). `EgressAuthority.DecideAsync` takes a pipeline `DecisionRequest` and the exact destination and
+returns an `EgressDecision`; `EgressAuthority.TransferAsync` is the guarded route for the owner's send operation.
+
+A transfer is allowed only when all of these hold, checked in this order, and the first failure refuses with a typed
+`EgressReason` (each with a stable code and a registered semantic code: `perm.egress_denied` for a denial, `resource.unavailable`
+when a source cannot answer):
+
+1. The destination is an exact destination identity (`EgressDestinationIdentity`): one lower-case HTTPS origin, written as a name.
+   A wildcard, category, path, query, userinfo, single-label name, invalid port or non-ASCII host is not an identity, and neither is
+   an address literal: the last label must be letters only or an `xn--` label, so decimal, octal, hexadecimal and short-form IPv4
+   literals (`127.1`, `0x7f.0x1`, `0xa9.0xfe.0xa9.0xfe`) are refused. Names that are not public are refused too: `localhost`,
+   `.local`, `.internal`, `.localdomain`, `.lan`, `.home.arpa`, and the reserved or conventionally private suffixes `.test`,
+   `.example`, `.invalid`, `.corp`, `.intranet`, `.private` and `.home` (a private suffix not on that list still passes; the
+   allowlist, not the parser, is what makes a destination reachable). Two identities are equal only when their canonical
+   origins are equal (so `api.example.com.evil.net` or `api.example.com:8443` is another destination). It must also be the
+   destination the invocation declared (`DecisionRequest.EgressDestination`).
+2. The content is classified by the host's `IEgressContentClassifier` (data class, and whether the knowledge policy makes it
+   AI-eligible). The classification never comes from the caller. `SecretMaterial` never leaves, whatever an allowlist or a grant says.
+3. The scope's `IEgressAllowlist` names the destination (the entry states the destination class and the highest data class that may
+   go there), and a destination of class `CloudAiProvider` receives only AI-eligible content (EG-02, EG-03).
+4. The principal holds an egress grant (`IEgressGrantSource`, `EgressGrantRecord`) for exactly this principal, capability, scope and
+   destination, in its half-open lifetime, admitting the content class. A standing `Denied` record wins over every grant. The grant
+   records the authority it rests on (user consent, workspace policy or product route) and a reference to it. Egress grants are
+   not the capability permissions of step 6, and no read permission is an input of the decision.
+5. The decision is durable in the `IEgressAuditSink`. An allowed decision whose record cannot be written is refused
+   (`AuditUnavailable`), so nothing is authorized without its audit event; a refusal is audited best effort and never changes.
+
+Every decision, allowed or refused, attempts one `EgressAuditRecord` write before it is returned (one attempt per decision; an allowed
+decision whose write fails becomes the `AuditUnavailable` refusal, and that refusal is not written a second time). The record holds: kind, reason, time, the
+complete actor chain, executor, capability, resource reference, scope, origin, device, correlation, the destination identity and
+class, the data class, the authority and its reference, and the grant and allowlist generations. A write that times out may still
+land in the sink after the caller was refused, so the durable log can show `Authorized` for a transfer that was refused (over-audit,
+which is safe for the transfer); an audit adapter (PLT.44) must treat that pair as possible. The record carries classes, identities and
+references only; no payload, content or secret, and the text of a malformed destination is not echoed.
+
+Source failures fail closed: a classifier, allowlist or grant source that returns nothing, throws, or does not answer within
+`EgressAuthorityOptions.StepTimeout` (default 15 s, at most 5 min) refuses with its `Unavailable` reason and an `Unknown` verdict.
+Only the caller's own cancellation propagates. The audit write is bounded by the same timeout and is not cancelled by the caller.
+
+Two integration shapes, both with no permissive default:
+
+- **Pipeline step 8.** `EgressDataBoundary(authority, secretUseAuthorizer)` is an `IDataBoundaryAuthorizer`: egress answers come
+  only from the authority and secret-use answers only from the host's own authorizer, whose egress answer is never consulted. The
+  pipeline's step 8 stays a verdict (`Allowed`, `Denied`, or `Unknown` for an unavailable source); the specific egress reason is
+  in the egress audit record. The step runs when the pipeline makes its service decision, so a decision that is allowed here
+  and refused by a later pipeline step is still an audited authorization, not a transfer.
+- **The send itself.** `TransferAsync(AuthorizedExecution ticket, destination, operation, ct)` decides again for every transfer
+  (a revocation or an expiry is seen at the next one), refuses any destination other than the one the invocation declared, writes
+  the audit record, and only then calls the owner's `EgressOperation` with a sealed `AuthorizedEgress` ticket (no public
+  constructor or factory) naming the exact destination, classes and authority. The ticket proves one decision; it has no single-use
+  or expiry state, so the send operation must use only the destination it names and not keep it for a later transfer. A refusal returns a typed failure with the
+  registered code and the operation is never called.
+
+Not provided here and not claimed:
+
+- The real classifier, allowlist and grant stores and the audit sink adapter (the audit store is a separate project that Security
+  does not reference; PLT.44) are ports the host implements. The attachment to a product's invocation pipeline is PLT.57; the
+  context and artifact integration that sends data is APP.06.
+- The authority does not intercept sockets. An owner operation that takes the `AuthorizedEgress` ticket cannot be called without a
+  decision, but code that opens a connection by itself is not stopped, and it is for the sender to connect only to
+  `ticket.Destination`, to resolve and pin the name, and to refuse a redirect to another origin. Name-based identity says nothing
+  about which address answers.
+- Whether a classifier labels content correctly, and whether a grant truly reflects the user's consent, are the owners' facts;
+  the offline tests use fakes for every port.
+- Effective risk (step 9) is not an input: the pipeline already raises risk for an external destination and automation.
+- A grant has no origin or device constraint; a remote origin is judged by the pipeline's own steps.

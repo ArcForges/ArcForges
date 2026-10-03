@@ -2593,5 +2593,70 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.VerifyInputAsync(ArcForges.LocalRpc.ILocalRpcBufferMapping, ulong, ArcForges.LocalRpc.LocalRpcDigest, int, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.AnInputWithTheParentMintedLengthAndDigestIsAccepted()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressDestinationIdentity.TryParse(string?, out ArcForges.Security.Egress.EgressDestinationIdentity?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDestinationTests.AnythingThatIsNotAnExactPublicHttpsNameIsNotADestination(string?)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressDestinationIdentity.Parse(string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDestinationTests.AnExactHttpsOriginIsCanonicalisedToLowerCaseWithTheDefaultPortImplied(string, string, string, int)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.IEgressContentClassifier.ClassifyAsync(ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Egress.EgressDestinationIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDecisionTests.SourcesAreAskedInOrderAndALaterOneIsNeverAskedAfterARefusal()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.IEgressAllowlist.FindAsync(string, ArcForges.Security.Egress.EgressDestinationIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDecisionTests.EveryScenarioGivesItsOwnReasonAndOnlyTheAllowedOnesAreReleased(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.IEgressGrantSource.FindAsync(ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Egress.EgressDestinationIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDecisionTests.TheAdmittingGrantWithTheLatestEndWinsAndTiesBreakOnTheIssuer()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.IEgressAuditSink.WriteAsync(ArcForges.Security.Egress.EgressAuditRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressAuditTests.EveryDecisionWritesExactlyOneAuditRecordThatTheDecisionCarries(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressReasons.Describe(ArcForges.Security.Egress.EgressReason)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressReasonTests.EveryReasonThatCanRefuseHasExactlyOneEntryWithAStableCodeAndARegisteredSemanticCode()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressDecision.ToBoundaryVerdict()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDecisionTests.EveryScenarioGivesItsOwnReasonAndOnlyTheAllowedOnesAreReleased(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressDecision.ToAuthorizationOutcome()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDecisionTests.EveryScenarioGivesItsOwnReasonAndOnlyTheAllowedOnesAreReleased(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressAuthority.DecideAsync(ArcForges.Security.Decisions.DecisionRequest, string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressDecisionTests.EveryScenarioGivesItsOwnReasonAndOnlyTheAllowedOnesAreReleased(string)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressAuthority.TransferAsync<TResult>(ArcForges.Security.Decisions.AuthorizedExecution, string, ArcForges.Security.Egress.EgressOperation<TResult>, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressTransferTests.TheSendOperationRunsOnlyAfterAnAllowedAndAuditedDecisionAndGetsItsFacts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressDataBoundary.AuthorizeSecretUseAsync(ArcForges.Security.Decisions.DecisionRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressPipelineTests.ASecretUseAuthorizationNeverAuthorizesAnEgressAndItsOwnEgressAnswerIsNeverConsulted()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Egress.EgressDataBoundary.AuthorizeEgressAsync(ArcForges.Security.Decisions.DecisionRequest, string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.EgressPipelineTests.ReadAccessAloneNeverAuthorizesEgressAndEgressAloneNeverAuthorizesTheCapability(bool, bool, bool)"
   }
 ]
