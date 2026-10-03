@@ -23,7 +23,7 @@ public enum LocalRpcControlOperation
     Health = 4,
 }
 
-/// <summary>Why a call was refused before it reached a service. A refused call never dispatched.</summary>
+/// <summary>Why a call was refused before it reached a service (or, for the two receipt reasons, before its effect ran). A refused call never dispatched.</summary>
 public enum LocalRpcRefusalReason
 {
     /// <summary>No refusal; never reported.</summary>
@@ -49,6 +49,12 @@ public enum LocalRpcRefusalReason
 
     /// <summary>The child behind a resolved route is no longer registered (lease over, launch superseded or revoked, process gone); the route guard refused the call before the wire (<c>FAILED_PRECONDITION</c>, raised by the caller).</summary>
     RouteNotLive = 7,
+
+    /// <summary>The command id is recorded with a different input; the command's effect was not run (<c>FAILED_PRECONDITION</c>).</summary>
+    CommandConflict = 8,
+
+    /// <summary>The receipt table holds only commands it may not forget; the command's effect was not run (<c>RESOURCE_EXHAUSTED</c>).</summary>
+    ReceiptsFull = 9,
 }
 
 /// <summary>The typed refusal a peer attaches to a call that was refused before dispatch.</summary>
@@ -67,6 +73,8 @@ public sealed record LocalRpcRefusal(LocalRpcRefusalReason Reason)
         [LocalRpcRefusalReason.RecursiveCallback] = "recursive-callback",
         [LocalRpcRefusalReason.UnroutedService] = "unrouted-service",
         [LocalRpcRefusalReason.RouteNotLive] = "route-not-live",
+        [LocalRpcRefusalReason.CommandConflict] = "command-conflict",
+        [LocalRpcRefusalReason.ReceiptsFull] = "receipts-full",
     }.ToFrozenDictionary();
 
     /// <summary>
@@ -118,7 +126,7 @@ public sealed record LocalRpcRefusal(LocalRpcRefusalReason Reason)
     internal static StatusCode StatusOf(LocalRpcRefusalReason reason) => reason switch
     {
         LocalRpcRefusalReason.DeadlineBeforeDispatch => StatusCode.DeadlineExceeded,
-        LocalRpcRefusalReason.RecursiveCallback or LocalRpcRefusalReason.RouteNotLive => StatusCode.FailedPrecondition,
+        LocalRpcRefusalReason.RecursiveCallback or LocalRpcRefusalReason.RouteNotLive or LocalRpcRefusalReason.CommandConflict => StatusCode.FailedPrecondition,
         LocalRpcRefusalReason.UnroutedService => StatusCode.Unimplemented,
         _ => StatusCode.ResourceExhausted,
     };

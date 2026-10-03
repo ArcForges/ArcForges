@@ -2243,5 +2243,85 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RequireDeclaredServices(ArcForges.LocalRpc.LocalRpcChildDeclaration)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRoutingWireTests.ADeclarationIsTakenOnceBeforeBuildAndMustBeForTheRegistrationsKind()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBackoff.Ceiling(int, System.TimeSpan, System.TimeSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBackoffTests.TheCeilingStartsAt250MillisecondsDoublesEveryAttemptAndStopsAtThirtySeconds()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBackoff.Next(int)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBackoffTests.TheWaitIsAUniformDrawBetweenZeroAndTheCeiling()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommand.DigestOf(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandTests.ThePlainDigestIsTheSha256OfTheCanonicalInput()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandContext.Commit()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandReceiptsTests.TheEffectsContextNamesTheCommandAndTracksItsCommitPoint()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandExecutor.CancelAsync(System.Guid, System.Func<ArcForges.LocalRpc.LocalRpcCommandRecord, System.Threading.CancellationToken, System.Threading.Tasks.Task<ArcForges.LocalRpc.LocalRpcEffect>>, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandRecoveryTests.ACancelRequestedForAnUnknownCommandStopsEveryReplayEvenWhenTheCommandAllowsIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandExecutor.ExecuteAsync<TResponse>(ArcForges.LocalRpc.LocalRpcCommand, ArcForges.LocalRpc.LocalRpcPeerGeneration, System.Func<int, System.Threading.CancellationToken, System.Threading.Tasks.Task<TResponse>>, System.Func<TResponse, ArcForges.LocalRpc.LocalRpcEffect>?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandExecutorTests.ASuccessIsRecordedUnderItsCommandIdWithItsResponse()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandExecutor.GetRecord(System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandExecutorTests.ASuccessIsRecordedUnderItsCommandIdWithItsResponse()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandExecutor.PeerLost(ArcForges.LocalRpc.LocalRpcPeerGeneration)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandExecutorTests.ALostLaunchAbortsTheRunningAttemptAndLeavesAnUnknownEffectOnlyForCommandsSentToIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandExecutor.ReconcileAsync(System.Guid, System.Func<ArcForges.LocalRpc.LocalRpcCommandRecord, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<ArcForges.LocalRpc.LocalRpcEffect>>, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandRecoveryTests.AnUnknownCommandReconciledToHappenedIsASuccessWithoutAResponseAndNeverSentAgain()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandExecutor.WatchPeer(ArcForges.LocalRpc.LocalRpcPeerGeneration, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandExecutorTests.WatchingAPeerDeclaresItLostWhenTheTokenIsCancelledAndNotAfterTheRegistrationIsDisposed()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandReceipts.CancelAsync(System.Guid, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandReceiptsTests.ACancelBeforeTheCommitPointStopsTheEffectAndReportsDidNotHappenAndTheOutcomeIsStable()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandReceipts.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandReceiptsTests.DisposingCancelsRunningEffectsWaitsForThemAndRefusesNewCommands()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandReceipts.ExecuteAsync<TResponse>(System.Guid, System.ReadOnlyMemory<byte>, System.Func<ArcForges.LocalRpc.LocalRpcCommandContext, System.Threading.Tasks.Task<TResponse>>, System.Func<TResponse, long>, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandReceiptsTests.AFirstArrivalRunsTheEffectOnceAndRecordsItsResponse()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandReceipts.Get(System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandReceiptsTests.AFirstArrivalRunsTheEffectOnceAndRecordsItsResponse()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCommandReceipts.TryReadEffect(Grpc.Core.RpcException, out ArcForges.LocalRpc.LocalRpcEffect)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcFailureClassifierTests.ABinaryTrailerNamedLikeTheEffectTrailerIsIgnored()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcPeerGeneration.From(ArcForges.LocalRpc.LocalRpcLaunchDescriptor)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcCommandTests.AGenerationIsTheLaunchIdAndEpochOfADescriptor()"
   }
 ]
