@@ -284,6 +284,9 @@ public sealed class LocalRpcLaunch : IAsyncDisposable
 
     internal string? DirectoryPath => _directory;
 
+    /// <summary>The clock this launch measures its windows on; a registration of the launch measures its lease on the same one.</summary>
+    internal TimeProvider Clock => _environment.Clock;
+
     /// <summary>True when every byte of the launch secret is zero (after consumption, revocation or disposal).</summary>
     internal bool SecretIsZeroed()
     {

@@ -37,6 +37,7 @@ public sealed class LocalRpcServerBuilder
     private Func<IEnumerable<string>?, IEnumerable<string>?>? _addressView;
     private LocalRpcLimits _limits = new();
     private Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? _authorizer;
+    private LocalRpcRegistration? _registration;
     private bool _built;
 
     internal LocalRpcServerBuilder(LocalRpcEndpoint? endpoint, LocalRpcStreamSupplier? supplier)
@@ -192,6 +193,26 @@ public sealed class LocalRpcServerBuilder
         return !segmentStart;
     }
 
+    /// <summary>
+    /// Serves one child's registration (WP-08.02). Every call is checked before routing: only the two bootstrap steps of an
+    /// unregistered child pass without credentials, every other call must present the registered peer nonce, caller instance and
+    /// contract-set digest on the registered connection within the lease, and a registered child is admitted no second connection.
+    /// The owner still registers its generated LocalBootstrap service, which maps its messages onto
+    /// <see cref="LocalRpcServerCallContextExtensions.GetBootstrapCall"/>. A registration serves one server.
+    /// </summary>
+    public LocalRpcServerBuilder RequireRegistration(LocalRpcRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        EnsureNotBuilt();
+        if (_registration is not null)
+        {
+            throw new InvalidOperationException("A server serves one registration.");
+        }
+
+        _registration = registration;
+        return this;
+    }
+
     /// <summary>Builds the server. Nothing listens until <see cref="LocalRpcServer.StartAsync"/>.</summary>
     public LocalRpcServer Build()
     {
@@ -202,14 +223,25 @@ public sealed class LocalRpcServerBuilder
             throw new InvalidOperationException("A server registers at least one generated service explicitly.");
         }
 
+        var required = _registration;
+        if (required is not null)
+        {
+            // The bootstrap steps and the lease renewal must run in the reserved control slots, or a saturated data lane would starve
+            // a child's registration and its renewals. Declaring them also makes StartAsync fail if no LocalBootstrap service is served.
+            DeclareRegistrationControl(LocalRpcRegistration.ChallengePath, LocalRpcControlOperation.Bootstrap);
+            DeclareRegistrationControl(LocalRpcRegistration.ConfirmPath, LocalRpcControlOperation.Bootstrap);
+            DeclareRegistrationControl(LocalRpcRegistration.RenewPath, LocalRpcControlOperation.LeaseRenewal);
+        }
+
         if (_supplier is not null)
         {
             _supplier.Claim();
         }
 
+        required?.BindToServer();
         _built = true;
         var bounds = new LocalRpcBoundsRegistry(limits, _time);
-        var endPoint = new LocalRpcListenEndPoint(_endpoint, _supplier, limits, _authorizer, bounds);
+        var endPoint = new LocalRpcListenEndPoint(_endpoint, _supplier, limits, required is null ? _authorizer : WithRegistration(required, _authorizer), bounds);
         var registrations = _services.ToArray();
         var control = _control.ToFrozenDictionary(StringComparer.Ordinal);
         var admission = new LocalRpcCallAdmission(bounds, control);
@@ -265,6 +297,11 @@ public sealed class LocalRpcServerBuilder
                 web.Configure(app =>
                 {
                     app.Use(RefuseCompressedRequestsAsync);
+                    if (required is not null)
+                    {
+                        app.Use(LocalRpcRegistrationGate.Create(required));
+                    }
+
                     app.UseRouting();
                     app.Use(admission.InvokeAsync);
                     app.UseEndpoints(endpoints =>
@@ -280,6 +317,31 @@ public sealed class LocalRpcServerBuilder
             .Build();
         return new LocalRpcServer(host, limits, _supplier, bounds, control, routes, addressView);
     }
+
+    /// <summary>Declares a bootstrap method as the control operation the registration needs; the owner may have declared it already, but never as another operation.</summary>
+    private void DeclareRegistrationControl(string path, LocalRpcControlOperation operation)
+    {
+        var key = path[1..];
+        if (_control.TryGetValue(key, out var declared))
+        {
+            if (declared != operation)
+            {
+                throw new InvalidOperationException("A registration's bootstrap method is the " + operation + " control operation, not " + declared + ".");
+            }
+
+            return;
+        }
+
+        _control.Add(key, operation);
+    }
+
+    /// <summary>The registration's own decision first (a registered child is admitted no further connection), then the owner's.</summary>
+    private static Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>> WithRegistration(
+        LocalRpcRegistration registration,
+        Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? owner) =>
+        async (connection, cancellationToken) =>
+            await registration.AuthorizeConnectionAsync(connection, cancellationToken).ConfigureAwait(false)
+            && (owner is null || await owner(connection, cancellationToken).ConfigureAwait(false));
 
     /// <summary>
     /// The private profile has no compression: a request that names any encoding other than identity is answered with

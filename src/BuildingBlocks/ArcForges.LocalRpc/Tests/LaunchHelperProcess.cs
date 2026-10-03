@@ -43,6 +43,8 @@ internal static class LaunchHelperProcess
                 return await BurstAsync(arguments[1], int.Parse(arguments[2], System.Globalization.CultureInfo.InvariantCulture)).ConfigureAwait(false);
             case "orphan":
                 return await OrphanAsync(arguments[1]).ConfigureAwait(false);
+            case "register":
+                return await RegistrationHelperProcess.RunAsync().ConfigureAwait(false);
             case "sleep":
                 await Say("READY").ConfigureAwait(false);
                 await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
