@@ -38,6 +38,7 @@ public sealed class LocalRpcServerBuilder
     private LocalRpcLimits _limits = new();
     private Func<LocalRpcConnectionInfo, CancellationToken, ValueTask<bool>>? _authorizer;
     private LocalRpcRegistration? _registration;
+    private LocalRpcChildDeclaration? _declaration;
     private bool _built;
 
     internal LocalRpcServerBuilder(LocalRpcEndpoint? endpoint, LocalRpcStreamSupplier? supplier)
@@ -213,6 +214,26 @@ public sealed class LocalRpcServerBuilder
         return this;
     }
 
+    /// <summary>
+    /// Fixes the closed set of generated services this server serves (WP-08.03). <see cref="LocalRpcServer.StartAsync"/> fails, and
+    /// nothing listens, unless the services registered with <see cref="AddService{TService}"/> are exactly the declared ones: a served service
+    /// that was not declared and a declared service that is not served are both refused, so a service cannot appear by being added
+    /// and no declared service can be missing. When a registration is required the declaration must be for the launch's child kind, and
+    /// it must name the LocalBootstrap service the registration is served through.
+    /// </summary>
+    public LocalRpcServerBuilder RequireDeclaredServices(LocalRpcChildDeclaration declaration)
+    {
+        ArgumentNullException.ThrowIfNull(declaration);
+        EnsureNotBuilt();
+        if (_declaration is not null)
+        {
+            throw new InvalidOperationException("A server has one service declaration.");
+        }
+
+        _declaration = declaration;
+        return this;
+    }
+
     /// <summary>Builds the server. Nothing listens until <see cref="LocalRpcServer.StartAsync"/>.</summary>
     public LocalRpcServer Build()
     {
@@ -224,6 +245,11 @@ public sealed class LocalRpcServerBuilder
         }
 
         var required = _registration;
+        if (required is not null && _declaration is { } declared && declared.ChildKind != required.Launch.Descriptor.Identity.ChildKind)
+        {
+            throw new InvalidOperationException("The service declaration is for another child kind than the registration's launch.");
+        }
+
         if (required is not null)
         {
             // The bootstrap steps and the lease renewal must run in the reserved control slots, or a saturated data lane would starve
@@ -315,7 +341,7 @@ public sealed class LocalRpcServerBuilder
                 });
             })
             .Build();
-        return new LocalRpcServer(host, limits, _supplier, bounds, control, routes, addressView);
+        return new LocalRpcServer(host, limits, _supplier, bounds, control, routes, addressView, _declaration);
     }
 
     /// <summary>Declares a bootstrap method as the control operation the registration needs; the owner may have declared it already, but never as another operation.</summary>
@@ -401,6 +427,7 @@ public sealed class LocalRpcServer : IAsyncDisposable
     private readonly IReadOnlyDictionary<string, LocalRpcControlOperation> _control;
     private readonly LocalRpcServerBuilder.RouteCapture _routes;
     private readonly Func<IEnumerable<string>?, IEnumerable<string>?>? _addressView;
+    private readonly LocalRpcChildDeclaration? _declaration;
     private int _state;
 
     internal LocalRpcServer(
@@ -410,8 +437,10 @@ public sealed class LocalRpcServer : IAsyncDisposable
         LocalRpcBoundsRegistry bounds,
         IReadOnlyDictionary<string, LocalRpcControlOperation> control,
         LocalRpcServerBuilder.RouteCapture routes,
-        Func<IEnumerable<string>?, IEnumerable<string>?>? addressView)
+        Func<IEnumerable<string>?, IEnumerable<string>?>? addressView,
+        LocalRpcChildDeclaration? declaration)
     {
+        _declaration = declaration;
         _addressView = addressView;
         _host = host;
         _limits = limits;
@@ -442,7 +471,8 @@ public sealed class LocalRpcServer : IAsyncDisposable
 
     /// <summary>
     /// Starts listening. The server refuses to run if any IP-based address is bound, if any other connection listener
-    /// is registered, or if a declared control method is not served by a registered service.
+    /// is registered, if a declared control method is not served by a registered service, or if the services served are not
+    /// exactly the declared ones (<see cref="LocalRpcServerBuilder.RequireDeclaredServices"/>).
     /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -460,7 +490,7 @@ public sealed class LocalRpcServer : IAsyncDisposable
         await _host.StartAsync(cancellationToken).ConfigureAwait(false);
         var addresses = _host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
         IEnumerable<string>? reported = addresses?.Addresses;
-        var failure = PrivateTransportViolation(_addressView is null ? reported : _addressView(reported)) ?? UnservedControlMethod();
+        var failure = PrivateTransportViolation(_addressView is null ? reported : _addressView(reported)) ?? UnservedControlMethod() ?? UndeclaredServices();
         if (failure is not null)
         {
             await _host.StopAsync(CancellationToken.None).ConfigureAwait(false);
@@ -478,7 +508,7 @@ public sealed class LocalRpcServer : IAsyncDisposable
             : null;
     }
 
-    private string? UnservedControlMethod()
+    private HashSet<string> ServedMethods()
     {
         var served = new HashSet<string>(StringComparer.Ordinal);
         foreach (var source in _routes.Builder?.DataSources ?? [])
@@ -492,10 +522,37 @@ public sealed class LocalRpcServer : IAsyncDisposable
             }
         }
 
+        return served;
+    }
+
+    private string? UnservedControlMethod()
+    {
+        var served = ServedMethods();
         var missing = _control.Keys.Where(key => !served.Contains(key)).Order(StringComparer.Ordinal).ToArray();
         return missing.Length == 0
             ? null
             : "A control method is not served by any registered service (" + string.Join(", ", missing) + "); it would run as a data call.";
+    }
+
+    /// <summary>Why the served services are not exactly the declared ones, or null when they are (or nothing was declared).</summary>
+    private string? UndeclaredServices()
+    {
+        if (_declaration is null)
+        {
+            return null;
+        }
+
+        var served = ServedMethods().Select(method => method[..method.IndexOf('/', StringComparison.Ordinal)]).ToHashSet(StringComparer.Ordinal);
+        var declared = _declaration.Services.Select(service => service.ServiceName).ToHashSet(StringComparer.Ordinal);
+        var extra = served.Where(name => !declared.Contains(name)).Order(StringComparer.Ordinal).ToArray();
+        var missing = declared.Where(name => !served.Contains(name)).Order(StringComparer.Ordinal).ToArray();
+        if (extra.Length == 0 && missing.Length == 0)
+        {
+            return null;
+        }
+
+        return (extra.Length == 0 ? string.Empty : "A service is served that the child did not declare (" + string.Join(", ", extra) + "). ")
+            + (missing.Length == 0 ? string.Empty : "A declared service is not served (" + string.Join(", ", missing) + ").");
     }
 
     /// <summary>Stops accepting, completes in-flight calls within the shutdown bound and closes every connection.</summary>

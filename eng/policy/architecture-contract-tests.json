@@ -2223,5 +2223,25 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RequireRegistration(ArcForges.LocalRpc.LocalRpcRegistration)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRegistrationGateTests.ARegistrationServesOneServerAndABuilderTakesOneRegistration()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRouter.Add(ArcForges.LocalRpc.LocalRpcRegistration, ArcForges.LocalRpc.LocalRpcChildDeclaration)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRoutingTests.AddRefusesWhatItCannotRouteTo()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRouter.TryResolve(ArcForges.LocalRpc.LocalRpcRouteRequest, out ArcForges.LocalRpc.LocalRpcResolvedRoute?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRoutingTests.TheRefusalsComeInAFixedOrderAndTheFirstFailureIsTheAnswer()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcResolvedRoute.CreateGuard()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRoutingWireTests.TheGuardRefusesEveryKindOfCallToAnotherServiceBeforeItReachesTheChannelAndPassesTheRoutedOne()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcServerBuilder.RequireDeclaredServices(ArcForges.LocalRpc.LocalRpcChildDeclaration)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcRoutingWireTests.ADeclarationIsTakenOnceBeforeBuildAndMustBeForTheRegistrationsKind()"
   }
 ]
