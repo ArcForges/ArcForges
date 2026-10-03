@@ -855,7 +855,8 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/EgressHarness.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/EgressPipelineTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/EgressReasonTests.cs",
-    "src/BuildingBlocks/ArcForges.Security/Tests/EgressTransferTests.cs"
+    "src/BuildingBlocks/ArcForges.Security/Tests/EgressTransferTests.cs",
+    "eng/policy/dependency-reviews/plt-16-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

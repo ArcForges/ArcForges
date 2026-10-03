@@ -1,7 +1,7 @@
 # ArcForges.LocalRpc
 
 Generated gRPC over HTTP/2 between a parent and the helper or extension children it owns, carried only by
-a Windows Named Pipe or a Unix domain socket. The project is non-packable until its package task admits it.
+a Windows Named Pipe or a Unix domain socket. It is packaged as the NuGet package `ArcForges.LocalRpc` in the repository's single-version release set (PLT.16); consumers pin the exact version and keep their committed lock files. The package targets `net10.0` with the `Microsoft.AspNetCore.App` shared framework, depends only on `Grpc.AspNetCore.Server` and `Grpc.Net.Client` at the versions admitted in `eng/packaging/packages.json`, and references no ArcForges contract or other ArcForges package.
 
 This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01), the call bounds on top of
 them (WP-08.04), the child registration lifecycle (WP-08.02), static routing with version refusal (WP-08.03) and the disconnect,

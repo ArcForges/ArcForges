@@ -19,7 +19,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "d0d7d9edcea99e14befd64e0f921e481748b434b913c697b70c689c049176c31",
+    "eng/packaging/packages.json": "4fdc16c8ac672acc37bb29bf6af1427eceeb5850011571e3eb6ac927bf643123",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -201,7 +201,7 @@
     "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj": "a3dd1928395674cabc3d0a1a88fd2d15c081165620e796767dbe85f5b29d8d1f",
     "src/BuildingBlocks/ArcForges.Foundation/Tests/packages.lock.json": "a66aa29dc746ed2999d9cfffd2f3ed75f3e73738e85135eb4df026a58491eb09",
     "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "275edc2c07cd106e7cafdb851474a56dc233c4326849b290a96ffb2c2cba81c6",
-    "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj": "a654509ca6f08305fc1088f9e6fd9fb0e4f4f0522903e5ae0188546782e0880f",
+    "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj": "3422bcba137d44a20048e882ac4fb0f8304ed7b0698330baea939e1371061963",
     "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj": "14e19eb581b42412afe5420aa766b3150839d0bf93a61227457be6665e3ca5be",
     "src/BuildingBlocks/ArcForges.LocalRpc/Tests/packages.lock.json": "4526b2979cf62d58566584946bc831f0d32aee9fa8511a4b81faa621fefd2329",
     "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164",
@@ -754,18 +754,18 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261002-plt38",
+    "owner": "w-c20261004-plt16",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
-    "reviewedOn": "2026-10-02",
-    "baselineCommit": "f7e5ba8c0823ba985943f4de22c6c838552f06b3",
-    "maintenanceAssessment": "PLT.38 adds the Security decision pipeline in the existing ArcForges.Security project (no project or package reference changes there, only a Compile Remove for the nested boundary project's directory) and one new non-packable nested production project, ArcForges.Security.LocalRpcBoundary, that references only ArcForges.Security and ArcForges.LocalRpc and binds the Security transport-session port to the LocalRpc launch identity. The existing ArcForges.Security.Tests project gains a project reference to that project and the CA2007 suppression the LocalRpc tests already carry. The only central-package change is appending the new project name to the existing ArcForges.Contracts.Foundation 1.0.0-ci.216.1 MSBuildProjectName selector (central transitive pinning rejects restore of a project that reaches ArcForges.Foundation under the repository-wide 1.0.0-ci.113.1 default). Every coordinate of the two regenerated locks (the new project's and Security.Tests') was already a key of the admitted NuGet closure before the change; no coordinate, version, content hash, licence or source was added. This immutable successor only re-binds the changed project, lock and Directory.Packages.props inputs and chains from the receipt active on main, preserving all prior receipts and unrelated dependency policy.",
+    "reviewedOn": "2026-10-04",
+    "baselineCommit": "f4827df5f385b5d7a25577c610ab314f0584b8cc",
+    "maintenanceAssessment": "PLT.16 admits the already-delivered library ArcForges.LocalRpc (PLT.09 to PLT.15) as a NuGet package in the existing single-version release set. It flips IsPackable from false to true on the one production project (its PackageId, readme, licence, description, package references, framework reference, InternalsVisibleTo item and README/LICENSE/NOTICE pack items were already present and are unchanged), appends one entry to eng/packaging/packages.json (kind managed, no owned dependencies because the project has no ProjectReference, and the two external dependencies a dotnet pack nuspec generates, Grpc.AspNetCore.Server 2.83.0 and Grpc.Net.Client 2.84.0, which are the exact central versions already admitted), and corrects the one README sentence that called the project non-packable. No source, package reference, project reference, central package selector, lockfile or test change; the locked NuGet closure keeps identical coordinates, versions and content hashes. This immutable successor only re-binds the changed dependency inputs (packages.json and the LocalRpc project file) and chains from the active plt-38-r1.json receipt, preserving all prior receipts and unrelated dependency policy.",
     "upgradeChecks": {
-      "compilation": "Locked-mode restore, Release build of the solution and the Security tests on the pinned SDK 10.0.400 (the separate installed copy under the user's .dotnet directory) with warnings as errors, run through the workstation build slot; hosted CI repeats them on the exact head.",
-      "aot-trim": "No AOT, trim, SDK, framework or native toolchain setting changed. Both production projects stay on the default analyzers with warnings as errors; the boundary project sets IsAotCompatible like ArcForges.LocalRpc. No Native AOT publish of either was run.",
-      "compatibility": "No existing public API, schema or package coordinate changed. ArcForges.Security stays non-packable and gains public types (Decisions namespace); the new boundary project is non-packable and not in eng/packaging/packages.json.",
-      "licence-provenance": "No external source or package is introduced. Both projects declare AGPL-3.0-only. Provenance appends the new first-party source, test, project and lock paths and this receipt; the licence boundary, runtime ownership, architecture and reconciliation inventories gain the one new project.",
-      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no package closure expansion occurs. The new closure of the boundary project and of Security.Tests contains only coordinates already admitted for ArcForges.LocalRpc and its tests (Grpc, Google.Protobuf, Microsoft.Extensions abstractions). Existing dependency, provenance, secret-scan and hosted security gates remain required.",
-      "runtime-performance-migration": "No schema, migration, performance claim or runtime owner is introduced. The boundary project is exercised offline against real LocalRpc launch authorities only; it proves no operating-system peer identity, child process or OS stream behavior.",
+      "compilation": "Pending: the packed candidate is produced by hosted CI on the exact head. Locally, the LocalRpc project is packed once with the pinned SDK 10.0.400 (the separate installed copy under the user's .dotnet directory) through the workstation build slot, and its nuspec dependency set is compared with the catalogue entry; results are recorded in the pull request, not here.",
+      "aot-trim": "No AOT, trim, SDK, framework or native toolchain setting changed. ArcForges.LocalRpc keeps IsAotCompatible and the default analyzers with warnings as errors. No Native AOT publish of the package was run by this task; the PRF.04 probe's Local RPC AOT compile jobs are unchanged.",
+      "compatibility": "No existing public API, schema or package coordinate changed. ArcForges.LocalRpc becomes the one new package ID of the release set; the tests project and the nested ArcForges.Security.LocalRpcBoundary project stay non-packable and unlisted.",
+      "licence-provenance": "No external source or package is introduced. The project declares AGPL-3.0-only and packs the repository LICENSE and NOTICE.md. Provenance appends this receipt; the licence boundary, runtime ownership, architecture and test-map inventories already bind the project and are unchanged.",
+      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no package closure expansion occurs. The new package's runtime dependencies are the already-admitted Grpc.AspNetCore.Server and Grpc.Net.Client plus the Microsoft.AspNetCore.App shared framework. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
+      "runtime-performance-migration": "No schema, migration, performance claim or runtime owner is introduced. Publication changes distribution only; no installed-package consumer, OS-stream, Linux or macOS runtime result is claimed by this admission.",
       "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400 with net10.0 targets; no framework major, runtime, Android, native ABI or toolchain version changed."
     },
     "inputHashes": {
@@ -786,7 +786,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "d0d7d9edcea99e14befd64e0f921e481748b434b913c697b70c689c049176c31",
+      "eng/packaging/packages.json": "4fdc16c8ac672acc37bb29bf6af1427eceeb5850011571e3eb6ac927bf643123",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -968,7 +968,7 @@
       "src/BuildingBlocks/ArcForges.Foundation/Tests/ArcForges.Foundation.Tests.csproj": "a3dd1928395674cabc3d0a1a88fd2d15c081165620e796767dbe85f5b29d8d1f",
       "src/BuildingBlocks/ArcForges.Foundation/Tests/packages.lock.json": "a66aa29dc746ed2999d9cfffd2f3ed75f3e73738e85135eb4df026a58491eb09",
       "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json": "275edc2c07cd106e7cafdb851474a56dc233c4326849b290a96ffb2c2cba81c6",
-      "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj": "a654509ca6f08305fc1088f9e6fd9fb0e4f4f0522903e5ae0188546782e0880f",
+      "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj": "3422bcba137d44a20048e882ac4fb0f8304ed7b0698330baea939e1371061963",
       "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj": "14e19eb581b42412afe5420aa766b3150839d0bf93a61227457be6665e3ca5be",
       "src/BuildingBlocks/ArcForges.LocalRpc/Tests/packages.lock.json": "4526b2979cf62d58566584946bc831f0d32aee9fa8511a4b81faa621fefd2329",
       "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164",
@@ -1040,7 +1040,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/prf-06-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-38-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1051,7 +1051,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-38-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-16-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

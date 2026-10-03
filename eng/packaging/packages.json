@@ -254,6 +254,23 @@
         "NOTICE.md",
         "build-identity.json"
       ]
+    },
+    {
+      "id": "ArcForges.LocalRpc",
+      "project": "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj",
+      "kind": "managed",
+      "dependencies": [],
+      "externalDependencies": {
+        "Grpc.AspNetCore.Server": "2.83.0",
+        "Grpc.Net.Client": "2.84.0"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.LocalRpc.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
     }
   ]
 }
