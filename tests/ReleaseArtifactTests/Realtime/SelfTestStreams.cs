@@ -509,6 +509,8 @@ internal static class SelfTestStreams
             (Make.Terminal("A", "completed"), Make.Terminal("A", "failed"), StopReason.IntegrityViolation, "different state"),
             (new ExecutionOutput { Execution = Make.Owner(), State = "completed" }, Make.Terminal("B"), StopReason.Completed, "a stream terminal without a hash does not disagree"),
             (new ExecutionOutput { Execution = Make.Owner(), FinalHash = "A" }, new ExecutionOutput { Execution = Make.Owner(), FinalHash = "A", State = "completed" }, StopReason.Completed, "a stream terminal without a state does not disagree"),
+            (Make.Terminal("A"), new ExecutionOutput { Execution = Make.Owner(), State = "completed" }, StopReason.Completed, "an authoritative terminal without a hash does not disagree"),
+            (Make.Terminal("A", "completed"), new ExecutionOutput { Execution = Make.Owner(), FinalHash = "A" }, StopReason.Completed, "an authoritative terminal without a state does not disagree"),
             (Make.Terminal("A"), Make.Terminal("A"), StopReason.Completed, "agreeing terminals"),
         ];
         foreach ((ExecutionOutput stream, ExecutionOutput read, StopReason expected, string name) in cases)
