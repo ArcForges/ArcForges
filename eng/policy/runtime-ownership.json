@@ -215,6 +215,10 @@
         {
           "path": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
           "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
+          "role": "test-or-build-tool"
         }
       ]
     },

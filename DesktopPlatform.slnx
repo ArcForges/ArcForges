@@ -49,6 +49,9 @@
   <Folder Name="/tests/LocalRpcAotTests/">
     <Project Path="tests/LocalRpcAotTests/LocalRpcAotTests.csproj" />
   </Folder>
+  <Folder Name="/tests/ReleaseArtifactTests/GrpcWeb/">
+    <Project Path="tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj" />
+  </Folder>
   <Project Path="src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj" />
   <Project Path="tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj" />
   <Project Path="tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj" />

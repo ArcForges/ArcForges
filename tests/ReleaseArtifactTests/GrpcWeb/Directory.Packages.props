@@ -1,0 +1,10 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!-- PRF.05: this probe alone selects the already-admitted published Contracts candidate that holds the
+       generated HelloService client. The repository-wide pins above stay unchanged. -->
+  <Import Project="../../../Directory.Packages.props" />
+  <ItemGroup>
+    <PackageVersion Include="ArcForges.Contracts.PublicApi" Version="1.0.0-ci.216.1" />
+    <PackageVersion Update="ArcForges.Contracts.Foundation" Version="1.0.0-ci.216.1" />
+  </ItemGroup>
+</Project>

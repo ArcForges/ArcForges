@@ -366,5 +366,13 @@
     "module": "",
     "production": false,
     "aot": false
+  },
+  {
+    "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
   }
 ]
