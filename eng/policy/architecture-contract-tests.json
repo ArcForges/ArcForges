@@ -2443,5 +2443,155 @@
     "apiSymbol": "ArcForges.Security.LocalRpcBoundary.LocalRpcTransportSession.VerifyCurrentAsync(System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.LocalRpcBoundaryTests.ARevokedLaunchStopsVouchingAtTheNextBoundary()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.AsSpan()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.ADigestIsTheSha256OfTheData()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.Compute(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.ADigestIsTheSha256OfTheData()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.FromBytes(System.ReadOnlySpan<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.ADigestIsBuiltFromExactlyThirtyTwoBytesAndCopiesThem()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.TryParse(string?, out ArcForges.LocalRpc.LocalRpcDigest?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.OnlyExactlySixtyFourLowercaseHexCharactersParse()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.ToHex()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.TheWireFormIsSixtyFourLowercaseHexCharactersAndRoundTrips()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.Equals(ArcForges.LocalRpc.LocalRpcDigest?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.DigestsAreEqualOnlyWhenEveryByteIs()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.Equals(object?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.DigestsAreEqualOnlyWhenEveryByteIs()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.GetHashCode()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.DigestsAreEqualOnlyWhenEveryByteIs()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcDigest.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.TheWireFormIsSixtyFourLowercaseHexCharactersAndRoundTrips()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCanonicalId.TryRead(System.ReadOnlySpan<byte>, out System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.AnIdentifierIsSixteenBytesInCanonicalUuidOrder()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcCanonicalId.Write(System.Guid, System.Span<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerTypeTests.AnIdentifierIsSixteenBytesInCanonicalUuidOrder()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.ILocalRpcBufferMapping.Read(long, System.Span<byte>)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.TheCopyIsMadeInBoundedChunksAtTheSealedOffsetAndEqualsTheSealedBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerRegistry.CreateSession(ArcForges.LocalRpc.LocalRpcBrokerSessionOptions)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerLifecycleTests.TheRegistryAdmitsOnlyItsLimitOfSessionsAndOnlyOnePerInvocation()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerRegistry.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerLifecycleTests.DisposingTheRegistryClosesEverySessionAndRefusesNewOnes()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Grant(uint, ulong)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.AGrantCarriesTheSlotItsFirstSequenceAndTheCapacityAndStartsWriting()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Seal(ArcForges.LocalRpc.LocalRpcBufferSeal, ArcForges.LocalRpc.LocalRpcBufferLayout?)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.AnHonestSealIsAcceptedAndTheSlotIsSealed()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.CopyAsync(uint, ulong, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.TheCopyIsMadeInBoundedChunksAtTheSealedOffsetAndEqualsTheSealedBytes()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Acknowledge(uint, ulong)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.AnAcknowledgementFreesTheSlotAndCarriesTheDigestOfTheVerifiedCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Renew()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerLifecycleTests.RenewalGivesAFullLeaseFromNowAndNeverMore()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Cancel()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerLifecycleTests.CancelWithdrawsEverySlotInUseAndRefusesEverythingAfterIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Close()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerLifecycleTests.ClosingReleasesEveryMappingOnceAndEndsOnceWhateverHowOftenItIsCalled()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerLifecycleTests.ClosingReleasesEveryMappingOnceAndEndsOnceWhateverHowOftenItIsCalled()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerSession.GetSnapshot()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.AGrantCarriesTheSlotItsFirstSequenceAndTheCapacityAndStartsWriting()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcVerifiedBuffer.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerSessionTests.ADisposedBufferIsZeroedAndUnreadableAndDisposingTwiceDoesNotFreeANewCopysBudget()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.Accept(ArcForges.LocalRpc.LocalRpcSlotGrant)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.AGrantFromTheParentMakesTheSlotWritable()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.Seal(uint, ulong, ulong, System.ReadOnlySpan<byte>, ulong)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.SealingReturnsTheDigestOfExactlyTheBytesWrittenAndSealsTheSlot()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.Acknowledge(ArcForges.LocalRpc.LocalRpcBufferAck)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.TheMatchingAcknowledgementFreesTheSlotForTheNextGrant()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.Cancel()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.CancellingWithdrawsEverySlotInUseCancelsTheTokenAndRefusesEverythingAfterIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.DisposingCancels()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBrokerChild.VerifyInputAsync(ArcForges.LocalRpc.ILocalRpcBufferMapping, ulong, ArcForges.LocalRpc.LocalRpcDigest, int, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.LocalRpcBrokerChildTests.AnInputWithTheParentMintedLengthAndDigestIsAccepted()"
   }
 ]

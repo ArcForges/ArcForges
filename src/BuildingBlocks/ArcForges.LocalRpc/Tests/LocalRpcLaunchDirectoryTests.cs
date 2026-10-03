@@ -11,6 +11,8 @@ namespace ArcForges.LocalRpc.Tests;
 /// verification, atomic publish and removal, records that hold no secret, and the sweep of directories whose parent is gone.
 /// Windows access control lists are checked on Windows and Unix modes on Unix; each platform's check is skipped on the other.
 /// </summary>
+// Shares the heavy-test collection: its rename-retry case races a 60 ms handle release against a 360 ms retry window and fails when other heavy tests load the machine.
+[Collection(LocalRpcCollection.Name)]
 public sealed class LocalRpcLaunchDirectoryTests
 {
     private const string WindowsOnly = "Windows access control check.";
