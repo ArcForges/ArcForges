@@ -217,6 +217,7 @@ internal sealed class EnforcementWorld
         Decisions.Permissions.Behavior = (request, _) => ValueTask.FromResult<PermissionGrantRecord?>(Decisions.Grant(request));
 
         var egress = new EgressAuthority(Clock.Clock, Classifier, Allowlist, EgressGrants, EgressAudit);
+        Egress = egress;
         DecisionPipeline = new SecurityDecisionPipeline(
             new DecisionPipelineServices(
                 Clock.Clock,
@@ -300,6 +301,8 @@ internal sealed class EnforcementWorld
 
     internal FakeEgressAudit EgressAudit { get; }
 
+    internal EgressAuthority Egress { get; }
+
     internal SecurityDecisionPipeline DecisionPipeline { get; }
 
     internal WorldEvidenceSource Evidence { get; }
@@ -326,6 +329,9 @@ internal sealed class EnforcementWorld
     /// <summary>What the owner's operation returns; a test replaces it to make the owner fail or be cancelled.</summary>
     internal Func<Outcome<EnforcedOwnerResult>> OwnerBehavior { get; set; } =
         () => Outcome.Success(new EnforcedOwnerResult("owner-result", new WireRevision { Value = 12 }));
+
+    /// <summary>When set, the owner's operation runs this with its ticket instead of <see cref="OwnerBehavior"/>.</summary>
+    internal Func<AuthorizedExecution, CancellationToken, ValueTask<Outcome<EnforcedOwnerResult>>>? OwnerWithTicket { get; set; }
 
     /// <summary>The owner's current revision of the resource: what step 11 compares the request's revision with.</summary>
     internal string CurrentRevision { get; set; } = ResourceRevision;
@@ -445,12 +451,12 @@ internal sealed class EnforcementWorld
         arguments => arguments.Value.ValueCase == StructuredValue.ValueOneofCase.Text
             ? Outcome.Success(arguments.Value.Text)
             : Outcome.Failure<string>(TypedFailure.Create("validation.invalid_request")),
-        Gate.Enforce<string, EnforcedOwnerResult>((ticket, _, _, _, _, _) =>
+        Gate.Enforce<string, EnforcedOwnerResult>((ticket, _, _, _, _, token) =>
         {
             Log.Add("owner-op");
             _ = Interlocked.Increment(ref _ownerRuns);
             LastTicket = ticket;
-            return ValueTask.FromResult(OwnerBehavior());
+            return OwnerWithTicket is { } withTicket ? withTicket(ticket, token) : ValueTask.FromResult(OwnerBehavior());
         }),
         result => Outcome.Success(new CapabilityResult
         {

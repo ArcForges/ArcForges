@@ -536,6 +536,61 @@ public sealed class CapabilityEnforcementEndToEndTests
         Assert.Equal(0, w.OwnerRuns);
     }
 
+    [Fact]
+    public async Task TheSendIsDecidedAgainThroughTheTicketAndAGrantWithdrawnBeforeItRefusesTheTransfer()
+    {
+        var allowed = new EnforcementWorld(EnforcementWorld.AppendUserMessage);
+        allowed.PermitEgress();
+        var sent = 0;
+        allowed.OwnerWithTicket = async (ticket, token) =>
+        {
+            var transfer = await allowed.Egress.TransferAsync<EnforcedOwnerResult>(
+                ticket,
+                EnforcementWorld.Destination,
+                (_, _) =>
+                {
+                    sent++;
+                    return ValueTask.FromResult(Outcome.Success(new EnforcedOwnerResult("sent", new Revision { Value = 3 })));
+                },
+                token);
+            return transfer.Result;
+        };
+        var delivered = await allowed.InvokeAsync(allowed.Invocation(), cancellationToken: Token);
+        Assert.Equal(OutcomeKind.Success, delivered.Kind);
+        Assert.Equal(1, sent);
+        Assert.Equal([EgressAuditKind.Authorized, EgressAuditKind.Authorized], allowed.EgressAudit.Records.Select(record => record.Kind));
+
+        var withdrawn = new EnforcementWorld(EnforcementWorld.AppendUserMessage);
+        withdrawn.PermitEgress();
+        var withdrawnSends = 0;
+        withdrawn.OwnerWithTicket = async (ticket, token) =>
+        {
+            var transfer = await withdrawn.Egress.TransferAsync<EnforcedOwnerResult>(
+                ticket,
+                EnforcementWorld.Destination,
+                (_, _) =>
+                {
+                    withdrawnSends++;
+                    return ValueTask.FromResult(Outcome.Success(new EnforcedOwnerResult("sent", new Revision { Value = 3 })));
+                },
+                token);
+            return transfer.Result;
+        };
+        withdrawn.Records.BeforeDispatch = () =>
+        {
+            withdrawn.EgressGrants.Behavior = (_, _, _) => ValueTask.FromResult<IReadOnlyList<EgressGrantRecord>>([]);
+            return Task.CompletedTask;
+        };
+
+        var refused = await withdrawn.InvokeAsync(withdrawn.Invocation(), cancellationToken: Token);
+
+        Assert.Equal(OutcomeKind.Failure, refused.Kind);
+        Assert.Equal("perm.egress_denied", refused.Failure!.Code);
+        Assert.Equal(0, withdrawnSends);
+        Assert.Equal([EgressAuditKind.Authorized, EgressAuditKind.Refused], withdrawn.EgressAudit.Records.Select(record => record.Kind));
+        Assert.Equal(SecurityAuditKind.OwnerFailed, Assert.Single(withdrawn.Decisions.Audit.Records).Kind);
+    }
+
     private static void Configure(EnforcementWorld w, string failure)
     {
         var d = w.Decisions;

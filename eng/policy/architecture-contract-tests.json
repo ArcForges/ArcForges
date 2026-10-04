@@ -3088,5 +3088,30 @@
     "apiSymbol": "ArcForges.Assistant.Abstractions.IHostSecureStorage.GetOrCreateHandleAsync(string, System.Threading.CancellationToken)",
     "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
     "testMethod": "AssistantAbstractionsTests.PortContractTests.PlatformServicesExposeBoundedOwnerScopedAbstractions()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.ICapabilityEvidenceSource.DescribeAsync(ArcForges.Capabilities.CapabilityRegistration, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityEnforcementEndToEndTests.ARealCapabilityRunsEveryStageInOrderAndIsRecordedAndAudited()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.AuthorizeAsync(ArcForges.Capabilities.CapabilityRegistration, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityEnforcementEndToEndTests.ARealCapabilityRunsEveryStageInOrderAndIsRecordedAndAudited()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.AuthorizeAsync(ArcForges.Capabilities.CapabilityRegistration, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget, ArcForges.Capabilities.FrozenContextSnapshot, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityEnforcementGateTests.MalformedIdentitiesInTheInvocationAreRefusedWithoutRunningAnyDecisionStep()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.Enforce<TArguments, TResult>(ArcForges.Security.CapabilityEnforcement.EnforcedOwnerOperation<TArguments, TResult>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityEnforcementGateTests.AnAdmissionIsSpentByTheOwnerSideOfItsOwnInvocationOnlyAndOnlyOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.RegistryCapabilityCatalogue.FindAsync(string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityEnforcementGateTests.TheRegistryCatalogueAnswersOnlyWithTheRegisteredDescriptorOfAnExactKey()"
   }
 ]

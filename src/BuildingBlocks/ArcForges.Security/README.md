@@ -293,3 +293,56 @@ Not provided here and not claimed:
   the offline tests use fakes for every port.
 - Effective risk (step 9) is not an input: the pipeline already raises risk for an external destination and automation.
 - A grant has no origin or device constraint; a remote origin is judged by the pipeline's own steps.
+
+## Capability enforcement gate (PLT.57)
+
+`ArcForges.Security.CapabilityEnforcement` is a separate non-packable nested project (it references only `ArcForges.Security`
+and `ArcForges.Capabilities`, adds no package, version, native code, runtime owner or wire schema, and neither of the two
+existing projects references it). It attaches the decision pipeline to the invocation pipeline and changes neither: resolve,
+availability, context freezing, the idempotency journal and tracing stay in `CapabilityInvocationPipeline`. It supplies exactly
+two things to it.
+
+- `CapabilityEnforcementGate.AuthorizeAsync` is the pipeline's `CapabilityInvocationAuthorization` step. It builds one
+  `DecisionRequest` and runs the service-side decision (steps 1 to 10). Success means all ten steps allowed it; a refusal is a
+  typed failure with the registered code of the failing step's reason (`SecurityDecision.ToAuthorizationOutcome`), and the
+  decision pipeline has already written the refusal to its audit sink.
+- `CapabilityEnforcementGate.Enforce` wraps the owner's operation, written against the `AuthorizedExecution` ticket
+  (`EnforcedOwnerOperation`). When the invocation pipeline dispatches, the wrapper spends the allowed decision of this
+  invocation's own frozen context once, then `ExecuteDecidedAsync` runs the owner's final validation (step 11) last, the owner's
+  operation, the result record (step 13) and the audit event (step 14). A decision that is missing, already spent, from another
+  context, or for another capability or command is refused and the owner is not reached.
+
+What comes from where: the capability key, command identity, approval identity, lease identity and the effect digest (SHA-256
+over the capability, the exact target instance, the arguments and the precondition) come from the invocation and its target, never
+from the host, so an approval binds to exactly what is being asked. Everything the invocation cannot prove (actors, scope,
+resource and revision, origin, transport session, risk facts, egress destination, step-up proof) is `CapabilityEvidence`, which
+the product supplies through `ICapabilityEvidenceSource` once per new command. No evidence, an exception, or a malformed identity
+refuses before any decision step runs (`resource.unavailable` or `validation.invalid_request`); only the caller's cancellation
+propagates. `RegistryCapabilityCatalogue` answers step 1 from the real first-party `CapabilityRegistry`, so the registered
+descriptor, never a caller's, sets the risk, approval and egress posture.
+
+Limits stated plainly:
+
+- The invocation pipeline cannot be asked to refuse a binding whose owner operation does not come from `Enforce`: such a binding
+  is gated by the authorize step but not by the owner's final validation, record and audit. A product composition must build every
+  binding through the gate; the guarantee is type-level only for owner operations written against the ticket.
+- Whether the actor chain, scope, resource and revision in the evidence are true is the host's fact: the gate does not check that
+  the chain's device or installation is the target's.
+- A replayed command is authorized again and the journal then replays the recorded result; the allowed decision of a replay is
+  never spent and is audited as nothing (an allowed decision that has not executed writes no audit event).
+- The send itself is decided again only when the owner calls `EgressAuthority.TransferAsync` with its ticket; step 8 decides at
+  the service decision. An owner that sends without the ticket is not stopped.
+- If the result record or the audit event cannot be written after the owner ran, the invocation reports `internal.unexpected`
+  while the effect happened (`ExecutionStatus.BookkeepingFailed`); the invocation pipeline then records that failure.
+
+What the offline end-to-end tests run for real and what they replace. Real: the invocation pipeline, the first-party capability
+registry and the action availability provider over host evidence, the decision pipeline, the trust evaluator, the lease manager,
+the egress authority and data-boundary adapter, the approval and step-up coordinators, the risk model and the actor chain. Test
+doubles (all owned by other tasks): the permission, product-policy, identity, scope, resource and owner-validation sources, the
+trust facts, the lease store and the egress allowlist, classifier and grant source, the sinks for the decision record, the
+security audit, the egress audit and the invocation trace, the invocation journal, and the in-process transport session. They
+prove ordering, fail-closed behaviour and the attachment, not a durable store, a process boundary or operating-system isolation.
+Not exercised: the durable audit store (`ArcForges.Security.Audit`, which neither this project nor Security references, so the
+security and egress audit sinks are not connected to it here; the egress-to-audit mapping decision recorded under PLT.44 stays
+open and is not made here), the lease events reaching that store, the real LocalRpc transport session, a product host
+composition, and a Native AOT publish of this project.
