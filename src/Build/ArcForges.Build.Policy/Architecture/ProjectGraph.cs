@@ -2,6 +2,7 @@
 
 using System.Diagnostics;
 using System.Text.Json;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -61,6 +62,18 @@ internal sealed class ProjectGraph
         ArgumentException.ThrowIfNullOrWhiteSpace(root);
         ArgumentNullException.ThrowIfNull(classification);
         string projectPath = ContainedPath(root, classification.Path);
+        // The pinned SDK compiler and the project's configured source generators run for this evaluation, writing
+        // their outputs to a fresh directory owned by the evaluation. Nothing the owning build left behind is read
+        // back, so a stale or hand-written generated file can neither satisfy nor bypass reconstruction.
+        string generatedDirectory = Path.Combine(Path.GetDirectoryName(projectPath)!, "obj", "arcforges-policy", configuration);
+        if (Directory.Exists(generatedDirectory))
+        {
+            Directory.Delete(generatedDirectory, recursive: true);
+        }
+
+        string generatedSourceRoot = Path.Combine(generatedDirectory, "generated");
+        _ = Directory.CreateDirectory(generatedSourceRoot);
+        string forceCompile = WriteForceCompileTargets(generatedDirectory, compatibilityTargets);
         var start = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = root,
@@ -76,9 +89,11 @@ internal sealed class ProjectGraph
 
         foreach (string argument in new[]
         {
-            "msbuild", projectPath, "-nologo", "-target:GenerateGlobalUsings,ResolveReferences,BeforeCompile", "-p:BuildProjectReferences=false",
+            "msbuild", projectPath, "-nologo", "-target:Compile", "-p:BuildProjectReferences=false",
             "-p:Configuration=" + configuration,
             "-p:EmitCompilerGeneratedFiles=true",
+            "-p:CompilerGeneratedFilesOutputPath=" + generatedSourceRoot,
+            "-p:CustomAfterMicrosoftCommonTargets=" + forceCompile,
             "-getProperty:TargetFramework,OutputType,PackageLicenseExpression,LicenceBoundary,IsAotCompatible,PublishAot,ManagePackageVersionsCentrally,RestorePackagesWithLockFile,NoWarn,SuppressTrimAnalysisWarnings,EnableTrimAnalyzer,EnableAotAnalyzer,MSBuildProjectFullPath,ProjectAssetsFile,DefineConstants,AssemblyName,CompilerGeneratedFilesOutputPath",
             "-getItem:Compile,ProjectReference,ReferencePath,PackageReference,PackageVersion",
         })
@@ -86,15 +101,10 @@ internal sealed class ProjectGraph
             start.ArgumentList.Add(argument);
         }
 
-        if (compatibilityTargets is not null)
-        {
-            start.ArgumentList.Add("-p:CustomAfterMicrosoftCommonTargets=" + compatibilityTargets);
-        }
-
         using var process = Process.Start(start) ?? throw new InvalidOperationException("MSBuild did not start.");
         var outputTask = process.StandardOutput.ReadToEndAsync();
         var errorTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(120_000))
+        if (!process.WaitForExit(600_000))
         {
             process.Kill(entireProcessTree: true);
             throw new TimeoutException("Bounded project evaluation timed out: " + classification.Path);
@@ -140,8 +150,13 @@ internal sealed class ProjectGraph
 
             packages[library.Name[..separator]] = library.Name[(separator + 1)..];
         }
-        string generated = Path.GetFullPath(properties["CompilerGeneratedFilesOutputPath"], Path.GetDirectoryName(projectPath)!);
-        var generatedSources = Directory.Exists(generated) ? Directory.GetFiles(generated, "*.cs", SearchOption.AllDirectories) : [];
+        if (!string.Equals(Path.GetFullPath(properties["CompilerGeneratedFilesOutputPath"], Path.GetDirectoryName(projectPath)!).TrimEnd(Path.DirectorySeparatorChar),
+            generatedSourceRoot.TrimEnd(Path.DirectorySeparatorChar), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The SDK compiler did not use the evaluation's generated-source directory: " + classification.Path);
+        }
+
+        var generatedSources = Directory.GetFiles(generatedSourceRoot, "*.cs", SearchOption.AllDirectories);
         return new ProjectFacts(classification, properties["TargetFramework"], properties["OutputType"],
             properties["PackageLicenseExpression"], properties["LicenceBoundary"],
             ReadItems(items, "ProjectReference").Select(item => Relative(root, Text(item, "FullPath"))).ToArray(),
@@ -183,6 +198,25 @@ internal sealed class ProjectGraph
         }
 
         return compilation;
+    }
+
+    // CoreCompile skips when its outputs are newer than its inputs, which would skip the source generators of an
+    // already built project. A freshly written additional compile input forces the real compiler to run once.
+    private static string WriteForceCompileTargets(string directory, string? compatibilityTargets)
+    {
+        string stamp = Path.Combine(directory, "force-compile.stamp");
+        File.WriteAllText(stamp, Guid.NewGuid().ToString("N"));
+        string targets = Path.Combine(directory, "force-compile.targets");
+        var project = new XElement("Project",
+            new XElement("ItemGroup",
+                new XElement("CustomAdditionalCompileInputs", new XAttribute("Include", stamp))));
+        if (compatibilityTargets is not null)
+        {
+            project.Add(new XElement("Import", new XAttribute("Project", compatibilityTargets)));
+        }
+
+        project.Save(targets);
+        return targets;
     }
 
     public static string Normalize(string path) => path.Replace('\\', '/');
