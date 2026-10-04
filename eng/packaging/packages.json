@@ -116,6 +116,25 @@
       ]
     },
     {
+      "id": "ArcForges.Assistant.Abstractions",
+      "project": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Foundation",
+        "ArcForges.Application.Abstractions"
+      ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Assistant.Abstractions.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
+    },
+    {
       "id": "ArcForges.Capabilities",
       "project": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
       "kind": "managed",

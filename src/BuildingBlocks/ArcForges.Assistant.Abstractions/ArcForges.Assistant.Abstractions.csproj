@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.Assistant.Abstractions</AssemblyName>
+    <RootNamespace>ArcForges.Assistant.Abstractions</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Assistant.Abstractions</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Storage-free typed host ports and identity-scoped assistant composition.</Description>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
+    <ProjectReference Include="../ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj" />
+    <Compile Remove="Tests/**/*.cs" />
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

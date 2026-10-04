@@ -133,6 +133,55 @@ class ExternalDependencyGuards(unittest.TestCase):
                             packages.inspect(path, entry, self.owned_version, commit)
 
 
+class AssistantAbstractionsPackageGuards(unittest.TestCase):
+    owned_version = "2.0.0-ci.20.1"
+    external_version = "1.0.0-ci.113.1"
+    owned_edges = ["ArcForges.Foundation", "ArcForges.Application.Abstractions"]
+
+    def entry(self):
+        return next(item for item in packages.catalogue() if item["id"] == "ArcForges.Assistant.Abstractions")
+
+    def metadata(self, rows):
+        metadata = ET.Element("metadata")
+        group = ET.SubElement(ET.SubElement(metadata, "dependencies"), "group", targetFramework="net10.0")
+        for name, pin in rows:
+            ET.SubElement(group, "dependency", id=name, version=pin)
+        return metadata
+
+    def test_allowlist_is_exact_architecture_27_owned_edges_and_existing_external_closure(self):
+        entry = self.entry()
+        self.assertEqual("managed", entry["kind"])
+        self.assertEqual("src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
+                         entry["project"])
+        self.assertEqual(self.owned_edges, entry["dependencies"])
+        self.assertEqual({"ArcForges.Contracts.Foundation": self.external_version}, entry["externalDependencies"])
+        self.assertEqual({**{name: self.owned_version for name in self.owned_edges},
+                          "ArcForges.Contracts.Foundation": self.external_version},
+                         packages.dependency_versions(entry, self.owned_version))
+
+    def test_nuspec_dependency_set_cannot_drop_add_or_repin_an_edge(self):
+        entry = self.entry()
+        correct = [(name, f"[{self.owned_version}]") for name in self.owned_edges]
+        correct.append(("ArcForges.Contracts.Foundation", f"[{self.external_version}]"))
+        expected = packages.dependency_versions(entry, self.owned_version)
+        self.assertEqual(expected, packages.validate_generated_dependencies(self.metadata(correct), entry, self.owned_version))
+
+        for rows in [correct[:-1], correct + [("ArcForges.Capabilities", f"[{self.owned_version}]")],
+                     [*correct[:-1], ("ArcForges.Contracts.Foundation", "[1.0.0-ci.216.1]")]]:
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                packages.validate_generated_dependencies(self.metadata(rows), entry, self.owned_version)
+
+        altered = dict(entry)
+        altered["dependencies"] = [*entry["dependencies"], "ArcForges.Capabilities"]
+        with self.assertRaisesRegex(ValueError, "dependency set"):
+            packages.validate_generated_dependencies(self.metadata(correct), altered, self.owned_version)
+
+        altered = dict(entry)
+        altered["externalDependencies"] = {"ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"}
+        with self.assertRaisesRegex(ValueError, "exact admitted pin"):
+            packages.validate_generated_dependencies(self.metadata(correct), altered, self.owned_version)
+
+
 class PackageGuards(unittest.TestCase):
     def fixture(self):
         source = Path(os.environ.get("ARCFORGES_PACKAGE_DIRECTORY", packages.ROOT / "artifacts/packages"))

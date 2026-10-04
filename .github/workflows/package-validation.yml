@@ -208,6 +208,8 @@ jobs:
             dotnet test --project $suite.Project -c Release --no-build --results-directory $testResults --report-xunit-trx --report-xunit-trx-filename "$($suite.Name).trx"
             if ($LASTEXITCODE) { $testFailures.Add($suite.Label) }
           }
+          dotnet test --project tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj -c Release --no-build
+          if ($LASTEXITCODE) { $testFailures.Add('Assistant host isolation tests') }
           dotnet test --project src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj -c Release --no-build
           if ($LASTEXITCODE) { $testFailures.Add('Design system token and contrast tests') }
           dotnet test --project src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj -c Release --no-build
