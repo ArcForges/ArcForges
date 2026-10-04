@@ -11,6 +11,10 @@ Product applications and services build independently from published packages.
   identities, revision/sequence, clocks, errors, version axes and storage-free application ports.
   Their verified package entries join the normal candidate publication; durable owner receipts
   and cross-language closure acceptance remain tracked delivery tasks.
+- `ArcForges.Assistant.Abstractions`: storage-free assistant host ports and explicit product,
+  installation, instance and profile-scoped composition. Its package keeps only the two
+  Architecture 27 owned edges: `ArcForges.Foundation` and `ArcForges.Application.Abstractions`.
+  It defines no assistant UI, persistence, Cloud behavior or WP15/WP17 implementation.
 - `ArcForges.Persistence.Sqlite`: owner-bound transactional writes, durable command receipts,
   append-only journal and per-step schema migrations. Its offline real-file fixtures are scoped
   mechanism evidence; product snapshot recovery and final persistence integration remain separate tasks.

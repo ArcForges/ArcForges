@@ -39,6 +39,14 @@
       "blob": "02ff1201122fde30678a74607a9173e59ac0b8db"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
+      "blob": "21f62d7bb1bb26b50e6ce84ec32933b9dcf00382"
+    },
+    {
+      "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+      "blob": "e24a06c6d1af579832c40bae4a6a61e60f66959d"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
       "blob": "2ec5aa4103a73bacdc8a4da3d510671a553f2a04"
     },

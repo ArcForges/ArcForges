@@ -8,6 +8,9 @@ the same-candidate Foundation package. These licences permit the AGPL-3.0-only c
 boundary; upstream packages retain their own licences and notices. Exact lock hashes,
 cached nuspec metadata and the reviewed closure are recorded in
 `eng/policy/dependency-reviews/fnd-01-06-r1.json`. No wire schema is copied here.
+`ArcForges.Assistant.Abstractions` retains only its two Architecture 27 owned package edges
+(`ArcForges.Foundation` and `ArcForges.Application.Abstractions`) and the same already-admitted
+`ArcForges.Contracts.Foundation` `1.0.0-ci.216.1` transitive closure (the version Foundation itself pins); it adds no external version.
 Other retained runtime scaffolds have no new external runtime package references. Build/test-only dependencies
 are Microsoft.CodeAnalysis.NetAnalyzers (MIT), Microsoft.NET.Test.Sdk and its platform dependencies (MIT),
 xunit.v3 and xunit.runner.visualstudio (Apache-2.0), and coverlet.collector (MIT).

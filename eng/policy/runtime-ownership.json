@@ -53,6 +53,10 @@
           "role": "aot-library"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
+          "role": "aot-library"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
           "role": "aot-library"
         },
@@ -210,6 +214,10 @@
         },
         {
           "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
           "role": "test-or-build-tool"
         },
         {
