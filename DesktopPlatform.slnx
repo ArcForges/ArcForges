@@ -32,6 +32,7 @@
     <Project Path="src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj" />
+    <Project Path="src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj" />
     <Project Path="src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj" />
