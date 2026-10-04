@@ -40,7 +40,8 @@ internal static class ContentSandboxHost
         ParserProfiles parsers,
         TimeProvider clock,
         CancellationToken stop,
-        ServiceFactory? serviceFactory = null)
+        ServiceFactory? serviceFactory = null,
+        Func<bool>? parentLost = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(bootstrap);
@@ -77,7 +78,7 @@ internal static class ContentSandboxHost
             var registered = await RegisterAsync(control.CallInvoker, bootstrap, stop).ConfigureAwait(false);
             keeper = LocalRpcLeaseKeeper.Start((command, token) => RenewAsync(registered.Authenticated, command, token));
 
-            var expiry = WatchExpiryAsync(service, exit, stop);
+            var expiry = WatchExpiryAsync(service, exit, parentLost, stop);
             var lost = Task.Delay(Timeout.InfiniteTimeSpan, keeper.Lost).ContinueWith(
                 _ => exit.TrySetResult(ContentSandboxContract.ExitParentLost),
                 CancellationToken.None,
@@ -113,7 +114,7 @@ internal static class ContentSandboxHost
         }
     }
 
-    private static async Task WatchExpiryAsync(ContentSandboxServiceImpl service, TaskCompletionSource<int> exit, CancellationToken stop)
+    private static async Task WatchExpiryAsync(ContentSandboxServiceImpl service, TaskCompletionSource<int> exit, Func<bool>? parentLost, CancellationToken stop)
     {
         using var timer = new PeriodicTimer(ExpiryPoll);
         try
@@ -123,6 +124,12 @@ internal static class ContentSandboxHost
                 if (service.IsExpired)
                 {
                     _ = exit.TrySetResult(ContentSandboxContract.ExitSessionExpired);
+                    return;
+                }
+
+                if (parentLost?.Invoke() == true)
+                {
+                    _ = exit.TrySetResult(ContentSandboxContract.ExitParentLost);
                     return;
                 }
             }

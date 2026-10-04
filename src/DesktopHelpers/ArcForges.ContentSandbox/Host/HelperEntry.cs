@@ -18,6 +18,7 @@ internal static class HelperEntry
 {
     /// <summary>Runs the helper process with the parser compositions of this build.</summary>
     [SuppressMessage("Design", "CA1031", Justification = "Every start-up failure maps to a distinct exit code; nothing is reported to the parent in prose.")]
+    [SuppressMessage("Reliability", "CA2000", Justification = "The resources are disposed by the await-using below.")]
     internal static async Task<int> RunAsync(ParserProfiles parsers)
     {
         ArgumentNullException.ThrowIfNull(parsers);
@@ -70,7 +71,9 @@ internal static class HelperEntry
                         return ContentSandboxContract.ExitIsolationUnavailable;
                     }
 
-                    return await ContentSandboxHost.RunAsync(frame, bootstrap, resources, parsers, TimeProvider.System, CancellationToken.None).ConfigureAwait(false);
+                    var parentId = bootstrap.Descriptor.Parent.ProcessId;
+                    Func<bool>? parentLost = OperatingSystem.IsLinux() ? () => LinuxNative.GetParentProcessId() != parentId : null;
+                    return await ContentSandboxHost.RunAsync(frame, bootstrap, resources, parsers, TimeProvider.System, CancellationToken.None, parentLost: parentLost).ConfigureAwait(false);
                 }
             }
         }

@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using ArcForges.ContentSandbox.Broker.Linux;
 using ArcForges.ContentSandbox.Broker.Windows;
 using ArcForges.ContentSandbox.Contracts;
 using ArcForges.Foundation.Errors;
@@ -116,6 +117,11 @@ public sealed class ContentSandboxLauncher : IAsyncDisposable
         if (OperatingSystem.IsWindows())
         {
             return new WindowsHelperLauncher(options.AppContainerName, options.SlotLockDirectory);
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return new LinuxHelperLauncher();
         }
 
         return null;
