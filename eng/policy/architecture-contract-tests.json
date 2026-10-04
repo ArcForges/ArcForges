@@ -2763,5 +2763,10 @@
     "apiSymbol": "ArcForges.Security.Trust.TrustEvaluator.EvaluateAsync(ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Decisions.TransportBinding?, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.TrustTests.ARequestOfALocalPersonReadsOnlyTheCallersSoftwareIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.CapabilityLeaseEventAuditSink.WriteAsync(ArcForges.Security.Leases.CapabilityLeaseEvent, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.TheRealLeaseManagerWritesEveryLifecycleFactIntoTheDurableAuditWithTheStableIdentity()"
   }
 ]
