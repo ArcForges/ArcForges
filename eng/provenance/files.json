@@ -948,7 +948,8 @@
     "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityEnforcementEndToEndTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityEnforcementGateTests.cs",
     "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityEnforcementWorld.cs",
-    "eng/policy/dependency-reviews/plt-57-r1.json"
+    "eng/policy/dependency-reviews/plt-57-r1.json",
+    "eng/policy/dependency-reviews/plt-25-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

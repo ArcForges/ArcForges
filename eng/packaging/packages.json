@@ -290,6 +290,24 @@
         "NOTICE.md",
         "build-identity.json"
       ]
+    },
+    {
+      "id": "ArcForges.Contributions",
+      "project": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Capabilities"
+      ],
+      "externalDependencies": {
+        "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"
+      },
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Contributions.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
     }
   ]
 }
