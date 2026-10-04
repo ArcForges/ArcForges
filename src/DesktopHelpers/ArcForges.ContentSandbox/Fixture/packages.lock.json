@@ -51,6 +51,14 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "8.0.1"
         }
       },
+      "arcforges.contentsandbox": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.ContentSandbox.Contracts": "[1.0.0, )",
+          "ArcForges.Foundation": "[1.0.0, )",
+          "ArcForges.LocalRpc": "[1.0.0, )"
+        }
+      },
       "arcforges.contentsandbox.contracts": {
         "type": "Project",
         "dependencies": {

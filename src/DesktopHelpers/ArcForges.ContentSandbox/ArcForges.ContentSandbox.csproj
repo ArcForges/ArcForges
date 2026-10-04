@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    Parent-bound helper scaffold. Current architecture 27 assigns its Native AOT runtime
-    to DesktopPlatform. The retained five-RID bootstrap is not proof of complete
-    containment or platform support; WP11/13 own the full helper capability.
+    The first-party Native AOT content helper host (WP-11.09). It runs only when a parent launches it in its restricted profile, with a closed
+    inventory of inherited streams and mappings. It composes no production parser; the approved parser compositions are added to this same host
+    by their own task. The retained five-RID bootstrap is not proof of platform support: the OS-enforced evidence is recorded in the Plan ledger.
   -->
   <Import Project="..\..\..\eng\build\desktop-aot.props" />
   <Import Project="..\..\..\eng\build\desktop-rids.props" />
@@ -13,11 +13,16 @@
     <RootNamespace>ArcForges.ContentSandbox</RootNamespace>
     <OutputType>Exe</OutputType>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Desktop.RichContent\ArcForges.Desktop.RichContent.csproj" />
+    <Compile Remove="Tests/**/*.cs;Fixture/**/*.cs" />
+    <None Remove="Tests/**;Fixture/**" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.HostileFixture" />
+    <ProjectReference Include="..\ArcForges.ContentSandbox.Contracts\ArcForges.ContentSandbox.Contracts.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Foundation\ArcForges.Foundation.csproj" />
-    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.NativeInterop\ArcForges.NativeInterop.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\ArcForges.LocalRpc\ArcForges.LocalRpc.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>
