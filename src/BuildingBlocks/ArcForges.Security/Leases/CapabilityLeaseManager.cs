@@ -103,7 +103,9 @@ public sealed class CapabilityLeaseManager : ILeaseUseValidator
 
     /// <summary>
     /// Issues one lease when the delegator's own permission covers it. Nothing is stored or audited as issued when any check refuses, and
-    /// nothing is stored when the issued fact cannot be made durable.
+    /// nothing is stored when the issued fact cannot be made durable. The issuing chain is taken as given: this is an owner-side
+    /// mechanism and the host calls it only after its own decision and authentication of that chain; it checks the chain's actor kinds
+    /// and the delegator's permission, not the chain's authenticity.
     /// </summary>
     [SuppressMessage("Usage", "CA1031:Do not catch general exception types", Justification = "A failing port must become a typed refusal that issues nothing; no exception text is retained.")]
     public async ValueTask<LeaseIssueResult> IssueAsync(LeaseRequest request, CancellationToken cancellationToken = default)
@@ -111,9 +113,10 @@ public sealed class CapabilityLeaseManager : ILeaseUseValidator
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
         var chain = request.IssuedBy;
-        if (chain.Actors.Count > 0 && chain.Actors[^1].Kind is ActorKind.Agent or ActorKind.Extension)
+        if (chain.Actors.Any(actor => actor.Kind is ActorKind.Agent or ActorKind.Extension))
         {
-            // CL-03: tools cannot mint grants or sub-delegate; only the owner's own side delegates.
+            // CL-03: tools cannot mint grants or sub-delegate; an agent or extension anywhere in the issuing chain refuses, even when an
+            // automation or service actor follows it. Only the owner's own side delegates.
             return Refuse(LeaseIssueRefusal.IssuerCannotDelegate);
         }
 
@@ -240,7 +243,9 @@ public sealed class CapabilityLeaseManager : ILeaseUseValidator
     }
 
     /// <summary>
-    /// Ends a lease at the owner's request. Only the lease's own owner may revoke it. Revocation is stored first, so the lease is dead
+    /// Ends a lease at the owner's request. Only the lease's own owner may revoke it; the revoking principal is taken as given, so the
+    /// host calls this only after authenticating it. A store failure is not turned into a typed failure: the exception propagates and
+    /// the lease stays as it was (it fails closed, because nothing was recorded). Revocation is stored first, so the lease is dead
     /// even if the lifecycle fact cannot be written (<see cref="LeaseTransition.EndRecorded"/> then says it is still owed). Revoking a
     /// lease that has already ended changes nothing. A lease past its expiry ends as expired, which is what it already was.
     /// </summary>

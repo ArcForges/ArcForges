@@ -315,6 +315,21 @@ public sealed class TrustTests
     }
 
     [Fact]
+    public async Task AnExtensionFollowedByAnotherActorIsStillEvaluatedAsAnExtension()
+    {
+        var facts = new FakeTrustFacts { Extension = ExtensionTrustState.Revoked };
+        var harness = new DecisionHarness();
+        var builder = harness.Request().WithActors(ActorKind.Extension, ActorKind.Automation);
+        var request = builder.Build();
+
+        var verdict = await new TrustEvaluator(facts).EvaluateAsync(request, null, Token);
+
+        Assert.Equal(TrustVerdict.Revoked, verdict);
+        Assert.Equal([TrustKind.SoftwareIdentity, TrustKind.Package, TrustKind.ExtensionState], facts.Reads);
+        Assert.Equal(request.Actors.Actors[0], facts.LastSubject!.Actor);
+    }
+
+    [Fact]
     public async Task AMismatchedCallerOutweighsAnEligibleExtension()
     {
         var verdict = await new TrustEvaluator(new FakeTrustFacts { Software = SoftwareIdentityState.Mismatched }).EvaluateAsync(

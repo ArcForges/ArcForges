@@ -104,12 +104,15 @@ public sealed class LeaseManagerTests
     }
 
     [Fact]
-    public async Task ASubDelegationThroughALongerChainIsRefusedWhateverIsEarlierInTheChain()
+    public async Task AnAgentOrExtensionAnywhereInTheIssuingChainCannotIssueWhateverFollowsIt()
     {
         var h = new LeaseHarness();
 
         await AssertRefusedAsync(h, h.Request(issuedBy: h.ChainOf(LeaseHarness.Actor(ActorKind.Automation), LeaseHarness.Actor(ActorKind.Agent))), LeaseIssueRefusal.IssuerCannotDelegate, "perm.capability_denied");
         await AssertRefusedAsync(h, h.Request(issuedBy: h.ChainOf(LeaseHarness.Actor(ActorKind.Agent), LeaseHarness.Actor(ActorKind.Extension))), LeaseIssueRefusal.IssuerCannotDelegate, "perm.capability_denied");
+        await AssertRefusedAsync(h, h.Request(issuedBy: h.ChainOf(LeaseHarness.Actor(ActorKind.Agent), LeaseHarness.Actor(ActorKind.Automation))), LeaseIssueRefusal.IssuerCannotDelegate, "perm.capability_denied");
+        await AssertRefusedAsync(h, h.Request(issuedBy: h.ChainOf(LeaseHarness.Actor(ActorKind.Extension), LeaseHarness.Actor(ActorKind.InternalService))), LeaseIssueRefusal.IssuerCannotDelegate, "perm.capability_denied");
+        await AssertRefusedAsync(h, h.Request(issuedBy: h.ChainOf(LeaseHarness.Actor(ActorKind.Agent), LeaseHarness.Actor(ActorKind.Automation), LeaseHarness.Actor(ActorKind.InternalService))), LeaseIssueRefusal.IssuerCannotDelegate, "perm.capability_denied");
     }
 
     [Theory]

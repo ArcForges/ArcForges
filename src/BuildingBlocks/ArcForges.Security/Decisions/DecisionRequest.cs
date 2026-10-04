@@ -126,8 +126,13 @@ public sealed class DecisionRequest
     /// <summary>The canonical key of the scope.</summary>
     public string ScopeKey => Scope.Key;
 
-    /// <summary>The delegated actor acting now (the last of the chain), or null when the owner acts directly.</summary>
-    internal LeaseHolder? Holder => Actors.Actors.Count == 0 ? null : LeaseHolder.From(Actors.Actors[^1]);
+    /// <summary>
+    /// The agent or extension in the chain that must hold the lease (the last of them), or null when none acts. An agent or extension
+    /// anywhere in the chain makes the request delegated, even when an automation or service actor comes after it.
+    /// </summary>
+    internal LeaseHolder? Holder => Actors.Actors.LastOrDefault(actor => actor.Kind is ActorKind.Agent or ActorKind.Extension) is { } actor
+        ? LeaseHolder.From(actor)
+        : null;
 
     /// <summary>What a lease is asked to cover for this request, or null when it carries no lease or no delegated actor acts.</summary>
     internal LeaseUse? ToLeaseUse() =>

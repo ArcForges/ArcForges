@@ -158,7 +158,7 @@ revocable and audited narrowing of the delegator's own authority for one accepte
   stored lease can only end. It lives at most 24 hours (`LeaseOptions.MaximumLifetime`, default one hour).
 - **Issue** (`CapabilityLeaseManager.IssueAsync`). The delegator's own permission is read through `ILeaseCeilingSource` at the
   instant it answered and must be granted, inside its lifetime and constraints (a constraint that is not understood refuses);
-  the lease cannot outlive it. A chain whose last actor is an agent or an extension cannot issue (no sub-delegation, CL-03);
+  the lease cannot outlive it. A chain with an agent or an extension anywhere in it cannot issue (no sub-delegation, CL-03);
   automation and internal services may issue for the owner; automation and internal services cannot hold a lease. The
   "issued" fact is written durably before the lease is stored, so a lease exists only if its issue was audited; the cost of that
   order is an audit record of an issue that never took effect when the store fails afterwards. A replayed request is a
@@ -174,6 +174,11 @@ revocable and audited narrowing of the delegator's own authority for one accepte
   least once (a failure after the write but before the mark, or a sweep racing the ending call, can repeat one): the lease
   identity plus the event kind identify a fact because a lease ends exactly once. The host calls `EndTaskAsync` when a task
   ends; nothing here observes tasks, so a lease still ends at its expiry if the host never does.
+- **Inputs the host owns.** `IssueAsync` takes the issuing chain and `RevokeAsync` the revoking principal as given; neither
+  authenticates anyone, so the host calls them only after its own decision and authentication. A lease use names no task, so a lease
+  ends with its task only because the host calls `EndTaskAsync` (otherwise at its expiry). The stored effective risk is audit
+  evidence and is not compared at use. `RevokeAsync` lets a store failure propagate as an exception (nothing was recorded, so the
+  lease stays as it was) instead of returning a typed failure.
 - **Durability.** `ILeaseStore` is the contract (insert-if-absent, compare-and-swap on the version, forward transitions only,
   a true result only after the commit). Production Security stays Foundation-only; the durable adapter is the host's. The offline
   tests drive a test-only adapter over the real `SqliteStore` (close and reopen, stale replacement across two open stores,
@@ -181,7 +186,7 @@ revocable and audited narrowing of the delegator's own authority for one accepte
   index aggregate written after the lease; a production adapter would index its own table.
 - **In the decision pipeline.** `DecisionRequest.Lease` names the lease a delegated actor claims, and
   `DecisionPipelineServices.Leases` (optional) is the use-time check. At step 6, after the delegator's own permission passes
-  (a lease never replaces it), an agent or extension acting without a lease is refused (`S06LeaseRequired`), a lease that does
+  (a lease never replaces it), an agent or extension anywhere in the chain acting without a lease is refused (`S06LeaseRequired`; the lease belongs to the last agent or extension of the chain), a lease that does
   not cover exactly this use is refused (`S06LeaseOutOfScope`), and a lease that is expired, ended with its task or revoked is
   refused (`S06LeaseExpired`, registered code `perm.lease_expired`; `S06LeaseRevoked`); a check that fails, is unknown or is
   not configured refuses (`S06LeaseUnavailable`). Step 11 runs the same check again before the owner is asked (`S11Lease...`),

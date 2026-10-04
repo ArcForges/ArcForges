@@ -345,6 +345,33 @@ public sealed class LeasePipelineTests
         Assert.Equal(DecisionReason.S06LeaseOutOfScope, decision.Reason);
     }
 
+    [Theory]
+    [InlineData(ActorKind.Agent, ActorKind.Automation)]
+    [InlineData(ActorKind.Extension, ActorKind.InternalService)]
+    public async Task AnAgentOrExtensionAnywhereInTheChainNeedsALeaseEvenWhenAnotherActorFollowsIt(ActorKind delegated, ActorKind after)
+    {
+        var w = new World();
+        var holder = delegated == ActorKind.Agent ? w.Leases.Agent : w.Leases.Extension;
+        var chain = w.Leases.ChainOf(holder, LeaseHarness.Actor(after));
+        var without = w.Builder(null, holder);
+        without.Actors = chain;
+        without.OmitLease = true;
+
+        var refused = await w.Pipeline().EvaluateAsync(EnforcementPoint.ServiceDecision, without.Build(), Token);
+
+        Assert.Equal(DecisionReason.S06LeaseRequired, refused.Reason);
+        var lease = await w.Leases.IssueAsync(w.Leases.Request(holder: LeaseHarness.HolderOf(holder)));
+        var covered = w.Builder(lease, holder);
+        covered.Actors = chain;
+        var other = w.Builder(await w.Leases.IssueAsync(w.Leases.Request(holder: LeaseHarness.HolderOf(LeaseHarness.Actor(delegated)))), holder);
+        other.Actors = chain;
+        var wrong = await w.Pipeline().EvaluateAsync(EnforcementPoint.ServiceDecision, other.Build(), Token);
+        Assert.Equal(DecisionReason.S06LeaseOutOfScope, wrong.Reason);
+        var ok = await w.Pipeline().EvaluateAsync(EnforcementPoint.ServiceDecision, covered.Build(), Token);
+        Assert.NotEqual(DecisionStep.CapabilityPermission, ok.FailedStep);
+        Assert.Equal(StepDisposition.Passed, ok.Steps[5].Disposition);
+    }
+
     [Fact]
     public async Task TheOwnerPointAloneRequiresTheLeaseToo()
     {

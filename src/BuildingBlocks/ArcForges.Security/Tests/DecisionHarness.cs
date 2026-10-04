@@ -525,7 +525,7 @@ internal sealed class RequestBuilder
 
     internal DecisionRequest Build()
     {
-        if (!OmitLease && Lease is null && Actors.Actors.Count > 0 && Actors.Actors[^1].Kind is ActorKind.Agent or ActorKind.Extension)
+        if (!OmitLease && Lease is null && Actors.Actors.Any(actor => actor.Kind is ActorKind.Agent or ActorKind.Extension))
         {
             Lease = CapabilityLeaseId.New();
         }

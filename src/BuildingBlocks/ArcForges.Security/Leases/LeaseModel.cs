@@ -140,7 +140,11 @@ public sealed record LeaseHolder
     internal static LeaseHolder From(DelegatedActor actor) => new(actor.Kind, actor.ActorId);
 }
 
-/// <summary>One use of a lease, compared with what the lease covers. Every field is evidence; none of them grants anything.</summary>
+/// <summary>
+/// One use of a lease, compared with what the lease covers. Every field is evidence; none of them grants anything. A use names no task:
+/// a lease is bound to its task only by the host ending it with the task (<c>EndTaskAsync</c>) or by its expiry. The stored effective
+/// risk is audit evidence and is not compared at use; the pipeline computes risk afresh.
+/// </summary>
 public sealed record LeaseUse
 {
     public LeaseUse(

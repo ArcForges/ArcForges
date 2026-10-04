@@ -87,7 +87,7 @@ public sealed class TrustEvaluator : ITrustEvaluator
     {
         ArgumentNullException.ThrowIfNull(request);
         var chain = request.Actors;
-        var actor = chain.Actors.Count == 0 ? null : chain.Actors[^1];
+        var actor = chain.Actors.LastOrDefault(candidate => candidate.Kind == ActorKind.Extension) ?? (chain.Actors.Count == 0 ? null : chain.Actors[^1]);
         var subject = new TrustSubject(actor, chain.Device, chain.Installation, chain.CallerInstance, request.Origin, transport);
         var points = new List<TrustEvaluationPoint> { TrustEvaluationPoint.LocalRpcHandshake };
         if (actor is { Kind: ActorKind.Extension })
