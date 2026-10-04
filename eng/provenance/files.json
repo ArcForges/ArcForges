@@ -939,7 +939,16 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/OsIsolationTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/PdfTextPagerTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/macos/ArcForges.ContentSandbox.entitlements"
+    "src/DesktopHelpers/ArcForges.ContentSandbox/macos/ArcForges.ContentSandbox.entitlements",
+    "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj",
+    "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/CapabilityEvidence.cs",
+    "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/CapabilityGate.cs",
+    "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/RegistryCatalogue.cs",
+    "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/packages.lock.json",
+    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityEnforcementEndToEndTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityEnforcementGateTests.cs",
+    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityEnforcementWorld.cs",
+    "eng/policy/dependency-reviews/plt-57-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

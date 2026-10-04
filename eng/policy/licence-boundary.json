@@ -129,6 +129,10 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj",
       "kind": "msbuild"
     },

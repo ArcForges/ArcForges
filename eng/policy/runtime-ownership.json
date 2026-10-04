@@ -145,6 +145,10 @@
           "role": "aot-library"
         },
         {
+          "path": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj",
+          "role": "aot-library"
+        },
+        {
           "path": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj",
           "role": "aot-library"
         },
