@@ -327,6 +327,46 @@ public sealed class ContractFacadeTests
     }
 
     [Fact]
+    public async Task AHelperThatIsNotThePinnedBuildIsRefusedByTheRealLauncherBeforeAnyProcessExists()
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), "arcforges-cs-pin-" + Guid.NewGuid().ToString("N")[..8]);
+        _ = Directory.CreateDirectory(directory);
+        try
+        {
+            var helper = Path.Combine(directory, "helper.bin");
+            await File.WriteAllBytesAsync(helper, "not a program"u8.ToArray(), Xunit.TestContext.Current.CancellationToken);
+            var options = Fixtures.Options() with { HelperPath = helper, HelperSha256 = SHA256.HashData("a different build"u8) };
+            await using var launcher = new ContentSandboxLauncher(options);
+            var result = await launcher.LaunchAsync("data"u8.ToArray(), Xunit.TestContext.Current.CancellationToken);
+            Assert.False(result.IsSuccess);
+            Assert.Equal("resource.integrity_failed", result.Failure!.Code);
+
+            // The refused file is still the file that was checked: nothing renamed or deleted it, and no launch record was left behind.
+            Assert.True(File.Exists(helper));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void HelperOutputInADiagnosticNoteIsBoundedAndPrintable()
+    {
+        var hostile = new string('A', 5000) + "\u0000\u001b[31m\r\nend\u00e9";
+        var note = HelperText.Sanitise(hostile);
+        Assert.True(note.Length <= HelperText.MaxChars);
+        Assert.All(note, character => Assert.InRange(character, ' ', '~'));
+        Assert.EndsWith("end ", note, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, HelperText.Sanitise(null));
+    }
+
+    [Fact]
     public void ALaunchExceptionCarriesARegisteredReasonCode()
     {
         var failure = new ContentSandboxLaunchException();

@@ -66,6 +66,11 @@ internal static class HelperEntry
 
                 await using (resources.ConfigureAwait(false))
                 {
+                    if (OperatingSystem.IsLinux() && !EndWithTheParent(bootstrap.Descriptor.Parent.ProcessId))
+                    {
+                        return ContentSandboxContract.ExitParentLost;
+                    }
+
                     if (!ProfileEnforcement.TryApplyAndVerify(frame, bootstrap.Descriptor.Parent))
                     {
                         return ContentSandboxContract.ExitIsolationUnavailable;
@@ -78,6 +83,15 @@ internal static class HelperEntry
             }
         }
     }
+
+    /// <summary>
+    /// Asks the kernel to kill this process when its parent dies, then checks the parent is still there (the race between spawn and this call).
+    /// The signal follows the parent thread that spawned the helper, so the parent-lost poll of the host stays as the second line; the first line on
+    /// Linux is the supervising parent, which kills the process on every orderly and failed path. A wedged helper outliving a killed parent is
+    /// therefore bounded by the kernel signal only, not by a Job Object as on Windows.
+    /// </summary>
+    private static bool EndWithTheParent(int parentId) =>
+        LinuxNative.Prctl(LinuxNative.PrSetParentDeathSignal, LinuxNative.SigKill, 0, 0, 0) == 0 && LinuxNative.GetParentProcessId() == parentId;
 
     private static HelperResources OpenResources(ContentSandboxLaunchFrame frame)
     {

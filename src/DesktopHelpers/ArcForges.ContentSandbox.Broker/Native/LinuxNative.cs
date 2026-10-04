@@ -16,6 +16,11 @@ internal static unsafe partial class LinuxNative
     internal const int SockStream = 1;
     internal const int SockCloseOnExec = 0x80000;
     internal const uint MemfdCloseOnExec = 1;
+    internal const uint MemfdAllowSealing = 2;
+    internal const int FAddSeals = 1033;
+    internal const int SealSeal = 0x1;
+    internal const int SealShrink = 0x2;
+    internal const int SealGrow = 0x4;
     internal const int FDupFdCloseOnExec = 1030;
     internal const int SigKill = 9;
 
@@ -42,6 +47,10 @@ internal static unsafe partial class LinuxNative
     [LibraryImport("libc", EntryPoint = "posix_spawn_file_actions_adddup2")]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
     internal static partial int SpawnFileActionsAddDup2(nint actions, int descriptor, int target);
+
+    [LibraryImport("libc", EntryPoint = "posix_spawn_file_actions_addclosefrom_np")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    internal static partial int SpawnFileActionsAddCloseFrom(nint actions, int from);
 
     [LibraryImport("libc", EntryPoint = "posix_spawn_file_actions_destroy")]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]

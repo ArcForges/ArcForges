@@ -14,6 +14,8 @@ internal static partial class LinuxNative
 {
     internal const int PrSetNoNewPrivs = 38;
     internal const int PrGetNoNewPrivs = 39;
+    internal const int PrSetParentDeathSignal = 1;
+    internal const int SigKill = 9;
     internal const int RlimitCore = 4;
     internal const int RlimitData = 2;
     internal const int RlimitNofile = 7;

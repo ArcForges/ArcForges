@@ -45,6 +45,30 @@ internal interface IProvisionedHelper : IAsyncDisposable
     void Terminate();
 }
 
+/// <summary>Bounds untrusted helper output before it is placed in a parent-side diagnostic note.</summary>
+internal static class HelperText
+{
+    internal const int MaxChars = 200;
+
+    /// <summary>Keeps at most <see cref="MaxChars"/> printable ASCII characters of the tail; everything else becomes a space.</summary>
+    internal static string Sanitise(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        var tail = text.Length > MaxChars ? text[^MaxChars..] : text;
+        return string.Create(tail.Length, tail, static (span, source) =>
+        {
+            for (var index = 0; index < span.Length; index++)
+            {
+                span[index] = source[index] is >= ' ' and <= '~' ? source[index] : ' ';
+            }
+        });
+    }
+}
+
 /// <summary>A launch could not be completed; the reason code is one of the registered producer codes.</summary>
 public sealed class ContentSandboxLaunchException : Exception
 {

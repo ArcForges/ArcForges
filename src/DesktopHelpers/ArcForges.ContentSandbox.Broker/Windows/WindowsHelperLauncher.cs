@@ -86,7 +86,8 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
         FileStream file;
         try
         {
-            file = new FileStream(request.HelperPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            // Neither writing nor deleting/renaming is shared while the handle is held, so the file cannot be replaced between the hash and the start.
+            file = new FileStream(request.HelperPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -289,7 +290,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 
             _ = await Task.WhenAny(_exited.Task, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
             await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
-            return _exited.Task.IsCompletedSuccessfully ? " (exit " + await _exited.Task.ConfigureAwait(false) + "; output: " + DiagnosticTail.ReplaceLineEndings(" ") + ")" : string.Empty;
+            return _exited.Task.IsCompletedSuccessfully ? " (exit " + await _exited.Task.ConfigureAwait(false) + "; output: " + HelperText.Sanitise(DiagnosticTail) + ")" : string.Empty;
         }
 
         private static async ValueTask DisposeStreamAsync(Stream? stream)

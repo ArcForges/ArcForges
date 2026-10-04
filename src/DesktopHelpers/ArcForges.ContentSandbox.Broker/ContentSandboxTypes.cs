@@ -54,7 +54,8 @@ public sealed class ContentSandboxResult<T>
 
     /// <summary>
     /// A short factual note of the parent's own about where a launch or call failed (a step name and an operating-system error number). It is
-    /// for diagnostics only, never contains anything the helper wrote, and must not be shown to a user or acted on.
+    /// for diagnostics only and must not be shown to a user or acted on. It may end with a short excerpt (at most 200 printable ASCII
+    /// characters) of what the hostile helper wrote to its output: untrusted text, kept out of any log that is parsed and out of any UI.
     /// </summary>
     public string? Detail { get; }
 

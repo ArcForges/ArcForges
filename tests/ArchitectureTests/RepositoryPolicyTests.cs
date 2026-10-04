@@ -93,6 +93,7 @@ public sealed class RepositoryPolicyTests
             ["libc:memfd_create"] = (broker, false, true),
             ["libc:posix_spawn"] = (broker, false, false),
             ["libc:posix_spawn_file_actions_adddup2"] = (broker, false, false),
+            ["libc:posix_spawn_file_actions_addclosefrom_np"] = (broker, false, false),
             ["libc:posix_spawn_file_actions_destroy"] = (broker, false, false),
             ["libc:posix_spawn_file_actions_init"] = (broker, false, false),
             ["libc:socketpair"] = (broker, false, true),

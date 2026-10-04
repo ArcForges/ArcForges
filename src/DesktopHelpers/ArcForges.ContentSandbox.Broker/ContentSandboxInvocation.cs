@@ -92,6 +92,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
     /// <summary>True once the helper process has been ended or has ended: every later call fails.</summary>
     public bool IsEnded => Volatile.Read(ref _terminated) != 0 || _helper.Exited.IsCompleted;
 
+    [SuppressMessage("Design", "CA1031", Justification = "Any failure after the helper started must end the helper and become a typed result.")]
     [SuppressMessage("Reliability", "CA2000", Justification = "Ownership of the launch, registration, server and channel passes to the invocation, which disposes them; every failure path disposes what exists.")]
     internal static async Task<ContentSandboxResult<ContentSandboxInvocation>> StartAsync(
         ContentSandboxLaunchOptions options,
@@ -188,8 +189,9 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
 
             return ContentSandboxResult<ContentSandboxInvocation>.Ok(invocation);
         }
-        catch (Exception exception) when (exception is ContentSandboxLaunchException or OperationCanceledException or RpcException or IOException or InvalidOperationException)
+        catch (Exception exception)
         {
+            // Any exception after the helper started must end it: nothing is left running when the launch is abandoned.
             if (invocation is not null)
             {
                 await invocation.DisposeAsync().ConfigureAwait(false);
@@ -667,7 +669,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
     {
         var inner = exception.InnerException;
         var exit = helper is { Exited.IsCompletedSuccessfully: true } ? " exit=" + helper.Exited.Result : string.Empty;
-        return exception.GetType().Name + ": " + exception.Message + (inner is null ? string.Empty : " / " + inner.GetType().Name + ": " + inner.Message) + exit + (helper is null ? string.Empty : " output=" + helper.DiagnosticTail.ReplaceLineEndings(" "));
+        return exception.GetType().Name + ": " + exception.Message + (inner is null ? string.Empty : " / " + inner.GetType().Name + ": " + inner.Message) + exit + (helper is null ? string.Empty : " output=" + HelperText.Sanitise(helper.DiagnosticTail));
     }
 
     private static string ReasonForStartFailure(IProvisionedHelper? helper)

@@ -76,6 +76,31 @@ public sealed class LinuxProfileTests
         }
     }
 
+    [Fact]
+    public void EveryX32CallNumberIsDeniedAndSignallingAndDescriptorTakingAreDeniedOnBothFamilies()
+    {
+        var x64 = SeccompProgram.Build(LinuxArchitecture.X64);
+        foreach (var number in new uint[] { 0x40000000 | 59, 0x40000000 | 41, 0x40000000 | 101, 0x40000000, 0x40000000 | 1, 0xFFFFFFFF })
+        {
+            Assert.Equal(Eperm, Run(x64, SeccompProgram.AuditArchX64, number));
+        }
+
+        foreach (var number in new uint[] { 62, 200, 424, 434, 438 })
+        {
+            Assert.Equal(Eperm, Run(x64, SeccompProgram.AuditArchX64, number));
+        }
+
+        var arm = SeccompProgram.Build(LinuxArchitecture.Arm64);
+        foreach (var number in new uint[] { 129, 130, 424, 434, 438 })
+        {
+            Assert.Equal(Eperm, Run(arm, SeccompProgram.AuditArchArm64, number));
+        }
+
+        // tgkill is the runtime's own thread suspension and stays possible (recorded as not covered).
+        Assert.Equal(SeccompProgram.RetAllow, Run(x64, SeccompProgram.AuditArchX64, 234));
+        Assert.Equal(SeccompProgram.RetAllow, Run(arm, SeccompProgram.AuditArchArm64, 131));
+    }
+
     [Theory]
     [MemberData(nameof(Architectures))]
     public void AForeignArchitectureKillsTheProcess(string name)

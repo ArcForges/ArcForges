@@ -19,8 +19,8 @@ namespace ArcForges.ContentSandbox.Broker.Linux;
 /// The Linux launch profile, parent side. The parent creates every resource before the child exists, as close-on-exec descriptors, and
 /// hands the child exactly the closed inventory at fixed numbers through a spawn plan (standard input carries the launch frame, standard output and
 /// error a diagnostic stream, 3 and 4 the two private streams, 5 the read-only input, 6 to 8 the slots); every other descriptor of the parent is
-/// closed by the exec. The helper then applies Landlock, seccomp, no_new_privs and its limits to itself and checks them before it serves a call
-/// (the profile is the helper's, because only the helper can restrict its own threads). This launcher has not been run on Linux by the task that
+/// closed by the plan (close-on-exec at the exec, and an explicit close-from the first unused number for any that is not). The helper then applies Landlock, seccomp, no_new_privs and its limits to itself and checks them before it serves a call
+/// (the profile is the helper's, because only the helper can restrict itself; Landlock is synchronised to all threads with its TSYNC flag, and the helper refuses to run if the kernel does not support that). This launcher has not been run on Linux by the task that
 /// wrote it: it is compiled in hosted CI and its pure parts are tested offline.
 /// </summary>
 [SupportedOSPlatform("linux")]
@@ -29,6 +29,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
 {
     private const int DiagnosticBytes = 4096;
     private const int FirstSafeDescriptor = 64;
+    private const int FirstUnusedDescriptor = 9;
 
     public ContentSandboxProfileKind Profile => ContentSandboxProfileKind.LinuxLandlockSeccomp;
 
@@ -59,7 +60,9 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
         FileStream file;
         try
         {
-            file = new FileStream(request.HelperPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            // Limit, stated and not hidden: on Linux the share mode is an advisory lock and the process is started by path, so a writer to the install
+            // directory could still swap the file between this hash and the start. The installation must keep that directory unwritable for the user.
+            file = new FileStream(request.HelperPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -279,7 +282,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
             int descriptor;
             try
             {
-                descriptor = LinuxNative.MemfdCreate(name, LinuxNative.MemfdCloseOnExec);
+                descriptor = LinuxNative.MemfdCreate(name, LinuxNative.MemfdCloseOnExec | LinuxNative.MemfdAllowSealing);
             }
             finally
             {
@@ -294,6 +297,16 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
             _ = owned;
             stream = new FileStream(new SafeFileHandle(descriptor, ownsHandle: true), FileAccess.ReadWrite, 1, false);
             stream.SetLength(length);
+
+            // The helper holds a read-write descriptor of every output slot: without these seals it could shrink one and the parent's copy would
+            // fault. Shrinking and growing are refused for good; writes through the mapping stay possible (and are never trusted).
+            if (LinuxNative.Fcntl(descriptor, LinuxNative.FAddSeals, LinuxNative.SealShrink | LinuxNative.SealGrow | LinuxNative.SealSeal) != 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                stream.Dispose();
+                throw new IOException("A memory-backed file could not be sealed.", error);
+            }
+
             return descriptor;
         }
 
@@ -314,6 +327,12 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
                     {
                         throw new IOException("A descriptor could not be placed in the spawn plan.");
                     }
+                }
+
+                // Every descriptor of the parent above the inventory is closed in the child, whatever flags it was opened with.
+                if (LinuxNative.SpawnFileActionsAddCloseFrom(actions, FirstUnusedDescriptor) != 0)
+                {
+                    throw new IOException("The spawn plan could not close the descriptors above the inventory.");
                 }
 
                 var path = Utf8(request.HelperPath, strings);
