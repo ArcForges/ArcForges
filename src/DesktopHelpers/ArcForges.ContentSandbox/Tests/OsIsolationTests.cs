@@ -66,7 +66,7 @@ public sealed class OsIsolationTests
         var udpReceived = udp.ReceiveAsync(Ct).AsTask();
         var lan = OsHarness.LanAddress();
 
-        await using var launcher = os.NewLauncher();
+        await using var launcher = new ContentSandboxLauncher(os.Options() with { Limits = new ContentSandboxLimits { TimeoutMs = 25000, MaxWidth = 4096, MaxHeight = 4096 } });
         await using var sibling = (await launcher.LaunchAsync(Fixtures.Script("image 8 8"), Ct)).Value!;
         var script = Fixtures.Script(
             "image 32 32",
@@ -85,8 +85,9 @@ public sealed class OsIsolationTests
         var launched = await launcher.LaunchAsync(script, Ct);
         Assert.True(launched.IsSuccess, launched.Failure?.Code + " " + launched.Detail);
         await using var attacker = launched.Value!;
-        var image = (await attacker.OpenImageAsync(0, 0, 1, Ct)).Value;
-        var report = (await attacker.GetImageInfoAsync(image, Ct)).Value!.Warnings.ToList();
+        var opened = await attacker.OpenImageAsync(0, 0, 1, Ct);
+        Assert.True(opened.IsSuccess, opened.Failure?.Code + " " + attacker.HelperDiagnostics);
+        var report = (await attacker.GetImageInfoAsync(opened.Value, Ct)).Value!.Warnings.ToList();
         OsHarness.Evidence("attack report", report);
 
         Assert.Equal(["file:DENIED:UnauthorizedAccessException", "file:DENIED:UnauthorizedAccessException"], report.Where(line => line.StartsWith("file:", StringComparison.Ordinal)));

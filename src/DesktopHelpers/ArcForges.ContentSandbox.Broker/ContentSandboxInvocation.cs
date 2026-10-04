@@ -46,6 +46,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
     private readonly TaskCompletionSource _stopSupervision = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private LocalRpcBrokerSession? _session;
     private Guid _sessionId;
+    private int _closing;
     private int _terminated;
     private int _disposed;
 
@@ -584,6 +585,9 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
             return;
         }
 
+        // The helper ends its own streams on the way out; that is the orderly end, not a loss to terminate over.
+        _ = Interlocked.Exchange(ref _closing, 1);
+
         try
         {
             _ = await _client.CloseSessionAsync(
@@ -1047,7 +1051,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
         var registrationEnded = Task.Delay(Timeout.Infinite, _registration.Ended);
         var renewal = RenewAsync();
         var first = await Task.WhenAny(exited, registrationEnded, _renewalLost.Task, _stopSupervision.Task).ConfigureAwait(false);
-        if (first != _stopSupervision.Task)
+        if (first != _stopSupervision.Task && Volatile.Read(ref _closing) == 0)
         {
             Terminate();
         }

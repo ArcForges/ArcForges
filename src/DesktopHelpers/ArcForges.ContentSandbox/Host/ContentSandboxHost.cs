@@ -63,7 +63,9 @@ internal static class ContentSandboxHost
                 return ContentSandboxContract.ExitInventoryInvalid;
             }
 
-            server = LocalRpcServer.CreateBuilder(supplier)
+            var builder = LocalRpcServer.CreateBuilder(supplier);
+            builder.Limits = new LocalRpcLimits { ShutdownTimeout = TimeSpan.FromMilliseconds(500) };
+            server = builder
                 .AddService(service)
                 .RegisterControl(LocalRpcControlOperation.LeaseRenewal, ContentSandboxServiceImpl.ServiceName, ContentSandboxContract.RenewSessionMethod)
                 .RegisterControl(LocalRpcControlOperation.Cancellation, ContentSandboxServiceImpl.ServiceName, ContentSandboxContract.CancelSessionMethod)

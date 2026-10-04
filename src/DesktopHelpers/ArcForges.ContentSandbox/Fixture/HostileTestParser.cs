@@ -373,7 +373,7 @@ internal static class HostileAttacks
         try
         {
             using var client = new TcpClient();
-            client.ConnectAsync(IPAddress.Parse(address), int.Parse(port, CultureInfo.InvariantCulture)).Wait(TimeSpan.FromSeconds(5));
+            client.ConnectAsync(IPAddress.Parse(address), int.Parse(port, CultureInfo.InvariantCulture)).Wait(TimeSpan.FromSeconds(2));
             return client.Connected ? "tcp:ALLOWED:" + address : "tcp:DENIED:NotConnected";
         }
         catch (Exception exception)
