@@ -6,6 +6,8 @@ using ArcForges.Foundation;
 using ArcForges.Foundation.Execution;
 using ArcForges.Security;
 using ArcForges.Security.Audit;
+using ArcForges.Security.Decisions;
+using ArcForges.Security.Leases;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
@@ -740,6 +742,405 @@ public sealed class AuditStoreTests
         Assert.DoesNotContain(fixture.Store.ReadMaintenanceReceipts(), item => item.Action == AuditMaintenanceAction.ReleaseLegalHold);
     }
 
+    [Fact]
+    public async Task TheRealLeaseManagerWritesEveryLifecycleFactIntoTheDurableAuditWithTheStableIdentity()
+    {
+        using var fixture = new AuditFixture();
+        var leases = new LeaseRig(fixture);
+        var cancellation = TestContext.Current.CancellationToken;
+
+        var issuedOnly = await leases.IssueAsync(LeaseIssueBasis.StepUpSatisfied, RiskLevel.R3, cancellation);
+        var revoked = await leases.IssueAsync(LeaseIssueBasis.PolicyAllowed, RiskLevel.R1, cancellation);
+        var expiring = await leases.IssueAsync(LeaseIssueBasis.RiskAccepted, RiskLevel.R2, cancellation, TimeSpan.FromMinutes(5));
+        var ended = await leases.IssueAsync(LeaseIssueBasis.UserApproved, RiskLevel.R4, cancellation);
+
+        var revocation = await leases.Manager.RevokeAsync(revoked.Id, fixture.Actor.Owner, LeaseRevocationReason.OwnerRevoked, cancellation);
+        Assert.True(revocation.TryGetValue(out var transition));
+        Assert.True(transition.Changed);
+        Assert.True(transition.EndRecorded);
+
+        var ending = await leases.Manager.EndTaskAsync(ended.Task, cancellation);
+        Assert.Equal(new LeaseSweep(1, 1, 0), ending);
+
+        leases.Advance(TimeSpan.FromMinutes(6));
+        var sweep = await leases.Manager.ExpireDueAsync(cancellation);
+        Assert.Equal(new LeaseSweep(1, 1, 0), sweep);
+
+        // Re-running the sweeps writes nothing more: each lease ends exactly once and its fact is recorded exactly once.
+        Assert.Equal(new LeaseSweep(0, 0, 0), await leases.Manager.ExpireDueAsync(cancellation));
+        Assert.Equal(new LeaseSweep(0, 0, 0), await leases.Manager.EndTaskAsync(ended.Task, cancellation));
+
+        using var independent = fixture.OpenSecondStore();
+        var rows = ReadAll(independent, fixture);
+        var byLease = rows.GroupBy(row => row.Event.Resource.Id).ToDictionary(group => group.Key, group => group.OrderBy(row => row.Sequence).ToArray());
+        Assert.Equal(4, byLease.Count);
+        Assert.Equal(7, rows.Count);
+        Assert.All(rows, row =>
+        {
+            Assert.Equal(AuditResourceKind.CapabilityLease, row.Event.Resource.Kind);
+            Assert.Equal(fixture.Actor.Owner, row.Event.ActorChain.Owner);
+            Assert.Equal(new AuditCapabilityId("tools.invoke"), row.Event.Capability);
+            Assert.Equal(AuditOrigin.Remote, row.Event.Origin);
+            Assert.Equal(leases.Workspace, row.Event.Workspace);
+            Assert.Null(row.Event.Egress);
+            Assert.Null(row.Event.Correlation);
+        });
+
+        var first = byLease[issuedOnly.Id.Value];
+        var firstRow = Assert.Single(first);
+        Assert.Equal(AuditEventType.CapabilityLeaseIssued, firstRow.Event.EventType);
+        Assert.Equal(AuditDecision.Allowed, firstRow.Event.Decision);
+        Assert.Equal(AuditDecisionReason.StepUpSatisfied, firstRow.Event.Reason);
+        Assert.Equal(AuditRisk.R3, firstRow.Event.Risk);
+        Assert.Equal(issuedOnly.Task, firstRow.Event.Task);
+        Assert.Equal(new AuditSoftwareIdentity("arcscope.desktop/1"), firstRow.Event.SoftwareIdentity);
+
+        var revokedRows = byLease[revoked.Id.Value];
+        Assert.Equal([AuditEventType.CapabilityLeaseIssued, AuditEventType.CapabilityLeaseRevoked], revokedRows.Select(row => row.Event.EventType));
+        Assert.Equal([AuditDecisionReason.PolicyAllowed, AuditDecisionReason.UserRejected], revokedRows.Select(row => row.Event.Reason));
+        Assert.Equal([AuditDecision.Allowed, AuditDecision.Completed], revokedRows.Select(row => row.Event.Decision));
+        Assert.All(revokedRows, row => Assert.Equal(AuditRisk.R1, row.Event.Risk));
+
+        var expiredRows = byLease[expiring.Id.Value];
+        Assert.Equal([AuditEventType.CapabilityLeaseIssued, AuditEventType.CapabilityLeaseExpired], expiredRows.Select(row => row.Event.EventType));
+        Assert.Equal([AuditDecisionReason.RiskAccepted, AuditDecisionReason.PolicyExpired], expiredRows.Select(row => row.Event.Reason));
+        Assert.All(expiredRows, row => Assert.Equal(AuditRisk.R2, row.Event.Risk));
+
+        var endedRows = byLease[ended.Id.Value];
+        Assert.Equal([AuditEventType.CapabilityLeaseIssued, AuditEventType.CapabilityLeaseTaskEnded], endedRows.Select(row => row.Event.EventType));
+        Assert.Equal([AuditDecisionReason.UserApproved, AuditDecisionReason.NotApplicable], endedRows.Select(row => row.Event.Reason));
+        Assert.All(endedRows, row =>
+        {
+            Assert.Equal(AuditRisk.R4, row.Event.Risk);
+            Assert.Equal(ended.Task, row.Event.Task);
+        });
+
+        // The identity is stored as the exact Guid of the manager's lease, not a string, hash or truncation.
+        using var connection = fixture.OpenRawConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM local_audit WHERE resource_kind=16 AND resource_id=$id;";
+        command.Parameters.AddWithValue("$id", revoked.Id.Value.ToString("N", System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(2L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellation), System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task AnIssueWhoseFactCannotBeAppendedIssuesNothingAndAnOwedEndFactIsAppendedOnceWhenAuditRecovers()
+    {
+        using var fixture = new AuditFixture();
+        var leases = new LeaseRig(fixture);
+        var cancellation = TestContext.Current.CancellationToken;
+
+        leases.AuditDown = true;
+        var refused = await leases.Manager.IssueAsync(leases.Request(LeaseIssueBasis.UserApproved, RiskLevel.R1, TimeSpan.FromMinutes(30)), cancellation);
+        Assert.False(refused.Issued);
+        Assert.Equal(LeaseIssueRefusal.AuditUnavailable, refused.Refusal);
+        Assert.Empty(leases.Store.All);
+        Assert.Empty(ReadAll(fixture.Store, fixture));
+
+        leases.AuditDown = false;
+        var lease = await leases.IssueAsync(LeaseIssueBasis.UserApproved, RiskLevel.R1, cancellation);
+        Assert.Single(ReadAll(fixture.Store, fixture));
+
+        // Revocation is stored first, so authority ends although the audit write fails; the fact is owed, not lost.
+        leases.AuditDown = true;
+        var revocation = await leases.Manager.RevokeAsync(lease.Id, fixture.Actor.Owner, LeaseRevocationReason.AuthorityLost, cancellation);
+        Assert.True(revocation.TryGetValue(out var transition));
+        Assert.True(transition.Changed);
+        Assert.False(transition.EndRecorded);
+        Assert.Equal(LeaseState.Revoked, transition.Lease.State);
+        Assert.Single(ReadAll(fixture.Store, fixture));
+        Assert.Equal(new LeaseSweep(0, 0, 1), await leases.Manager.ExpireDueAsync(cancellation));
+
+        leases.AuditDown = false;
+        Assert.Equal(new LeaseSweep(0, 1, 0), await leases.Manager.ExpireDueAsync(cancellation));
+        var rows = ReadAll(fixture.Store, fixture);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(AuditEventType.CapabilityLeaseRevoked, rows[1].Event.EventType);
+        Assert.Equal(AuditDecisionReason.AuthorityMissing, rows[1].Event.Reason);
+        Assert.Equal(lease.Id.Value, rows[1].Event.Resource.Id);
+        Assert.Equal(new LeaseSweep(0, 0, 0), await leases.Manager.ExpireDueAsync(cancellation));
+        Assert.Equal(2, ReadAll(fixture.Store, fixture).Count);
+    }
+
+    [Fact]
+    public async Task AFactTheAuditShapeCannotHoldFailsTheRealIssueClosedAndLeavesNoRowAndNoLease()
+    {
+        using var fixture = new AuditFixture();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        // A capability key that the audit does not accept as a canonical key refuses the issue instead of storing a different key.
+        var leases = new LeaseRig(fixture, capability: "Tools/Invoke");
+        var badKey = await leases.Manager.IssueAsync(leases.Request(LeaseIssueBasis.UserApproved, RiskLevel.R1, TimeSpan.FromMinutes(30)), cancellation);
+        Assert.Equal(LeaseIssueRefusal.AuditUnavailable, badKey.Refusal);
+        Assert.Empty(leases.Store.All);
+
+        // A lease of another owner than the store's owner is refused by the store (owner scoping), so no foreign lease is audited.
+        var foreign = new LeaseRig(fixture, owner: new HumanPrincipal(new RealmId(Guid.NewGuid()), new UserId(Guid.NewGuid()), HumanIdentityKind.LocalHuman));
+        var foreignIssue = await foreign.Manager.IssueAsync(foreign.Request(LeaseIssueBasis.UserApproved, RiskLevel.R1, TimeSpan.FromMinutes(30)), cancellation);
+        Assert.Equal(LeaseIssueRefusal.AuditUnavailable, foreignIssue.Refusal);
+        Assert.Empty(foreign.Store.All);
+
+        // A disposed store fails closed too.
+        var disposed = new LeaseRig(fixture);
+        fixture.Store.Dispose();
+        var disposedIssue = await disposed.Manager.IssueAsync(disposed.Request(LeaseIssueBasis.UserApproved, RiskLevel.R1, TimeSpan.FromMinutes(30)), cancellation);
+        Assert.Equal(LeaseIssueRefusal.AuditUnavailable, disposedIssue.Refusal);
+        Assert.Empty(disposed.Store.All);
+
+        using var reopened = fixture.OpenSecondStore();
+        Assert.Empty(ReadAll(reopened, fixture));
+    }
+
+    [Fact]
+    public async Task EveryIssueBasisAndRevocationReasonMapsToItsOwnAuditReasonAndOnlyTheSinkEntryPointExists()
+    {
+        using var fixture = new AuditFixture();
+        var sink = new CapabilityLeaseEventAuditSink(new CapabilityLeaseAuditAdapter(fixture.Store), new AuditSoftwareIdentity("arcscope.desktop/1"));
+        var now = fixture.NowInstant;
+        var cancellation = TestContext.Current.CancellationToken;
+
+        (LeaseIssueBasis Basis, AuditDecisionReason Reason)[] bases =
+        [
+            (LeaseIssueBasis.PolicyAllowed, AuditDecisionReason.PolicyAllowed),
+            (LeaseIssueBasis.UserApproved, AuditDecisionReason.UserApproved),
+            (LeaseIssueBasis.StepUpSatisfied, AuditDecisionReason.StepUpSatisfied),
+            (LeaseIssueBasis.RiskAccepted, AuditDecisionReason.RiskAccepted),
+        ];
+        (LeaseRevocationReason Reason, AuditDecisionReason Expected)[] revocations =
+        [
+            (LeaseRevocationReason.OwnerRevoked, AuditDecisionReason.UserRejected),
+            (LeaseRevocationReason.PolicyDenied, AuditDecisionReason.PolicyDenied),
+            (LeaseRevocationReason.RiskRejected, AuditDecisionReason.RiskRejected),
+            (LeaseRevocationReason.AuthorityLost, AuditDecisionReason.AuthorityMissing),
+        ];
+
+        var expected = new List<(Guid Lease, AuditEventType Type, AuditDecisionReason Reason, AuditRisk Risk)>();
+        RiskLevel[] risks = [RiskLevel.R0, RiskLevel.R1, RiskLevel.R2, RiskLevel.R3, RiskLevel.R4];
+        var index = 0;
+        foreach (var (basis, reason) in bases)
+        {
+            var risk = risks[index++ % risks.Length];
+            var lease = LeaseOf(fixture, basis, risk, LeaseState.Active);
+            await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.Issued, lease, now), cancellation);
+            expected.Add((lease.Id.Value, AuditEventType.CapabilityLeaseIssued, reason, RiskOf(risk)));
+        }
+
+        foreach (var (revocation, reason) in revocations)
+        {
+            var risk = risks[index++ % risks.Length];
+            var endedLease = LeaseOf(fixture, LeaseIssueBasis.UserApproved, risk, LeaseState.Revoked, revocation);
+            await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.Revoked, endedLease, now), cancellation);
+            expected.Add((endedLease.Id.Value, AuditEventType.CapabilityLeaseRevoked, reason, RiskOf(risk)));
+        }
+
+        var expiredLease = LeaseOf(fixture, LeaseIssueBasis.UserApproved, RiskLevel.R2, LeaseState.Expired);
+        await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.Expired, expiredLease, now), cancellation);
+        expected.Add((expiredLease.Id.Value, AuditEventType.CapabilityLeaseExpired, AuditDecisionReason.PolicyExpired, AuditRisk.R2));
+        var taskEndedLease = LeaseOf(fixture, LeaseIssueBasis.UserApproved, RiskLevel.R2, LeaseState.TaskEnded);
+        await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.TaskEnded, taskEndedLease, now), cancellation);
+        expected.Add((taskEndedLease.Id.Value, AuditEventType.CapabilityLeaseTaskEnded, AuditDecisionReason.NotApplicable, AuditRisk.R2));
+
+        var rows = ReadAll(fixture.Store, fixture);
+        Assert.Equal(expected.Count, rows.Count);
+        for (var row = 0; row < expected.Count; row++)
+        {
+            Assert.Equal(expected[row].Lease, rows[row].Event.Resource.Id);
+            Assert.Equal(expected[row].Type, rows[row].Event.EventType);
+            Assert.Equal(expected[row].Reason, rows[row].Event.Reason);
+            Assert.Equal(expected[row].Risk, rows[row].Event.Risk);
+        }
+
+        // A null fact and a pre-cancelled call append nothing, and the constructor refuses missing collaborators.
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await sink.WriteAsync(null!, cancellation).ConfigureAwait(false));
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        var again = LeaseOf(fixture, LeaseIssueBasis.UserApproved, RiskLevel.R1, LeaseState.Active);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.Issued, again, now), cancelled.Token).ConfigureAwait(false));
+        Assert.Equal(expected.Count, ReadAll(fixture.Store, fixture).Count);
+        Assert.Throws<ArgumentNullException>(() => new CapabilityLeaseEventAuditSink(null!, new AuditSoftwareIdentity("arcscope.desktop/1")));
+        Assert.Throws<ArgumentNullException>(() => new CapabilityLeaseEventAuditSink(new CapabilityLeaseAuditAdapter(fixture.Store), null!));
+    }
+
+    [Fact]
+    public async Task ADelegatedIssuingChainRecordsItsFinalActorSoftwareIdentityAndTheFallbackIsUsedOnlyForADirectIssue()
+    {
+        using var fixture = new AuditFixture();
+        var sink = new CapabilityLeaseEventAuditSink(new CapabilityLeaseAuditAdapter(fixture.Store), new AuditSoftwareIdentity("fallback.composition/1"));
+        var now = fixture.NowInstant;
+        var automation = new DelegatedActor(ActorKind.Automation, Guid.NewGuid(), new InstanceId(Guid.NewGuid()), "owned.automation/2");
+        var chain = new ActorChain(fixture.Actor.Owner, fixture.Actor.Device, fixture.Actor.Installation, SessionId.New(), fixture.Actor.CallerInstance, [automation]);
+        var delegated = LeaseOf(fixture, LeaseIssueBasis.PolicyAllowed, RiskLevel.R1, LeaseState.Active, issuedBy: chain);
+        var direct = LeaseOf(fixture, LeaseIssueBasis.PolicyAllowed, RiskLevel.R1, LeaseState.Active);
+
+        await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.Issued, delegated, now), TestContext.Current.CancellationToken);
+        await sink.WriteAsync(new CapabilityLeaseEvent(LeaseEventKind.Issued, direct, now), TestContext.Current.CancellationToken);
+
+        var rows = ReadAll(fixture.Store, fixture);
+        Assert.Equal(new AuditSoftwareIdentity("owned.automation/2"), rows[0].Event.SoftwareIdentity);
+        Assert.Equal(automation.Executor, rows[0].Event.Executor);
+        Assert.Equal(new AuditSoftwareIdentity("fallback.composition/1"), rows[1].Event.SoftwareIdentity);
+        Assert.Equal(direct.IssuedBy.CallerInstance, rows[1].Event.Executor);
+    }
+
+    private static List<AuditEventRecord> ReadAll(AuditStore store, AuditFixture fixture)
+    {
+        var from = fixture.Now.AddDays(-1);
+        var to = fixture.Now.AddDays(1);
+        var all = new List<AuditEventRecord>();
+        long after = 0;
+        while (true)
+        {
+            var page = store.Query(new AuditQuery(from, to, 100, afterSequence: after));
+            if (page.Count == 0) return all;
+            all.AddRange(page);
+            after = page[^1].Sequence;
+        }
+    }
+
+    private static AuditRisk RiskOf(RiskLevel level) => level switch
+    {
+        RiskLevel.R0 => AuditRisk.R0,
+        RiskLevel.R1 => AuditRisk.R1,
+        RiskLevel.R2 => AuditRisk.R2,
+        RiskLevel.R3 => AuditRisk.R3,
+        RiskLevel.R4 => AuditRisk.R4,
+        _ => throw new ArgumentOutOfRangeException(nameof(level)),
+    };
+
+    private static CapabilityLease LeaseOf(AuditFixture fixture, LeaseIssueBasis basis, RiskLevel risk, LeaseState state,
+        LeaseRevocationReason revocation = LeaseRevocationReason.None, ActorChain? issuedBy = null)
+    {
+        var chain = issuedBy ?? new ActorChain(fixture.Actor.Owner, fixture.Actor.Device, fixture.Actor.Installation,
+            SessionId.New(), fixture.Actor.CallerInstance, []);
+        var terminal = state != LeaseState.Active;
+        return new CapabilityLease(new CapabilityLeaseId(Guid.NewGuid()), fixture.Actor.Owner,
+            new DecisionScope(fixture.Actor.Owner.Realm, new WorkspaceId(Guid.NewGuid())), new TaskId(Guid.NewGuid()),
+            new LeaseHolder(ActorKind.Extension, Guid.NewGuid()), "tools.invoke", ["resource/1"], risk, DecisionOrigin.Local, basis,
+            chain, fixture.NowInstant, Instant.FromDateTimeOffset(fixture.Now.AddMinutes(30)), state, terminal ? 2 : 1,
+            terminal ? Instant.FromDateTimeOffset(fixture.Now.AddMinutes(1)) : null, revocation);
+    }
+
+    /// <summary>The real lease manager over an in-memory lease store, with the audit sink under test as its only event sink.</summary>
+    private sealed class LeaseRig
+    {
+        private readonly AuditFixture fixture;
+        private readonly string capability;
+        private readonly HumanPrincipal owner;
+        private readonly SwitchableSink sink;
+
+        public LeaseRig(AuditFixture fixture, string capability = "tools.invoke", HumanPrincipal? owner = null)
+        {
+            this.fixture = fixture;
+            this.capability = capability;
+            this.owner = owner ?? fixture.Actor.Owner;
+            Workspace = new WorkspaceId(Guid.NewGuid());
+            Scope = new DecisionScope(this.owner.Realm, Workspace);
+            Store = new InMemoryLeaseStore();
+            sink = new SwitchableSink(new CapabilityLeaseEventAuditSink(new CapabilityLeaseAuditAdapter(fixture.Store),
+                new AuditSoftwareIdentity("arcscope.desktop/1")));
+            Manager = new CapabilityLeaseManager(fixture.Clock, Store, sink, new Ceilings(fixture));
+        }
+
+        public bool AuditDown
+        {
+            get => sink.Down;
+            set => sink.Down = value;
+        }
+
+        public WorkspaceId Workspace { get; }
+        public DecisionScope Scope { get; }
+        public InMemoryLeaseStore Store { get; }
+        public CapabilityLeaseManager Manager { get; }
+
+        public void Advance(TimeSpan duration)
+        {
+            fixture.AdvanceMonotonic(duration);
+            fixture.AdvanceWallOnly(duration);
+        }
+
+        public LeaseRequest Request(LeaseIssueBasis basis, RiskLevel risk, TimeSpan lifetime) => new(
+            new ActorChain(owner, fixture.Actor.Device, fixture.Actor.Installation, SessionId.New(), fixture.Actor.CallerInstance, []),
+            Scope, new TaskId(Guid.NewGuid()), new LeaseHolder(ActorKind.Extension, Guid.NewGuid()), capability,
+            ["resource/1"], risk, DecisionOrigin.Remote, basis, lifetime);
+
+        public async Task<CapabilityLease> IssueAsync(LeaseIssueBasis basis, RiskLevel risk, CancellationToken cancellationToken,
+            TimeSpan? lifetime = null)
+        {
+            var result = await Manager.IssueAsync(Request(basis, risk, lifetime ?? TimeSpan.FromMinutes(30)), cancellationToken).ConfigureAwait(false);
+            Assert.True(result.Issued, result.Refusal.ToString());
+            return result.Lease!;
+        }
+
+        private sealed class SwitchableSink(ILeaseEventSink inner) : ILeaseEventSink
+        {
+            public bool Down { get; set; }
+
+            public ValueTask WriteAsync(CapabilityLeaseEvent leaseEvent, CancellationToken cancellationToken)
+            {
+                if (Down) throw new InvalidOperationException("audit offline");
+                return inner.WriteAsync(leaseEvent, cancellationToken);
+            }
+        }
+
+        private sealed class Ceilings(AuditFixture fixture) : ILeaseCeilingSource
+        {
+            public ValueTask<PermissionGrantRecord?> FindAsync(string principalKey, string capabilityKey, string scopeKey, CancellationToken cancellationToken) =>
+                ValueTask.FromResult<PermissionGrantRecord?>(new PermissionGrantRecord("owner.test", principalKey, capabilityKey, scopeKey,
+                    PermissionGrantState.Granted, [], fixture.Now.AddHours(-1), fixture.Now.AddHours(20), "generation-1"));
+        }
+    }
+
+    /// <summary>A minimal durable-store stand-in with the lease store contract: insert-if-absent and compare-and-swap on the version.</summary>
+    private sealed class InMemoryLeaseStore : ILeaseStore
+    {
+        private readonly Lock gate = new();
+        private readonly Dictionary<CapabilityLeaseId, CapabilityLease> leases = [];
+
+        public IReadOnlyList<CapabilityLease> All
+        {
+            get
+            {
+                lock (gate) return [.. leases.Values];
+            }
+        }
+
+        public ValueTask<CapabilityLease?> ReadAsync(CapabilityLeaseId id, CancellationToken cancellationToken)
+        {
+            lock (gate) return ValueTask.FromResult(leases.GetValueOrDefault(id));
+        }
+
+        public ValueTask<bool> TryCreateAsync(CapabilityLease lease, CancellationToken cancellationToken)
+        {
+            lock (gate) return ValueTask.FromResult(leases.TryAdd(lease.Id, lease));
+        }
+
+        public ValueTask<bool> TryReplaceAsync(CapabilityLeaseId id, long expectedVersion, CapabilityLease replacement, CancellationToken cancellationToken)
+        {
+            lock (gate)
+            {
+                if (!leases.TryGetValue(id, out var current) || current.Version != expectedVersion) return ValueTask.FromResult(false);
+                leases[id] = replacement;
+                return ValueTask.FromResult(true);
+            }
+        }
+
+        public ValueTask<IReadOnlyList<CapabilityLease>> ListUnsettledAsync(TaskId? task, Instant? dueAt, int limit, CancellationToken cancellationToken)
+        {
+            lock (gate)
+            {
+                IReadOnlyList<CapabilityLease> result =
+                [
+                    .. leases.Values
+                        .Where(lease => task is null || lease.Task == task)
+                        .Where(lease => lease.State == LeaseState.Active ? dueAt is null || lease.ExpiresAt <= dueAt : !lease.EndEventRecorded)
+                        .OrderBy(lease => lease.IssuedAt.UnixSeconds).ThenBy(lease => lease.Id.Value)
+                        .Take(limit),
+                ];
+                return ValueTask.FromResult(result);
+            }
+        }
+    }
+
     private sealed class AuditFixture : IDisposable
     {
         private readonly string directory = Path.Combine(Path.GetTempPath(), "ArcForges-Audit-" + Guid.NewGuid().ToString("N"));
@@ -773,6 +1174,7 @@ public sealed class AuditStoreTests
         public AuditRetentionPolicy Policy { get; }
         public AuditStore Store { get; }
         public DateTimeOffset Now => timeProvider.GetUtcNow();
+        public Clock Clock => clock;
         public Instant NowInstant => clock.GetCurrentInstant();
 
         public AuditEvent CreateEvent(bool delegated = false)
