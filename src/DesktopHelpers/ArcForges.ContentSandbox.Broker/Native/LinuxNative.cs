@@ -23,9 +23,9 @@ internal static unsafe partial class LinuxNative
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
     internal static partial int SocketPair(int domain, int type, int protocol, int* descriptors);
 
-    [LibraryImport("libc", EntryPoint = "memfd_create", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    [LibraryImport("libc", EntryPoint = "memfd_create", SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-    internal static partial int MemfdCreate(string name, uint flags);
+    internal static partial int MemfdCreate(nint name, uint flags);
 
     [LibraryImport("libc", EntryPoint = "fcntl", SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]

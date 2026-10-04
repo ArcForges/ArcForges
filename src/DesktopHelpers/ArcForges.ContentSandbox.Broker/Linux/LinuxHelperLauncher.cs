@@ -275,7 +275,17 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
 
         private static int CreateMemory(long length, List<int> owned, out FileStream stream)
         {
-            var descriptor = LinuxNative.MemfdCreate("arcforges-content", LinuxNative.MemfdCloseOnExec);
+            var name = Marshal.StringToCoTaskMemUTF8("arcforges-content");
+            int descriptor;
+            try
+            {
+                descriptor = LinuxNative.MemfdCreate(name, LinuxNative.MemfdCloseOnExec);
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(name);
+            }
+
             if (descriptor < 0)
             {
                 throw new IOException("A memory-backed file could not be created.", Marshal.GetLastPInvokeError());

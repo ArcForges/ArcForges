@@ -51,10 +51,58 @@ public sealed class RepositoryPolicyTests
     [Xunit.Fact]
     public void ProductionNativeBindingsHaveOneCapabilityOwner()
     {
-        var owners = new Dictionary<string, string>(StringComparer.Ordinal)
+        // The closed map: every production binding is one library:entry-point export with exactly one owner directory and exactly its declared
+        // marshalling flags (UTF-16 strings, last-error capture). A binding that is not listed, is listed twice or is declared elsewhere fails.
+        string image = Path.Combine(Root, "src", "Native", "ArcForges.Native.Image");
+        string secrets = Path.Combine(Root, "src", "BuildingBlocks", "ArcForges.Security.Secrets");
+        string broker = Path.Combine(Root, "src", "DesktopHelpers", "ArcForges.ContentSandbox.Broker", "Native");
+        string helper = Path.Combine(Root, "src", "DesktopHelpers", "ArcForges.ContentSandbox", "Native");
+        var expected = new Dictionary<string, (string Owner, bool Utf16, bool LastError)>(StringComparer.Ordinal)
         {
-            ["ArcImageNative"] = Path.Combine(Root, "src", "Native", "ArcForges.Native.Image"),
-            ["Advapi32.dll"] = Path.Combine(Root, "src", "BuildingBlocks", "ArcForges.Security.Secrets"),
+            ["Advapi32.dll:CredDeleteW"] = (secrets, true, true),
+            ["Advapi32.dll:CredFree"] = (secrets, false, false),
+            ["Advapi32.dll:CredReadW"] = (secrets, true, true),
+            ["Advapi32.dll:CredWriteW"] = (secrets, false, true),
+            ["ArcImageNative:arc_image_get_abi_version"] = (image, false, false),
+            ["ArcImageNative:arc_image_get_build_info"] = (image, false, false),
+            ["ArcImageNative:arc_image_get_last_error"] = (image, false, false),
+            ["Advapi32.dll:EqualSid"] = (broker, false, false),
+            ["Advapi32.dll:FreeSid"] = (broker, false, false),
+            ["Advapi32.dll:GetTokenInformation"] = (broker, false, true),
+            ["Advapi32.dll:OpenProcessToken"] = (broker, false, true),
+            ["Kernel32.dll:AssignProcessToJobObject"] = (broker, false, true),
+            ["Kernel32.dll:CloseHandle"] = (broker, false, false),
+            ["Kernel32.dll:CreateFileW"] = (broker, true, true),
+            ["Kernel32.dll:CreateJobObjectW"] = (broker, false, true),
+            ["Kernel32.dll:CreateProcessW"] = (broker, true, true),
+            ["Kernel32.dll:DeleteProcThreadAttributeList"] = (broker, false, false),
+            ["Kernel32.dll:DuplicateHandle"] = (broker, false, true),
+            ["Kernel32.dll:InitializeProcThreadAttributeList"] = (broker, false, true),
+            ["Kernel32.dll:IsProcessInJob"] = (broker, false, true),
+            ["Kernel32.dll:ResumeThread"] = (broker, false, true),
+            ["Kernel32.dll:SetHandleInformation"] = (broker, false, true),
+            ["Kernel32.dll:SetInformationJobObject"] = (broker, false, true),
+            ["Kernel32.dll:TerminateJobObject"] = (broker, false, true),
+            ["Kernel32.dll:TerminateProcess"] = (broker, false, true),
+            ["Kernel32.dll:UpdateProcThreadAttribute"] = (broker, false, true),
+            ["Userenv.dll:CreateAppContainerProfile"] = (broker, true, false),
+            ["Userenv.dll:DeriveAppContainerSidFromAppContainerName"] = (broker, true, false),
+            ["libc:close"] = (broker, false, true),
+            ["libc:fcntl"] = (broker, false, true),
+            ["libc:kill"] = (broker, false, true),
+            ["libc:memfd_create"] = (broker, false, true),
+            ["libc:posix_spawn"] = (broker, false, false),
+            ["libc:posix_spawn_file_actions_adddup2"] = (broker, false, false),
+            ["libc:posix_spawn_file_actions_destroy"] = (broker, false, false),
+            ["libc:posix_spawn_file_actions_init"] = (broker, false, false),
+            ["libc:socketpair"] = (broker, false, true),
+            ["libc:waitpid"] = (broker, false, true),
+            ["Kernel32.dll:MapViewOfFile"] = (helper, false, true),
+            ["Kernel32.dll:UnmapViewOfFile"] = (helper, false, true),
+            ["libc:getppid"] = (helper, false, false),
+            ["libc:prctl"] = (helper, false, true),
+            ["libc:setrlimit"] = (helper, false, true),
+            ["libc:syscall"] = (helper, false, true),
         };
         var exports = new HashSet<string>(StringComparer.Ordinal);
         foreach (string file in Files("*.cs").Where(file => Path.GetRelativePath(Root, file)
@@ -68,31 +116,18 @@ public sealed class RepositoryPolicyTests
                 source, """LibraryImport\("([^"]+)", EntryPoint = "([^"]+)"(, StringMarshalling = StringMarshalling\.Utf16)?(, SetLastError = true)?\)"""))
             {
                 matched++;
-                string library = match.Groups[1].Value;
-                string entryPoint = match.Groups[2].Value;
-                Xunit.Assert.True(owners.TryGetValue(library, out string? owner), library);
-                Xunit.Assert.Equal(owner, Path.GetDirectoryName(file));
-                Xunit.Assert.Equal(library == "Advapi32.dll" && (entryPoint == "CredReadW" || entryPoint == "CredDeleteW"),
-                    match.Groups[3].Success);
-                Xunit.Assert.Equal(library == "Advapi32.dll" && (entryPoint == "CredWriteW" || entryPoint == "CredReadW" || entryPoint == "CredDeleteW"),
-                    match.Groups[4].Success);
-                Xunit.Assert.True(exports.Add(library + ":" + entryPoint), "Duplicate production binding: " + match.Value);
+                string key = match.Groups[1].Value + ":" + match.Groups[2].Value;
+                Xunit.Assert.True(expected.TryGetValue(key, out var allowed), key);
+                Xunit.Assert.Equal(allowed.Owner, Path.GetDirectoryName(file));
+                Xunit.Assert.Equal(allowed.Utf16, match.Groups[3].Success);
+                Xunit.Assert.Equal(allowed.LastError, match.Groups[4].Success);
+                Xunit.Assert.True(exports.Add(key), "Duplicate production binding: " + match.Value);
             }
 
             Xunit.Assert.Equal(declarations, matched);
         }
 
-        string[] expectedExports =
-        [
-            "Advapi32.dll:CredDeleteW",
-            "Advapi32.dll:CredFree",
-            "Advapi32.dll:CredReadW",
-            "Advapi32.dll:CredWriteW",
-            "ArcImageNative:arc_image_get_abi_version",
-            "ArcImageNative:arc_image_get_build_info",
-            "ArcImageNative:arc_image_get_last_error",
-        ];
-        Xunit.Assert.Equal(expectedExports, exports.OrderBy(value => value, StringComparer.Ordinal));
+        Xunit.Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), exports.OrderBy(value => value, StringComparer.Ordinal));
         foreach (string file in Files("*.csproj").Where(file => Path.GetRelativePath(Root, file)
             .Replace('\\', '/').StartsWith("src/", StringComparison.Ordinal)))
         {
