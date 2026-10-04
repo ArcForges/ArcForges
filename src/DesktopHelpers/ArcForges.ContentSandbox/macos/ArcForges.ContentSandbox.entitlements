@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!--
+  Declarative input of the macOS profile of the content helper (annex 24): a separately signed helper under the App Sandbox with no network,
+  no application-group or product container, no file-access entitlement and no inherited sandbox. It is verified by an offline test as data
+  only. The XPC descriptor handoff that would launch a helper signed with it needs a signed sandboxed bundle and a native activation shim that
+  this repository cannot build or run here, so the launcher refuses this platform (security.isolation_unavailable) until they exist.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+</dict>
+</plist>

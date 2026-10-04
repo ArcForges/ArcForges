@@ -224,6 +224,38 @@
     "aot": true
   },
   {
+    "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+    "role": "Foundation",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
+    "role": "NativeAdapter",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": true,
+    "aot": true
+  },
+  {
+    "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
+    "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
+    "role": "Test",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
+  },
+  {
     "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
     "role": "Foundation",
     "owner": "DesktopPlatform",

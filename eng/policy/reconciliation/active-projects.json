@@ -136,7 +136,23 @@
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
-      "blob": "63f22e07804e1b9af3a7955fed864187a14366c4"
+      "blob": "e34137a9950742ccd0b14f192bbe935376061ce1"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+      "blob": "f4298e2955bca926d8c0557eec5bf6345ce9264f"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
+      "blob": "eccb93c0d14acaac921ae8063a43d1da2bab58d5"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+      "blob": "15d0553b57178acdb4751dff042759d758977682"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
+      "blob": "df3e0db1ecdc88147bdf640cfa674e9f30704cad"
     },
     {
       "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",

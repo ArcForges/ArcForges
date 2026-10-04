@@ -133,6 +133,22 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
       "kind": "msbuild"
     },

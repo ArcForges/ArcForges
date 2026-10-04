@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.ContentSandbox.Contracts</AssemblyName>
+    <RootNamespace>ArcForges.ContentSandbox.Contracts</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.LocalRpc.Platform" />
+    <PackageReference Include="ArcForges.Contracts.LocalRpc.Sandbox" />
+    <ProjectReference Include="../../BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.Broker" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.HostileFixture" />
+  </ItemGroup>
+</Project>

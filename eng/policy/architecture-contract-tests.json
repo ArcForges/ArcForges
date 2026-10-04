@@ -2768,5 +2768,95 @@
     "apiSymbol": "ArcForges.Security.Audit.CapabilityLeaseEventAuditSink.WriteAsync(ArcForges.Security.Leases.CapabilityLeaseEvent, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
     "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.TheRealLeaseManagerWritesEveryLifecycleFactIntoTheDurableAuditWithTheStableIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Contracts.ContentSandboxLimits.IsWithinProfile()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.ContractFacadeTests.TheBudgetIsPositiveAndWithinTheProfileAndARequestMayOnlyLowerIt()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxLauncher.ProbeProfile()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.ContractFacadeTests.TheProfileOfThisPlatformIsReportedWithoutLaunchingAnything()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxLauncher.LaunchAsync(System.ReadOnlyMemory<byte>, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxLauncher.DisposeAsync()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.ContractFacadeTests.AProfileWithoutALauncherFailsClosedWithoutStartingAnything(ArcForges.ContentSandbox.Broker.ContentSandboxProfile)"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.OpenImageAsync(uint, uint, uint, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.GetImageInfoAsync(System.Guid, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.ReadImageTileAsync(System.Guid, uint, uint, uint, uint, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.CloseImageAsync(System.Guid, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.OpenPdfAsync(System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.GetPdfPageAsync(System.Guid, uint, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.ExtractPdfTextAsync(System.Guid, uint, uint, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.RenderPdfTileAsync(System.Guid, ArcForges.Contracts.LocalRpc.Sandbox.V1.SandboxPdfPage, uint, uint, uint, uint, uint, uint, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.ClosePdfAsync(System.Guid, System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.CancelAsync()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.CancellationReachesTheHelperThroughTheControlSlotWhileTheDataLaneIsFull()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.CloseAsync()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.WaitForExitAsync(System.Threading.CancellationToken)",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.DisposeAsync()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
+  },
+  {
+    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxTile.Dispose()",
+    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+    "testMethod": "ArcForges.ContentSandbox.Tests.HostileHelperTests.TheBytesOfATileAreAPrivateCopyThatSurvivesLaterWritesAndIsZeroedOnDispose()"
   }
 ]

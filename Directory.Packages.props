@@ -13,7 +13,9 @@
     <PackageVersion Update="ArcForges.Contracts.Foundation" Version="1.0.0-ci.216.1" Condition="'$(MSBuildProjectName)' == 'ArcForges.Security.Audit.Tests'" />
     <PackageVersion Update="ArcForges.Contracts.Foundation" Version="1.0.0-ci.216.1" Condition="'$(MSBuildProjectName)' == 'ArcForges.Observability.Desktop'" />
     <PackageVersion Update="ArcForges.Contracts.Foundation" Version="1.0.0-ci.216.1" Condition="'$(MSBuildProjectName)' == 'ArcForges.Observability.Desktop.Tests'" />
+    <PackageVersion Update="ArcForges.Contracts.Foundation" Version="1.0.0-ci.216.1" Condition="'$(MSBuildProjectName)' == 'ArcForges.ContentSandbox.Contracts' Or '$(MSBuildProjectName)' == 'ArcForges.ContentSandbox.Broker' Or '$(MSBuildProjectName)' == 'ArcForges.ContentSandbox.Tests' Or '$(MSBuildProjectName)' == 'ArcForges.ContentSandbox.HostileFixture'" />
     <PackageVersion Include="ArcForges.Contracts.LocalRpc.Platform" Version="1.0.0-ci.216.1" />
+    <PackageVersion Include="ArcForges.Contracts.LocalRpc.Sandbox" Version="1.0.0-ci.216.1" />
     <PackageVersion Include="ArcForges.Contracts.Events" Version="1.0.0-ci.270.1" Condition="'$(MSBuildProjectName)' == 'RealtimeAotProbe'" />
     <PackageVersion Include="ArcForges.Contracts.PublicApi" Version="1.0.0-ci.270.1" Condition="'$(MSBuildProjectName)' == 'RealtimeAotProbe'" />
     <PackageVersion Update="ArcForges.Contracts.Foundation" Version="1.0.0-ci.270.1" Condition="'$(MSBuildProjectName)' == 'RealtimeAotProbe'" />

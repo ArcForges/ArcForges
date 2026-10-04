@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    TEST ONLY. A deliberately hostile first-party parser composed into the same helper host (SUB-hostile-test-parser). It exists to prove
+    operating-system containment mechanics (denial, resource bounds, crash, hang and parent-death cleanup) against a child that attacks on
+    purpose. It parses no real format, is never packable, is never part of a release composition and is never an input of any parser task.
+  -->
+  <Import Project="..\..\..\..\eng\build\desktop-aot.props" />
+  <Import Project="..\..\..\..\eng\build\desktop-rids.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ArcForges.ContentSandbox.HostileFixture</AssemblyName>
+    <RootNamespace>ArcForges.ContentSandbox.HostileFixture</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
+    <ProjectReference Include="..\ArcForges.ContentSandbox.csproj" />
+  </ItemGroup>
+</Project>
