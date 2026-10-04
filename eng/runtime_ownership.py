@@ -39,6 +39,11 @@ RETIRED = {'ArcChat': ('retired', 'DesktopPlatform'), 'ArcScope': ('extracted', 
            'Contracts': ('extracted', 'Contracts'), 'SDK': ('extracted', 'Contracts'),
            'Extensions': ('extracted', 'DesktopPlatform')}
 TRUE = {'PublishAot', 'IsAotCompatible'}
+# PLT.45: the two non-host managed projects beside the ContentSandbox host, and the directory of the test-only fixture executable.
+HELPER_LIBRARIES = {
+    'src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj',
+    'src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj',
+}
 HOSTS = {'DesktopPlatform': 'src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj',
          'Cloud': 'src/ArcForges.Cloud/ArcForges.Cloud.csproj',
          **{name: f'src/ArcForges.{name}/ArcForges.{name}.csproj' for name in ('ArcScope',)}}
@@ -77,6 +82,10 @@ def role(owner, relative):
             return 'test-or-build-tool'
         if relative.startswith(('tests/', 'eng/')) or (relative.startswith('src/') and '/Tests/' in relative):
             return 'test-or-build-tool'
+        if owner == 'DesktopPlatform' and relative.startswith('src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/'):
+            return 'test-or-build-tool'
+        if owner == 'DesktopPlatform' and relative in HELPER_LIBRARIES:
+            return 'aot-library'
         require(relative.startswith('src/'), 'unassigned managed source project')
         if '/Build/' in relative or '.Runtime.' in relative:
             require(owner == 'DesktopPlatform', 'unassigned runtime package')

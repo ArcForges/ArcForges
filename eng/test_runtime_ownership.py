@@ -55,6 +55,24 @@ class RuntimeOwnershipTests(unittest.TestCase):
             with self.subTest(owner=owner, path=relative), self.assertRaises(ValueError):
                 policy.role(owner, relative)
 
+    def test_content_helper_has_one_host_two_exact_libraries_and_a_test_only_fixture(self):
+        helpers = 'src/DesktopHelpers/'
+        self.assertEqual(policy.role('DesktopPlatform', helpers + 'ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj'), 'aot-host')
+        for library in ('ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj',
+                        'ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj'):
+            self.assertEqual(policy.role('DesktopPlatform', helpers + library), 'aot-library')
+        self.assertEqual(policy.role('DesktopPlatform', helpers + 'ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj'), 'test-or-build-tool')
+        self.assertEqual(policy.role('DesktopPlatform', helpers + 'ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj'), 'test-or-build-tool')
+        for owner, relative in [
+            ('ArcScope', helpers + 'ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj'),
+            ('DesktopPlatform', helpers + 'ArcForges.ContentSandbox.Other/ArcForges.ContentSandbox.Other.csproj'),
+            ('DesktopPlatform', helpers + 'ArcForges.ContentSandbox.Broker/Extra/ArcForges.ContentSandbox.Broker.csproj'),
+            ('DesktopPlatform', helpers + 'Other/Fixture/Other.csproj'),
+            ('ArcScope', helpers + 'ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj'),
+        ]:
+            with self.subTest(owner=owner, path=relative), self.assertRaises(ValueError):
+                policy.role(owner, relative)
+
     def test_registry_rejects_missing_duplicate_and_extra_owner(self):
         original = policy.document(policy.ROOT, policy.POLICY)
         policy.validate_policy(original)
