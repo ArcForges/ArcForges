@@ -94,6 +94,66 @@ public sealed class CapabilityEnforcementGateTests
     }
 
     [Fact]
+    public async Task AnAdmissionIsSpentOnlyOnTheEffectThatWasAuthorized()
+    {
+        var w = new EnforcementWorld();
+        var command = Guid.NewGuid();
+        var invocation = w.Invocation(command: command);
+        var context = Context(w);
+        var owner = Owner(w);
+        Assert.Equal(OutcomeKind.Success, (await AuthorizeAsync(w, invocation, context)).Kind);
+
+        var otherArguments = w.Invocation("a different effect", command: command);
+        Assert.Equal(OutcomeKind.Failure, (await RunAsync(owner, w, otherArguments, context)).Kind);
+
+        var otherPrecondition = invocation.Clone();
+        otherPrecondition.ExpectedRev = new Revision { Value = 8 };
+        Assert.Equal(OutcomeKind.Failure, (await RunAsync(owner, w, otherPrecondition, context)).Kind);
+
+        var elsewhere = new EnforcementWorld();
+        var otherTarget = await owner(elsewhere.Target, invocation, "argument", context, Token);
+        Assert.Equal(OutcomeKind.Failure, otherTarget.Kind);
+        var otherEpoch = new CapabilityTarget(
+            new InstanceIdentity(w.Identity.Installation, w.Identity.InstanceId, 2), w.Registration.Descriptor, InstanceHealth.Ready, acceptsWork: true);
+        Assert.Equal(OutcomeKind.Failure, (await owner(otherEpoch, invocation, "argument", context, Token)).Kind);
+
+        Assert.Equal(0, w.Log.Count("owner-op"));
+        Assert.Empty(w.Decisions.Recorder.Records);
+        Assert.Equal(OutcomeKind.Success, (await RunAsync(owner, w, invocation, context)).Kind);
+        Assert.Equal(1, w.Log.Count("owner-op"));
+    }
+
+    [Fact]
+    public async Task AnEvidenceSourceThatNeverAnswersIsBoundedAndRefusesTheInvocation()
+    {
+        var w = new EnforcementWorld(evidenceTimeout: TimeSpan.FromMilliseconds(100));
+        w.Evidence.Behavior = (_, _, _) => new ValueTask<CapabilityEvidence?>(new TaskCompletionSource<CapabilityEvidence?>().Task);
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = await AuthorizeAsync(w, w.Invocation(), Context(w));
+
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(10));
+        Assert.Equal("resource.unavailable", Code(outcome));
+        Assert.Empty(w.Decisions.Audit.Records);
+        Assert.DoesNotContain("policy", w.Log.Entries);
+
+        var full = await w.InvokeAsync(w.Invocation(), cancellationToken: Token);
+        Assert.Equal("resource.unavailable", full.Failure!.Code);
+        Assert.Equal(0, w.Records.BeginCalls);
+        Assert.Equal(0, w.OwnerRuns);
+
+        using var cancelled = new CancellationTokenSource();
+        var slow = new EnforcementWorld(evidenceTimeout: TimeSpan.FromMinutes(1));
+        slow.Evidence.Behavior = (_, _, _) => new ValueTask<CapabilityEvidence?>(new TaskCompletionSource<CapabilityEvidence?>().Task);
+        var pending = slow.Gate.AuthorizeAsync(slow.Registration, slow.Invocation(), slow.Target, Context(slow), cancelled.Token).AsTask();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new CapabilityEnforcementGate(w.DecisionPipeline, w.Evidence, TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new CapabilityEnforcementGate(w.DecisionPipeline, w.Evidence, TimeSpan.FromMinutes(6)));
+    }
+
+    [Fact]
     public async Task AnAdmissionDoesNotCoverAnotherCommandOrCapabilityAndIsNotBurnedByTheAttempt()
     {
         var w = new EnforcementWorld();

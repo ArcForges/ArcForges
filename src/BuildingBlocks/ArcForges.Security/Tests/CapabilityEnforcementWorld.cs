@@ -194,7 +194,8 @@ internal sealed class EnforcementWorld
         AvailabilityFreshnessDisposition freshness = AvailabilityFreshnessDisposition.Current,
         DecisionPipelineOptions? options = null,
         ulong epoch = 1,
-        InstanceIdentity? identity = null)
+        InstanceIdentity? identity = null,
+        TimeSpan? evidenceTimeout = null)
     {
         _capability = capability;
         Clock = new DecisionClock();
@@ -240,7 +241,7 @@ internal sealed class EnforcementWorld
             options);
 
         Evidence = new WorldEvidenceSource(Log) { Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(DefaultEvidence()) };
-        Gate = new CapabilityEnforcementGate(DecisionPipeline, Evidence);
+        Gate = new CapabilityEnforcementGate(DecisionPipeline, Evidence, evidenceTimeout);
 
         var scope = new AvailabilityProviderScope(Identity, PrincipalKey, "session:enumeration-1");
         var asOf = Clock.UtcNow;

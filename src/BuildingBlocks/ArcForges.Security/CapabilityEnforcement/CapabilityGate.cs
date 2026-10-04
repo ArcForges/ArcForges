@@ -46,11 +46,20 @@ public sealed class CapabilityEnforcementGate
     private readonly SecurityDecisionPipeline _pipeline;
     private readonly ICapabilityEvidenceSource _evidence;
     private readonly ConditionalWeakTable<FrozenContextSnapshot, Admission> _admissions = [];
+    private readonly TimeSpan _evidenceTimeout;
 
-    public CapabilityEnforcementGate(SecurityDecisionPipeline pipeline, ICapabilityEvidenceSource evidence)
+    /// <param name="pipeline">The decision pipeline that decides and audits.</param>
+    /// <param name="evidence">The host's evidence source.</param>
+    /// <param name="evidenceTimeout">The longest the evidence source may take (default 15 s, above zero and at most 5 min); a source that does not answer in time refuses the invocation.</param>
+    public CapabilityEnforcementGate(SecurityDecisionPipeline pipeline, ICapabilityEvidenceSource evidence, TimeSpan? evidenceTimeout = null)
     {
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
+        _evidenceTimeout = evidenceTimeout ?? TimeSpan.FromSeconds(15);
+        if (_evidenceTimeout <= TimeSpan.Zero || _evidenceTimeout > TimeSpan.FromMinutes(5))
+        {
+            throw new ArgumentOutOfRangeException(nameof(evidenceTimeout), "The evidence timeout is above zero and at most five minutes.");
+        }
     }
 
     /// <summary>
@@ -76,17 +85,32 @@ public sealed class CapabilityEnforcementGate
         }
 
         CapabilityEvidence? evidence;
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bound.CancelAfter(_evidenceTimeout);
         try
         {
-            evidence = await _evidence.DescribeAsync(capability, invocation.Clone(), target, context, cancellationToken).ConfigureAwait(false);
+            var pending = _evidence.DescribeAsync(capability, invocation.Clone(), target, context, bound.Token).AsTask();
+            var finished = await Task.WhenAny(pending, Task.Delay(Timeout.InfiniteTimeSpan, bound.Token)).ConfigureAwait(false);
+            if (!ReferenceEquals(finished, pending))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _ = pending.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
+                return Failure<bool>("resource.unavailable");
+            }
+
+            evidence = await pending.ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception)
         {
             return Failure<bool>("resource.unavailable");
+        }
+        finally
+        {
+            await bound.CancelAsync().ConfigureAwait(false);
         }
 
         if (evidence is null)
@@ -103,7 +127,7 @@ public sealed class CapabilityEnforcementGate
                 evidence.Scope,
                 new CommandId(UuidBoundary.FromWire(invocation.CommandId)),
                 evidence.Resource,
-                EffectDigest(capability, invocation, target),
+                EffectDigest(capability.Key, invocation, target),
                 evidence.Origin,
                 evidence.Transport,
                 evidence.DeclaredFacts,
@@ -122,7 +146,7 @@ public sealed class CapabilityEnforcementGate
         var decision = await _pipeline.EvaluateAsync(EnforcementPoint.ServiceDecision, request, cancellationToken).ConfigureAwait(false);
         if (decision.Allowed)
         {
-            _admissions.AddOrUpdate(context, new Admission(decision, request));
+            _admissions.AddOrUpdate(context, new Admission(decision, request, request.EffectSha256));
         }
 
         return decision.ToAuthorizationOutcome();
@@ -144,7 +168,7 @@ public sealed class CapabilityEnforcementGate
     private static Outcome<T> Failure<T>(string code) => Outcome.Failure<T>(TypedFailure.Create(code));
 
     /// <summary>The canonical uppercase SHA-256 of what is being asked: capability, exact target instance, arguments and precondition.</summary>
-    private static string EffectDigest(CapabilityRegistration capability, Invocation invocation, CapabilityTarget target)
+    private static string EffectDigest(string capabilityKey, Invocation invocation, CapabilityTarget target)
     {
         var stable = invocation.Clone();
         stable.InvocationId = null;
@@ -154,7 +178,7 @@ public sealed class CapabilityEnforcementGate
         using var buffer = new MemoryStream();
         using (var writer = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write(capability.Key);
+            writer.Write(capabilityKey);
             writer.Write(target.Identity.Installation.App.ProductId);
             writer.Write(target.Identity.Installation.DeviceId.Value.ToByteArray());
             writer.Write(target.Identity.Installation.InstallationId.Value.ToByteArray());
@@ -176,7 +200,7 @@ public sealed class CapabilityEnforcementGate
         FrozenContextSnapshot context,
         CancellationToken cancellationToken)
     {
-        if (!_admissions.TryGetValue(context, out var admission) || !admission.Matches(invocation) || !admission.TryTake())
+        if (!_admissions.TryGetValue(context, out var admission) || !admission.Matches(invocation, EffectDigest(invocation.Capability, invocation, target)) || !admission.TryTake())
         {
             return Failure<TResult>("perm.capability_denied");
         }
@@ -189,7 +213,7 @@ public sealed class CapabilityEnforcementGate
         return execution.Result;
     }
 
-    private sealed class Admission(SecurityDecision decision, DecisionRequest request)
+    private sealed class Admission(SecurityDecision decision, DecisionRequest request, string effect)
     {
         private int _taken;
 
@@ -197,8 +221,9 @@ public sealed class CapabilityEnforcementGate
 
         internal DecisionRequest Request { get; } = request;
 
-        internal bool Matches(Invocation invocation) =>
-            invocation.HasCapability
+        internal bool Matches(Invocation invocation, string effectNow) =>
+            string.Equals(effectNow, effect, StringComparison.Ordinal)
+            && invocation.HasCapability
             && string.Equals(invocation.Capability, Request.CapabilityKey, StringComparison.Ordinal)
             && Request.CommandId.ToWire().Equals(invocation.CommandId);
 

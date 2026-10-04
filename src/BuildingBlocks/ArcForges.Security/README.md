@@ -305,7 +305,10 @@ two things to it.
 - `CapabilityEnforcementGate.AuthorizeAsync` is the pipeline's `CapabilityInvocationAuthorization` step. It builds one
   `DecisionRequest` and runs the service-side decision (steps 1 to 10). Success means all ten steps allowed it; a refusal is a
   typed failure with the registered code of the failing step's reason (`SecurityDecision.ToAuthorizationOutcome`), and the
-  decision pipeline has already written the refusal to its audit sink.
+  decision pipeline has already written the refusal to its audit sink. Only a refusal by steps 1 to 10 is audited: a refusal
+  before the decision pipeline runs (no evidence, an evidence source that throws or does not answer within its timeout, a
+  malformed identity or origin) writes no security audit event, because the audit record needs the actor chain, scope and
+  resource that only the evidence supplies and nothing is invented; the invocation pipeline's own trace still records the failure.
 - `CapabilityEnforcementGate.Enforce` wraps the owner's operation, written against the `AuthorizedExecution` ticket
   (`EnforcedOwnerOperation`). When the invocation pipeline dispatches, the wrapper spends the allowed decision of this
   invocation's own frozen context once, then `ExecuteDecidedAsync` runs the owner's final validation (step 11) last, the owner's
@@ -323,6 +326,15 @@ descriptor, never a caller's, sets the risk, approval and egress posture.
 
 Limits stated plainly:
 
+- The owner operation is spent against the digest of the effect computed at authorization: the gate recomputes it from the
+  invocation and the target when the owner side runs, so arguments, precondition or target that changed between the two are
+  refused. The digest algorithm is private, so a product cannot compute it; an approval for an exact effect is obtained by
+  presenting the refused request, not by precomputing the digest.
+- The evidence source is bounded (`evidenceTimeout`, default 15 s, at most 5 min) like every pipeline source; a source that does
+  not answer refuses with `resource.unavailable`. A source that ignores its token is abandoned, not stopped.
+- The result record and the audit event are written after the owner's effect, so a sink that fails leaves the effect with no
+  audit trace (reported as `BookkeepingFailed`, effect `Happened`). A step-up proof is bound to the command identity, not to the
+  effect digest (inherited from PLT.38).
 - The invocation pipeline cannot be asked to refuse a binding whose owner operation does not come from `Enforce`: such a binding
   is gated by the authorize step but not by the owner's final validation, record and audit. A product composition must build every
   binding through the gate; the guarantee is type-level only for owner operations written against the ticket.
