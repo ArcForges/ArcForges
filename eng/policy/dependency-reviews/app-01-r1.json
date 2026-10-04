@@ -3,7 +3,7 @@
     "owner": "w-c20261004-app01",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-10-04",
-    "baselineCommit": "8d8192f46237c849430e17200c6dfbdabfefea4c",
+    "baselineCommit": "d6e3fabf4dea2112d9c594c5eb5ac7f679c8be20",
     "maintenanceAssessment": "PROVISIONAL",
     "upgradeChecks": {
       "compilation": "PROVISIONAL",
@@ -32,7 +32,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "eada3c85b5d59eee26eb2f470a654f01d8100a4e77977748b4110dfabc425898",
+      "eng/packaging/packages.json": "9a03b9cc8288210427c05f29c2993f3ddd6cae399a773f329e8563c8b82b6dd4",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
