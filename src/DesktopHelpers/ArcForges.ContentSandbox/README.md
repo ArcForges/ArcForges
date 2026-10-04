@@ -22,8 +22,7 @@ generated `ContentSandboxService` contract. This project is non-packable; packag
   or the user profile. Linux (`Native/LinuxEnforcement`): the helper applies no_new_privs, resource limits, Landlock and a seccomp
   filter to itself and checks them. Seccomp is synchronised to every thread (TSYNC). Landlock restricts only the calling thread unless its own
   TSYNC flag is given, so the helper passes that flag, refuses to run if the kernel rejects it (a kernel without multithread Landlock, which
-  is recent), and its self-check observes the denial from the applying thread, from several thread-pool threads and from a new thread. It also
-  sets a parent-death signal. Not covered on Linux: tgkill to another same-user process (the runtime needs it), no PID/user/mount namespaces, and
+  is recent), and its self-check observes the denial from the applying thread, from several thread-pool threads and from a new thread. Parent loss is detected by the helper polling its parent id (no parent-death signal: the kernel ties it to the spawning thread, which may retire while the parent lives) and the supervising parent kills the helper on every path. A wedged helper whose parent was killed is not ended by the kernel. No offline test observes the Landlock TSYNC flag or the shrink seal (a mutant that drops either survives offline); both need a Linux kernel. Not covered on Linux: tgkill to another same-user process (the runtime needs it), no PID/user/mount namespaces, and
   the profile has never run on a Linux kernel here. macOS: no launcher exists; `macos/ArcForges.ContentSandbox.entitlements` is the declarative input of the
   profile that a signed sandboxed bundle and an XPC descriptor handoff would need, and a launch there is refused.
 - **Fixture (`Fixture/`).** TEST ONLY: the same host with one deliberately hostile first-party test composition (the registered

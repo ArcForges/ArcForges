@@ -364,6 +364,9 @@ public sealed class ContractFacadeTests
         Assert.All(note, character => Assert.InRange(character, ' ', '~'));
         Assert.EndsWith("end ", note, StringComparison.Ordinal);
         Assert.Equal(string.Empty, HelperText.Sanitise(null));
+        Assert.Equal(200, HelperText.MaxChars);
+        Assert.Equal(HelperText.MaxChars, HelperText.Sanitise(new string('B', 201)).Length);
+        Assert.Equal(new string('B', 3), HelperText.Sanitise("BBB"));
     }
 
     [Fact]
