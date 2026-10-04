@@ -356,6 +356,25 @@ public sealed class ContractFacadeTests
     }
 
     [Fact]
+    public void AReapedChildIsNeverSignalledAgainBecauseItsIdMayBeRecycled()
+    {
+        var signalled = new List<int>();
+        int? exit = null;
+        var guard = new ChildProcessGuard(4242, _ => exit, signalled.Add);
+        Assert.True(guard.IsLive);
+        Assert.Null(guard.TryReap());
+        guard.Kill();
+        Assert.Equal([4242], signalled);
+
+        exit = 9;
+        Assert.Equal(9, guard.TryReap());
+        Assert.False(guard.IsLive);
+        guard.Kill();
+        Assert.Null(guard.TryReap());
+        Assert.Equal([4242], signalled);
+    }
+
+    [Fact]
     public void HelperOutputInADiagnosticNoteIsBoundedAndPrintable()
     {
         var hostile = new string('A', 5000) + "\u0000\u001b[31m\r\nend\u00e9";

@@ -30,6 +30,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
     private const int DiagnosticBytes = 4096;
     private const int FirstSafeDescriptor = 64;
     private const int FirstUnusedDescriptor = 9;
+    private const int WaitNoHang = 1;
 
     public ContentSandboxProfileKind Profile => ContentSandboxProfileKind.LinuxLandlockSeccomp;
 
@@ -87,7 +88,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
         private readonly object _tailGate = new();
         private readonly object _spawnGate = new();
         private int _tailLength;
-        private int _processId;
+        private ChildProcessGuard _child = new(0, static _ => null, static _ => { });
         private NetworkStream? _control;
         private NetworkStream? _service;
         private NetworkStream? _diagnostics;
@@ -158,7 +159,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
 
                 var entries = LinuxLaunchPlan.TargetPlan(request.SlotCapacities.Count).Select(item => new ContentSandboxHandleEntry(item.Role, (ulong)item.Target)).ToList();
                 var processId = Spawn(request, childFds);
-                _processId = processId;
+                _child = new ChildProcessGuard(processId, TryReapChild, static id => _ = LinuxNative.Kill(id, LinuxNative.SigKill));
                 foreach (var fd in childFds.Values)
                 {
                     _ = LinuxNative.Close(fd);
@@ -202,11 +203,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
 
         public void Terminate()
         {
-            var processId = Volatile.Read(ref _processId);
-            if (processId > 0)
-            {
-                _ = LinuxNative.Kill(processId, LinuxNative.SigKill);
-            }
+            Volatile.Read(ref _child).Kill();
         }
 
         public async ValueTask DisposeAsync()
@@ -217,7 +214,7 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
             }
 
             Terminate();
-            if (Volatile.Read(ref _processId) > 0)
+            if (Volatile.Read(ref _child).IsLive)
             {
                 try
                 {
@@ -381,13 +378,26 @@ internal sealed class LinuxHelperLauncher : IContentSandboxProcessLauncher
 
         private void WaitForExit()
         {
-            var code = -1;
-            if (LinuxNative.WaitPid(_processId, out var status, 0) == _processId)
+            var child = Volatile.Read(ref _child);
+            int? code;
+            while ((code = child.TryReap()) is null && child.IsLive)
             {
-                code = (status & 0x7F) == 0 ? (status >> 8) & 0xFF : 128 + (status & 0x7F);
+                Thread.Sleep(25);
             }
 
-            _ = _exited.TrySetResult(code);
+            _ = _exited.TrySetResult(code ?? -1);
+        }
+
+        /// <summary>A non-blocking reap, run under the guard's lock so a signal never reaches a recycled id.</summary>
+        private static int? TryReapChild(int processId)
+        {
+            var result = LinuxNative.WaitPid(processId, out var status, WaitNoHang);
+            if (result == 0)
+            {
+                return null;
+            }
+
+            return result == processId ? ((status & 0x7F) == 0 ? (status >> 8) & 0xFF : 128 + (status & 0x7F)) : -1;
         }
 
         private async Task ReadDiagnosticsAsync()

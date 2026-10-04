@@ -45,6 +45,69 @@ internal interface IProvisionedHelper : IAsyncDisposable
     void Terminate();
 }
 
+/// <summary>
+/// Owns the right to signal one child process id. Once the child has been reaped the id may be recycled by an unrelated process, so the id is
+/// invalidated under the same lock that reaps it, and a signal is only ever sent under that lock while the id is still valid.
+/// </summary>
+internal sealed class ChildProcessGuard
+{
+    private readonly object _gate = new();
+    private readonly Func<int, int?> _tryReap;
+    private readonly Action<int> _kill;
+    private int _processId;
+
+    internal ChildProcessGuard(int processId, Func<int, int?> tryReap, Action<int> kill)
+    {
+        _processId = processId;
+        _tryReap = tryReap;
+        _kill = kill;
+    }
+
+    /// <summary>True while the child has not been reaped.</summary>
+    internal bool IsLive
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _processId > 0;
+            }
+        }
+    }
+
+    /// <summary>Signals the child unless it was already reaped. Never signals a recycled id.</summary>
+    internal void Kill()
+    {
+        lock (_gate)
+        {
+            if (_processId > 0)
+            {
+                _kill(_processId);
+            }
+        }
+    }
+
+    /// <summary>Reaps the child if it has ended and invalidates the id in the same step; returns the exit code when it did.</summary>
+    internal int? TryReap()
+    {
+        lock (_gate)
+        {
+            if (_processId <= 0)
+            {
+                return null;
+            }
+
+            var code = _tryReap(_processId);
+            if (code is not null)
+            {
+                _processId = 0;
+            }
+
+            return code;
+        }
+    }
+}
+
 /// <summary>Bounds untrusted helper output before it is placed in a parent-side diagnostic note.</summary>
 internal static class HelperText
 {
