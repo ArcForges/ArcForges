@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using ArcForges.Foundation.Errors;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Foundation.Errors;
 
 namespace ArcForges.Assistant.Abstractions;
 

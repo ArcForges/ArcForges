@@ -26,6 +26,8 @@ public sealed class ActionRegistryTests
 
         Xunit.Assert.Equal(owner, token.Owner);
         Xunit.Assert.Equal("measurements.read", token.Descriptor.OperationId);
+        Xunit.Assert.True(actions.GetAvailability("measurements.read").TryGetValue(out var availability));
+        Xunit.Assert.True(availability.IsAvailable);
         var result = await actions.InvokeAsync(token, owner, "four", cancellationToken: Xunit.TestContext.Current.CancellationToken);
         Xunit.Assert.True(result.TryGetValue(out int length));
         Xunit.Assert.Equal(4, length);

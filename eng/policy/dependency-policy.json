@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "ab8984cf93d6b3949bbeaffa0d8198e1044f101a41fc4a876bee83b208e2d627",
+    "Directory.Packages.props": "46f376f647fbf1f512eb81c3bb906b0e55403c0f4599b5d4444c715bb2258c56",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
     "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -19,7 +19,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "4fdc16c8ac672acc37bb29bf6af1427eceeb5850011571e3eb6ac927bf643123",
+    "eng/packaging/packages.json": "eada3c85b5d59eee26eb2f470a654f01d8100a4e77977748b4110dfabc425898",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -179,6 +179,8 @@
     "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
     "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
+    "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj": "38f313d8eaa527683cbcf2f72eeb78a79fad7a341acf0b10f34cf26159a2859e",
+    "src/BuildingBlocks/ArcForges.Assistant.Abstractions/packages.lock.json": "33c199ae62f7e0558d6e0b79086a73b6261cceb3c9cc9bbc1f21e9847c426aed",
     "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "ae05aef953a581e9c2baf98d65d9106145c3edf673779d8ec55daa8ced3ffe7f",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
     "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "b83120656ca0890664744fcf05c3d75dc1c56ccc7a493a118f63c70c7069643b",
@@ -266,6 +268,8 @@
     "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+    "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
+    "tests/AssistantAbstractionsTests/packages.lock.json": "b242f814d6724e1c8c5d82e1a969b846f51cb907c9acfd4d426556059785d8c8",
     "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
     "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
@@ -775,25 +779,25 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261004-plt45",
+    "owner": "w-c20261004-app01",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-10-04",
-    "baselineCommit": "022a80e4a94a04a95bac543cac8026b57bf5cd39",
-    "maintenanceAssessment": "PLT.45 adds three non-packable production projects (ArcForges.ContentSandbox.Contracts, ArcForges.ContentSandbox.Broker and the existing ArcForges.ContentSandbox helper host, whose references change) and a non-packable test project and test-only hostile-parser fixture. They reference the existing ArcForges.LocalRpc and ArcForges.Foundation projects and the admitted ArcForges.Contracts.LocalRpc.Platform 1.0.0-ci.216.1 candidate. The only new coordinate is ArcForges.Contracts.LocalRpc.Sandbox 1.0.0-ci.216.1, the candidate of the same Contracts source commit (eb650e5b9ef7fc06f0eb79ee167b896e4252b50e) as the admitted Platform bindings, with Apache-2.0 nuspec evidence from the nuget.org flat container and the locked content hash; its nuspec dependencies (Foundation 1.0.0-ci.216.1, Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0) were already admitted. Directory.Packages.props gains the exact Sandbox PackageVersion and the four new project names in the ArcForges.Contracts.Foundation 1.0.0-ci.216.1 selector (central transitive pinning rejects restore of a project that reaches ArcForges.Foundation under the 1.0.0-ci.113.1 default). The helper no longer references ArcForges.Desktop.RichContent or ArcForges.NativeInterop, which it never used. No other package, version, native library, vcpkg port or signing identity changes and nothing is published. This immutable successor re-binds the changed inputs and chains from the receipt active on main at merge, preserving all prior receipts and unrelated dependency policy.",
+    "baselineCommit": "8d8192f46237c849430e17200c6dfbdabfefea4c",
+    "maintenanceAssessment": "PROVISIONAL",
     "upgradeChecks": {
-      "compilation": "Pending: the packed candidate is produced by hosted CI on the exact head. Locally, the LocalRpc project is packed once with the pinned SDK 10.0.400 (the separate installed copy under the user's .dotnet directory) through the workstation build slot, and its nuspec dependency set is compared with the catalogue entry; results are recorded in the pull request, not here.",
-      "aot-trim": "No AOT, trim, SDK, framework or native toolchain setting changed. ArcForges.LocalRpc keeps IsAotCompatible and the default analyzers with warnings as errors. No Native AOT publish of the package was run by this task; the PRF.04 probe's Local RPC AOT compile jobs are unchanged.",
-      "compatibility": "No existing public API, schema or package coordinate changed. ArcForges.LocalRpc becomes the one new package ID of the release set; the tests project and the nested ArcForges.Security.LocalRpcBoundary project stay non-packable and unlisted.",
-      "licence-provenance": "No external source or package is introduced. The project declares AGPL-3.0-only and packs the repository LICENSE and NOTICE.md. Provenance appends this receipt; the licence boundary, runtime ownership, architecture and test-map inventories already bind the project and are unchanged.",
-      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no package closure expansion occurs. The new package's runtime dependencies are the already-admitted Grpc.AspNetCore.Server and Grpc.Net.Client plus the Microsoft.AspNetCore.App shared framework. Existing dependency, provenance, secret-scan and hosted security gates remain required.",
-      "runtime-performance-migration": "No schema, migration, performance claim or runtime owner is introduced. Publication changes distribution only; no installed-package consumer, OS-stream, Linux or macOS runtime result is claimed by this admission.",
-      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400 with net10.0 targets; no framework major, runtime, Android, native ABI or toolchain version changed."
+      "compilation": "PROVISIONAL",
+      "aot-trim": "PROVISIONAL",
+      "compatibility": "PROVISIONAL",
+      "licence-provenance": "PROVISIONAL",
+      "security-sbom": "PROVISIONAL",
+      "runtime-performance-migration": "PROVISIONAL",
+      "framework-runtime-posture": "PROVISIONAL"
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "ab8984cf93d6b3949bbeaffa0d8198e1044f101a41fc4a876bee83b208e2d627",
+      "Directory.Packages.props": "46f376f647fbf1f512eb81c3bb906b0e55403c0f4599b5d4444c715bb2258c56",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
       "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -807,7 +811,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "4fdc16c8ac672acc37bb29bf6af1427eceeb5850011571e3eb6ac927bf643123",
+      "eng/packaging/packages.json": "eada3c85b5d59eee26eb2f470a654f01d8100a4e77977748b4110dfabc425898",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -967,6 +971,8 @@
       "src/Build/ArcForges.Build.Policy/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/BuildingBlocks/ArcForges.Application.Abstractions/ArcForges.Application.Abstractions.csproj": "270f378987937ebeb8d457ba332d56a8fb0f50a734386402f5358a430db3ebf6",
       "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
+      "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj": "38f313d8eaa527683cbcf2f72eeb78a79fad7a341acf0b10f34cf26159a2859e",
+      "src/BuildingBlocks/ArcForges.Assistant.Abstractions/packages.lock.json": "33c199ae62f7e0558d6e0b79086a73b6261cceb3c9cc9bbc1f21e9847c426aed",
       "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj": "ae05aef953a581e9c2baf98d65d9106145c3edf673779d8ec55daa8ced3ffe7f",
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj": "01ea51cef17b0abe6aa30d7a7cb88c28a619fbd0abc8fb338e6353d5efe961c7",
       "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json": "b83120656ca0890664744fcf05c3d75dc1c56ccc7a493a118f63c70c7069643b",
@@ -1054,6 +1060,8 @@
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
+      "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
+      "tests/AssistantAbstractionsTests/packages.lock.json": "b242f814d6724e1c8c5d82e1a969b846f51cb907c9acfd4d426556059785d8c8",
       "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
       "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
@@ -1069,7 +1077,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-16-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-45-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1080,7 +1088,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-45-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/app-01-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

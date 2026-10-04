@@ -4,9 +4,9 @@
 #pragma warning disable CA2000 // Sessions and hosts here are in-memory test doubles that own no resources.
 using ArcForges.Assistant.Abstractions;
 using ArcForges.Contracts.Foundation.V1;
-using Google.Protobuf;
 using ArcForges.Foundation;
 using ArcForges.Foundation.Errors;
+using Google.Protobuf;
 
 namespace AssistantAbstractionsTests;
 

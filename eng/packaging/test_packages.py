@@ -16,7 +16,7 @@ import packages
 
 class ExternalDependencyGuards(unittest.TestCase):
     owned_version = "2.0.0-ci.20.1"
-    external_version = "1.0.0-ci.113.1"
+    external_version = "1.0.0-ci.216.1"
 
     def entry(self):
         return {"id": "ArcForges.Consumer", "kind": "managed", "dependencies": ["ArcForges.Foundation"],
@@ -135,7 +135,7 @@ class ExternalDependencyGuards(unittest.TestCase):
 
 class AssistantAbstractionsPackageGuards(unittest.TestCase):
     owned_version = "2.0.0-ci.20.1"
-    external_version = "1.0.0-ci.113.1"
+    external_version = "1.0.0-ci.216.1"
     owned_edges = ["ArcForges.Foundation", "ArcForges.Application.Abstractions"]
 
     def entry(self):
@@ -167,7 +167,7 @@ class AssistantAbstractionsPackageGuards(unittest.TestCase):
         self.assertEqual(expected, packages.validate_generated_dependencies(self.metadata(correct), entry, self.owned_version))
 
         for rows in [correct[:-1], correct + [("ArcForges.Capabilities", f"[{self.owned_version}]")],
-                     [*correct[:-1], ("ArcForges.Contracts.Foundation", "[1.0.0-ci.216.1]")]]:
+                     [*correct[:-1], ("ArcForges.Contracts.Foundation", "[1.0.0-ci.113.1]")]]:
             with self.subTest(rows=rows), self.assertRaises(ValueError):
                 packages.validate_generated_dependencies(self.metadata(rows), entry, self.owned_version)
 
@@ -177,7 +177,7 @@ class AssistantAbstractionsPackageGuards(unittest.TestCase):
             packages.validate_generated_dependencies(self.metadata(correct), altered, self.owned_version)
 
         altered = dict(entry)
-        altered["externalDependencies"] = {"ArcForges.Contracts.Foundation": "1.0.0-ci.216.1"}
+        altered["externalDependencies"] = {"ArcForges.Contracts.Foundation": "1.0.0-ci.113.1"}
         with self.assertRaisesRegex(ValueError, "exact admitted pin"):
             packages.validate_generated_dependencies(self.metadata(correct), altered, self.owned_version)
 
