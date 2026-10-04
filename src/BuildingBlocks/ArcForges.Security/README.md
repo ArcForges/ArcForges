@@ -46,7 +46,7 @@ nested offline test project. Before supporting edits, claim epoch 1 binds:
 `SecurityDecisionPipeline` (namespace `ArcForges.Security.Decisions`) implements the fourteen-step decision pipeline
 of requirements 07 section 11 once and runs it at the four enforcement points of architecture 08 section 2. It holds no
 mutable state, so one instance serves concurrent requests. Every step produces a typed `StepOutcome`; a refusal names
-the failing step and a stable reason (`DecisionReasons`: 49 reasons, each belonging to exactly one step and mapped to a
+the failing step and a stable reason (`DecisionReasons`: 59 reasons, each belonging to exactly one step and mapped to a
 code of the closed registered reason-code set, which this task does not extend). Reasons are more granular than steps,
 so a step can refuse for several distinct causes; every step 1 to 14 has at least one reason.
 
@@ -124,7 +124,7 @@ a principal, capability and scope: disposition, constraints, lifetime, issuer an
 instant. It is a user-interface preflight only, never a grant, resource authorization or substitute for the owner's
 validation. Mapping it into the Capabilities availability evidence belongs to the composition that owns both projects.
 
-Not provided here and not claimed: the real permission-grant store, product policy, trust evaluation (PLT.43), egress
+Not provided here and not claimed: the real permission-grant store, product policy, the host's trust fact sources, egress
 decision (PLT.41) and the record and audit adapters (the invocation record store and the audit store are separate projects
 that Security does not reference); the registration lease and bootstrap proof exchange (PLT.11); peer operating-system
 identity; and any cross-process call, since the service decision and the ticket are in-process objects.
@@ -145,6 +145,76 @@ a closed set (`TransportRefusal`) and callers must not tell the child which one 
 the registration or the proof exchange. The caller instance it binds is whatever the caller passes (null until PLT.11
 supplies it); when set, the actor chain's caller instance must equal it. `TransportSessions.InProcess` is the explicit session
 of a caller in the same process: it authenticates nobody and every other step still runs.
+
+### Capability leases (PLT.43)
+
+`ArcForges.Security.Leases` implements BR-07, CL-01 to CL-04, DG-01 and DG-02. A lease is a durable, scoped, expiring,
+revocable and audited narrowing of the delegator's own authority for one accepted tool or extension invocation:
+
+- **Identity.** `CapabilityLeaseId` is a non-empty, immutable, Guid-backed value; every lifecycle fact of a lease carries the
+  same one, and an audit intake maps its `Value` directly. The identity is an address, not a credential.
+- **What a lease covers.** Exactly one capability, an exact set of 1 to 64 resource identities, one realm and workspace, one
+  task, one holder (an agent or an extension, by kind and exact actor identity) and one owner. The coverage is immutable; a
+  stored lease can only end. It lives at most 24 hours (`LeaseOptions.MaximumLifetime`, default one hour).
+- **Issue** (`CapabilityLeaseManager.IssueAsync`). The delegator's own permission is read through `ILeaseCeilingSource` at the
+  instant it answered and must be granted, inside its lifetime and constraints (a constraint that is not understood refuses);
+  the lease cannot outlive it. A chain with an agent or an extension anywhere in it cannot issue (no sub-delegation, CL-03);
+  automation and internal services may issue for the owner; automation and internal services cannot hold a lease. The
+  "issued" fact is written durably before the lease is stored, so a lease exists only if its issue was audited; the cost of that
+  order is an audit record of an issue that never took effect when the store fails afterwards. A replayed request is a
+  duplicate and writes no second fact.
+- **Use is judged at every use** (`ValidateAsync`): stored state, then the exact holder, owner, scope, capability and
+  resource (anything else is out of scope, whatever the lease's state), then expiry (exclusive: at `ExpiresAt` it is over).
+  Time is the wall clock but never earlier than the monotonic time since the manager started and never earlier than an
+  instant it already judged, so a wall-clock step back cannot extend a lease. An expiry that is observed is stored, so it cannot
+  be revived by a later step back or a new manager. Across a restart only the wall clock exists; that gap is real.
+- **Revocation and the end of the task** (`RevokeAsync`, `EndTaskAsync`, `ExpireDueAsync`). Only the lease's owner can revoke.
+  The end is stored before its fact is written, so authority ends even while the audit sink is down; the fact is then owed
+  (`EndEventRecorded` is false) and a sweep retries it. A use never writes anything for an ended lease. Facts are written at
+  least once (a failure after the write but before the mark, or a sweep racing the ending call, can repeat one): the lease
+  identity plus the event kind identify a fact because a lease ends exactly once. The host calls `EndTaskAsync` when a task
+  ends; nothing here observes tasks, so a lease still ends at its expiry if the host never does.
+- **Inputs the host owns.** `IssueAsync` takes the issuing chain and `RevokeAsync` the revoking principal as given; neither
+  authenticates anyone, so the host calls them only after its own decision and authentication. A lease use names no task, so a lease
+  ends with its task only because the host calls `EndTaskAsync` (otherwise at its expiry). The stored effective risk is audit
+  evidence and is not compared at use. `RevokeAsync` lets a store failure propagate as an exception (nothing was recorded, so the
+  lease stays as it was) instead of returning a typed failure.
+- **Durability.** `ILeaseStore` is the contract (insert-if-absent, compare-and-swap on the version, forward transitions only,
+  a true result only after the commit). Production Security stays Foundation-only; the durable adapter is the host's. The offline
+  tests drive a test-only adapter over the real `SqliteStore` (close and reopen, stale replacement across two open stores,
+  restart after revocation, expiry, task end and owed facts). `SqliteStore` has no enumeration, so that adapter keeps a lease
+  index aggregate written after the lease; a production adapter would index its own table.
+- **In the decision pipeline.** `DecisionRequest.Lease` names the lease a delegated actor claims, and
+  `DecisionPipelineServices.Leases` (optional) is the use-time check. At step 6, after the delegator's own permission passes
+  (a lease never replaces it), an agent or extension anywhere in the chain acting without a lease is refused (`S06LeaseRequired`; the lease belongs to the last agent or extension of the chain), a lease that does
+  not cover exactly this use is refused (`S06LeaseOutOfScope`), and a lease that is expired, ended with its task or revoked is
+  refused (`S06LeaseExpired`, registered code `perm.lease_expired`; `S06LeaseRevoked`); a check that fails, is unknown or is
+  not configured refuses (`S06LeaseUnavailable`). Step 11 runs the same check again before the owner is asked (`S11Lease...`),
+  so an expiry or revocation after the service decision still stops the owner operation. `AuthorizedExecution.Lease` hands a
+  long operation the `LeaseUse` to re-check at each security boundary. The audit record of step 14 carries the lease identity.
+  An owner acting directly needs no lease and a lease it claims is out of scope; automation and internal services are
+  re-authorized by permission at each trigger (DG-03) and need none.
+
+### Typed trust (PLT.43)
+
+`ArcForges.Security.Trust` implements section 9 of the security requirements and section 10 of the architecture. Trust is typed,
+never a scalar: five kinds with their own closed states (publisher, package, software identity, device, extension state), each
+starting at `Unknown`, which is never eligible; the namespace has no numeric trust level and names no permission, grant, lease or
+decision type. A verified signature or publisher is "eligible", never "safe" (TR-02, TR-03).
+
+- **Defined points** (`TrustEvaluationPoint`, `TrustPoints.KindsAt`): package install or update (publisher, package), extension
+  host start (package), local RPC handshake and extension host handshake (software identity), cloud authentication and remote
+  invocation (device), extension invocation (extension state). `TrustEvaluator.AssessAsync` reads exactly the kinds of one point,
+  once each, from the host's `ITrustFactSource`.
+- **Step 5** (`TrustEvaluator` implements `ITrustEvaluator`): every request reads the caller's software identity, an extension
+  also its package and extension state, a remote request also its device. Eligibility combines strictest first: any kind not
+  eligible (revoked, mismatched, untrusted, installed but not enabled) refuses as `TrustVerdict.Revoked`, any kind unknown or
+  undefined refuses, any kind eligible but unverified (unverified, developer mode) passes with the pipeline's higher risk floor,
+  and only all eligible is verified.
+- **Trust never substitutes for permission** (TR-01, TR-04, TR-09): verified trust of every kind with no grant is refused at
+  step 6; a grant with revoked or unknown trust is refused at step 5 without consulting the permission source; changing trust
+  from unverified to verified changes nothing about the permission outcome; unverified trust raises risk and grants nothing; trust
+  is not a lease either.
 
 ### Validation actually run
 

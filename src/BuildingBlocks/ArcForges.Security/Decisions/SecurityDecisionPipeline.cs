@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Foundation;
 using ArcForges.Foundation.Errors;
 using ArcForges.Security.Approvals;
+using ArcForges.Security.Leases;
 using Instant = ArcForges.Foundation.Instant;
 
 namespace ArcForges.Security.Decisions;
@@ -26,7 +27,8 @@ public sealed class DecisionPipelineServices
         ISensitiveOperationSource sensitiveOperations,
         IOwnerValidator owner,
         IDecisionRecorder recorder,
-        ISecurityAuditSink audit)
+        ISecurityAuditSink audit,
+        ILeaseUseValidator? leases = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         Catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
@@ -43,6 +45,7 @@ public sealed class DecisionPipelineServices
         Owner = owner ?? throw new ArgumentNullException(nameof(owner));
         Recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
         Audit = audit ?? throw new ArgumentNullException(nameof(audit));
+        Leases = leases;
     }
 
     public IClock Clock { get; }
@@ -74,6 +77,12 @@ public sealed class DecisionPipelineServices
     public IDecisionRecorder Recorder { get; }
 
     public ISecurityAuditSink Audit { get; }
+
+    /// <summary>
+    /// The use-time lease check. It is the one optional service: a request made by an agent or an extension without a lease is refused
+    /// whether or not it is configured, and a request that does carry a lease is refused as unavailable when it is not.
+    /// </summary>
+    public ILeaseUseValidator? Leases { get; }
 }
 
 /// <summary>Bounds of the pipeline. Both default to values that fail closed rather than wait or trust a stale decision.</summary>
@@ -393,7 +402,58 @@ public sealed class SecurityDecisionPipeline
     {
         var (reason, evidence) = await PermissionAsync(run.Request, cancellationToken).ConfigureAwait(false);
         run.Permission = evidence;
-        return reason == DecisionReason.None ? StepResult.Pass : StepResult.Refuse(reason);
+        if (reason != DecisionReason.None)
+        {
+            return StepResult.Refuse(reason);
+        }
+
+        // A delegation narrows the delegator's permission, so the lease is checked in addition to the grant, never instead of it.
+        var lease = await LeaseAsync(run.Request, DecisionStep.CapabilityPermission, cancellationToken).ConfigureAwait(false);
+        return lease == DecisionReason.None ? StepResult.Pass : StepResult.Refuse(lease);
+    }
+
+    /// <summary>
+    /// The lease check of a delegated request at use. An agent or an extension acts only under a lease; a lease belongs only to the
+    /// delegated actor that acts now, and must cover exactly this owner, scope, capability and resource. Run at step 6 and again at
+    /// step 11, so an expiry or a revocation after the service decision still stops the owner operation.
+    /// </summary>
+    private async ValueTask<DecisionReason> LeaseAsync(DecisionRequest request, DecisionStep step, CancellationToken cancellationToken)
+    {
+        var holder = request.Holder;
+        var atOwner = step == DecisionStep.OwnerValidation;
+        if (request.Lease is null)
+        {
+            return holder is { CanHoldLease: true }
+                ? (atOwner ? DecisionReason.S11LeaseRequired : DecisionReason.S06LeaseRequired)
+                : DecisionReason.None;
+        }
+
+        var use = request.ToLeaseUse();
+        if (_services.Leases is not { } validator)
+        {
+            return atOwner ? DecisionReason.S11LeaseUnavailable : DecisionReason.S06LeaseUnavailable;
+        }
+
+        if (use is null)
+        {
+            // A lease claimed by the owner acting directly: there is no delegated actor it could belong to.
+            return atOwner ? DecisionReason.S11LeaseOutOfScope : DecisionReason.S06LeaseOutOfScope;
+        }
+
+        var verdict = await CallAsync(token => validator.ValidateAsync(use, token), cancellationToken).ConfigureAwait(false);
+        if (!verdict.Ok)
+        {
+            return atOwner ? DecisionReason.S11LeaseUnavailable : DecisionReason.S06LeaseUnavailable;
+        }
+
+        return verdict.Value switch
+        {
+            LeaseUseVerdict.Valid => DecisionReason.None,
+            LeaseUseVerdict.Expired => atOwner ? DecisionReason.S11LeaseExpired : DecisionReason.S06LeaseExpired,
+            LeaseUseVerdict.Revoked => atOwner ? DecisionReason.S11LeaseRevoked : DecisionReason.S06LeaseRevoked,
+            LeaseUseVerdict.OutOfScope => atOwner ? DecisionReason.S11LeaseOutOfScope : DecisionReason.S06LeaseOutOfScope,
+            _ => atOwner ? DecisionReason.S11LeaseUnavailable : DecisionReason.S06LeaseUnavailable,
+        };
     }
 
     private async ValueTask<(DecisionReason Reason, PermissionAvailabilityEvidence Evidence)> PermissionAsync(
@@ -447,25 +507,7 @@ public sealed class SecurityDecisionPipeline
             return Result(DecisionReason.S06OutsideLifetime, PermissionDisposition.Required, grant);
         }
 
-        var device = PermissionConstraints.DeviceBound(request.Actors.Device);
-        var understood = true;
-        var met = true;
-        foreach (var constraint in grant.Constraints)
-        {
-            if (string.Equals(constraint, PermissionConstraints.LocalOriginOnly, StringComparison.Ordinal))
-            {
-                met &= request.Origin == DecisionOrigin.Local;
-            }
-            else if (constraint.StartsWith("device:", StringComparison.Ordinal))
-            {
-                met &= string.Equals(constraint, device, StringComparison.Ordinal);
-            }
-            else
-            {
-                understood = false;
-            }
-        }
-
+        var (understood, met) = PermissionConstraints.Evaluate(grant.Constraints, request.Actors.Device, request.Origin);
         if (!understood)
         {
             return Result(DecisionReason.S06ConstraintUnknown, PermissionDisposition.Required, grant);
@@ -734,6 +776,12 @@ public sealed class SecurityDecisionPipeline
     private async ValueTask<StepResult> OwnerStepAsync(Run run, SecurityDecision? service, CancellationToken cancellationToken)
     {
         var request = run.Request;
+        var lease = await LeaseAsync(request, DecisionStep.OwnerValidation, cancellationToken).ConfigureAwait(false);
+        if (lease != DecisionReason.None)
+        {
+            return StepResult.Refuse(lease);
+        }
+
         var validation = new OwnerValidationRequest(request, service?.Risk, service);
         var verdict = await CallAsync(token => _services.Owner.ValidateAsync(validation, token), cancellationToken).ConfigureAwait(false);
         if (!verdict.Ok)
@@ -955,7 +1003,8 @@ public sealed class SecurityDecisionPipeline
             chain.Device,
             request.Scope,
             request.CommandId,
-            effect);
+            effect,
+            request.Lease);
     }
 
     /// <summary>

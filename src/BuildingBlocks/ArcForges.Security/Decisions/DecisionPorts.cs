@@ -180,7 +180,7 @@ public enum SecurityAuditKind
 /// <summary>
 /// The audit fact of one refusal or execution (step 14): kind, point, failing step and reason, the complete actor chain,
 /// executor and software identity, capability, resource reference, effective risk, decision, origin, device, workspace, realm and
-/// correlation. It carries no payload, secret or content.
+/// correlation, and the capability lease the request claimed to act under, if any. It carries no payload, secret or content.
 /// </summary>
 public sealed record SecurityAuditRecord(
     SecurityAuditKind Kind,
@@ -199,7 +199,8 @@ public sealed record SecurityAuditRecord(
     ArcForges.Contracts.Foundation.Values.DeviceId Device,
     DecisionScope Scope,
     ArcForges.Contracts.Foundation.Values.CommandId Correlation,
-    EffectCertainty Effect);
+    EffectCertainty Effect,
+    ArcForges.Security.Leases.CapabilityLeaseId? Lease = null);
 
 /// <summary>Step 14 sink. It owns audit durability; Security never references the audit store.</summary>
 public interface ISecurityAuditSink

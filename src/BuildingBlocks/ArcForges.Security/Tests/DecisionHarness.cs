@@ -7,6 +7,7 @@ using ArcForges.Foundation.Errors;
 using ArcForges.Foundation.Execution;
 using ArcForges.Security.Approvals;
 using ArcForges.Security.Decisions;
+using ArcForges.Security.Leases;
 using Xunit;
 using Instant = ArcForges.Foundation.Instant;
 
@@ -235,6 +236,28 @@ internal sealed class FakePresence : ILocalPresenceVerifier
         ValueTask.FromResult(Confirmed);
 }
 
+/// <summary>
+/// The use-time lease check a test controls. By default every lease is valid. It deliberately does not write to the shared call log, so
+/// the recorded order of the fourteen steps stays that of a request without a lease.
+/// </summary>
+internal sealed class FakeLeases : ILeaseUseValidator
+{
+    private int _calls;
+
+    internal int Calls => Volatile.Read(ref _calls);
+
+    internal LeaseUse? Last { get; private set; }
+
+    internal Func<LeaseUse, CancellationToken, ValueTask<LeaseUseVerdict>> Behavior { get; set; } = (_, _) => ValueTask.FromResult(LeaseUseVerdict.Valid);
+
+    public ValueTask<LeaseUseVerdict> ValidateAsync(LeaseUse use, CancellationToken cancellationToken)
+    {
+        _ = Interlocked.Increment(ref _calls);
+        Last = use;
+        return Behavior(use, cancellationToken);
+    }
+}
+
 /// <summary>A transport session whose answer a test controls.</summary>
 internal sealed class FakeTransport(CallLog log, TransportKind kind = TransportKind.InProcess) : ITransportSession
 {
@@ -278,8 +301,9 @@ internal sealed class DecisionHarness
 {
     internal const string DefaultCapability = "test.capability.read";
 
-    internal DecisionHarness(string risk = "R1", string approval = "none", string egress = "none")
+    internal DecisionHarness(string risk = "R1", string approval = "none", string egress = "none", DecisionClock? clock = null)
     {
+        Clock = clock ?? new DecisionClock();
         Descriptor = Describe(DefaultCapability, risk, approval, egress);
         Catalogue = new FakeCatalogue(Log) { Behavior = (_, _) => ValueTask.FromResult<CapabilityDescriptor?>(Descriptor) };
         Policy = new FakePolicy(Log);
@@ -293,6 +317,7 @@ internal sealed class DecisionHarness
         Owner = new FakeOwnerValidator(Log);
         Recorder = new FakeRecorder(Log);
         Audit = new FakeAudit(Log);
+        Leases = new FakeLeases();
         Transport = new FakeTransport(Log);
         OwnerOperation = new FakeOwnerOperation(Log);
         Authenticator = new FakeAuthenticator(Clock.Clock);
@@ -302,7 +327,7 @@ internal sealed class DecisionHarness
         StepUp = new StepUpCoordinator(Clock.Clock, Authenticator, Presence);
     }
 
-    internal DecisionClock Clock { get; } = new();
+    internal DecisionClock Clock { get; }
 
     internal CallLog Log { get; } = new();
 
@@ -332,6 +357,14 @@ internal sealed class DecisionHarness
 
     internal FakeAudit Audit { get; }
 
+    internal FakeLeases Leases { get; }
+
+    /// <summary>A real lease validator to use instead of the fake one.</summary>
+    internal ILeaseUseValidator? RealLeases { get; set; }
+
+    /// <summary>A real trust evaluator to use instead of the fake one.</summary>
+    internal ITrustEvaluator? RealTrust { get; set; }
+
     internal FakeTransport Transport { get; }
 
     internal FakeOwnerOperation OwnerOperation { get; }
@@ -347,8 +380,8 @@ internal sealed class DecisionHarness
     internal StepUpCoordinator StepUp { get; }
 
     internal DecisionPipelineServices Services() => new(
-        Clock.Clock, Catalogue, Policy, Identity, Scope, Trust, Permissions, Resources, DataBoundary,
-        Approvals, StepUp, Sensitive, Owner, Recorder, Audit);
+        Clock.Clock, Catalogue, Policy, Identity, Scope, RealTrust ?? Trust, Permissions, Resources, DataBoundary,
+        Approvals, StepUp, Sensitive, Owner, Recorder, Audit, RealLeases ?? Leases);
 
     internal SecurityDecisionPipeline Pipeline(DecisionPipelineOptions? options = null) => new(Services(), options);
 
@@ -477,6 +510,12 @@ internal sealed class RequestBuilder
 
     internal SensitiveOperation Operation { get; set; }
 
+    /// <summary>The lease the request names. When null, a request whose last actor is an agent or extension gets a fresh one.</summary>
+    internal CapabilityLeaseId? Lease { get; set; }
+
+    /// <summary>Builds the request without any lease, even for an agent or an extension.</summary>
+    internal bool OmitLease { get; set; }
+
     internal RequestBuilder WithActors(params ActorKind[] kinds)
     {
         Actors = DecisionHarness.Chain(kinds);
@@ -484,9 +523,17 @@ internal sealed class RequestBuilder
         return this;
     }
 
-    internal DecisionRequest Build() => new(
-        Actors, Capability, Scope, CommandId, Resource, Effect, Origin, Transport, Facts, EgressDestination,
-        SecretUseKey, ApprovalId, Proof, Operation);
+    internal DecisionRequest Build()
+    {
+        if (!OmitLease && Lease is null && Actors.Actors.Any(actor => actor.Kind is ActorKind.Agent or ActorKind.Extension))
+        {
+            Lease = CapabilityLeaseId.New();
+        }
+
+        return new DecisionRequest(
+            Actors, Capability, Scope, CommandId, Resource, Effect, Origin, Transport, Facts, EgressDestination,
+            SecretUseKey, ApprovalId, Proof, Operation, OmitLease ? null : Lease);
+    }
 
     public static implicit operator DecisionRequest(RequestBuilder builder) => builder.Build();
 }

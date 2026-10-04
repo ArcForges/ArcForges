@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Globalization;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Security.Approvals;
+using ArcForges.Security.Leases;
 
 namespace ArcForges.Security.Decisions;
 
@@ -26,7 +26,8 @@ public sealed class DecisionRequest
         string? secretUseKey = null,
         Guid? approvalId = null,
         StepUpProof? stepUpProof = null,
-        SensitiveOperation sensitiveOperation = SensitiveOperation.None)
+        SensitiveOperation sensitiveOperation = SensitiveOperation.None,
+        CapabilityLeaseId? lease = null)
     {
         ArgumentNullException.ThrowIfNull(actors);
         SecurityText.Validate(capabilityKey, 256, nameof(capabilityKey));
@@ -60,6 +61,11 @@ public sealed class DecisionRequest
             throw new ArgumentOutOfRangeException(nameof(sensitiveOperation));
         }
 
+        if (lease is { IsValid: false })
+        {
+            throw new ArgumentException("A capability lease identity cannot be empty.", nameof(lease));
+        }
+
         Actors = actors;
         CapabilityKey = capabilityKey;
         Scope = scope;
@@ -74,6 +80,7 @@ public sealed class DecisionRequest
         ApprovalId = approvalId;
         StepUpProof = stepUpProof;
         SensitiveOperation = sensitiveOperation;
+        Lease = lease;
     }
 
     public ActorChain Actors { get; }
@@ -107,11 +114,28 @@ public sealed class DecisionRequest
 
     public SensitiveOperation SensitiveOperation { get; }
 
+    /// <summary>
+    /// The lease the delegated actor claims to act under. It is a claim to compare with the stored lease at every use, never
+    /// authority: an agent or extension acting without one is refused, and a lease that does not cover this exact use is refused.
+    /// </summary>
+    public CapabilityLeaseId? Lease { get; }
+
     /// <summary>The canonical key of the human owner the permission lookup is made for.</summary>
-    public string PrincipalKey => string.Create(
-        CultureInfo.InvariantCulture,
-        $"principal:{Actors.Owner.Realm.Value:N}/{Actors.Owner.Id.Value:N}");
+    public string PrincipalKey => PermissionKeys.Principal(Actors.Owner);
 
     /// <summary>The canonical key of the scope.</summary>
     public string ScopeKey => Scope.Key;
+
+    /// <summary>
+    /// The agent or extension in the chain that must hold the lease (the last of them), or null when none acts. An agent or extension
+    /// anywhere in the chain makes the request delegated, even when an automation or service actor comes after it.
+    /// </summary>
+    internal LeaseHolder? Holder => Actors.Actors.LastOrDefault(actor => actor.Kind is ActorKind.Agent or ActorKind.Extension) is { } actor
+        ? LeaseHolder.From(actor)
+        : null;
+
+    /// <summary>What a lease is asked to cover for this request, or null when it carries no lease or no delegated actor acts.</summary>
+    internal LeaseUse? ToLeaseUse() =>
+        Lease is { } id && Holder is { } holder ? new LeaseUse(id, Actors.Owner, Scope, holder, CapabilityKey, Resource.Id) : null;
 }
+

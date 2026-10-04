@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation.Errors;
 using ArcForges.Security.Approvals;
 using ArcForges.Security.Decisions;
+using ArcForges.Security.Leases;
 using Xunit;
 
 namespace ArcForges.Security.Tests;
@@ -78,7 +79,9 @@ public sealed class DecisionRefusalMatrixTests
         Assert.Empty(harness.Recorder.Records);
         Assert.Equal(0, harness.OwnerOperation.Calls);
         Assert.Equal(0, harness.Log.Count("owner-op"));
-        Assert.Equal(point == EnforcementPoint.OwnerFinalValidation ? 1 : 0, harness.Log.Count("owner"));
+        // A lease refusal at the owner point comes before the owner is asked, so the owner's validator is not consulted for it.
+        var leaseReason = item.Reason is >= DecisionReason.S11LeaseRequired and <= DecisionReason.S11LeaseUnavailable;
+        Assert.Equal(point == EnforcementPoint.OwnerFinalValidation && !leaseReason ? 1 : 0, harness.Log.Count("owner"));
         Assert.Equal(0, harness.Log.Count("record"));
 
         // The same request through the executing route is refused with the same typed failure and runs nothing.
@@ -102,6 +105,7 @@ public sealed class DecisionRefusalMatrixTests
         {
             DecisionReason.S11ServiceDecisionInvalid,
             DecisionReason.S11ServiceDecisionStale,
+            DecisionReason.S11LeaseRequired,
             DecisionReason.S12OwnerFailed,
             DecisionReason.S13RecordFailed,
             DecisionReason.S14AuditFailed,
@@ -130,7 +134,7 @@ public sealed class DecisionRefusalMatrixTests
         }
 
         Assert.Equal(Enumerable.Range(1, 11).Select(value => (DecisionStep)value), seen.Keys.OrderBy(step => (int)step));
-        Assert.Equal(DecisionReasons.All.Count(info => info.Step <= DecisionStep.OwnerValidation) - 2, codes.Count);
+        Assert.Equal(DecisionReasons.All.Count(info => info.Step <= DecisionStep.OwnerValidation) - 3, codes.Count);
         foreach (var codeSet in seen.Values)
         {
             Assert.All(codeSet, code => Assert.Equal(1, seen.Values.Count(other => other.Contains(code))));
@@ -303,6 +307,55 @@ public sealed class DecisionRefusalMatrixTests
         });
         Sync("s06 permission source throws", DecisionReason.S06Unavailable, (h, _) =>
             h.Permissions.Behavior = (_, _) => throw new InvalidOperationException("grants offline"));
+
+        // Step 6, lease part: a delegated actor acts only under a lease that covers exactly this use, judged at use.
+        Sync("s06 extension acts without a lease", DecisionReason.S06LeaseRequired, (_, b) =>
+        {
+            b.WithActors(ActorKind.Extension);
+            b.OmitLease = true;
+        });
+        Sync("s06 agent acts without a lease", DecisionReason.S06LeaseRequired, (_, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            b.OmitLease = true;
+        });
+        Sync("s06 an agent beneath an extension acts without a lease", DecisionReason.S06LeaseRequired, (_, b) =>
+        {
+            b.WithActors(ActorKind.Extension, ActorKind.Agent);
+            b.OmitLease = true;
+        });
+        Sync("s06 lease expired", DecisionReason.S06LeaseExpired, (h, b) =>
+        {
+            b.WithActors(ActorKind.Extension);
+            h.Leases.Behavior = (_, _) => ValueTask.FromResult(LeaseUseVerdict.Expired);
+        });
+        Sync("s06 lease revoked", DecisionReason.S06LeaseRevoked, (h, b) =>
+        {
+            b.WithActors(ActorKind.Extension);
+            h.Leases.Behavior = (_, _) => ValueTask.FromResult(LeaseUseVerdict.Revoked);
+        });
+        Sync("s06 lease does not cover the use", DecisionReason.S06LeaseOutOfScope, (h, b) =>
+        {
+            b.WithActors(ActorKind.Extension);
+            h.Leases.Behavior = (_, _) => ValueTask.FromResult(LeaseUseVerdict.OutOfScope);
+        });
+        Sync("s06 lease claimed by the owner acting directly", DecisionReason.S06LeaseOutOfScope, (_, b) =>
+            b.Lease = CapabilityLeaseId.New());
+        Sync("s06 lease check unknown", DecisionReason.S06LeaseUnavailable, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            h.Leases.Behavior = (_, _) => ValueTask.FromResult(LeaseUseVerdict.Unknown);
+        });
+        Sync("s06 lease check undefined value", DecisionReason.S06LeaseUnavailable, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            h.Leases.Behavior = (_, _) => ValueTask.FromResult((LeaseUseVerdict)31);
+        });
+        Sync("s06 lease check throws", DecisionReason.S06LeaseUnavailable, (h, b) =>
+        {
+            b.WithActors(ActorKind.Extension);
+            h.Leases.Behavior = (_, _) => throw new InvalidOperationException("leases offline");
+        });
 
         // Step 7: resource authorization.
         Sync("s07 resource denied", DecisionReason.S07ResourceDenied, (h, _) =>
@@ -632,7 +685,43 @@ public sealed class DecisionRefusalMatrixTests
             return Task.CompletedTask;
         });
 
+        // Step 11, lease part: the owner checks the lease again last and never relies on the service decision's check.
+        Sync("s11 lease expired after the service decision", DecisionReason.S11LeaseExpired, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            h.Leases.Behavior = LeaseVerdictOnCall(2, LeaseUseVerdict.Expired);
+        });
+        Sync("s11 lease revoked after the service decision", DecisionReason.S11LeaseRevoked, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            h.Leases.Behavior = LeaseVerdictOnCall(2, LeaseUseVerdict.Revoked);
+        });
+        Sync("s11 lease no longer covers the use", DecisionReason.S11LeaseOutOfScope, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            h.Leases.Behavior = LeaseVerdictOnCall(2, LeaseUseVerdict.OutOfScope);
+        });
+        Sync("s11 lease check unknown at the owner", DecisionReason.S11LeaseUnavailable, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            h.Leases.Behavior = LeaseVerdictOnCall(2, LeaseUseVerdict.Unknown);
+        });
+        Sync("s11 lease check throws at the owner", DecisionReason.S11LeaseUnavailable, (h, b) =>
+        {
+            b.WithActors(ActorKind.Agent);
+            var calls = 0;
+            h.Leases.Behavior = (_, _) => ++calls < 2
+                ? ValueTask.FromResult(LeaseUseVerdict.Valid)
+                : throw new InvalidOperationException("leases offline");
+        });
+
         return [.. cases];
+    }
+
+    private static Func<LeaseUse, CancellationToken, ValueTask<LeaseUseVerdict>> LeaseVerdictOnCall(int call, LeaseUseVerdict verdict)
+    {
+        var calls = 0;
+        return (_, _) => ValueTask.FromResult(++calls < call ? LeaseUseVerdict.Valid : verdict);
     }
 
     private sealed record RefusalCase(string Name, DecisionReason Reason, Func<DecisionHarness, RequestBuilder, Task> Arrange);

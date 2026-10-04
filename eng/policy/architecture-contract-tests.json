@@ -2658,5 +2658,110 @@
     "apiSymbol": "ArcForges.Security.Egress.EgressDataBoundary.AuthorizeEgressAsync(ArcForges.Security.Decisions.DecisionRequest, string, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.EgressPipelineTests.ReadAccessAloneNeverAuthorizesEgressAndEgressAloneNeverAuthorizesTheCapability(bool, bool, bool)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.CapabilityLeaseId.New()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseModelTests.ALeaseIdentityIsGuidBackedNonEmptyAndNeverDefault()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseStore.ReadAsync(ArcForges.Security.Leases.CapabilityLeaseId, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.SqliteLeaseStoreTests.ALeaseAndItsRevocationSurviveClosingAndReopeningTheStore()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseStore.TryCreateAsync(ArcForges.Security.Leases.CapabilityLease, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.SqliteLeaseStoreTests.ACreateOfAnExistingLeaseIsRefusedAndAnUnknownLeaseReadsNull()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseStore.TryReplaceAsync(ArcForges.Security.Leases.CapabilityLeaseId, long, ArcForges.Security.Leases.CapabilityLease, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.SqliteLeaseStoreTests.AStaleReplacementAcrossTwoOpenStoresIsRefusedAndTheLeaseOnlyMovesForward()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseStore.ListUnsettledAsync(ArcForges.Foundation.Execution.TaskId?, ArcForges.Foundation.Instant?, int, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.SqliteLeaseStoreTests.TheEndOfATasksLeasesIsDurableAndOnlyTheListedLeasesAreSwept()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseEventSink.WriteAsync(ArcForges.Security.Leases.CapabilityLeaseEvent, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.TheIssuedFactIsDurableBeforeTheLeaseExistsAndCarriesTheSameIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseCeilingSource.FindAsync(string, string, string, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.TheCeilingIsLookedUpForTheDelegatorsPrincipalCapabilityAndScopeExactly()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.ILeaseUseValidator.ValidateAsync(ArcForges.Security.Leases.LeaseUse, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeasePipelineTests.AnAgentActsUnderALeaseThroughEveryStepAndTheAuditNamesTheLease()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.CapabilityLeaseManager.IssueAsync(ArcForges.Security.Leases.LeaseRequest, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.AnIssuedLeaseIsStoredActiveAndCoversExactlyWhatWasRequested()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.CapabilityLeaseManager.RevokeAsync(ArcForges.Security.Leases.CapabilityLeaseId, ArcForges.Security.HumanPrincipal, ArcForges.Security.Leases.LeaseRevocationReason, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.RevocationStoresTheEndThenRecordsTheFactWithTheSameIdentity()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.CapabilityLeaseManager.EndTaskAsync(ArcForges.Foundation.Execution.TaskId, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.TheEndOfATaskEndsOnlyThatTasksLeasesAutomatically()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.CapabilityLeaseManager.ExpireDueAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.ExpireDueEndsExactlyTheLeasesWhoseTimeIsOver()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Leases.CapabilityLeaseManager.ValidateAsync(ArcForges.Security.Leases.LeaseUse, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.LeaseManagerTests.ALeaseExpiresAtUseNotOnlyAtIssueAndItsEndIsExclusiveToTheTick()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.ITrustFactSource.ReadPublisherAsync(ArcForges.Security.Trust.TrustSubject, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.EachPublisherStateHasItsOwnEligibility(ArcForges.Security.Trust.PublisherTrustState, ArcForges.Security.Trust.TrustEligibility)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.ITrustFactSource.ReadPackageAsync(ArcForges.Security.Trust.TrustSubject, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.EachPackageStateHasItsOwnEligibility(ArcForges.Security.Trust.PackageTrustState, ArcForges.Security.Trust.TrustEligibility)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.ITrustFactSource.ReadSoftwareIdentityAsync(ArcForges.Security.Trust.TrustSubject, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.EachSoftwareIdentityStateHasItsOwnEligibility(ArcForges.Security.Trust.SoftwareIdentityState, ArcForges.Security.Trust.TrustEligibility)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.ITrustFactSource.ReadDeviceAsync(ArcForges.Security.Trust.TrustSubject, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.EachDeviceStateHasItsOwnEligibility(ArcForges.Security.Trust.DeviceTrustState, ArcForges.Security.Trust.TrustEligibility)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.ITrustFactSource.ReadExtensionStateAsync(ArcForges.Security.Trust.TrustSubject, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.EachExtensionStateHasItsOwnEligibility(ArcForges.Security.Trust.ExtensionTrustState, ArcForges.Security.Trust.TrustEligibility)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.TrustPoints.KindsAt(ArcForges.Security.Trust.TrustEvaluationPoint)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.ThePointTableCoversEveryDefinedPointAndRefusesTheUndefined()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.TrustEvaluator.AssessAsync(ArcForges.Security.Trust.TrustEvaluationPoint, ArcForges.Security.Trust.TrustSubject, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.EachPointEvaluatesExactlyItsOwnKindsOnceAndNoOthers(ArcForges.Security.Trust.TrustEvaluationPoint)"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Trust.TrustEvaluator.EvaluateAsync(ArcForges.Security.Decisions.DecisionRequest, ArcForges.Security.Decisions.TransportBinding?, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.TrustTests.ARequestOfALocalPersonReadsOnlyTheCallersSoftwareIdentity()"
   }
 ]
