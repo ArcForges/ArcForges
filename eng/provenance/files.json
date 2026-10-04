@@ -741,6 +741,7 @@
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
     "tests/ArchitectureTests/BuildIdentityTests.cs",
     "tests/ArchitectureTests/EvaluatedPolicyTests.cs",
+    "tests/ArchitectureTests/GeneratedSourceReconstructionTests.cs",
     "tests/ArchitectureTests/PublicBoundaryContractTests.cs",
     "tests/ArchitectureTests/RepositoryPolicyTests.cs",
     "tests/ArchitectureTests/SharedPolicyTests.cs",
