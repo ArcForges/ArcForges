@@ -4,8 +4,8 @@ using ArcForges.Capabilities;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation.Errors;
-using ArcForges.Security.CapabilityEnforcement;
 using ArcForges.Security.Approvals;
+using ArcForges.Security.CapabilityEnforcement;
 using ArcForges.Security.Decisions;
 using ArcForges.Security.Leases;
 using Google.Protobuf;
@@ -209,6 +209,34 @@ public sealed class CapabilityEnforcementGateTests
         };
         _ = await AuthorizeAsync(elsewhere, elsewhere.Invocation(command: command), Context(elsewhere));
         Assert.NotEqual(digests[0], elsewhereDigests[0]);
+    }
+
+    [Fact]
+    public async Task TheEffectDigestNamesTheExactTargetInstanceAndEpoch()
+    {
+        var command = Guid.NewGuid();
+        var baseline = new EnforcementWorld();
+        var same = new EnforcementWorld(identity: baseline.Identity);
+        var nextEpoch = new EnforcementWorld(identity: new InstanceIdentity(baseline.Identity.Installation, baseline.Identity.InstanceId, 2));
+        var otherInstance = new EnforcementWorld(identity: new InstanceIdentity(baseline.Identity.Installation, new InstanceId(Guid.NewGuid()), 1));
+
+        var digest = await DigestAsync(baseline, command);
+
+        Assert.Equal(digest, await DigestAsync(same, command));
+        Assert.NotEqual(digest, await DigestAsync(nextEpoch, command));
+        Assert.NotEqual(digest, await DigestAsync(otherInstance, command));
+    }
+
+    private static async Task<string> DigestAsync(EnforcementWorld w, Guid command)
+    {
+        string? digest = null;
+        w.Decisions.Permissions.Behavior = (request, _) =>
+        {
+            digest = request.EffectSha256;
+            return ValueTask.FromResult<PermissionGrantRecord?>(w.Decisions.Grant(request));
+        };
+        _ = await AuthorizeAsync(w, w.Invocation(command: command), Context(w));
+        return digest!;
     }
 
     [Fact]

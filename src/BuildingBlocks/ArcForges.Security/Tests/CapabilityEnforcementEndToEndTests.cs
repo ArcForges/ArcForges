@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Capabilities;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Foundation.Values;
 using ArcForges.Foundation.Errors;
 using ArcForges.Security.Approvals;
 using ArcForges.Security.CapabilityEnforcement;
@@ -589,6 +590,83 @@ public sealed class CapabilityEnforcementEndToEndTests
         Assert.Equal(0, withdrawnSends);
         Assert.Equal([EgressAuditKind.Authorized, EgressAuditKind.Refused], withdrawn.EgressAudit.Records.Select(record => record.Kind));
         Assert.Equal(SecurityAuditKind.OwnerFailed, Assert.Single(withdrawn.Decisions.Audit.Records).Kind);
+    }
+
+    [Fact]
+    public async Task EveryFactTheHostDeclaresReachesTheDecisionRatherThanBeingReplacedByADefault()
+    {
+        var sensitive = new EnforcementWorld();
+        sensitive.Evidence.Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(new CapabilityEvidence(
+            sensitive.DirectChain(), sensitive.Leases.Scope, new ResourceReference(EnforcementWorld.ResourceId, EnforcementWorld.ResourceRevision),
+            DecisionOrigin.Local, sensitive.Decisions.Transport,
+            declaredFacts: new RiskFacts(RiskScope.SingleOperation, RiskTarget.SensitiveResource, RiskReversibility.Reversible, false)));
+        Assert.Equal(OutcomeKind.Success, (await sensitive.InvokeAsync(sensitive.Invocation(), cancellationToken: Token)).Kind);
+        Assert.Equal(RiskLevel.R2, Assert.Single(sensitive.Decisions.Recorder.Records).EffectiveRisk);
+
+        var remote = new EnforcementWorld();
+        remote.Decisions.Permissions.Behavior = (request, _) => ValueTask.FromResult<PermissionGrantRecord?>(
+            remote.Decisions.Grant(request, constraints: [PermissionConstraints.LocalOriginOnly]));
+        remote.Evidence.Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(new CapabilityEvidence(
+            remote.DirectChain(), remote.Leases.Scope, new ResourceReference(EnforcementWorld.ResourceId, EnforcementWorld.ResourceRevision),
+            DecisionOrigin.Remote, remote.Decisions.Transport));
+        AssertRefusedAtAuthorize(
+            remote, await remote.InvokeAsync(remote.Invocation(), cancellationToken: Token), "perm.capability_denied", DecisionReason.S06ConstraintUnmet);
+        Assert.Equal(DecisionOrigin.Remote, remote.Decisions.Audit.Records.Single().Origin);
+
+        var foreign = new EnforcementWorld();
+        foreign.Evidence.Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(new CapabilityEvidence(
+            foreign.DirectChain(), new DecisionScope(new RealmId(Guid.NewGuid()), null),
+            new ResourceReference(EnforcementWorld.ResourceId, EnforcementWorld.ResourceRevision), DecisionOrigin.Local, foreign.Decisions.Transport));
+        AssertRefusedAtAuthorize(
+            foreign, await foreign.InvokeAsync(foreign.Invocation(), cancellationToken: Token), "perm.resource_denied", DecisionReason.S04RealmMismatch);
+
+        var secret = new EnforcementWorld();
+        secret.Decisions.DataBoundary.SecretBehavior = (_, _) => ValueTask.FromResult(BoundaryVerdict.Denied);
+        secret.Evidence.Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(new CapabilityEvidence(
+            secret.DirectChain(), secret.Leases.Scope, new ResourceReference(EnforcementWorld.ResourceId, EnforcementWorld.ResourceRevision),
+            DecisionOrigin.Local, secret.Decisions.Transport, secretUseKey: "stored.credential.reference"));
+        AssertRefusedAtAuthorize(
+            secret, await secret.InvokeAsync(secret.Invocation(), cancellationToken: Token), "perm.capability_denied", DecisionReason.S08SecretUseDenied);
+        Assert.Contains("secret", secret.Log.Entries);
+    }
+
+    [Fact]
+    public async Task AStepUpTheSourceRequiresIsCarriedAsHostEvidenceAndSpentOnlyByTheMatchingProof()
+    {
+        var w = new EnforcementWorld();
+        w.Decisions.Sensitive.Behavior = (_, _) => ValueTask.FromResult(SensitiveOperation.EnableRemoteAgent);
+        DecisionRequest? seen = null;
+        w.Decisions.Permissions.Behavior = (request, _) =>
+        {
+            seen = request;
+            return ValueTask.FromResult<PermissionGrantRecord?>(w.Decisions.Grant(request));
+        };
+        var chain = w.DirectChain();
+        var declared = SensitiveOperation.None;
+        StepUpProof? proof = null;
+        w.Evidence.Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(new CapabilityEvidence(
+            chain, w.Leases.Scope, new ResourceReference(EnforcementWorld.ResourceId, EnforcementWorld.ResourceRevision),
+            DecisionOrigin.Local, w.Decisions.Transport, stepUpProof: proof, sensitiveOperation: declared));
+        var command = Guid.NewGuid();
+
+        var unspecified = await w.InvokeAsync(w.Invocation(command: command), cancellationToken: Token);
+        Assert.Equal("auth.step_up_required", unspecified.Failure!.Code);
+        Assert.Equal("decision.s10.step_up_operation_unspecified", w.Decisions.Audit.Records[^1].ReasonCode);
+
+        declared = SensitiveOperation.EnableRemoteAgent;
+        var unproven = await w.InvokeAsync(w.Invocation(command: command), cancellationToken: Token);
+        Assert.Equal("auth.step_up_required", unproven.Failure!.Code);
+        Assert.Equal("decision.s10.step_up_required", w.Decisions.Audit.Records[^1].ReasonCode);
+
+        proof = await w.Decisions.ProofAsync(seen!, SensitiveOperation.EnableRemoteAgent, RiskLevel.R1);
+        var proven = await w.InvokeAsync(w.Invocation(command: command), cancellationToken: Token);
+        Assert.Equal(OutcomeKind.Success, proven.Kind);
+        Assert.Equal(1, w.OwnerRuns);
+
+        var other = await w.InvokeAsync(w.Invocation(command: Guid.NewGuid()), cancellationToken: Token);
+        Assert.Equal("auth.step_up_required", other.Failure!.Code);
+        Assert.Equal("decision.s10.step_up_invalid", w.Decisions.Audit.Records[^1].ReasonCode);
+        Assert.Equal(1, w.OwnerRuns);
     }
 
     private static void Configure(EnforcementWorld w, string failure)

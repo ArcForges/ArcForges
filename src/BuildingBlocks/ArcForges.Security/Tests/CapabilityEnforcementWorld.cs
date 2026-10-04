@@ -193,7 +193,8 @@ internal sealed class EnforcementWorld
         string capability = GetSession,
         AvailabilityFreshnessDisposition freshness = AvailabilityFreshnessDisposition.Current,
         DecisionPipelineOptions? options = null,
-        ulong epoch = 1)
+        ulong epoch = 1,
+        InstanceIdentity? identity = null)
     {
         _capability = capability;
         Clock = new DecisionClock();
@@ -202,7 +203,7 @@ internal sealed class EnforcementWorld
         Registry = CapabilityRegistry.CreateInitial();
         Registration = Registry.Find(capability)!;
         var app = Registration.Owner.ProductApp!;
-        Identity = new InstanceIdentity(
+        Identity = identity ?? new InstanceIdentity(
             new InstallationIdentity(app, new DeviceId(Guid.NewGuid()), new InstallationId(Guid.NewGuid())),
             new InstanceId(Guid.NewGuid()),
             epoch);
