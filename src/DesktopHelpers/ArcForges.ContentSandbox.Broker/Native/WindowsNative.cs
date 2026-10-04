@@ -27,12 +27,9 @@ internal static unsafe partial class WindowsNative
     internal const uint SectionMapRead = 0x0004;
     internal const uint ProcessQueryLimitedInformation = 0x1000;
 
-    internal const nuint AttributeHandleList = 0x00020002;
-    internal const nuint AttributeMitigationPolicy = 0x00020007;
-    internal const nuint AttributeSecurityCapabilities = 0x00020009;
-    internal const nuint AttributeChildProcessPolicy = 0x0002000E;
-
-    internal const uint ChildProcessRestricted = 0x01;
+    internal const uint AttributeHandleList = 0x00020002;
+    internal const uint AttributeMitigationPolicy = 0x00020007;
+    internal const uint AttributeSecurityCapabilities = 0x00020009;
 
     internal const int JobObjectBasicUiRestrictions = 4;
     internal const int JobObjectExtendedLimitInformation = 9;

@@ -7,11 +7,11 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using Microsoft.Win32.SafeHandles;
 using System.Text;
 using ArcForges.ContentSandbox.Broker.Native;
 using ArcForges.ContentSandbox.Contracts;
 using ArcForges.LocalRpc;
+using Microsoft.Win32.SafeHandles;
 using static ArcForges.ContentSandbox.Broker.Native.WindowsNative;
 
 namespace ArcForges.ContentSandbox.Broker.Windows;
@@ -114,7 +114,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
         private AnonymousPipeServerStream? _diagnostics;
         private NamedPipeServerStream? _control;
         private NamedPipeServerStream? _service;
-        private nint _job;
+        private long _job;
         private Process? _process;
         private Task _diagnosticReader = Task.CompletedTask;
         private int _disposed;
@@ -206,12 +206,12 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 
                 VerifyAppContainer(information.Process, container.Sid);
                 _job = CreateJob(request.Limits);
-                if (!AssignProcessToJobObject(_job, information.Process))
+                if (!AssignProcessToJobObject((nint)_job, information.Process))
                 {
                     throw Fail("The helper could not be placed in its Job Object.");
                 }
 
-                if (!IsProcessInJob(information.Process, _job, out var inJob) || !inJob)
+                if (!IsProcessInJob(information.Process, (nint)_job, out var inJob) || !inJob)
                 {
                     throw Fail("The helper is not in its Job Object.");
                 }
@@ -310,10 +310,10 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 
         public void Terminate()
         {
-            var job = _job;
+            var job = Interlocked.Read(ref _job);
             if (job != 0)
             {
-                _ = TerminateJobObject(job, 1);
+                _ = TerminateJobObject((nint)job, 1);
             }
             else
             {
@@ -359,7 +359,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 
             if (_job != 0)
             {
-                _ = CloseHandle(_job);
+                _ = CloseHandle((nint)_job);
                 _job = 0;
             }
 
@@ -467,20 +467,20 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 
                 initialized = true;
                 var capabilities = new SecurityCapabilities { AppContainerSid = appContainerSid };
-                if (!UpdateProcThreadAttribute(list, 0, AttributeSecurityCapabilities, (nint)(&capabilities), (nuint)sizeof(SecurityCapabilities), 0, 0))
+                if (!UpdateProcThreadAttribute(list, 0, (nuint)AttributeSecurityCapabilities, (nint)(&capabilities), (nuint)sizeof(SecurityCapabilities), 0, 0))
                 {
                     throw Fail("The AppContainer attribute could not be set.");
                 }
 
                 fixed (nint* handles = inheritedHandles)
                 {
-                    if (!UpdateProcThreadAttribute(list, 0, AttributeHandleList, (nint)handles, (nuint)(inheritedHandles.Length * sizeof(nint)), 0, 0))
+                    if (!UpdateProcThreadAttribute(list, 0, (nuint)AttributeHandleList, (nint)handles, (nuint)(inheritedHandles.Length * sizeof(nint)), 0, 0))
                     {
                         throw Fail("The handle list could not be set.");
                     }
 
                     var mitigation = MitigationPolicy;
-                    if (!UpdateProcThreadAttribute(list, 0, AttributeMitigationPolicy, (nint)(&mitigation), sizeof(ulong), 0, 0))
+                    if (!UpdateProcThreadAttribute(list, 0, (nuint)AttributeMitigationPolicy, (nint)(&mitigation), sizeof(ulong), 0, 0))
                     {
                         throw Fail("The mitigation policy could not be set.");
                     }

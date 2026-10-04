@@ -14,7 +14,7 @@ namespace ArcForges.ContentSandbox.Broker.Windows;
 internal sealed class AppContainerLease : IDisposable
 {
     private readonly FileStream _lock;
-    private nint _sid;
+    private long _sid;
 
     internal AppContainerLease(string name, nint sid, FileStream slotLock)
     {
@@ -27,14 +27,14 @@ internal sealed class AppContainerLease : IDisposable
     internal string Name { get; }
 
     /// <summary>The package SID. Valid until <see cref="Dispose"/>.</summary>
-    internal nint Sid => _sid == 0 ? throw new ObjectDisposedException(nameof(AppContainerLease)) : _sid;
+    internal nint Sid => _sid == 0 ? throw new ObjectDisposedException(nameof(AppContainerLease)) : (nint)_sid;
 
     public void Dispose()
     {
         var sid = Interlocked.Exchange(ref _sid, 0);
         if (sid != 0)
         {
-            _ = WindowsNative.FreeSid(sid);
+            _ = WindowsNative.FreeSid((nint)sid);
             _lock.Dispose();
         }
     }

@@ -153,6 +153,22 @@
           "role": "aot-host"
         },
         {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
           "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
           "role": "aot-library"
         },

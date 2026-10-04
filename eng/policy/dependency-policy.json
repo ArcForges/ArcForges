@@ -5,7 +5,7 @@
     ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
     "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
     "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-    "Directory.Packages.props": "f0e6e0784a796917b0f96413ab2488cf3694cff980d4bd48e080c6eb42cf389b",
+    "Directory.Packages.props": "ab8984cf93d6b3949bbeaffa0d8198e1044f101a41fc4a876bee83b208e2d627",
     "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
     "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
     "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -247,8 +247,16 @@
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
     "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
+    "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj": "9f38eb49ade9e02d64fc9ce8db904f21631d89f7edb1b8c92325130e072d4c50",
+    "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/packages.lock.json": "d484757d0de8539423641c61aea8b03bbc681b39826035d3a550326205779f07",
+    "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj": "9cf9cdf2e72c9c55da5b9fda99a2efc07d7d918738ca89ae24456d2e762bd660",
+    "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "f43afe9ccaa7e52ee5c3a2bdeef7eec20ada355c65ab3b9c8a68fe1124a484ca",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj": "c902b6c2d32ec042573459b66d6984cc92a6698e1ef7a5908a0bf98b843ce306",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj": "9d97cbef2c2c5585c3698a2c5f7ade78aed10ff806ebc513965a97cada38bc1b",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e",
     "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
     "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
     "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -336,6 +344,19 @@
       "nuspecSha256": "2e9af7a67637cdff08601ce3fb2d20a445fd34c7d535dc4d3508ff10bc9a3c1b",
       "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.localrpc.platform/1.0.0-ci.216.1/arcforges.contracts.localrpc.platform.nuspec",
       "classification": "Exact CON.05 generated LocalRpc producer consumed only by the PRF.04 non-packable AOT probe; source commit and original candidate publication are recorded in the Plan ledger.",
+      "internalPublisher": {
+        "repository": "ArcForges/Contracts",
+        "workflow": "ci.yml",
+        "sourceCommit": "eb650e5b9ef7fc06f0eb79ee167b896e4252b50e",
+        "feed": "https://api.nuget.org/v3/index.json"
+      }
+    },
+    "arcforges.contracts.localrpc.sandbox/1.0.0-ci.216.1": {
+      "contentHash": "u0NGE5MZvolG4Bc2t2nPKiccsP8fKcIPQcnAFCSmMBgL1+q6KwHgr9mlFF1FDyW7Seu9JVINWYOsK38RH5hfkg==",
+      "licence": "Apache-2.0",
+      "nuspecSha256": "c65862c9eedf3402636ddc28c67fbd9a54a9a5b6214bf4bb816b4bb2c47805b6",
+      "source": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.localrpc.sandbox/1.0.0-ci.216.1/arcforges.contracts.localrpc.sandbox.nuspec",
+      "classification": "Exact CON.04 generated ContentSandboxService producer (same Contracts source commit as the admitted LocalRpc.Platform candidate), consumed by the PLT.45 non-packable ContentSandbox contracts facade, broker, helper host, test project and test-only fixture; its nuspec dependencies (Foundation 1.0.0-ci.216.1, Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0) are already admitted. Source commit and original candidate publication are recorded in the Plan ledger.",
       "internalPublisher": {
         "repository": "ArcForges/Contracts",
         "workflow": "ci.yml",
@@ -754,11 +775,11 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261004-plt16",
+    "owner": "w-c20261004-plt45",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
     "reviewedOn": "2026-10-04",
-    "baselineCommit": "f4827df5f385b5d7a25577c610ab314f0584b8cc",
-    "maintenanceAssessment": "PLT.16 admits the already-delivered library ArcForges.LocalRpc (PLT.09 to PLT.15) as a NuGet package in the existing single-version release set. It flips IsPackable from false to true on the one production project (its PackageId, readme, licence, description, package references, framework reference, InternalsVisibleTo item and README/LICENSE/NOTICE pack items were already present and are unchanged), appends one entry to eng/packaging/packages.json (kind managed, no owned dependencies because the project has no ProjectReference, and the two external dependencies a dotnet pack nuspec generates, Grpc.AspNetCore.Server 2.83.0 and Grpc.Net.Client 2.84.0, which are the exact central versions already admitted), and corrects the one README sentence that called the project non-packable. No source, package reference, project reference, central package selector, lockfile or test change; the locked NuGet closure keeps identical coordinates, versions and content hashes. This immutable successor only re-binds the changed dependency inputs (packages.json and the LocalRpc project file) and chains from the active plt-38-r1.json receipt, preserving all prior receipts and unrelated dependency policy.",
+    "baselineCommit": "f8f5db333be0212ac0988549467676e7f837a609",
+    "maintenanceAssessment": "PLT.45 adds three non-packable production projects (ArcForges.ContentSandbox.Contracts, ArcForges.ContentSandbox.Broker and the existing ArcForges.ContentSandbox helper host, whose references change) and a non-packable test project and test-only hostile-parser fixture. They reference the existing ArcForges.LocalRpc and ArcForges.Foundation projects and the admitted ArcForges.Contracts.LocalRpc.Platform 1.0.0-ci.216.1 candidate. The only new coordinate is ArcForges.Contracts.LocalRpc.Sandbox 1.0.0-ci.216.1, the candidate of the same Contracts source commit (eb650e5b9ef7fc06f0eb79ee167b896e4252b50e) as the admitted Platform bindings, with Apache-2.0 nuspec evidence from the nuget.org flat container and the locked content hash; its nuspec dependencies (Foundation 1.0.0-ci.216.1, Google.Protobuf 3.36.1, Grpc.Core.Api 2.84.0) were already admitted. Directory.Packages.props gains the exact Sandbox PackageVersion and the four new project names in the ArcForges.Contracts.Foundation 1.0.0-ci.216.1 selector (central transitive pinning rejects restore of a project that reaches ArcForges.Foundation under the 1.0.0-ci.113.1 default). The helper no longer references ArcForges.Desktop.RichContent or ArcForges.NativeInterop, which it never used. No other package, version, native library, vcpkg port or signing identity changes and nothing is published. This immutable successor re-binds the changed inputs and chains from the receipt active on main at merge, preserving all prior receipts and unrelated dependency policy.",
     "upgradeChecks": {
       "compilation": "Pending: the packed candidate is produced by hosted CI on the exact head. Locally, the LocalRpc project is packed once with the pinned SDK 10.0.400 (the separate installed copy under the user's .dotnet directory) through the workstation build slot, and its nuspec dependency set is compared with the catalogue entry; results are recorded in the pull request, not here.",
       "aot-trim": "No AOT, trim, SDK, framework or native toolchain setting changed. ArcForges.LocalRpc keeps IsAotCompatible and the default analyzers with warnings as errors. No Native AOT publish of the package was run by this task; the PRF.04 probe's Local RPC AOT compile jobs are unchanged.",
@@ -772,7 +793,7 @@
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
       "Directory.Build.props": "5755571e24d77ac71c2acee2d14e511b308269d84fc8b01ef6be19cdf08fa418",
       "Directory.Build.targets": "f38a795efa407c99b0190316cbfece23d0e84d179b5ec63ba88257746412a917",
-      "Directory.Packages.props": "f0e6e0784a796917b0f96413ab2488cf3694cff980d4bd48e080c6eb42cf389b",
+      "Directory.Packages.props": "ab8984cf93d6b3949bbeaffa0d8198e1044f101a41fc4a876bee83b208e2d627",
       "NuGet.config": "274d3bbf1913f74ace4d77a96223ea744018536aca462b58b6283ac94cfc2f07",
       "benchmarks/probes/acquisition/AcquisitionProbe.csproj": "02bf424b1c64762d0303d4a24a8715a3c2123ac60e3aac146c14be245b5d44bd",
       "benchmarks/probes/acquisition/packages.lock.json": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6",
@@ -1014,8 +1035,16 @@
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de",
       "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "6f4879a2681431029c41d5c9914531ba7b63752dbb12c319c2d94fcece6cb19c",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "290e9e77d2eb6c67dc51fd7c7b1a5b5b075a981255ac8a51b44b03974de3d64a",
+      "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj": "9f38eb49ade9e02d64fc9ce8db904f21631d89f7edb1b8c92325130e072d4c50",
+      "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/packages.lock.json": "d484757d0de8539423641c61aea8b03bbc681b39826035d3a550326205779f07",
+      "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj": "9cf9cdf2e72c9c55da5b9fda99a2efc07d7d918738ca89ae24456d2e762bd660",
+      "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "f43afe9ccaa7e52ee5c3a2bdeef7eec20ada355c65ab3b9c8a68fe1124a484ca",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj": "c902b6c2d32ec042573459b66d6984cc92a6698e1ef7a5908a0bf98b843ce306",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj": "9d97cbef2c2c5585c3698a2c5f7ade78aed10ff806ebc513965a97cada38bc1b",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
       "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
       "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -1040,7 +1069,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-38-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-16-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1051,7 +1080,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-16-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-45-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

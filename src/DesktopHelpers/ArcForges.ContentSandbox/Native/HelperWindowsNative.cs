@@ -34,7 +34,7 @@ internal sealed unsafe class WindowsMappedView : ILocalRpcBufferMapping, IHelper
 {
     private readonly object _gate = new();
     private readonly SafeFileHandle _section;
-    private nint _base;
+    private long _base;
     private int _disposed;
 
     private WindowsMappedView(SafeFileHandle section, nint baseAddress, long length)
@@ -78,7 +78,7 @@ internal sealed unsafe class WindowsMappedView : ILocalRpcBufferMapping, IHelper
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_base == 0, this);
-            new ReadOnlySpan<byte>((byte*)_base + offset, count).CopyTo(destination);
+            new ReadOnlySpan<byte>((byte*)(nint)_base + offset, count).CopyTo(destination);
         }
 
         return count;
@@ -93,7 +93,7 @@ internal sealed unsafe class WindowsMappedView : ILocalRpcBufferMapping, IHelper
         }
 
         ObjectDisposedException.ThrowIf(_base == 0, this);
-        return new Span<byte>((byte*)_base + offset, length);
+        return new Span<byte>((byte*)(nint)_base + offset, length);
     }
 
     /// <inheritdoc />
@@ -104,7 +104,7 @@ internal sealed unsafe class WindowsMappedView : ILocalRpcBufferMapping, IHelper
             return;
         }
 
-        nint address;
+        long address;
         lock (_gate)
         {
             address = _base;
@@ -113,7 +113,7 @@ internal sealed unsafe class WindowsMappedView : ILocalRpcBufferMapping, IHelper
 
         if (address != 0)
         {
-            _ = HelperWindowsNative.UnmapViewOfFile(address);
+            _ = HelperWindowsNative.UnmapViewOfFile((nint)address);
         }
 
         _section.Dispose();

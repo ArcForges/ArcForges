@@ -68,7 +68,7 @@ internal sealed unsafe class LinuxMappedView : ILocalRpcBufferMapping, IHelperSl
     private readonly object _gate = new();
     private readonly MemoryMappedFile _file;
     private readonly MemoryMappedViewAccessor _view;
-    private nint _base;
+    private long _base;
     private int _disposed;
 
     private LinuxMappedView(MemoryMappedFile file, MemoryMappedViewAccessor view, long length)
@@ -125,7 +125,7 @@ internal sealed unsafe class LinuxMappedView : ILocalRpcBufferMapping, IHelperSl
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_base == 0, this);
-            new ReadOnlySpan<byte>((byte*)_base + offset, count).CopyTo(destination);
+            new ReadOnlySpan<byte>((byte*)(nint)_base + offset, count).CopyTo(destination);
         }
 
         return count;
@@ -140,7 +140,7 @@ internal sealed unsafe class LinuxMappedView : ILocalRpcBufferMapping, IHelperSl
         }
 
         ObjectDisposedException.ThrowIf(_base == 0, this);
-        return new Span<byte>((byte*)_base + offset, length);
+        return new Span<byte>((byte*)(nint)_base + offset, length);
     }
 
     /// <inheritdoc />
