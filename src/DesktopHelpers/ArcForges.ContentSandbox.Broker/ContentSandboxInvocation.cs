@@ -651,7 +651,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
     {
         var inner = exception.InnerException;
         var exit = helper is { Exited.IsCompletedSuccessfully: true } ? " exit=" + helper.Exited.Result : string.Empty;
-        return exception.GetType().Name + ": " + exception.Message + (inner is null ? string.Empty : " / " + inner.GetType().Name + ": " + inner.Message) + exit;
+        return exception.GetType().Name + ": " + exception.Message + (inner is null ? string.Empty : " / " + inner.GetType().Name + ": " + inner.Message) + exit + (helper is null ? string.Empty : " output=" + helper.DiagnosticTail.ReplaceLineEndings(" "));
     }
 
     private static string ReasonForStartFailure(IProvisionedHelper? helper)

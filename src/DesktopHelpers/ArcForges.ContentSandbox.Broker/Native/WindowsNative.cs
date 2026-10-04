@@ -18,6 +18,10 @@ internal static unsafe partial class WindowsNative
     internal const uint CreateUnicodeEnvironment = 0x00000400;
     internal const uint CreateNoWindow = 0x08000000;
     internal const uint StartfUseStdHandles = 0x00000100;
+    internal const uint GenericReadWrite = 0xC0000000;
+    internal const uint OpenExisting = 3;
+    internal const uint FileFlagOverlapped = 0x40000000;
+    internal const uint SecuritySqosPresent = 0x00100000;
     internal const uint HandleFlagInherit = 0x00000001;
     internal const uint DuplicateSameAccess = 0x00000002;
     internal const uint SectionMapRead = 0x0004;
@@ -46,6 +50,14 @@ internal static unsafe partial class WindowsNative
     internal const int TokenAppContainerSid = 31;
 
     internal const int ErrorAlreadyExists = unchecked((int)0x800700B7);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SecurityAttributes
+    {
+        public uint Length;
+        public nint SecurityDescriptor;
+        public int InheritHandle;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct SecurityCapabilities
@@ -136,6 +148,10 @@ internal static unsafe partial class WindowsNative
     {
         public uint UiRestrictionsClass;
     }
+
+    [LibraryImport("Kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static partial nint CreateFileW(string fileName, uint desiredAccess, uint shareMode, ref SecurityAttributes securityAttributes, uint creationDisposition, uint flagsAndAttributes, nint templateFile);
 
     [LibraryImport("Kernel32.dll", EntryPoint = "InitializeProcThreadAttributeList", SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]

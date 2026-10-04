@@ -7,7 +7,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 using System.Text;
 using ArcForges.ContentSandbox.Broker.Native;
 using ArcForges.ContentSandbox.Contracts;
@@ -148,8 +148,8 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             ArgumentNullException.ThrowIfNull(pinnedHelper);
             using var stdin = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable, 64 * 1024);
             var diagnostics = _diagnostics = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable, 64 * 1024);
-            NamedPipeClientStream? controlClient = null;
-            NamedPipeClientStream? serviceClient = null;
+            SafeFileHandle? controlClient = null;
+            SafeFileHandle? serviceClient = null;
             MemoryMappedFile? input = null;
             nint inputReadOnly = 0;
             ProcessInformation information = default;
@@ -179,8 +179,8 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                 {
                     stdin.ClientSafePipeHandle.DangerousGetHandle(),
                     diagnostics.ClientSafePipeHandle.DangerousGetHandle(),
-                    controlClient.SafePipeHandle.DangerousGetHandle(),
-                    serviceClient.SafePipeHandle.DangerousGetHandle(),
+                    controlClient.DangerousGetHandle(),
+                    serviceClient.DangerousGetHandle(),
                     inputReadOnly,
                 };
                 inherited.AddRange(_slots.Select(slot => slot.SectionHandle));
@@ -195,8 +195,8 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                 diagnostics.DisposeLocalCopyOfClientHandle();
                 var entries = new List<ContentSandboxHandleEntry>
                 {
-                    new(ContentSandboxHandleRole.Control, (ulong)controlClient.SafePipeHandle.DangerousGetHandle()),
-                    new(ContentSandboxHandleRole.Service, (ulong)serviceClient.SafePipeHandle.DangerousGetHandle()),
+                    new(ContentSandboxHandleRole.Control, (ulong)controlClient.DangerousGetHandle()),
+                    new(ContentSandboxHandleRole.Service, (ulong)serviceClient.DangerousGetHandle()),
                     new(ContentSandboxHandleRole.Input, (ulong)inputReadOnly),
                 };
                 for (var index = 0; index < _slots.Count; index++)
@@ -258,8 +258,8 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             }
             finally
             {
-                await DisposeStreamAsync(controlClient).ConfigureAwait(false);
-                await DisposeStreamAsync(serviceClient).ConfigureAwait(false);
+                controlClient?.Dispose();
+                serviceClient?.Dispose();
                 input?.Dispose();
                 if (inputReadOnly != 0)
                 {
@@ -409,7 +409,11 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             }
         }
 
-        private static async Task<(NamedPipeServerStream Server, NamedPipeClientStream Client)> CreatePipeAsync(CancellationToken cancellationToken)
+        /// <summary>
+        /// Creates one duplex pipe: the parent's asynchronous server end, and the child's end opened overlapped, inheritable and never bound to a
+        /// completion port here. A handle that the parent bound to its own thread pool could not be bound again by the child.
+        /// </summary>
+        private static async Task<(NamedPipeServerStream Server, SafeFileHandle Client)> CreatePipeAsync(CancellationToken cancellationToken)
         {
             var name = "ArcForges.ContentSandbox." + Guid.NewGuid().ToString("N");
             var server = new NamedPipeServerStream(
@@ -418,23 +422,31 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                 1,
                 PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance);
-            var client = new NamedPipeClientStream(
-                ".",
-                name,
-                PipeDirection.InOut,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
-                TokenImpersonationLevel.Anonymous,
-                HandleInheritability.Inheritable);
             try
             {
                 var accepted = server.WaitForConnectionAsync(cancellationToken);
-                await client.ConnectAsync(PipeConnectMilliseconds, cancellationToken).ConfigureAwait(false);
-                await accepted.ConfigureAwait(false);
+                var attributes = new SecurityAttributes { Length = (uint)Marshal.SizeOf<SecurityAttributes>(), InheritHandle = 1 };
+                var raw = CreateFileW(@"\\.\pipe\" + name, GenericReadWrite, 0, ref attributes, OpenExisting, FileFlagOverlapped | SecuritySqosPresent, 0);
+                if (raw == -1)
+                {
+                    throw Fail("The child end of a pipe could not be opened.");
+                }
+
+                var client = new SafeFileHandle(raw, ownsHandle: true);
+                try
+                {
+                    await accepted.WaitAsync(TimeSpan.FromMilliseconds(PipeConnectMilliseconds), cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    client.Dispose();
+                    throw;
+                }
+
                 return (server, client);
             }
             catch
             {
-                await client.DisposeAsync().ConfigureAwait(false);
                 await server.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
@@ -518,7 +530,9 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
         private static char[] MinimalEnvironment()
         {
             var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-            return ("SystemRoot=" + windows + "\0windir=" + windows + "\0\0").ToCharArray();
+            // AppContainer process creation fails (error 203) unless LOCALAPPDATA is present; the system redirects it for the container.
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return ("SystemRoot=" + windows + "\0windir=" + windows + "\0LOCALAPPDATA=" + local + "\0\0").ToCharArray();
         }
 
         private static nint CreateJob(ContentSandboxLimits limits)

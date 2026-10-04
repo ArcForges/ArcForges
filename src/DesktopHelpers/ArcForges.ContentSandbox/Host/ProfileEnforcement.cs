@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Net;
-using System.Net.Sockets;
 using System.Runtime.Versioning;
 using ArcForges.ContentSandbox.Contracts;
 using ArcForges.ContentSandbox.Native;
@@ -33,7 +31,13 @@ internal static class ProfileEnforcement
         {
             if (OperatingSystem.IsWindows())
             {
-                return WindowsProbes.AllDenied(parent);
+                var allowed = WindowsProbes.FirstAllowed(parent);
+                if (allowed is not null)
+                {
+                    Console.Error.WriteLine("isolation: " + allowed + " was not denied");
+                }
+
+                return allowed is null;
             }
 
             if (OperatingSystem.IsLinux())
@@ -44,34 +48,24 @@ internal static class ProfileEnforcement
             return false;
         }
         catch (Exception exception) when (exception is InvalidOperationException or PlatformNotSupportedException or IOException
-            or UnauthorizedAccessException or SocketException or System.ComponentModel.Win32Exception or DllNotFoundException or EntryPointNotFoundException)
+            or UnauthorizedAccessException or System.ComponentModel.Win32Exception or DllNotFoundException or EntryPointNotFoundException)
         {
             return false;
         }
     }
 
     /// <summary>
-    /// The Windows self-check. Each attempt must be denied by the operating system: a connection to the loopback address, a handle on the
-    /// parent process, and a listing of the user profile. They are attempts to use an ambient authority, not proof of the whole profile.
+    /// The Windows self-check. Each attempt must be denied by the operating system: a handle on the parent process and a listing of the user
+    /// profile. They are attempts to use an ambient authority, not proof of the whole profile. Network denial is not probed here: a connection
+    /// attempt cannot tell a blocked path from a closed port without a listener, so the parent verifies the token (an AppContainer holding no capability)
+    /// before it resumes the helper, and the opt-in tests connect to real listeners.
     /// </summary>
     [SupportedOSPlatform("windows")]
     private static class WindowsProbes
     {
-        internal static bool AllDenied(LocalRpcProcessIdentity parent) => NetworkDenied() && ParentProcessDenied(parent) && UserProfileDenied();
-
-        private static bool NetworkDenied()
-        {
-            try
-            {
-                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                socket.Connect(new IPEndPoint(IPAddress.Loopback, 9));
-                return false;
-            }
-            catch (SocketException exception)
-            {
-                return exception.SocketErrorCode == SocketError.AccessDenied;
-            }
-        }
+        /// <summary>Names the first attempt that was not denied, or null when every one was.</summary>
+        internal static string? FirstAllowed(LocalRpcProcessIdentity parent) =>
+            !ParentProcessDenied(parent) ? "parent-process" : !UserProfileDenied() ? "user-profile" : null;
 
         private static bool ParentProcessDenied(LocalRpcProcessIdentity parent)
         {

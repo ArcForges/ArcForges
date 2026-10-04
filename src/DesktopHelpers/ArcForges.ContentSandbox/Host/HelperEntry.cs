@@ -59,6 +59,7 @@ internal static class HelperEntry
                 }
                 catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException or PlatformNotSupportedException)
                 {
+                    await Console.Error.WriteLineAsync("inventory: " + exception.GetType().Name + ": " + exception.Message).ConfigureAwait(false);
                     return ContentSandboxContract.ExitInventoryInvalid;
                 }
 
@@ -97,9 +98,9 @@ internal static class HelperEntry
         var opened = new List<IDisposable>();
         try
         {
-            var control = new NamedPipeClientStream(PipeDirection.InOut, true, true, new SafePipeHandle((nint)Require(frame, ContentSandboxHandleRole.Control), true));
+            var control = OpenPipe(frame, ContentSandboxHandleRole.Control);
             opened.Add(control);
-            var service = new NamedPipeClientStream(PipeDirection.InOut, true, true, new SafePipeHandle((nint)Require(frame, ContentSandboxHandleRole.Service), true));
+            var service = OpenPipe(frame, ContentSandboxHandleRole.Service);
             opened.Add(service);
             var input = WindowsMappedView.Map(Require(frame, ContentSandboxHandleRole.Input), checked((long)frame.InputLength), writable: false);
             opened.Add(input);
@@ -122,6 +123,22 @@ internal static class HelperEntry
             }
 
             throw;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    [SuppressMessage("Reliability", "CA2000", Justification = "The stream owns the handle and is owned by the returned resources.")]
+    private static NamedPipeClientStream OpenPipe(ContentSandboxLaunchFrame frame, ContentSandboxHandleRole role)
+    {
+        var handle = new SafePipeHandle((nint)Require(frame, role), true);
+        try
+        {
+            return new NamedPipeClientStream(PipeDirection.InOut, true, true, handle);
+        }
+        catch (ArgumentException exception)
+        {
+            handle.SetHandleAsInvalid();
+            throw new InvalidOperationException(role + " pipe: " + exception.Message, exception);
         }
     }
 

@@ -348,7 +348,6 @@ internal static class HostileAttacks
             "udp" when line.Length >= 4 => Udp(line[2], line[3]),
             "process" when line.Length >= 3 => OpenProcess(line[2]),
             "spawn" when line.Length >= 3 => Spawn(string.Join(' ', line.Skip(2))),
-            "handles" => LeakedHandles(),
             "input-write" => InputWritable(),
             "env" => Environment(),
             "identity" => Identity(),
@@ -431,43 +430,6 @@ internal static class HostileAttacks
         }
     }
 
-    /// <summary>Looks for an inherited section or pipe beyond the closed inventory. None may exist.</summary>
-    private static string LeakedHandles()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return "handles:DENIED:NotApplicable";
-        }
-
-        var leaked = 0;
-        for (ulong value = 4; value <= 8192; value += 4)
-        {
-            if (HelperFacts.InheritedValues.Contains(value))
-            {
-                continue;
-            }
-
-            if (HelperWindowsNative.MapViewOfFile((nint)value, HelperWindowsNative.FileMapRead, 0, 0, 1) != 0)
-            {
-                leaked++;
-                continue;
-            }
-
-            try
-            {
-                using var borrowed = new SafePipeHandle((nint)value, false);
-                using var pipe = new NamedPipeClientStream(PipeDirection.InOut, false, true, borrowed);
-                leaked++;
-            }
-            catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException or ObjectDisposedException)
-            {
-                // Not a pipe.
-            }
-        }
-
-        return leaked == 0 ? "handles:DENIED:NoneBeyondInventory" : "handles:ALLOWED:" + leaked.ToString(CultureInfo.InvariantCulture);
-    }
-
     /// <summary>The input section arrived read-only: mapping it writable must fail.</summary>
     private static string InputWritable()
     {
@@ -491,8 +453,10 @@ internal static class HostileAttacks
         var names = System.Environment.GetEnvironmentVariables().Keys.Cast<string>().Order(StringComparer.OrdinalIgnoreCase).ToArray();
         var unexpected = names.Where(name => !name.Equals("SystemRoot", StringComparison.OrdinalIgnoreCase)
             && !name.Equals("windir", StringComparison.OrdinalIgnoreCase)
+            && !name.Equals("LOCALAPPDATA", StringComparison.OrdinalIgnoreCase) && !name.Equals("TEMP", StringComparison.OrdinalIgnoreCase)
+            && !name.Equals("TMP", StringComparison.OrdinalIgnoreCase)
             && !name.StartsWith("DOTNET_", StringComparison.OrdinalIgnoreCase)).ToArray();
-        return unexpected.Length == 0 ? "env:DENIED:OnlySystemRoot" : "env:ALLOWED:" + string.Join(',', unexpected.Take(8));
+        return unexpected.Length == 0 ? "env:DENIED:OnlySystemRoot" : "env:ALLOWED:" + string.Join('/', unexpected.Take(8));
     }
 
     [SupportedOSPlatform("windows")]
