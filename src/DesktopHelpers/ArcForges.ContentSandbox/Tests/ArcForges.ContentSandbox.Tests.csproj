@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <!-- xUnit forbids ConfigureAwait(false) in tests, so CA2007 would force noise on every await; test doubles own short-lived disposables (CA2000). -->
+    <NoWarn>$(NoWarn);CA2007;CA2000</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.LocalRpc.Platform" />
+    <PackageReference Include="ArcForges.Contracts.LocalRpc.Sandbox" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="../ArcForges.ContentSandbox.csproj" />
+    <ProjectReference Include="../Fixture/ArcForges.ContentSandbox.HostileFixture.csproj" />
+    <ProjectReference Include="../../ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj" />
+    <ProjectReference Include="../../ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj" />
+  </ItemGroup>
+</Project>

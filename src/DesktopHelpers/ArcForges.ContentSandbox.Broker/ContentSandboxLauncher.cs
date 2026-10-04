@@ -36,7 +36,9 @@ public sealed class ContentSandboxLauncher : IAsyncDisposable
         _options = options;
         _status = profileOverride is { } forced
             ? new ContentSandboxProfileStatus(forced, launcherOverride is not null, launcherOverride is null ? "The profile was forced unavailable." : string.Empty)
-            : ProbeProfile();
+            : launcherOverride is not null
+                ? new ContentSandboxProfileStatus(ContentSandboxProfile.WindowsAppContainerJob, true, string.Empty)
+                : ProbeProfile();
         _launcher = launcherOverride ?? (profileOverride is null ? CreateLauncher(options) : null);
         _authority = _launcher is null ? null : LocalRpcLaunchAuthority.Create(options.RuntimeRoot);
     }

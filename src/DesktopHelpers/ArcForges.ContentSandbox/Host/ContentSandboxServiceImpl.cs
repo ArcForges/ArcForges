@@ -20,7 +20,7 @@ namespace ArcForges.ContentSandbox.Host;
 /// ends the invocation: nothing it produced is kept, and nothing it throws is sent.
 /// </summary>
 [SuppressMessage("Maintainability", "CA1506", Justification = "The service is the one owner of the helper session and implements the fifteen generated methods.")]
-internal sealed class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxServiceBase, IDisposable
+internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxServiceBase, IDisposable
 {
     private const int MaxOpenObjects = 8;
     private const int MaxPdfTextBytes = 60 * 1024;
@@ -741,7 +741,7 @@ internal sealed class ContentSandboxServiceImpl : ContentSandboxService.ContentS
     }
 
     /// <summary>Ends the session and releases every parser. Idempotent.</summary>
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {

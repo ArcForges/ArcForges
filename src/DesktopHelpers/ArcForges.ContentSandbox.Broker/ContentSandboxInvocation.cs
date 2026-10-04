@@ -42,6 +42,8 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
     private readonly Guid _leaseId;
     private readonly ulong _generation = 1;
     private readonly Task _supervision;
+    private readonly TaskCompletionSource _renewalLost = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _stopSupervision = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private LocalRpcBrokerSession? _session;
     private Guid _sessionId;
     private int _terminated;
@@ -76,6 +78,15 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
 
     /// <summary>The last output the helper wrote to its standard output and error. Diagnostics only: never a parser result and never trusted.</summary>
     public string HelperDiagnostics => _helper.DiagnosticTail;
+
+    /// <summary>The raw generated client, for the tests that must speak to the helper outside the typed operations.</summary>
+    internal ContentSandboxService.ContentSandboxServiceClient RawClient => _client;
+
+    /// <summary>The identifier of the one session of this invocation.</summary>
+    internal Guid SessionId => _sessionId;
+
+    /// <summary>The brokered session of this invocation.</summary>
+    internal LocalRpcBrokerSession? BrokerSession => _session;
 
     /// <summary>True once the helper process has been ended or has ended: every later call fails.</summary>
     public bool IsEnded => Volatile.Read(ref _terminated) != 0 || _helper.Exited.IsCompleted;
@@ -613,6 +624,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
         }
 
         Terminate();
+        _ = _stopSupervision.TrySetResult();
         await _lifetime.CancelAsync().ConfigureAwait(false);
         try
         {
@@ -951,6 +963,11 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
         {
             return await operation(linked.Token).ConfigureAwait(false);
         }
+        catch (Exception exception) when (cancellationToken.IsCancellationRequested && exception is RpcException or OperationCanceledException)
+        {
+            _ = await CancelAsync().ConfigureAwait(false);
+            throw new OperationCanceledException(cancellationToken);
+        }
         catch (RpcException exception)
         {
             return FailedTransport<T>(exception);
@@ -1029,8 +1046,13 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
         var exited = _helper.Exited;
         var registrationEnded = Task.Delay(Timeout.Infinite, _registration.Ended);
         var renewal = RenewAsync();
-        _ = await Task.WhenAny(exited, registrationEnded, renewal).ConfigureAwait(false);
-        Terminate();
+        var first = await Task.WhenAny(exited, registrationEnded, _renewalLost.Task, _stopSupervision.Task).ConfigureAwait(false);
+        if (first != _stopSupervision.Task)
+        {
+            Terminate();
+        }
+
+        _ = renewal;
     }
 
     private async Task RenewAsync()
@@ -1047,6 +1069,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
 
                 if (session.Renew() != LocalRpcBrokerRefusal.None)
                 {
+                    _ = _renewalLost.TrySetResult();
                     return;
                 }
 
@@ -1055,6 +1078,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
                     new CallOptions(deadline: DateTime.UtcNow + CancelGrace, cancellationToken: _lifetime.Token)).ConfigureAwait(false);
                 if (response.OutcomeCase != ContentSandboxServiceRenewSessionResponse.OutcomeOneofCase.Value)
                 {
+                    _ = _renewalLost.TrySetResult();
                     return;
                 }
             }
@@ -1066,6 +1090,7 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
         catch (RpcException)
         {
             // The helper no longer answers; supervision ends it.
+            _ = _renewalLost.TrySetResult();
         }
     }
 

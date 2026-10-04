@@ -43,6 +43,10 @@
   </Folder>
   <Folder Name="/src/DesktopHelpers/">
     <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj" />
+    <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj" />
+    <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj" />
+    <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj" />
+    <Project Path="src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/NativeAbiTests/">
     <Project Path="tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj" />

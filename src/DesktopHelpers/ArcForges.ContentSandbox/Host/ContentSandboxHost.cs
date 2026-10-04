@@ -19,6 +19,14 @@ namespace ArcForges.ContentSandbox.Host;
 /// </summary>
 internal static class ContentSandboxHost
 {
+    /// <summary>A seam for the tests only: builds the service the host serves. Production always builds the real one.</summary>
+    internal delegate ContentSandboxServiceImpl ServiceFactory(
+        ContentSandboxLaunchFrame frame,
+        HelperResources resources,
+        IContentParserProfile? profile,
+        TimeProvider clock,
+        Action<int> requestExit);
+
     private static readonly TimeSpan ExpiryPoll = TimeSpan.FromSeconds(1);
 
     /// <summary>Serves until the process should end and returns its exit code. Everything it was given is released before it returns.</summary>
@@ -31,7 +39,8 @@ internal static class ContentSandboxHost
         HelperResources resources,
         ParserProfiles parsers,
         TimeProvider clock,
-        CancellationToken stop)
+        CancellationToken stop,
+        ServiceFactory? serviceFactory = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(bootstrap);
@@ -40,7 +49,9 @@ internal static class ContentSandboxHost
         ArgumentNullException.ThrowIfNull(clock);
         var exit = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var profile = parsers.Find(frame.ParserProfile);
-        using var service = new ContentSandboxServiceImpl(frame, resources, profile, clock, code => exit.TrySetResult(code));
+        using var service = serviceFactory is null
+            ? new ContentSandboxServiceImpl(frame, resources, profile, clock, code => exit.TrySetResult(code))
+            : serviceFactory(frame, resources, profile, clock, code => exit.TrySetResult(code));
         LocalRpcServer? server = null;
         LocalRpcClientChannel? control = null;
         LocalRpcLeaseKeeper? keeper = null;
