@@ -130,6 +130,7 @@ public sealed class CapabilityEnforcementGateTests
         var owner = await RunAsync(Owner(w), w, invocation, context);
         Assert.Equal(OutcomeKind.Failure, owner.Kind);
         Assert.Equal(0, w.Log.Count("owner-op"));
+        Assert.Equal(DecisionStep.CapabilityPermission, Assert.Single(w.Decisions.Audit.Records).FailedStep);
     }
 
     [Fact]
@@ -219,12 +220,49 @@ public sealed class CapabilityEnforcementGateTests
         var same = new EnforcementWorld(identity: baseline.Identity);
         var nextEpoch = new EnforcementWorld(identity: new InstanceIdentity(baseline.Identity.Installation, baseline.Identity.InstanceId, 2));
         var otherInstance = new EnforcementWorld(identity: new InstanceIdentity(baseline.Identity.Installation, new InstanceId(Guid.NewGuid()), 1));
+        var installation = baseline.Identity.Installation;
+        var otherInstallation = new EnforcementWorld(identity: new InstanceIdentity(
+            new InstallationIdentity(installation.App, installation.DeviceId, new InstallationId(Guid.NewGuid())),
+            baseline.Identity.InstanceId,
+            1));
+        var otherDevice = new EnforcementWorld(identity: new InstanceIdentity(
+            new InstallationIdentity(installation.App, new DeviceId(Guid.NewGuid()), installation.InstallationId),
+            baseline.Identity.InstanceId,
+            1));
 
         var digest = await DigestAsync(baseline, command);
 
         Assert.Equal(digest, await DigestAsync(same, command));
         Assert.NotEqual(digest, await DigestAsync(nextEpoch, command));
         Assert.NotEqual(digest, await DigestAsync(otherInstance, command));
+        Assert.NotEqual(digest, await DigestAsync(otherInstallation, command));
+        Assert.NotEqual(digest, await DigestAsync(otherDevice, command));
+    }
+
+    [Fact]
+    public async Task TheEffectDigestDoesNotChangeWithTheLeaseOrTheApprovalThatAreClaimedAlongsideIt()
+    {
+        var w = new EnforcementWorld();
+        var command = Guid.NewGuid();
+        var digests = new List<string>();
+        w.Decisions.Permissions.Behavior = (request, _) =>
+        {
+            digests.Add(request.EffectSha256);
+            return ValueTask.FromResult<PermissionGrantRecord?>(w.Decisions.Grant(request));
+        };
+
+        foreach (var invocation in new[]
+        {
+            w.Invocation(command: command),
+            w.Invocation(command: command, lease: CapabilityLeaseId.New()),
+            w.Invocation(command: command, approval: Guid.NewGuid()),
+        })
+        {
+            _ = await AuthorizeAsync(w, invocation, Context(w));
+        }
+
+        Assert.Equal(3, digests.Count);
+        Assert.Single(digests.Distinct());
     }
 
     private static async Task<string> DigestAsync(EnforcementWorld w, Guid command)

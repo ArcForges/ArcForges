@@ -631,6 +631,28 @@ public sealed class CapabilityEnforcementEndToEndTests
     }
 
     [Fact]
+    public async Task TheResourceAndRevisionTheHostNamesAreTheOnesTheOwnerAndTheAuditSee()
+    {
+        var w = new EnforcementWorld();
+        var current = "revision:41";
+        w.Evidence.Behavior = (_, _, _) => ValueTask.FromResult<CapabilityEvidence?>(new CapabilityEvidence(
+            w.DirectChain(), w.Leases.Scope, new ResourceReference("resource/other", "revision:40"), DecisionOrigin.Local, w.Decisions.Transport));
+        w.Decisions.Owner.Behavior = (validation, _) => ValueTask.FromResult(
+            string.Equals(validation.Request.Resource.Revision, current, StringComparison.Ordinal) ? OwnerVerdict.Valid : OwnerVerdict.RevisionChanged);
+
+        var stale = await w.InvokeAsync(w.Invocation(), cancellationToken: Token);
+        Assert.Equal("conflict.revision_mismatch", stale.Failure!.Code);
+        Assert.Equal("revision:40", w.Decisions.Audit.Records.Single().Resource.Revision);
+
+        current = "revision:40";
+        var fresh = await w.InvokeAsync(w.Invocation(), cancellationToken: Token);
+        Assert.Equal(OutcomeKind.Success, fresh.Kind);
+        Assert.Equal("resource/other", w.LastTicket!.Resource.Id);
+        Assert.Equal("resource/other", w.Decisions.Recorder.Records.Single().Resource.Id);
+        Assert.Equal("revision:40", w.Decisions.Recorder.Records.Single().Resource.Revision);
+    }
+
+    [Fact]
     public async Task AStepUpTheSourceRequiresIsCarriedAsHostEvidenceAndSpentOnlyByTheMatchingProof()
     {
         var w = new EnforcementWorld();
