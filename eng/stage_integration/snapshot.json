@@ -1,6 +1,6 @@
 {
   "collectedOn": "2026-10-05",
-  "policySha256": "cdb4e12a76f004e968728b66f9bd5dda528d749f668d15cd341c3886e388c4cb",
+  "policySha256": "5d833be97e5e550edb416c6cb34bf1b1e89ff545515517b8cc2e020d00cf891e",
   "repositories": {
     "AI": {
       "commit": "5421c3789240093b2fce36322c2eb7773325ec7b",
@@ -116,7 +116,7 @@
       ]
     },
     "ArcScope": {
-      "commit": "80dd7f24009a5259cf432551b26d70b634b7b746",
+      "commit": "b0ff5cd18fb0ffbbaf1bd8b7b67cb7304e6ba794",
       "facts": {
         "boundary": "AGPL",
         "consumes": [
@@ -141,7 +141,7 @@
               "tests/ArchitectureTests"
             ],
             "relation": "Direct",
-            "version": "1.0.0-ci.94.1"
+            "version": "1.0.0-ci.100.1"
           },
           {
             "ecosystem": "nuget",
@@ -561,7 +561,7 @@
         },
         {
           "path": "eng/ArcForges.Repository/packages.lock.json",
-          "sha256": "aed398a962febbae6526990591b5ba553d417782e67ec199818ffa104c72dd73"
+          "sha256": "511ee4ebd67acdba4674b8ceaf97aedb738c35eec2bea9a36e0df06bfd77049b"
         },
         {
           "path": "eng/policy/exceptions.json",
@@ -573,19 +573,19 @@
         },
         {
           "path": "src/ArcForges.ArcScope.Core/packages.lock.json",
-          "sha256": "d6201e07d10130a337b51d44b0812f4e8c05b03f4d7daf0809af9ec105471ca5"
+          "sha256": "b33d3913c82204be67b0b8b21c3c9d224324d5c0544900b184e6096a6e326e07"
         },
         {
           "path": "src/ArcForges.ArcScope.Domain/packages.lock.json",
-          "sha256": "7019b7a06d181c6252a1db00bf8d3ffd9de7ea066a5c0151917de92e2470fe33"
+          "sha256": "508d6e8c6a935331c98865841965a0f6a67786b1829af0f84d468582c99580b0"
         },
         {
           "path": "src/ArcForges.ArcScope/packages.lock.json",
-          "sha256": "89a0e72576d903704cfc3a1755338db85e1114642ceb4e5df3821c1b941e3d57"
+          "sha256": "ff3e21f54873c54a5fd8945546a334f5d36b132c944db6954bc8a5506f9b1878"
         },
         {
           "path": "tests/ArcForges.ArcScope.Tests/packages.lock.json",
-          "sha256": "017e5c8a3b4540dec7b04a79ae7c03e3a52340f99118d23ef8c722b42e4f7c7d"
+          "sha256": "b5e43c543c298c2d2d53b74cc469ad4130b032f06cb6cbea77920f03b552c593"
         },
         {
           "path": "tests/ArchitectureTests/ArcForges.ArcScope.ArchitectureTests.csproj",
@@ -593,12 +593,12 @@
         },
         {
           "path": "tests/ArchitectureTests/packages.lock.json",
-          "sha256": "7019b7a06d181c6252a1db00bf8d3ffd9de7ea066a5c0151917de92e2470fe33"
+          "sha256": "508d6e8c6a935331c98865841965a0f6a67786b1829af0f84d468582c99580b0"
         }
       ]
     },
     "Cloud": {
-      "commit": "ea08736d571cf0f4b44e022117cb44652a392e66",
+      "commit": "b24b0cf2cd83b163514fd5f7fd31a559e73fa18d",
       "facts": {
         "boundary": "AGPL",
         "consumes": [
@@ -652,6 +652,27 @@
             "id": "ArcForges.Build.Policy",
             "locks": [
               "src/ArcForges.Cloud",
+              "src/ArcForges.Cloud.Modules.Abstractions",
+              "src/ArcForges.Cloud.Modules.Agent",
+              "src/ArcForges.Cloud.Modules.Audit",
+              "src/ArcForges.Cloud.Modules.Chat",
+              "src/ArcForges.Cloud.Modules.Commerce",
+              "src/ArcForges.Cloud.Modules.Configuration",
+              "src/ArcForges.Cloud.Modules.Devices",
+              "src/ArcForges.Cloud.Modules.Entitlement",
+              "src/ArcForges.Cloud.Modules.Identity",
+              "src/ArcForges.Cloud.Modules.Notification",
+              "src/ArcForges.Cloud.Modules.PackageCatalog",
+              "src/ArcForges.Cloud.Modules.Policy",
+              "src/ArcForges.Cloud.Modules.Resource",
+              "src/ArcForges.Cloud.Modules.Scope",
+              "src/ArcForges.Cloud.Modules.Search",
+              "src/ArcForges.Cloud.Modules.Support",
+              "src/ArcForges.Cloud.Modules.Sync",
+              "src/ArcForges.Cloud.Modules.Task",
+              "src/ArcForges.Cloud.Modules.TrustSafety",
+              "src/ArcForges.Cloud.Modules.Workspace",
+              "src/ArcForges.Cloud.Storage.D1",
               "tests/ArcForges.Cloud.Consumer",
               "tests/ArcForges.Cloud.Tests",
               "tests/ArchitectureTests"
@@ -663,7 +684,8 @@
             "ecosystem": "nuget",
             "id": "ArcForges.Contracts.CloudInternal",
             "locks": [
-              "src/ArcForges.Cloud"
+              "src/ArcForges.Cloud",
+              "src/ArcForges.Cloud.Storage.D1"
             ],
             "relation": "Direct",
             "version": "1.0.0-ci.287.1"
@@ -682,6 +704,7 @@
             "id": "ArcForges.Contracts.Events",
             "locks": [
               "src/ArcForges.Cloud",
+              "src/ArcForges.Cloud.Storage.D1",
               "tests/ArcForges.Cloud.Tests"
             ],
             "relation": "Transitive",
@@ -692,6 +715,7 @@
             "id": "ArcForges.Contracts.Foundation",
             "locks": [
               "src/ArcForges.Cloud",
+              "src/ArcForges.Cloud.Storage.D1",
               "tests/ArcForges.Cloud.Consumer",
               "tests/ArcForges.Cloud.Tests"
             ],
@@ -712,6 +736,7 @@
             "ecosystem": "nuget",
             "id": "ArcForges.Contracts.PublicApi",
             "locks": [
+              "src/ArcForges.Cloud.Storage.D1",
               "tests/ArcForges.Cloud.Tests"
             ],
             "relation": "Transitive",
@@ -853,6 +878,27 @@
           "arcforges.cloud",
           "arcforges.cloud.architecturetests",
           "arcforges.cloud.consumer",
+          "arcforges.cloud.modules.abstractions",
+          "arcforges.cloud.modules.agent",
+          "arcforges.cloud.modules.audit",
+          "arcforges.cloud.modules.chat",
+          "arcforges.cloud.modules.commerce",
+          "arcforges.cloud.modules.configuration",
+          "arcforges.cloud.modules.devices",
+          "arcforges.cloud.modules.entitlement",
+          "arcforges.cloud.modules.identity",
+          "arcforges.cloud.modules.notification",
+          "arcforges.cloud.modules.packagecatalog",
+          "arcforges.cloud.modules.policy",
+          "arcforges.cloud.modules.resource",
+          "arcforges.cloud.modules.scope",
+          "arcforges.cloud.modules.search",
+          "arcforges.cloud.modules.support",
+          "arcforges.cloud.modules.sync",
+          "arcforges.cloud.modules.task",
+          "arcforges.cloud.modules.trustsafety",
+          "arcforges.cloud.modules.workspace",
+          "arcforges.cloud.storage.d1",
           "arcforges.cloud.tests"
         ],
         "markers": [
@@ -865,8 +911,252 @@
         "produces": [],
         "projectRefs": [
           {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.agent"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.audit"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.chat"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.commerce"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.configuration"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.devices"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.entitlement"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.identity"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.notification"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.packagecatalog"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.policy"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.resource"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.scope"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.search"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.support"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.sync"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.task"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.trustsafety"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.modules.workspace"
+          },
+          {
+            "lock": "src/ArcForges.Cloud",
+            "project": "arcforges.cloud.storage.d1"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Agent",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Audit",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Chat",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Commerce",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Configuration",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Devices",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Entitlement",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Identity",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Notification",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.PackageCatalog",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Policy",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Resource",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Scope",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Search",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Support",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Sync",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Task",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.TrustSafety",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "src/ArcForges.Cloud.Modules.Workspace",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
             "lock": "tests/ArcForges.Cloud.Tests",
             "project": "arcforges.cloud"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.abstractions"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.agent"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.audit"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.chat"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.commerce"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.configuration"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.devices"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.entitlement"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.identity"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.notification"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.packagecatalog"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.policy"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.resource"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.scope"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.search"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.support"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.sync"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.task"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.trustsafety"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.modules.workspace"
+          },
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud.storage.d1"
           }
         ],
         "sourceDeps": [],
@@ -898,7 +1188,7 @@
         },
         {
           "path": "eng/policy/licence-boundary.json",
-          "sha256": "852ed240d4d24fc98d6e7d93dc7da6357f4eac0de7176841b101cacbb9f7cc08"
+          "sha256": "5417672b4598b1c83a2f5158644dd994258a29f5570a165c9ad9ec8663f4019e"
         },
         {
           "path": "package-lock.json",
@@ -906,11 +1196,95 @@
         },
         {
           "path": "package.json",
-          "sha256": "3d63378d9c510703ec2ab2a511620a9684c50bcec2d15462b098fc2512627e0c"
+          "sha256": "7d8f1e1174d1c984598c723172db6653ce9e9ce7edc374f9f2fa190bd66a992d"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Abstractions/packages.lock.json",
+          "sha256": "1b2719a5bd0a484d28194ab3ddb3af6c16874828219f15d71326bde1abb7eb56"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Agent/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Audit/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Chat/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Commerce/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Configuration/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Devices/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Entitlement/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Identity/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Notification/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.PackageCatalog/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Policy/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Resource/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Scope/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Search/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Support/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Sync/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Task/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.TrustSafety/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Modules.Workspace/packages.lock.json",
+          "sha256": "6bdcb8c29ec5c1772e6b659273bda681fe4d66370078ca00e7742293fa979841"
+        },
+        {
+          "path": "src/ArcForges.Cloud.Storage.D1/packages.lock.json",
+          "sha256": "5ef3c196005caf9cddb702a0061fafd310d149f1326708b958d1381934f69313"
         },
         {
           "path": "src/ArcForges.Cloud/packages.lock.json",
-          "sha256": "5afb9d9c634d79cfcab876a839b16782f8d921532ce14d5b14c27891a4c2122a"
+          "sha256": "e987c7c5f052759bb916bf9616d3a724430172c80ba3cc1a406c04231e6ee149"
         },
         {
           "path": "tests/ArcForges.Cloud.Consumer/packages.lock.json",
@@ -918,7 +1292,7 @@
         },
         {
           "path": "tests/ArcForges.Cloud.Tests/packages.lock.json",
-          "sha256": "b19532c5591bcba3eb2d333c6100e898a1169607e30792e8009b00811375d3b9"
+          "sha256": "106b812a0f8aed1311795425fa7266b1cafcc26d0c3b753d9e81c8458fcc750a"
         },
         {
           "path": "tests/ArchitectureTests/ArcForges.Cloud.ArchitectureTests.csproj",
@@ -1681,7 +2055,7 @@
       ]
     },
     "DesktopPlatform": {
-      "commit": "5405d80a7e49d7d5b385db6859ab9ab3c5d6dd18",
+      "commit": "0e5244a1a9303ea12b6fefddb9c760f6ab424e3a",
       "facts": {
         "boundary": "AGPL",
         "consumes": [
@@ -2082,6 +2456,18 @@
             "jobContinueOnError": "",
             "jobIf": "",
             "step": "Verify exports against an isolated immutable Design checkout",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/pr-gate.yml"
+          },
+          {
+            "found": true,
+            "id": "stage-integration",
+            "job": "stage-integration",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Verify the committed published-metadata snapshot of the seven repositories",
             "stepContinueOnError": "",
             "stepIf": "",
             "suppressed": false,
@@ -2735,7 +3121,7 @@
         },
         {
           "path": ".github/workflows/pr-gate.yml",
-          "sha256": "91100a2d4741bfef3186b015a458d17ac7f52d6ac089bc0522fa67b20603c2ff"
+          "sha256": "ec8ebf336d06238f343fed2fcb1122f7df20d43ac3bd46c37cab76fa15ece16f"
         },
         {
           "path": ".github/workflows/publish-nuget.yml",
