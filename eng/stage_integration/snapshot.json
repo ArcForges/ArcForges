@@ -1,0 +1,3282 @@
+{
+  "collectedOn": "2026-10-05",
+  "policySha256": "cdb4e12a76f004e968728b66f9bd5dda528d749f668d15cd341c3886e388c4cb",
+  "repositories": {
+    "AI": {
+      "commit": "5421c3789240093b2fce36322c2eb7773325ec7b",
+      "facts": {
+        "boundary": "AGPL",
+        "consumes": [
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/proto",
+            "locks": [
+              "."
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          }
+        ],
+        "edges": [
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/proto",
+            "to": "@bufbuild/protobuf"
+          }
+        ],
+        "exceptions": [],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "validate",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/ci.yml"
+          }
+        ],
+        "harness": {
+          "classes": [],
+          "workers": [
+            "arcforges-ai-hello"
+          ],
+          "workflows": [
+            "HelloAgentWorkflow"
+          ]
+        },
+        "localPackageNames": [
+          "@arcforges/ai"
+        ],
+        "localProjects": [],
+        "markers": [
+          {
+            "found": true,
+            "id": "policy-wired-into-check",
+            "path": "eng/project.mjs"
+          },
+          {
+            "found": true,
+            "id": "check-script",
+            "path": "package.json"
+          }
+        ],
+        "produces": [],
+        "projectRefs": [],
+        "sourceDeps": [],
+        "spdx": "AGPL-3.0-only",
+        "workflows": [
+          {
+            "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/ci.yml",
+            "triggers": [
+              "pull_request",
+              "push",
+              "schedule",
+              "workflow_dispatch"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "9fb852855e87f9923249d51fb654c804b910f173c12bd58fd96a44014b17a9c7"
+        },
+        {
+          "path": "eng/policy/exceptions.json",
+          "sha256": "a6e513a6271c17e9d1b81c646b2c3e612253ccc300b5029c40707df66a89af69"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "9cc360bb210d5d32b2814f79926d3edd641f7c6a008c5177a8bc4a1f139c8035"
+        },
+        {
+          "path": "eng/project.mjs",
+          "sha256": "ec16b06db3d9df6c7224702feeeb742f06526932912c1900d8bd9a2ac959d24f"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "fbb3559b62e1ae6d218257d66d93ba0bd48e64a9d64053958dc3e3e34ebb2de0"
+        },
+        {
+          "path": "package.json",
+          "sha256": "b37581d64d1672e0270c893e0a40f1e6a81fa368cd73728e9ce90b095adb9a89"
+        },
+        {
+          "path": "wrangler.json",
+          "sha256": "9778f643f32d148fe064986cec486c5ba6f5a107cb2b2adc9c85951cf8c08c40"
+        }
+      ]
+    },
+    "ArcScope": {
+      "commit": "80dd7f24009a5259cf432551b26d70b634b7b746",
+      "facts": {
+        "boundary": "AGPL",
+        "consumes": [
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Application.Abstractions",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Build.Policy",
+            "locks": [
+              "eng/ArcForges.Repository",
+              "src/ArcForges.ArcScope",
+              "src/ArcForges.ArcScope.Core",
+              "src/ArcForges.ArcScope.Domain",
+              "tests/ArcForges.ArcScope.Tests",
+              "tests/ArchitectureTests"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.94.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.113.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Scope",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.113.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "src/ArcForges.ArcScope",
+              "src/ArcForges.ArcScope.Core"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.36.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "eng/ArcForges.Repository",
+              "tests/ArcForges.ArcScope.Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.36.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Foundation",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Native.Abstractions",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Native.Image",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Native.Image.Runtime.win-x64",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Angle.Windows.Natives",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "2.1.27548.20260419"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.BuildServices",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "11.3.2"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Desktop",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.FreeDesktop",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.FreeDesktop.AtSpi",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.HarfBuzz",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Native",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Remote.Protocol",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Skia",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Themes.Fluent",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Direct",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Win32",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.X11",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "HarfBuzzSharp",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "8.3.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "HarfBuzzSharp.NativeAssets.Linux",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "8.3.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "HarfBuzzSharp.NativeAssets.WebAssembly",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "8.3.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "HarfBuzzSharp.NativeAssets.Win32",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "8.3.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "HarfBuzzSharp.NativeAssets.macOS",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "8.3.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "SkiaSharp",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "3.119.4"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "SkiaSharp.NativeAssets.Linux",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "3.119.4"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "SkiaSharp.NativeAssets.WebAssembly",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "3.119.4"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "SkiaSharp.NativeAssets.Win32",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "3.119.4"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "SkiaSharp.NativeAssets.macOS",
+            "locks": [
+              "src/ArcForges.ArcScope"
+            ],
+            "relation": "Transitive",
+            "version": "3.119.4"
+          }
+        ],
+        "edges": [
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Application.Abstractions",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Application.Abstractions",
+            "to": "ArcForges.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Foundation",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Scope",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Scope",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Foundation",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Native.Image",
+            "to": "ArcForges.Native.Abstractions"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Native.Image.Runtime.win-x64",
+            "to": "ArcForges.Native.Image"
+          }
+        ],
+        "exceptions": [],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "quality",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Run the ArcScope architecture policy over the real project graph",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/ci.yml"
+          }
+        ],
+        "harness": {
+          "classes": [],
+          "workers": [],
+          "workflows": []
+        },
+        "localPackageNames": [],
+        "localProjects": [
+          "arcforges.arcscope",
+          "arcforges.arcscope.architecturetests",
+          "arcforges.arcscope.core",
+          "arcforges.arcscope.domain",
+          "arcforges.arcscope.tests",
+          "arcforges.repository"
+        ],
+        "markers": [
+          {
+            "found": true,
+            "id": "host-project",
+            "path": "tests/ArchitectureTests/ArcForges.ArcScope.ArchitectureTests.csproj"
+          }
+        ],
+        "produces": [],
+        "projectRefs": [
+          {
+            "lock": "eng/ArcForges.Repository",
+            "project": "arcforges.arcscope.core"
+          },
+          {
+            "lock": "src/ArcForges.ArcScope",
+            "project": "arcforges.arcscope.core"
+          },
+          {
+            "lock": "tests/ArcForges.ArcScope.Tests",
+            "project": "arcforges.arcscope.core"
+          },
+          {
+            "lock": "tests/ArcForges.ArcScope.Tests",
+            "project": "arcforges.arcscope.domain"
+          },
+          {
+            "lock": "tests/ArcForges.ArcScope.Tests",
+            "project": "arcforges.repository"
+          }
+        ],
+        "sourceDeps": [],
+        "spdx": "AGPL-3.0-only",
+        "workflows": [
+          {
+            "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/ci.yml",
+            "triggers": [
+              "pull_request",
+              "push",
+              "schedule",
+              "workflow_dispatch"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "169f0e616f21d258d851b6c7100529e31d6b63a51b05cf032db0183227f8cbe7"
+        },
+        {
+          "path": "eng/ArcForges.Repository/packages.lock.json",
+          "sha256": "aed398a962febbae6526990591b5ba553d417782e67ec199818ffa104c72dd73"
+        },
+        {
+          "path": "eng/policy/exceptions.json",
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "47dc480f1bd4fa2b21a600ce700fb19c1c2ab39862edf1620f45795b804c3b37"
+        },
+        {
+          "path": "src/ArcForges.ArcScope.Core/packages.lock.json",
+          "sha256": "d6201e07d10130a337b51d44b0812f4e8c05b03f4d7daf0809af9ec105471ca5"
+        },
+        {
+          "path": "src/ArcForges.ArcScope.Domain/packages.lock.json",
+          "sha256": "7019b7a06d181c6252a1db00bf8d3ffd9de7ea066a5c0151917de92e2470fe33"
+        },
+        {
+          "path": "src/ArcForges.ArcScope/packages.lock.json",
+          "sha256": "89a0e72576d903704cfc3a1755338db85e1114642ceb4e5df3821c1b941e3d57"
+        },
+        {
+          "path": "tests/ArcForges.ArcScope.Tests/packages.lock.json",
+          "sha256": "017e5c8a3b4540dec7b04a79ae7c03e3a52340f99118d23ef8c722b42e4f7c7d"
+        },
+        {
+          "path": "tests/ArchitectureTests/ArcForges.ArcScope.ArchitectureTests.csproj",
+          "sha256": "ea4fb7dfccf14424febf4dc30129cfc23bd215b579934e16356d749826c0e7b2"
+        },
+        {
+          "path": "tests/ArchitectureTests/packages.lock.json",
+          "sha256": "7019b7a06d181c6252a1db00bf8d3ffd9de7ea066a5c0151917de92e2470fe33"
+        }
+      ]
+    },
+    "Cloud": {
+      "commit": "ea08736d571cf0f4b44e022117cb44652a392e66",
+      "facts": {
+        "boundary": "AGPL",
+        "consumes": [
+          {
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contracts-connect-client",
+            "locks": [
+              "tests/kotlin-consumer"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.42.1"
+          },
+          {
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contracts-proto",
+            "locks": [
+              "tests/kotlin-consumer"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.42.1"
+          },
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/ai-internal",
+            "locks": [
+              "."
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/api-client",
+            "locks": [
+              "."
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/proto",
+            "locks": [
+              "."
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Build.Policy",
+            "locks": [
+              "src/ArcForges.Cloud",
+              "tests/ArcForges.Cloud.Consumer",
+              "tests/ArcForges.Cloud.Tests",
+              "tests/ArchitectureTests"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.94.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.CloudInternal",
+            "locks": [
+              "src/ArcForges.Cloud"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.CloudInternal",
+            "locks": [
+              "tests/ArcForges.Cloud.Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Events",
+            "locks": [
+              "src/ArcForges.Cloud",
+              "tests/ArcForges.Cloud.Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "src/ArcForges.Cloud",
+              "tests/ArcForges.Cloud.Consumer",
+              "tests/ArcForges.Cloud.Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "src/ArcForges.Cloud",
+              "tests/ArcForges.Cloud.Consumer"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "tests/ArcForges.Cloud.Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.287.1"
+          }
+        ],
+        "edges": [
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@arcforges/proto"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@bufbuild/protobuf"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@connectrpc/connect"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@connectrpc/connect-web"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/proto",
+            "to": "@bufbuild/protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.CloudInternal",
+            "to": "ArcForges.Contracts.Events"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.CloudInternal",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.CloudInternal",
+            "to": "ArcForges.Contracts.PublicApi"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.CloudInternal",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.CloudInternal",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "ArcForges.Contracts.PublicApi"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Foundation",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Grpc.Core.Api"
+          }
+        ],
+        "exceptions": [],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "quality",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Architecture policy gate (hosted)",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/ci.yml"
+          },
+          {
+            "found": true,
+            "id": "forbidden-terms",
+            "job": "quality",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Forbidden-term scan",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/ci.yml"
+          }
+        ],
+        "harness": {
+          "classes": [
+            "CloudContainer"
+          ],
+          "workers": [
+            "arcforges-cloud"
+          ],
+          "workflows": []
+        },
+        "localPackageNames": [
+          "@arcforges/cloud-workspace"
+        ],
+        "localProjects": [
+          "arcforges.cloud",
+          "arcforges.cloud.architecturetests",
+          "arcforges.cloud.consumer",
+          "arcforges.cloud.tests"
+        ],
+        "markers": [
+          {
+            "found": true,
+            "id": "host-project",
+            "path": "tests/ArchitectureTests/ArcForges.Cloud.ArchitectureTests.csproj"
+          }
+        ],
+        "produces": [],
+        "projectRefs": [
+          {
+            "lock": "tests/ArcForges.Cloud.Tests",
+            "project": "arcforges.cloud"
+          }
+        ],
+        "sourceDeps": [],
+        "spdx": "AGPL-3.0-only",
+        "workflows": [
+          {
+            "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/ci.yml",
+            "triggers": [
+              "pull_request",
+              "push",
+              "schedule",
+              "workflow_dispatch"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "e983f5b9471355e057e8a7d7762aa7f0d3e74d176d812cf34d2d4d35cd44bb5e"
+        },
+        {
+          "path": "eng/policy/exceptions.json",
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "852ed240d4d24fc98d6e7d93dc7da6357f4eac0de7176841b101cacbb9f7cc08"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "b0581c303a7324b5038331dd7ba54cebf1fcd9bbdf1ab30bb042ae1173696f4e"
+        },
+        {
+          "path": "package.json",
+          "sha256": "3d63378d9c510703ec2ab2a511620a9684c50bcec2d15462b098fc2512627e0c"
+        },
+        {
+          "path": "src/ArcForges.Cloud/packages.lock.json",
+          "sha256": "5afb9d9c634d79cfcab876a839b16782f8d921532ce14d5b14c27891a4c2122a"
+        },
+        {
+          "path": "tests/ArcForges.Cloud.Consumer/packages.lock.json",
+          "sha256": "4c1c255b6f8ddd1d3a5fc577f47aa1f9f065b2482336792530a19f136e7909ff"
+        },
+        {
+          "path": "tests/ArcForges.Cloud.Tests/packages.lock.json",
+          "sha256": "b19532c5591bcba3eb2d333c6100e898a1169607e30792e8009b00811375d3b9"
+        },
+        {
+          "path": "tests/ArchitectureTests/ArcForges.Cloud.ArchitectureTests.csproj",
+          "sha256": "d19471c5dc68dd8c006d533ce763ee0f24c8dca44cb7b58eddb23e325c2de151"
+        },
+        {
+          "path": "tests/ArchitectureTests/packages.lock.json",
+          "sha256": "f6d230ccd616da3f2445e37a8ecaae3bf97b52efdbf46555ff60bf8ebcbe0c53"
+        },
+        {
+          "path": "tests/kotlin-consumer/gradle.lockfile",
+          "sha256": "0a6640ce98f60bf6e38bf19158fc87e68e33e1934eb3ede2df75b614a6b18c47"
+        },
+        {
+          "path": "tests/kotlin-consumer/settings.gradle.kts",
+          "sha256": "64675e4ff0bb4d84e56a315bb017e2adac9e58eb1efb86e409fb148806b38a55"
+        },
+        {
+          "path": "wrangler.json",
+          "sha256": "d7ed04c091f43fe9f246eba894c2c0a560fa7934d160bbbd34f57a75514c1c9e"
+        }
+      ]
+    },
+    "Contracts": {
+      "commit": "db9df61430cd8a6c3765a7986bcc4b4165307abc",
+      "facts": {
+        "boundary": "Apache",
+        "consumes": [
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Build.Policy",
+            "locks": [
+              "tests/ArchitectureTests"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.94.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "tests/StructureTests/PreviousClient"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.113.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "tests/StructureTests/PreviousClient"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.113.1"
+          }
+        ],
+        "edges": [
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Foundation",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Grpc.Core.Api"
+          }
+        ],
+        "exceptions": [
+          {
+            "expires": "2027-04-04",
+            "owner": "Contracts",
+            "path": "tests/ArchitectureTests/ArcForges.Contracts.ArchitectureTests.csproj",
+            "rule": "RP-03"
+          }
+        ],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "secrets",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Enforce the shared architecture policy over the full project graph",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/security.yml"
+          }
+        ],
+        "harness": {
+          "classes": [],
+          "workers": [],
+          "workflows": []
+        },
+        "localPackageNames": [
+          "@arcforges/ai-internal",
+          "@arcforges/api-client",
+          "@arcforges/contract-fixtures",
+          "@arcforges/operator-client",
+          "@arcforges/proto",
+          "arcforges-contracts-workspace"
+        ],
+        "localProjects": [
+          "arcforges.cli",
+          "arcforges.contracts.architecturetests",
+          "arcforges.contracts.cloudinternal",
+          "arcforges.contracts.events",
+          "arcforges.contracts.foundation",
+          "arcforges.contracts.localrpc.chat",
+          "arcforges.contracts.localrpc.platform",
+          "arcforges.contracts.localrpc.sandbox",
+          "arcforges.contracts.localrpc.scope",
+          "arcforges.contracts.publicapi",
+          "arcforges.contracts.validation",
+          "arcforges.sdk.client",
+          "arcforges.sdk.contracts",
+          "codegen",
+          "helloclient",
+          "hellohost",
+          "previousclient",
+          "serializationprobe",
+          "structuretests"
+        ],
+        "markers": [
+          {
+            "found": true,
+            "id": "host-project",
+            "path": "tests/ArchitectureTests/ArcForges.Contracts.ArchitectureTests.csproj"
+          }
+        ],
+        "produces": [
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contract-fixtures",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "io.github.arcforges:contracts-proto"
+            ],
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contracts-connect-client",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contracts-proto",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [],
+            "ecosystem": "npm",
+            "id": "@arcforges/ai-internal",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "@arcforges/proto"
+            ],
+            "ecosystem": "npm",
+            "id": "@arcforges/api-client",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "npm",
+            "id": "@arcforges/contract-fixtures",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [
+              "@arcforges/proto"
+            ],
+            "ecosystem": "npm",
+            "id": "@arcforges/operator-client",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "npm",
+            "id": "@arcforges/proto",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Contracts.Validation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Cli",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [
+              "ArcForges.Contracts.Events",
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.PublicApi"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.CloudInternal",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.PublicApi"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Events",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.LocalRpc.Platform",
+              "ArcForges.Contracts.PublicApi"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Chat",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.PublicApi",
+              "ArcForges.Sdk.Contracts"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Platform",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Sandbox",
+            "kind": "contract"
+          },
+          {
+            "access": "internal",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.LocalRpc.Platform",
+              "ArcForges.Contracts.PublicApi"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Scope",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Contracts.Events",
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.PublicApi",
+              "ArcForges.Sdk.Contracts"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Validation",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Contracts.Validation",
+              "ArcForges.Sdk.Contracts"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Sdk.Client",
+            "kind": "contract"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Contracts.Foundation",
+              "ArcForges.Contracts.PublicApi"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Sdk.Contracts",
+            "kind": "contract"
+          }
+        ],
+        "projectRefs": [
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.CloudInternal",
+            "project": "arcforges.contracts.events"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.CloudInternal",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.CloudInternal",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Chat",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Chat",
+            "project": "arcforges.contracts.localrpc.platform"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Chat",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Chat",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Platform",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Platform",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Platform",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Sandbox",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Scope",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Scope",
+            "project": "arcforges.contracts.localrpc.platform"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Scope",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Scope",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Cli",
+            "project": "arcforges.contracts.events"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Cli",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Cli",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Cli",
+            "project": "arcforges.contracts.validation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Cli",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.Events",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.Events",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.PublicApi",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.Validation",
+            "project": "arcforges.contracts.events"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.Validation",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.Validation",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Contracts.Validation",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Client",
+            "project": "arcforges.contracts.events"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Client",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Client",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Client",
+            "project": "arcforges.contracts.validation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Client",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Contracts",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "src/public/dotnet/ArcForges.Sdk.Contracts",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.cloudinternal"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.events"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.localrpc.chat"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.localrpc.platform"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.localrpc.sandbox"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.localrpc.scope"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.contracts.validation"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.sdk.client"
+          },
+          {
+            "lock": "tests/StructureTests",
+            "project": "arcforges.sdk.contracts"
+          },
+          {
+            "lock": "tests/public/HelloClient",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "tests/public/HelloClient",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "tests/public/HelloHost",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "tests/public/HelloHost",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.cloudinternal"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.events"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.foundation"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.localrpc.chat"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.localrpc.platform"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.localrpc.sandbox"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.localrpc.scope"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.publicapi"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.contracts.validation"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.sdk.client"
+          },
+          {
+            "lock": "tests/public/SerializationProbe",
+            "project": "arcforges.sdk.contracts"
+          }
+        ],
+        "sourceDeps": [],
+        "spdx": "Apache-2.0",
+        "workflows": [
+          {
+            "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/ci.yml",
+            "triggers": [
+              "merge_group",
+              "pull_request",
+              "push",
+              "workflow_dispatch"
+            ]
+          },
+          {
+            "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/security.yml",
+            "triggers": [
+              "pull_request",
+              "push",
+              "schedule",
+              "workflow_dispatch"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "6a81f521adea04eb2bcdb17d15607734bada6466d1f37529bc8179ecba701f9a"
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "sha256": "7a562e987137135a82b2089c12f642b09c74e6f581867e650dc38306c7966867"
+        },
+        {
+          "path": "eng/Codegen/packages.lock.json",
+          "sha256": "1823b949cabbc4f28cfb0326e36aab09e688869fd612d3a9d2630d7c1b82b875"
+        },
+        {
+          "path": "eng/central-signing/settings.gradle.kts",
+          "sha256": "1f1f5285f2938dc48b7a5da29f1c86f43a06ead1cffabd469b47597580f671b5"
+        },
+        {
+          "path": "eng/contract-packages.json",
+          "sha256": "e07c3bf1afd9dbab9ad5c313f00450ce0e0af743b7bd4949cf8ad2da9cd6e796"
+        },
+        {
+          "path": "eng/policy/exceptions.json",
+          "sha256": "075e27fc9ff607052bba432264f67940a5f57f1d5611e65a4624488322d65ae4"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "750b1d7cd08238e201d4f0d20e78c3a5da7538e73b4052f2b8aeb6ce52dffdec"
+        },
+        {
+          "path": "gradle.lockfile",
+          "sha256": "b176c43fe3fdb8fc99e36c8ccafc6dd1c07c2a2c0c0e9e5cbb3a328b70d128df"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "3e536db25743ceb5a021559dbc1f31d57112211c62d94f84df34daca5382709c"
+        },
+        {
+          "path": "package.json",
+          "sha256": "b0f73a6c907e161a6203bc954f1f96a88515a7ebfcf08c3ae76023a8d40a15be"
+        },
+        {
+          "path": "settings.gradle.kts",
+          "sha256": "08e4e324a1fd3b548fced7c36945454823410fd7a7fbb95061375352668a7e64"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.CloudInternal/packages.lock.json",
+          "sha256": "4c4e87d606b9b79824286022accc631f2b8ac6689248b213fc9eb54255121cee"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Chat/packages.lock.json",
+          "sha256": "2ffa6c7fb3cf873b86775fa67fcce30516bed510d126113933bfef7fbed3e052"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Platform/packages.lock.json",
+          "sha256": "4af9f61c399adec188a1e1717c4ba13b2291d4039af5a374d99832cfd9228586"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Sandbox/packages.lock.json",
+          "sha256": "950f637a1c8b5152e0fdabff441cb2a8802ac50ae8aae0b97a89b4fa1e633b29"
+        },
+        {
+          "path": "src/internal/dotnet/ArcForges.Contracts.LocalRpc.Scope/packages.lock.json",
+          "sha256": "2ffa6c7fb3cf873b86775fa67fcce30516bed510d126113933bfef7fbed3e052"
+        },
+        {
+          "path": "src/internal/ts/ai-internal/package.json",
+          "sha256": "0bff2cf81a1a98ae3b94b9215e813b97d5ce3048dc09184cab1a7de496a68870"
+        },
+        {
+          "path": "src/internal/ts/operator-client/package.json",
+          "sha256": "d086732d7aa86738498b74f57f82652667f3603059e5a71d0744c71e85ae8d58"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Cli/packages.lock.json",
+          "sha256": "103777bb279eafe8ebe643afc4fb1c5d7d33f80f5f7d31fa3c796c64474b24f8"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Contracts.Events/packages.lock.json",
+          "sha256": "5f4282b8edd354a2197bcc62bf48c640251aa7272bd81b4a51dd340cf28fce45"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Contracts.Foundation/packages.lock.json",
+          "sha256": "fa17fe6057706e36ae0b9370a457536d05d0f3a8f0f72df622881bfc1628337e"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Contracts.PublicApi/packages.lock.json",
+          "sha256": "950f637a1c8b5152e0fdabff441cb2a8802ac50ae8aae0b97a89b4fa1e633b29"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Contracts.Validation/packages.lock.json",
+          "sha256": "17e9ab54e527b0811319a94b81bbfcb16bd1773fd019ad81bbeffbbe4368508d"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Sdk.Client/packages.lock.json",
+          "sha256": "2182c09fccd0754761f9160db38c112d496a4ee72047cc052bbcaf2f22351a91"
+        },
+        {
+          "path": "src/public/dotnet/ArcForges.Sdk.Contracts/packages.lock.json",
+          "sha256": "0490ab15d029c97f1015d0483d419737a7963c4d7be002247d917eac684f74ce"
+        },
+        {
+          "path": "src/public/kotlin/contract-fixtures/gradle.lockfile",
+          "sha256": "14dc5803d23ab183aa24b2849ee51541e52e4d26fbada80e19082d15e0b1c654"
+        },
+        {
+          "path": "src/public/kotlin/contracts-connect-client/gradle.lockfile",
+          "sha256": "9b5447a219bb4ec726f780a103ce193eaa6468378da8314316558bbf79ff7281"
+        },
+        {
+          "path": "src/public/kotlin/contracts-proto/gradle.lockfile",
+          "sha256": "15e984aed92f5b614310976df0ca1d27d23d40b333ae732b5287c4bbd72ca90a"
+        },
+        {
+          "path": "src/public/ts/api-client/package.json",
+          "sha256": "898f6dd155206d058bd3b9ff73718fc5adaf9960db1b22719015c67d8437ecf8"
+        },
+        {
+          "path": "src/public/ts/contract-fixtures/package.json",
+          "sha256": "c593abc4f5179b38fc470cf034a993ba0e0d552e7d6bd224b770c87db3047128"
+        },
+        {
+          "path": "src/public/ts/proto/package.json",
+          "sha256": "2a07095d6b90bbec4914bdd42a036eb0468ebd3de18c6204781927c7c50cd46a"
+        },
+        {
+          "path": "tests/ArchitectureTests/ArcForges.Contracts.ArchitectureTests.csproj",
+          "sha256": "7065e2d1b5404380438aa305c5dbfcf000214d15ad0fe232846b7ba7639856c7"
+        },
+        {
+          "path": "tests/ArchitectureTests/packages.lock.json",
+          "sha256": "7019b7a06d181c6252a1db00bf8d3ffd9de7ea066a5c0151917de92e2470fe33"
+        },
+        {
+          "path": "tests/StructureTests/PreviousClient/packages.lock.json",
+          "sha256": "5e4f160e83bd12b6f3d630a9ee93aa5e2becd200fef836a1068fc0cbee92e695"
+        },
+        {
+          "path": "tests/StructureTests/packages.lock.json",
+          "sha256": "2246f9ae3ea5a3d1023b6fc53255ba0ac667991d0d002c71c011475349272424"
+        },
+        {
+          "path": "tests/public/HelloClient/packages.lock.json",
+          "sha256": "1592ed0d5c1bc731764993c0629fbc4954673001b4757800f0c7511ac1e462e7"
+        },
+        {
+          "path": "tests/public/HelloHost/packages.lock.json",
+          "sha256": "15c1bd39184b4ee86f3f30e52eb21a6cf1ba7d3d8032a21e49b5af71ea7cca1d"
+        },
+        {
+          "path": "tests/public/KotlinConnectClient/gradle.lockfile",
+          "sha256": "b26b25bf3dc4f915dce29f33fe7783a29be49053a7165e7f0f94f23293f7adfe"
+        },
+        {
+          "path": "tests/public/KotlinConnectClient/settings.gradle.kts",
+          "sha256": "997d5d04e67aafbd50d094c4aed81bcc239cf5a9c205a786f2847140474f61e5"
+        },
+        {
+          "path": "tests/public/SerializationProbe/packages.lock.json",
+          "sha256": "e75614decb118410170fdf147349d86607faa7a23b295fb0329ec914f55ee286"
+        }
+      ]
+    },
+    "DesktopPlatform": {
+      "commit": "5405d80a7e49d7d5b385db6859ab9ab3c5d6dd18",
+      "facts": {
+        "boundary": "AGPL",
+        "consumes": [
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/contract-fixtures",
+            "locks": [
+              "eng/acceptance/foundation"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.113.1"
+          },
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/proto",
+            "locks": [
+              "eng/acceptance/foundation"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.113.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Application.Abstractions",
+            "locks": [
+              "eng/acceptance/foundation"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Events",
+            "locks": [
+              "tests/ReleaseArtifactTests/Realtime"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.270.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "eng/acceptance/foundation"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.113.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "src/BuildingBlocks/ArcForges.Foundation"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "src/BuildingBlocks/ArcForges.Application.Abstractions",
+              "src/BuildingBlocks/ArcForges.Assistant.Abstractions",
+              "src/BuildingBlocks/ArcForges.Capabilities",
+              "src/BuildingBlocks/ArcForges.Capabilities/Tests",
+              "src/BuildingBlocks/ArcForges.Contributions",
+              "src/BuildingBlocks/ArcForges.Contributions/Tests",
+              "src/BuildingBlocks/ArcForges.Foundation/Tests",
+              "src/BuildingBlocks/ArcForges.LocalRpc/Tests",
+              "src/BuildingBlocks/ArcForges.Observability",
+              "src/BuildingBlocks/ArcForges.Observability.Desktop",
+              "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+              "src/BuildingBlocks/ArcForges.Observability/Tests",
+              "src/BuildingBlocks/ArcForges.Persistence.Resources",
+              "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests",
+              "src/BuildingBlocks/ArcForges.Persistence.Sqlite",
+              "src/BuildingBlocks/ArcForges.Security",
+              "src/BuildingBlocks/ArcForges.Security.Audit",
+              "src/BuildingBlocks/ArcForges.Security.Audit/Tests",
+              "src/BuildingBlocks/ArcForges.Security.Secrets",
+              "src/BuildingBlocks/ArcForges.Security.Secrets/Tests",
+              "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement",
+              "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary",
+              "src/BuildingBlocks/ArcForges.Security/Tests",
+              "src/DesignSystem/ArcForges.Desktop.Shell",
+              "src/DesignSystem/ArcForges.Desktop.Shell/Tests",
+              "src/DesktopHelpers/ArcForges.ContentSandbox",
+              "src/DesktopHelpers/ArcForges.ContentSandbox.Broker",
+              "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts",
+              "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture",
+              "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+              "tests/AssistantAbstractionsTests",
+              "tests/LocalRpcAotTests",
+              "tests/PersistenceTests",
+              "tests/ReleaseArtifactTests/GrpcWeb"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.Foundation",
+            "locks": [
+              "tests/ReleaseArtifactTests/Realtime"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.270.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Platform",
+            "locks": [
+              "src/BuildingBlocks/ArcForges.LocalRpc/Tests",
+              "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts",
+              "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+              "tests/LocalRpcAotTests"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Platform",
+            "locks": [
+              "src/DesktopHelpers/ArcForges.ContentSandbox",
+              "src/DesktopHelpers/ArcForges.ContentSandbox.Broker",
+              "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Sandbox",
+            "locks": [
+              "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts",
+              "src/DesktopHelpers/ArcForges.ContentSandbox/Tests"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.LocalRpc.Sandbox",
+            "locks": [
+              "src/DesktopHelpers/ArcForges.ContentSandbox",
+              "src/DesktopHelpers/ArcForges.ContentSandbox.Broker",
+              "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "tests/ReleaseArtifactTests/GrpcWeb"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "src/BuildingBlocks/ArcForges.Capabilities",
+              "src/BuildingBlocks/ArcForges.Capabilities/Tests",
+              "src/BuildingBlocks/ArcForges.Contributions",
+              "src/BuildingBlocks/ArcForges.Contributions/Tests",
+              "src/BuildingBlocks/ArcForges.Observability",
+              "src/BuildingBlocks/ArcForges.Observability.Desktop",
+              "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+              "src/BuildingBlocks/ArcForges.Observability/Tests",
+              "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement",
+              "src/BuildingBlocks/ArcForges.Security/Tests",
+              "src/DesignSystem/ArcForges.Desktop.Shell",
+              "src/DesignSystem/ArcForges.Desktop.Shell/Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contracts.PublicApi",
+            "locks": [
+              "tests/ReleaseArtifactTests/Realtime"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.270.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Foundation",
+            "locks": [
+              "eng/acceptance/foundation"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.29.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Sdk.Contracts",
+            "locks": [
+              "src/BuildingBlocks/ArcForges.Capabilities"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "ArcForges.Sdk.Contracts",
+            "locks": [
+              "src/BuildingBlocks/ArcForges.Capabilities/Tests",
+              "src/BuildingBlocks/ArcForges.Contributions",
+              "src/BuildingBlocks/ArcForges.Contributions/Tests",
+              "src/BuildingBlocks/ArcForges.Observability",
+              "src/BuildingBlocks/ArcForges.Observability.Desktop",
+              "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+              "src/BuildingBlocks/ArcForges.Observability/Tests",
+              "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement",
+              "src/BuildingBlocks/ArcForges.Security/Tests",
+              "src/DesignSystem/ArcForges.Desktop.Shell",
+              "src/DesignSystem/ArcForges.Desktop.Shell/Tests"
+            ],
+            "relation": "Transitive",
+            "version": "1.0.0-ci.216.1"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia",
+            "locks": [
+              "eng/verification/probe-evidence"
+            ],
+            "relation": "Direct",
+            "version": "12.1.3"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.BuildServices",
+            "locks": [
+              "eng/verification/probe-evidence"
+            ],
+            "relation": "Transitive",
+            "version": "11.3.2"
+          },
+          {
+            "ecosystem": "nuget",
+            "id": "Avalonia.Remote.Protocol",
+            "locks": [
+              "eng/verification/probe-evidence"
+            ],
+            "relation": "Transitive",
+            "version": "12.1.3"
+          }
+        ],
+        "edges": [
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/proto",
+            "to": "@bufbuild/protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Application.Abstractions",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Application.Abstractions",
+            "to": "ArcForges.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "ArcForges.Contracts.PublicApi"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Events",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.Foundation",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Platform",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Platform",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Platform",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Sandbox",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Sandbox",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.LocalRpc.Sandbox",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Contracts.PublicApi",
+            "to": "Grpc.Core.Api"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Foundation",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Sdk.Contracts",
+            "to": "ArcForges.Contracts.Foundation"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Sdk.Contracts",
+            "to": "ArcForges.Contracts.PublicApi"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Sdk.Contracts",
+            "to": "Google.Protobuf"
+          },
+          {
+            "ecosystem": "nuget",
+            "from": "ArcForges.Sdk.Contracts",
+            "to": "Grpc.Core.Api"
+          }
+        ],
+        "exceptions": [],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "pack",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Build and test platform ownership",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/package-validation.yml"
+          },
+          {
+            "found": true,
+            "id": "invariant-accounting",
+            "job": "pack",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Build and test platform ownership",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/package-validation.yml"
+          },
+          {
+            "found": true,
+            "id": "specification-integrity",
+            "job": "design-policy",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Verify exports against an isolated immutable Design checkout",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/pr-gate.yml"
+          }
+        ],
+        "harness": {
+          "classes": [],
+          "workers": [],
+          "workflows": []
+        },
+        "localPackageNames": [
+          "foundation-acceptance"
+        ],
+        "localProjects": [
+          "acquisitionprobe",
+          "arcforges.application.abstractions",
+          "arcforges.assistant.abstractions",
+          "arcforges.build.policy",
+          "arcforges.capabilities",
+          "arcforges.capabilities.tests",
+          "arcforges.contentsandbox",
+          "arcforges.contentsandbox.broker",
+          "arcforges.contentsandbox.contracts",
+          "arcforges.contentsandbox.hostilefixture",
+          "arcforges.contentsandbox.tests",
+          "arcforges.contributions",
+          "arcforges.contributions.tests",
+          "arcforges.designsystem",
+          "arcforges.designsystem.tests",
+          "arcforges.desktop.experience",
+          "arcforges.desktop.graphics",
+          "arcforges.desktop.preview",
+          "arcforges.desktop.richcontent",
+          "arcforges.desktop.shell",
+          "arcforges.desktop.shell.tests",
+          "arcforges.desktop.text",
+          "arcforges.foundation",
+          "arcforges.foundation.tests",
+          "arcforges.localrpc",
+          "arcforges.localrpc.tests",
+          "arcforges.native.abstractions",
+          "arcforges.native.image",
+          "arcforges.native.image.runtime.win-x64",
+          "arcforges.nativeinterop",
+          "arcforges.observability",
+          "arcforges.observability.desktop",
+          "arcforges.observability.desktop.tests",
+          "arcforges.observability.tests",
+          "arcforges.persistence.derived",
+          "arcforges.persistence.derived.tests",
+          "arcforges.persistence.resources",
+          "arcforges.persistence.resources.tests",
+          "arcforges.persistence.sqlite",
+          "arcforges.security",
+          "arcforges.security.audit",
+          "arcforges.security.audit.tests",
+          "arcforges.security.capabilityenforcement",
+          "arcforges.security.localrpcboundary",
+          "arcforges.security.secrets",
+          "arcforges.security.secrets.tests",
+          "arcforges.security.tests",
+          "arcforges.tests.architecturetests",
+          "arcforges.tests.nativeabitests",
+          "arcforges.tests.persistencetests",
+          "arcslate_image_abi",
+          "assistantabstractionstests",
+          "foundation.acceptance",
+          "grpcwebaotprobe",
+          "localrpcaottests",
+          "prf09.tableviewprobe",
+          "realtimeaotprobe"
+        ],
+        "markers": [
+          {
+            "found": true,
+            "id": "host-project",
+            "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj"
+          },
+          {
+            "found": true,
+            "id": "engine-source",
+            "path": "src/Build/ArcForges.Build.Policy/Architecture/PolicyEngine.cs"
+          }
+        ],
+        "produces": [
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Application.Abstractions",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Application.Abstractions",
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Assistant.Abstractions",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Build.Policy",
+            "kind": "build"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Capabilities",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Capabilities"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Contributions",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.DesignSystem",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Capabilities",
+              "ArcForges.DesignSystem",
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Desktop.Shell",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Foundation",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.LocalRpc",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Native.Abstractions",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Native.Abstractions"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Native.Image",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Native.Image"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Native.Image.Runtime.win-x64",
+            "kind": "native"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Capabilities",
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Observability",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Foundation",
+              "ArcForges.Observability"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Observability.Desktop",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Persistence.Derived",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Persistence.Resources",
+            "kind": "managed"
+          },
+          {
+            "access": "public",
+            "dependencies": [
+              "ArcForges.Foundation"
+            ],
+            "ecosystem": "nuget",
+            "id": "ArcForges.Persistence.Sqlite",
+            "kind": "managed"
+          }
+        ],
+        "projectRefs": [
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Application.Abstractions",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Assistant.Abstractions",
+            "project": "arcforges.application.abstractions"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Assistant.Abstractions",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Capabilities",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Capabilities/Tests",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Capabilities/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Contributions",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Contributions",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Contributions/Tests",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Contributions/Tests",
+            "project": "arcforges.contributions"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Contributions/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Contributions/Tests",
+            "project": "arcforges.persistence.sqlite"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Foundation/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.LocalRpc/Tests",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop",
+            "project": "arcforges.observability"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+            "project": "arcforges.observability"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests",
+            "project": "arcforges.observability.desktop"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability/Tests",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Observability/Tests",
+            "project": "arcforges.observability"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests",
+            "project": "arcforges.persistence.derived"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Persistence.Resources",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests",
+            "project": "arcforges.persistence.resources"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Persistence.Sqlite",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Audit",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Audit",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Audit/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Audit/Tests",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Audit/Tests",
+            "project": "arcforges.security.audit"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Secrets",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Secrets",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests",
+            "project": "arcforges.security.secrets"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.persistence.sqlite"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.security"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.security.capabilityenforcement"
+          },
+          {
+            "lock": "src/BuildingBlocks/ArcForges.Security/Tests",
+            "project": "arcforges.security.localrpcboundary"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.DesignSystem/Tests",
+            "project": "arcforges.designsystem"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell",
+            "project": "arcforges.designsystem"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell/Tests",
+            "project": "arcforges.capabilities"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell/Tests",
+            "project": "arcforges.designsystem"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell/Tests",
+            "project": "arcforges.desktop.shell"
+          },
+          {
+            "lock": "src/DesignSystem/ArcForges.Desktop.Shell/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox",
+            "project": "arcforges.contentsandbox.contracts"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker",
+            "project": "arcforges.contentsandbox.contracts"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture",
+            "project": "arcforges.contentsandbox"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture",
+            "project": "arcforges.contentsandbox.contracts"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+            "project": "arcforges.contentsandbox"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+            "project": "arcforges.contentsandbox.broker"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+            "project": "arcforges.contentsandbox.contracts"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+            "project": "arcforges.contentsandbox.hostilefixture"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests",
+            "project": "arcforges.localrpc"
+          },
+          {
+            "lock": "src/Native/ArcForges.Native.Image",
+            "project": "arcforges.native.abstractions"
+          },
+          {
+            "lock": "tests/AssistantAbstractionsTests",
+            "project": "arcforges.application.abstractions"
+          },
+          {
+            "lock": "tests/AssistantAbstractionsTests",
+            "project": "arcforges.assistant.abstractions"
+          },
+          {
+            "lock": "tests/AssistantAbstractionsTests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "tests/NativeAbiTests",
+            "project": "arcforges.native.abstractions"
+          },
+          {
+            "lock": "tests/PersistenceTests",
+            "project": "arcforges.foundation"
+          },
+          {
+            "lock": "tests/PersistenceTests",
+            "project": "arcforges.persistence.sqlite"
+          }
+        ],
+        "sourceDeps": [],
+        "spdx": "AGPL-3.0-only",
+        "workflows": [
+          {
+            "calls": [],
+            "filteredTriggers": [],
+            "path": ".github/workflows/deep-check.yml",
+            "triggers": [
+              "schedule",
+              "workflow_dispatch"
+            ]
+          },
+          {
+            "calls": [],
+            "filteredTriggers": [],
+            "path": ".github/workflows/native-abi.yml",
+            "triggers": [
+              "workflow_call",
+              "workflow_dispatch"
+            ]
+          },
+          {
+            "calls": [],
+            "filteredTriggers": [],
+            "path": ".github/workflows/package-validation.yml",
+            "triggers": [
+              "workflow_call"
+            ]
+          },
+          {
+            "calls": [
+              ".github/workflows/package-validation.yml",
+              ".github/workflows/native-abi.yml"
+            ],
+            "filteredTriggers": [],
+            "path": ".github/workflows/pr-gate.yml",
+            "triggers": [
+              "pull_request",
+              "workflow_call"
+            ]
+          },
+          {
+            "calls": [
+              ".github/workflows/pr-gate.yml"
+            ],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/publish-nuget.yml",
+            "triggers": [
+              "push"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/deep-check.yml",
+          "sha256": "49f2f91b2c20fb81a63c1208c2759fa378f1cbe6d4749f879db73603a8f05002"
+        },
+        {
+          "path": ".github/workflows/native-abi.yml",
+          "sha256": "030a503bedc028353b61ad56665aa46b54da35f81db76da595d74d43eb998368"
+        },
+        {
+          "path": ".github/workflows/package-validation.yml",
+          "sha256": "03a888d0e5f087f95ea150027516073b4b7bd0171bc9f9bf477c93a7b6821028"
+        },
+        {
+          "path": ".github/workflows/pr-gate.yml",
+          "sha256": "91100a2d4741bfef3186b015a458d17ac7f52d6ac089bc0522fa67b20603c2ff"
+        },
+        {
+          "path": ".github/workflows/publish-nuget.yml",
+          "sha256": "32e4c53d3b75eaca7037f505353206562f38f0e9e74b610330bbaa0d673fea42"
+        },
+        {
+          "path": "benchmarks/probes/acquisition/packages.lock.json",
+          "sha256": "cbbc653c41d6c060a74f249099ac50c04062869ec4bd91000fe234164f04b7e6"
+        },
+        {
+          "path": "eng/acceptance/foundation/package-lock.json",
+          "sha256": "2caa7295ba1f8ecd23890a8c8671f21412a186f5c91f8117ef428f2a918c91b7"
+        },
+        {
+          "path": "eng/acceptance/foundation/package.json",
+          "sha256": "32361db70e2072b195385c9141b7bd5b003fd51f6a919b566fcb2c152da8b780"
+        },
+        {
+          "path": "eng/acceptance/foundation/packages.lock.json",
+          "sha256": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c"
+        },
+        {
+          "path": "eng/packaging/packages.json",
+          "sha256": "6cb689cac903c5c6065f8cc5c1163547e33bc68c7d8cac884f023651ae207907"
+        },
+        {
+          "path": "eng/policy/exceptions.json",
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "ff60bbf6a53ce9d09bfdf293148b9b85d8d1e506bfb9c5a8827fd6a903e68f0f"
+        },
+        {
+          "path": "eng/verification/probe-evidence/packages.lock.json",
+          "sha256": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02"
+        },
+        {
+          "path": "src/Build/ArcForges.Build.Policy/Architecture/PolicyEngine.cs",
+          "sha256": "337727e4fbb27a372d10bec227387c7a447604ac1c42f857a50d6ebacae6fe7a"
+        },
+        {
+          "path": "src/Build/ArcForges.Build.Policy/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Application.Abstractions/packages.lock.json",
+          "sha256": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/packages.lock.json",
+          "sha256": "33c199ae62f7e0558d6e0b79086a73b6261cceb3c9cc9bbc1f21e9847c426aed"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/packages.lock.json",
+          "sha256": "b83120656ca0890664744fcf05c3d75dc1c56ccc7a493a118f63c70c7069643b"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Capabilities/packages.lock.json",
+          "sha256": "35cd295d2a07470c88259af06ca22114c709fa2c4e4b929abd599c96a9c26b0c"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/packages.lock.json",
+          "sha256": "2329c3088610c295fbaaf35a03c858c17d9b748d10fc733707dd4fde0967de8f"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Contributions/packages.lock.json",
+          "sha256": "03ee63c6a4335b1c141cef2016983cd9064532846d582ee6fe03dce8ccf866f5"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Desktop.Graphics/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Desktop.Preview/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Desktop.RichContent/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Desktop.Text/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Foundation/Tests/packages.lock.json",
+          "sha256": "a66aa29dc746ed2999d9cfffd2f3ed75f3e73738e85135eb4df026a58491eb09"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Foundation/packages.lock.json",
+          "sha256": "275edc2c07cd106e7cafdb851474a56dc233c4326849b290a96ffb2c2cba81c6"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/packages.lock.json",
+          "sha256": "4526b2979cf62d58566584946bc831f0d32aee9fa8511a4b81faa621fefd2329"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.LocalRpc/packages.lock.json",
+          "sha256": "6fd6cb14bb463d5a940b14742188f214c3b267eff1af3690ee1eea347664f164"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.NativeInterop/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/packages.lock.json",
+          "sha256": "041d44c07cced9649ead71a03bf645210c4f7ce105f2667539400dbd85362238"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/packages.lock.json",
+          "sha256": "65a20afa293666592531d349f51b909d3a26327991444dfade78b881d9318252"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Observability/Tests/packages.lock.json",
+          "sha256": "c2bb444ba5d39e0d920b203aa02ccc36512d3d941b9568ddb6a3dc6cb86accd2"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Observability/packages.lock.json",
+          "sha256": "03ee63c6a4335b1c141cef2016983cd9064532846d582ee6fe03dce8ccf866f5"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/packages.lock.json",
+          "sha256": "59de52cf05cb0fca8c726a6013779f86e239c9499c0ce2b661fd87240a0cc0e7"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/Tests/packages.lock.json",
+          "sha256": "6b3f5df901b107d2f1cc78dca31fe656cb44dffa811be58fb82e26facf5ee112"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json",
+          "sha256": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json",
+          "sha256": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/packages.lock.json",
+          "sha256": "1c93de4dbc04b8f0a15fef30f352c476b7543ff26f381cbdd348c0803fc092fd"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security.Audit/packages.lock.json",
+          "sha256": "ba8caa1127c0dc5f1036d45aea694e80008a6395dbe6c5a1d96e3fc4a2bf4352"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/packages.lock.json",
+          "sha256": "ba013fd952ee15fd79f34bfdd37c1113b5933b94d89d83bdb9373974caee6e62"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security.Secrets/packages.lock.json",
+          "sha256": "a70e1701b6e854e19dc5aee64ca29bd9c48b408eb0251d7bb181d4d1bd55e1bd"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/packages.lock.json",
+          "sha256": "d853a740c8ddb1da79ae2aad7d54fcecf80ed0a73dac94df14443c29d4eae7f7"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/packages.lock.json",
+          "sha256": "c9cd093bc0d4fe58c08f1bd0fc591d4f3086c8f302b6a374b319efcc9ec1d3e9"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json",
+          "sha256": "790d82612130bcf77c69c55ea91686a1dd63531ad54c422bc6304c2815e40e39"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Security/packages.lock.json",
+          "sha256": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json",
+          "sha256": "56db8dfaee7c7680201c53073b0243910102e886292a26de735333bb830e8465"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json",
+          "sha256": "687884c0b3e6057ab3732f9f1d042cc81a4cb3b170460a8ac9b140137e436acc"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json",
+          "sha256": "fb8ee728a3353478b0d217bf06125769240b4cc3307b392e80f5c43f61bfd6de"
+        },
+        {
+          "path": "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json",
+          "sha256": "a88f5fef8077a6678c68eb12ec52c89cc8449b68fb27190f9b0c92a0768d50b5"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/packages.lock.json",
+          "sha256": "d484757d0de8539423641c61aea8b03bbc681b39826035d3a550326205779f07"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json",
+          "sha256": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json",
+          "sha256": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json",
+          "sha256": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json",
+          "sha256": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Abstractions/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/packages.lock.json",
+          "sha256": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Image/packages.lock.json",
+          "sha256": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576"
+        },
+        {
+          "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+          "sha256": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a"
+        },
+        {
+          "path": "tests/ArchitectureTests/packages.lock.json",
+          "sha256": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168"
+        },
+        {
+          "path": "tests/AssistantAbstractionsTests/packages.lock.json",
+          "sha256": "b242f814d6724e1c8c5d82e1a969b846f51cb907c9acfd4d426556059785d8c8"
+        },
+        {
+          "path": "tests/LocalRpcAotTests/packages.lock.json",
+          "sha256": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3"
+        },
+        {
+          "path": "tests/NativeAbiTests/packages.lock.json",
+          "sha256": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1"
+        },
+        {
+          "path": "tests/PersistenceTests/packages.lock.json",
+          "sha256": "c94488ff2560372433bf2ca0d6f04a69429d10cde23265edca24ea6f798b6778"
+        },
+        {
+          "path": "tests/ReleaseArtifactTests/GrpcWeb/packages.lock.json",
+          "sha256": "fb32043eec1ecd8f2ec860466523722bd3f5ae68a60e38d4d8a62140448f68d8"
+        },
+        {
+          "path": "tests/ReleaseArtifactTests/Realtime/packages.lock.json",
+          "sha256": "0dbb97585be8af174a773fe14e3a8a216e54f66a3694ab7c9de3870e50971525"
+        }
+      ]
+    },
+    "Mobile": {
+      "commit": "377fa5d6e00b7a50d37d2f8434f915850c6d5b9f",
+      "facts": {
+        "boundary": "Apache",
+        "consumes": [
+          {
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contracts-connect-client",
+            "locks": [
+              "app"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.60.1"
+          },
+          {
+            "ecosystem": "maven",
+            "id": "io.github.arcforges:contracts-proto",
+            "locks": [
+              "app"
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.60.1"
+          }
+        ],
+        "edges": [],
+        "exceptions": [],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "build",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "Build, test, lint and prepare unsigned Android candidate",
+            "stepContinueOnError": "",
+            "stepIf": "",
+            "suppressed": false,
+            "workflow": ".github/workflows/ci.yml"
+          }
+        ],
+        "harness": {
+          "classes": [],
+          "workers": [],
+          "workflows": []
+        },
+        "localPackageNames": [],
+        "localProjects": [],
+        "markers": [
+          {
+            "found": true,
+            "id": "policy-applied",
+            "path": "build.gradle.kts"
+          },
+          {
+            "found": true,
+            "id": "policy-before-spotless",
+            "path": "gradle/policy/mobile-policy.gradle.kts"
+          }
+        ],
+        "produces": [],
+        "projectRefs": [],
+        "sourceDeps": [],
+        "spdx": "Apache-2.0",
+        "workflows": [
+          {
+            "calls": [
+              ".github/workflows/security.yml"
+            ],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/ci.yml",
+            "triggers": [
+              "pull_request",
+              "push",
+              "workflow_dispatch"
+            ]
+          },
+          {
+            "calls": [],
+            "filteredTriggers": [],
+            "path": ".github/workflows/security.yml",
+            "triggers": [
+              "schedule",
+              "workflow_call",
+              "workflow_dispatch"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "822e4b21bae79fed2fcf8d5e7026280c6b63568b1ffff3d196d2e4db8efc5d78"
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "sha256": "2c632e9a3f5ab7f4b3ac403dd68fd689dee06f51abf81564aa1973b4f3a4f3ef"
+        },
+        {
+          "path": "app/gradle.lockfile",
+          "sha256": "c2ffa98c088d86b028aaae1abd33c4ae05d904093263474d2294e26ec20ee2af"
+        },
+        {
+          "path": "build.gradle.kts",
+          "sha256": "2e5f2a4c17a134f06dd3bdf2b9282df247db2085f78777065f378ff04b0714bf"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "eae6bb06e3680a9db2611d254ea7efe80b488d7921c3fe7d2e1df4f05df43736"
+        },
+        {
+          "path": "gradle/locks/shared-linux-x64.lockfile",
+          "sha256": "ba5b1cfa5f3b16e18788b08ed1ed6592a1dc34c31afec9b04caa4413303d9886"
+        },
+        {
+          "path": "gradle/locks/shared-windows-x64.lockfile",
+          "sha256": "8e23f1e7459d2ce2b7ef80b1d809dc8e2da9b62f36f6647ba17fb1a4921c36c3"
+        },
+        {
+          "path": "gradle/policy/mobile-policy.gradle.kts",
+          "sha256": "4809fb912f0d8a0276ec060cb93e48028308aacf301f34b07b1800602e57c326"
+        },
+        {
+          "path": "settings.gradle.kts",
+          "sha256": "545057a2ec0163d4825a069576e0bbe96247f0c316027f35dd7a365685ac8e19"
+        }
+      ]
+    },
+    "Web": {
+      "commit": "794ef933d3dba836c60b29a481091d40ab4a2b1a",
+      "facts": {
+        "boundary": "AGPL",
+        "consumes": [
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/api-client",
+            "locks": [
+              "."
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          },
+          {
+            "ecosystem": "npm",
+            "id": "@arcforges/proto",
+            "locks": [
+              "."
+            ],
+            "relation": "Direct",
+            "version": "1.0.0-ci.287.1"
+          }
+        ],
+        "edges": [
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@arcforges/proto"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@bufbuild/protobuf"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@connectrpc/connect"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/api-client",
+            "to": "@connectrpc/connect-web"
+          },
+          {
+            "ecosystem": "npm",
+            "from": "@arcforges/proto",
+            "to": "@bufbuild/protobuf"
+          }
+        ],
+        "exceptions": [],
+        "gates": [
+          {
+            "found": true,
+            "id": "architecture-suite",
+            "job": "source",
+            "jobContinueOnError": "",
+            "jobIf": "",
+            "step": "",
+            "stepContinueOnError": "",
+            "stepIf": "runner.os == 'Linux'",
+            "suppressed": false,
+            "workflow": ".github/workflows/ci.yml"
+          }
+        ],
+        "harness": {
+          "classes": [],
+          "workers": [
+            "arcforges-web"
+          ],
+          "workflows": []
+        },
+        "localPackageNames": [
+          "@arcforges/web-app",
+          "@arcforges/web-site",
+          "@arcforges/web-ui",
+          "@arcforges/web-workspace"
+        ],
+        "localProjects": [
+          "arcforges.web"
+        ],
+        "markers": [
+          {
+            "found": true,
+            "id": "policy-source",
+            "path": "eng/policy/architecture.ts"
+          },
+          {
+            "found": true,
+            "id": "check-script",
+            "path": "package.json"
+          }
+        ],
+        "produces": [],
+        "projectRefs": [],
+        "sourceDeps": [],
+        "spdx": "AGPL-3.0-only",
+        "workflows": [
+          {
+            "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
+            "path": ".github/workflows/ci.yml",
+            "triggers": [
+              "pull_request",
+              "push",
+              "schedule",
+              "workflow_dispatch"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "f679f4df6f425e076e197fb8d85e16ba1866d4f17858683b6de0c8dddfb789bd"
+        },
+        {
+          "path": "apps/app/package.json",
+          "sha256": "0634d5208be3edd24ff0f2f70f230d3069b16810ba0317295f9eb79d35bdc4b5"
+        },
+        {
+          "path": "apps/site/package.json",
+          "sha256": "68f599c70359599806f4b9475187607a0d5a059d09bc3975f0ee03db70d0f38d"
+        },
+        {
+          "path": "eng/policy/architecture.ts",
+          "sha256": "b841685b367b94e9eb42e83b7a05e455e2d94f70b4e31b414684d50b95f6f05f"
+        },
+        {
+          "path": "eng/policy/licence-boundary.json",
+          "sha256": "243391c5874fa5b42274d1b722b1515af146cd3c7b7f78c059cb64faae9d9b69"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "a3b4dd666a7cb9fb1f89a3781ae4796182e96bde9570785153394bd45e839788"
+        },
+        {
+          "path": "package.json",
+          "sha256": "c68bc3377bcb8bbf20f7edcb582780921d1e9aab70ac215dbae439f283c4fc87"
+        },
+        {
+          "path": "packages/ui/package.json",
+          "sha256": "d20240b20d4f2ff524d36d502b6f28b42f25c0ff54b91c8e416e8a49266342d6"
+        },
+        {
+          "path": "wrangler.json",
+          "sha256": "1cf89efa8f3739354f68722ce27632dd38117a7d1504de176b5f8d257a9a0a36"
+        }
+      ]
+    }
+  },
+  "schemaVersion": 1
+}

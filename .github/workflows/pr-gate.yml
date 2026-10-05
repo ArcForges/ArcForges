@@ -261,7 +261,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [allocate-version, managed-packages, native, secret-scan, repository-hooks, design-policy, licence-policy, provenance-policy, reference-policy, runtime-policy, reconciliation-policy]
+    needs: [allocate-version, managed-packages, native, secret-scan, repository-hooks, design-policy, licence-policy, provenance-policy, reference-policy, runtime-policy, reconciliation-policy, stage-integration]
     runs-on: ubuntu-latest
     env:
       CI_NEEDS: ${{ toJSON(needs) }}
@@ -272,3 +272,25 @@ jobs:
           $jobs = $env:CI_NEEDS | ConvertFrom-Json
           $failed = @($jobs.PSObject.Properties | Where-Object { $_.Value.result -ne 'success' })
           if ($failed.Count) { throw 'One or more platform gates did not succeed.' }
+
+  stage-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Reject forbidden cross-repository edges with offline fixtures
+        run: python -m unittest discover -s eng/stage_integration -p 'test_*.py' -v
+      - name: Verify the committed published-metadata snapshot of the seven repositories
+        run: python eng/stage_integration/stage_integration.py verify --report artifacts/evidence/stage-integration.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: stage-integration-ubuntu-latest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/evidence/stage-integration.json
+          if-no-files-found: error
+          retention-days: 30
