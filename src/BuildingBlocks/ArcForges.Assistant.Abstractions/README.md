@@ -32,6 +32,18 @@ A frozen context can only be built within an item and byte budget (bounded by th
 overflow-safe accounting), only from the owning product's resources and never changes afterwards. No
 whole-document upload is implicit.
 
+`AssistantLifecycle` is the reusable product-host lifecycle for one composition: it is the `IHostLifecycle` the host
+supplies in `AssistantHostServices`, launches the one session (`LaunchAsync`) and separates three lifetimes. Views
+(`OpenView`, one per window) own a draft and a view-scoped cancellation token; closing one saves its draft and cancels
+only its own scope, leaving the session, other views, local work and Cloud work alone. The session and services live for
+the application and are released once, last, by `DisposeAsync`. Canonical data is never touched here. Launch and save never
+consult Cloud (an optional `IAssistantRemoteLink` is read for information only and a throwing link counts as
+unavailable). Drafts are made durable through the host's `IAssistantDraftStore` port (revisioned, atomic, one profile
+partition); after a crash every durable draft is returned by the next launch at its last durable revision and each can be
+resumed by exactly one view. Shutdown saves unsaved drafts and asks local work to checkpoint; whatever cannot be made
+durable is a stated refusal, Cloud-only work never blocks quitting and is never cancelled here. The package defines no
+store: the draft store, the Cloud link and the canonical data are supplied by the host.
+
 This package defines contracts and composition boundaries only. It does not implement assistant UI,
 persistence, Cloud behavior, cross-product discovery or WP15/WP17 services. Its tests use a clearly test-only
 host double to exercise the port signatures; no real product host is composed here (APP.08 owns the minimal real
