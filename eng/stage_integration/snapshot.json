@@ -1,5 +1,6 @@
 {
-  "policySha256": "7eee986b5e23433cae2aaa38f42a4f70f3fc70439226edc03a5334fdb2895424",
+  "collectedOn": "2026-10-05",
+  "policySha256": "cdb4e12a76f004e968728b66f9bd5dda528d749f668d15cd341c3886e388c4cb",
   "repositories": {
     "AI": {
       "commit": "5421c3789240093b2fce36322c2eb7773325ec7b",
@@ -40,7 +41,9 @@
         ],
         "harness": {
           "classes": [],
-          "worker": "arcforges-ai-hello",
+          "workers": [
+            "arcforges-ai-hello"
+          ],
           "workflows": [
             "HelloAgentWorkflow"
           ]
@@ -68,6 +71,9 @@
         "workflows": [
           {
             "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/ci.yml",
             "triggers": [
               "pull_request",
@@ -488,7 +494,7 @@
         ],
         "harness": {
           "classes": [],
-          "worker": null,
+          "workers": [],
           "workflows": []
         },
         "localPackageNames": [],
@@ -535,6 +541,9 @@
         "workflows": [
           {
             "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/ci.yml",
             "triggers": [
               "pull_request",
@@ -830,10 +839,11 @@
         ],
         "harness": {
           "classes": [
-            "CloudContainer",
             "CloudContainer"
           ],
-          "worker": "arcforges-cloud",
+          "workers": [
+            "arcforges-cloud"
+          ],
           "workflows": []
         },
         "localPackageNames": [
@@ -864,6 +874,9 @@
         "workflows": [
           {
             "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/ci.yml",
             "triggers": [
               "pull_request",
@@ -1008,7 +1021,7 @@
         ],
         "harness": {
           "classes": [],
-          "worker": null,
+          "workers": [],
           "workflows": []
         },
         "localPackageNames": [
@@ -1478,6 +1491,9 @@
         "workflows": [
           {
             "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/ci.yml",
             "triggers": [
               "merge_group",
@@ -1488,6 +1504,9 @@
           },
           {
             "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/security.yml",
             "triggers": [
               "pull_request",
@@ -2071,7 +2090,7 @@
         ],
         "harness": {
           "classes": [],
-          "worker": null,
+          "workers": [],
           "workflows": []
         },
         "localPackageNames": [
@@ -2651,6 +2670,7 @@
         "workflows": [
           {
             "calls": [],
+            "filteredTriggers": [],
             "path": ".github/workflows/deep-check.yml",
             "triggers": [
               "schedule",
@@ -2659,6 +2679,7 @@
           },
           {
             "calls": [],
+            "filteredTriggers": [],
             "path": ".github/workflows/native-abi.yml",
             "triggers": [
               "workflow_call",
@@ -2667,6 +2688,7 @@
           },
           {
             "calls": [],
+            "filteredTriggers": [],
             "path": ".github/workflows/package-validation.yml",
             "triggers": [
               "workflow_call"
@@ -2677,6 +2699,7 @@
               ".github/workflows/package-validation.yml",
               ".github/workflows/native-abi.yml"
             ],
+            "filteredTriggers": [],
             "path": ".github/workflows/pr-gate.yml",
             "triggers": [
               "pull_request",
@@ -2686,6 +2709,9 @@
           {
             "calls": [
               ".github/workflows/pr-gate.yml"
+            ],
+            "filteredTriggers": [
+              "push"
             ],
             "path": ".github/workflows/publish-nuget.yml",
             "triggers": [
@@ -3011,7 +3037,7 @@
         ],
         "harness": {
           "classes": [],
-          "worker": null,
+          "workers": [],
           "workflows": []
         },
         "localPackageNames": [],
@@ -3037,6 +3063,9 @@
             "calls": [
               ".github/workflows/security.yml"
             ],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/ci.yml",
             "triggers": [
               "pull_request",
@@ -3046,6 +3075,7 @@
           },
           {
             "calls": [],
+            "filteredTriggers": [],
             "path": ".github/workflows/security.yml",
             "triggers": [
               "schedule",
@@ -3162,7 +3192,9 @@
         ],
         "harness": {
           "classes": [],
-          "worker": "arcforges-web",
+          "workers": [
+            "arcforges-web"
+          ],
           "workflows": []
         },
         "localPackageNames": [
@@ -3193,6 +3225,9 @@
         "workflows": [
           {
             "calls": [],
+            "filteredTriggers": [
+              "push"
+            ],
             "path": ".github/workflows/ci.yml",
             "triggers": [
               "pull_request",

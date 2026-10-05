@@ -127,7 +127,7 @@ class FakeProvider:
 
 
 def snapshot_of(files, policy=POLICY):
-    return {'schemaVersion': 1, 'policySha256': si.digest(policy), 'repositories': {
+    return {'schemaVersion': 1, 'collectedOn': TODAY, 'policySha256': si.digest(policy), 'repositories': {
         name: {'commit': 'a' * 40,
                'sources': [{'path': 'x', 'sha256': 'b' * 64}],
                'facts': si.extract_facts(name, files[name], policy)} for name in ORDER}}
@@ -320,15 +320,17 @@ class NegativeFixtures(unittest.TestCase):
             'missing repository': lambda s: s['repositories'].pop('Web'),
             'no digests': lambda s: s['repositories']['Web'].__setitem__('sources', []),
             'wrong boundary': lambda s: s['repositories']['Web']['facts'].__setitem__('boundary', 'Apache'),
+            'boundary not read': lambda s: s['repositories']['Web']['facts'].__setitem__('boundary', None),
+            'schema version': lambda s: s.__setitem__('schemaVersion', 2),
+            'no collection date': lambda s: s.pop('collectedOn'),
+            'stale pin': lambda s: s.__setitem__('collectedOn', '2026-08-01'),
+            'future pin': lambda s: s.__setitem__('collectedOn', '2026-12-01'),
+            'malformed digest': lambda s: s['repositories']['Web']['sources'][0].__setitem__('sha256', 'zz'),
         }.items():
             with self.subTest(label):
                 broken = copy.deepcopy(snapshot)
                 mutate(broken)
-                try:
-                    found = si.evaluate(broken, POLICY, TODAY)
-                except KeyError:
-                    continue
-                self.assertIn('SI-10', rules(found))
+                self.assertIn('SI-10', rules(si.evaluate(broken, POLICY, TODAY)))
 
     def test_si11_exception_data(self):
         for row in [{'rule': 'RP-03', 'path': 'p', 'owner': 'Other', 'expires': '2027-01-01'},
@@ -338,6 +340,171 @@ class NegativeFixtures(unittest.TestCase):
                 files = world_files()
                 files['Web']['eng/policy/exceptions.json'] = j({'exceptions': [row]})
                 self.assertEqual(rules(run(files)), ['SI-11'])
+
+
+class ReviewGaps(unittest.TestCase):
+    """Cases the first review showed unpinned: third-party intermediates, access, gate shapes, wrangler files."""
+
+    def cloud_lock(self, files, entries, projects=()):
+        files['Cloud']['src/Cloud/packages.lock.json'] = nuget_lock(entries, projects=projects)
+
+    def test_owned_package_reached_only_through_a_third_party_package(self):
+        for owned, rule in [('ArcForges.Native.Image.Runtime.win-x64', {'SI-04', 'SI-06'}),
+                            ('ArcForges.Capabilities', {'SI-04'})]:
+            with self.subTest(owned=owned):
+                files = world_files()
+                self.cloud_lock(files, [('Vendor.Lib', '1', 'Direct', [owned]), (owned, '1', 'Transitive', [])],
+                                projects=['cloud.core'])
+                self.assertTrue(rule <= set(rules(run(files))), rules(run(files)))
+
+    def test_npm_owned_package_behind_a_third_party_package(self):
+        files = world_files()
+        files['Web']['package-lock.json'] = j({'packages': {
+            '': {}, 'node_modules/vendor-lib': {'version': '1', 'dependencies': {'@arcforges/operator-client': '1'}},
+            'node_modules/@arcforges/operator-client': {'version': '1'}}})
+        files['Web']['package.json'] = j({'name': '@arcforges/web', 'scripts': {'check': 'npm run policy'},
+                                         'dependencies': {'vendor-lib': '1'}})
+        files['Contracts']['eng/contract-packages.json'] = j({'packages': [
+            {'id': '@arcforges/operator-client', 'kind': 'npm', 'access': 'internal', 'dependencies': []}]})
+        self.assertIn('SI-04', rules(run(files)))
+
+    def test_npm_lock_edges_between_owned_packages(self):
+        files = world_files()
+        files['Contracts']['eng/contract-packages.json'] = j({'packages': [
+            {'id': '@arcforges/proto', 'kind': 'npm', 'access': 'public', 'dependencies': []},
+            {'id': '@arcforges/operator-client', 'kind': 'npm', 'access': 'internal', 'dependencies': []}]})
+        files['Web']['package-lock.json'] = j({'packages': {
+            '': {}, 'node_modules/@arcforges/proto': {'version': '1', 'dependencies': {'@arcforges/operator-client': '1'}},
+            'node_modules/@arcforges/operator-client': {'version': '1'}}})
+        found = run(files)
+        self.assertIn('SI-04', rules(found))
+
+    def test_unregistered_edge_from_an_owned_parent(self):
+        files = world_files()
+        self.cloud_lock(files, [('ArcForges.Contracts.CloudInternal', '1', 'Direct', ['ArcForges.Ghost'])],
+                        projects=['cloud.core'])
+        found = run(files)
+        self.assertEqual(rules(found), ['SI-01'])
+        self.assertIn('unregistered ArcForges.Ghost', messages(found, 'SI-01')[0])
+
+    def test_registry_access_fails_closed_without_an_audience_override(self):
+        files = world_files()
+        files['Contracts']['eng/contract-packages.json'] = j({'packages': [
+            {'id': '@arcforges/new-internal', 'kind': 'npm', 'access': 'internal', 'dependencies': []}]})
+        files['Web']['package.json'] = j({'name': '@arcforges/web', 'scripts': {'check': 'npm run policy'},
+                                         'dependencies': {'@arcforges/new-internal': '1'}})
+        files['Web']['package-lock.json'] = j({'packages': {'node_modules/@arcforges/new-internal': {'version': '1'}}})
+        found = run(files)
+        self.assertIn('failing closed', ' '.join(messages(found, 'SI-03')))
+
+    def test_a_workspace_name_equal_to_a_foreign_producer_id_is_a_duplicate(self):
+        files = world_files()
+        files['Web']['apps/x/package.json'] = j({'name': '@arcforges/proto'})
+        self.assertEqual(rules(run(files)), ['SI-01'])
+
+    def test_duplicate_producer_is_its_own_finding(self):
+        files = world_files()
+        files['Contracts']['eng/contract-packages.json'] = j({'packages': [
+            {'id': 'ArcForges.Foundation', 'kind': 'nuget', 'access': 'public', 'dependencies': []}]})
+        self.assertTrue(any('also produced by' in m for m in messages(run(files), 'SI-01')))
+
+    def test_si05_every_lock_must_be_covered_and_the_rule_must_match(self):
+        files = world_files()
+        files['Contracts']['src/Product/packages.lock.json'] = nuget_lock([('ArcForges.Build.Policy', '1', 'Direct', [])])
+        self.assertIn('SI-05', rules(run(files)))  # covered lock plus an uncovered lock is not covered
+        files = world_files()
+        files['Contracts']['eng/policy/exceptions.json'] = j([
+            {'rule': 'RP-02', 'path': 'tests/ArchitectureTests/Host.csproj', 'owner': 'Contracts', 'expires': '2027-04-04'}])
+        self.assertIn('SI-05', rules(run(files)))
+        files = world_files()
+        files['Contracts']['eng/policy/exceptions.json'] = j([])
+        self.assertIn('SI-05', rules(run(files)))
+
+    def test_si06_foreign_ui_packages_by_substring_and_when_transitive(self):
+        for name, relation in [('Projektanker.Icons.Avalonia', 'Direct'), ('Material.Avalonia', 'Transitive'),
+                               ('LibVLCSharp.Avalonia', 'Direct'), ('SkiaSharp', 'Transitive')]:
+            with self.subTest(name=name):
+                files = world_files()
+                self.cloud_lock(files, [(name, '1', relation, [])], projects=['cloud.core'])
+                self.assertEqual(rules(run(files)), ['SI-06'])
+
+    def test_si08_package_name_and_every_wrangler_file(self):
+        files = world_files()
+        files['Contracts']['eng/packaging/packages.json'] = b'{}'
+        policy = copy.deepcopy(POLICY)
+        policy['producerManifests'].append({'repository': 'Web', 'path': 'eng/p.json', 'format': 'desktop-packages',
+                                            'ecosystem': 'nuget'})
+        files['Web']['eng/p.json'] = j({'packages': [{'id': 'ArcForges.HarnessBridge', 'kind': 'managed'}]})
+        found = si.evaluate(snapshot_of(files, policy), policy, TODAY)
+        self.assertIn('Harness-named package', ' '.join(messages(found, 'SI-08')))
+        for path, content in [('a/wrangler.jsonc', b'// c\n{"name":"x","workflows":[{"class_name":"W"},],}'),
+                              ('wrangler.toml', b'name = "x"\n[[workflows]]\nclass_name = "W"\n')]:
+            with self.subTest(path=path):
+                files = world_files()
+                files['Cloud'][path] = content
+                self.assertEqual(rules(run(files)), ['SI-08'])
+        files = world_files()
+        files['Cloud']['a/wrangler.json'] = j({'name': 'a', 'workflows': [{'class_name': 'W'}]})
+        files['Cloud']['z/wrangler.json'] = j({'name': 'z'})
+        self.assertEqual(rules(run(files)), ['SI-08'])
+
+    def test_jsonc_comment_markers_inside_strings_survive(self):
+        text = '{"url": "https://x//y", /* c */ "a": [1,],}'
+        self.assertEqual(json.loads(si.strip_jsonc(text)), {'url': 'https://x//y', 'a': [1]})
+
+    def test_si09_text_that_does_not_run_the_gate(self):
+        gate = 'spotlessCheck'
+        for label, run_text in {
+            'echo': 'echo "spotlessCheck"',
+            'printf': "printf '%s' spotlessCheck",
+            'semicolon true': 'spotlessCheck; true',
+            'or echo': 'spotlessCheck || echo ok',
+            'set +e': 'set +e\n          spotlessCheck',
+            'or colon': 'spotlessCheck || :',
+            'silently continue': 'spotlessCheck -ErrorAction SilentlyContinue',
+        }.items():
+            with self.subTest(label):
+                files = world_files()
+                files['Mobile']['.github/workflows/ci.yml'] = workflow(run_text)
+                self.assertEqual(rules(run(files)), ['SI-09'], label)
+        self.assertEqual(gate, 'spotlessCheck')
+
+    def test_si09_a_masking_duplicate_does_not_hide_a_disabled_gate_or_a_clean_gate(self):
+        files = world_files()
+        text = workflow('echo spotlessCheck', extra=(
+            '      - name: Real gate\n        if: ${{ false }}\n        run: ./gradlew spotlessCheck\n'))
+        files['Mobile']['.github/workflows/ci.yml'] = text
+        self.assertEqual(rules(run(files)), ['SI-09'])
+        text = workflow('echo spotlessCheck', extra='      - name: Real gate\n        run: ./gradlew spotlessCheck\n')
+        files['Mobile']['.github/workflows/ci.yml'] = text
+        self.assertEqual(run(files), [])
+
+    def test_si09_pull_request_filters_and_job_level_conditions(self):
+        for label, mutate in {
+            'paths filter': lambda t: t.replace(b'  pull_request:\n', b'  pull_request:\n    paths: [docs/**]\n'),
+            'branches filter': lambda t: t.replace(b'  pull_request:\n', b'  pull_request:\n    branches: [release]\n'),
+            'types filter': lambda t: t.replace(b'  pull_request:\n', b'  pull_request:\n    types: [closed]\n'),
+            'job if': lambda t: t.replace(b'  gate:\n', b"  gate:\n    if: github.event_name == 'push'\n"),
+            'job continue': lambda t: t.replace(b'  gate:\n', b'  gate:\n    continue-on-error: true\n'),
+        }.items():
+            with self.subTest(label):
+                files = world_files()
+                path = '.github/workflows/ci.yml'
+                files['Mobile'][path] = mutate(files['Mobile'][path])
+                self.assertEqual(rules(run(files)), ['SI-09'], label)
+
+    def test_si09_gate_facts_must_match_the_declared_gates(self):
+        snapshot = snapshot_of(world_files())
+        snapshot['repositories']['Mobile']['facts']['gates'] = []
+        found = si.evaluate(snapshot, POLICY, TODAY)
+        self.assertIn('gate facts do not match', ' '.join(messages(found, 'SI-09')))
+
+    def test_expiry_is_evaluated_against_the_real_date_in_verify(self):
+        snapshot_text = si.SNAPSHOT_PATH.read_text(encoding='utf-8')
+        with mock.patch.object(si, 'today_default', return_value='2999-01-01'):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(si.main(['verify']), 1)
+        self.assertTrue(snapshot_text)
 
 
 class Extraction(unittest.TestCase):

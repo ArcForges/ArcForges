@@ -261,7 +261,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [allocate-version, managed-packages, native, secret-scan, repository-hooks, design-policy, licence-policy, provenance-policy, reference-policy, runtime-policy, reconciliation-policy]
+    needs: [allocate-version, managed-packages, native, secret-scan, repository-hooks, design-policy, licence-policy, provenance-policy, reference-policy, runtime-policy, reconciliation-policy, stage-integration]
     runs-on: ubuntu-latest
     env:
       CI_NEEDS: ${{ toJSON(needs) }}

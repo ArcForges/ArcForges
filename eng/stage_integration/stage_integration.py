@@ -26,6 +26,7 @@ import posixpath
 import re
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -130,7 +131,7 @@ def metadata_kind(path):
         return 'gradle-lock'
     if name in ('settings.gradle', 'settings.gradle.kts'):
         return 'gradle-settings'
-    if name == 'wrangler.json':
+    if name in ('wrangler.json', 'wrangler.jsonc', 'wrangler.toml'):
         return 'wrangler'
     if name == '.gitmodules':
         return 'gitmodules'
@@ -154,6 +155,35 @@ def select_sources(paths, policy, repository):
 
 def decode(raw):
     return raw.decode('utf-8-sig').replace('\r\n', '\n')
+
+
+def strip_jsonc(text):
+    """Remove comments and trailing commas from JSON with comments, leaving string contents untouched."""
+    out, index, in_string = [], 0, False
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if char == '\\' and index + 1 < len(text):
+                out.append(text[index + 1])
+                index += 1
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+            out.append(char)
+        elif text.startswith('//', index):
+            while index < len(text) and text[index] != '\n':
+                index += 1
+            continue
+        elif text.startswith('/*', index):
+            end = text.find('*/', index + 2)
+            index = len(text) if end < 0 else end + 2
+            continue
+        else:
+            out.append(char)
+        index += 1
+    return re.sub(r',(\s*[}\]])', r'\1', ''.join(out))
 
 
 def normalise_dir(path):
@@ -187,20 +217,27 @@ def parse_workflow(text):
         if current is not None:
             blocks[current][1].append(line)
 
-    workflow = {'triggers': [], 'calls': [], 'jobs': []}
+    workflow = {'triggers': [], 'calls': [], 'jobs': [], 'filteredTriggers': []}
     inline, body = blocks.get('on', ('', []))
     triggers = set()
+    filtered = set()
     if inline:
         triggers.update(token.strip(' []\'"') for token in inline.split(',') if token.strip(' []\'"'))
     body = [line for line in body if meaningful(line)]
     if body:
         base = min(indent(line) for line in body)
+        current_trigger = None
         for line in body:
             if indent(line) == base:
                 match = re.match(r'^\s*(?:-\s*)?([A-Za-z_][\w-]*)\s*:?', line)
+                current_trigger = match.group(1) if match else None
                 if match:
-                    triggers.add(match.group(1))
+                    triggers.add(current_trigger)
+            elif current_trigger and re.match(
+                    r'^\s*(branches|branches-ignore|paths|paths-ignore|types|tags|tags-ignore):', line):
+                filtered.add(current_trigger)
     workflow['triggers'] = sorted(triggers)
+    workflow['filteredTriggers'] = sorted(filtered)
 
     _, job_lines = blocks.get('jobs', ('', []))
     job_lines = [line for line in job_lines if meaningful(line)]
@@ -302,11 +339,12 @@ def gate_fact(gate, workflows):
     workflow = workflows.get(gate['workflow'])
     if workflow is None:
         return fact
+    candidates = []
     for job in workflow['jobs']:
         for step in job['steps']:
-            text = step['run']
+            text = commands(step['run'])
             if text and all(pattern in text for pattern in gate['runContains']):
-                fact.update({
+                candidates.append({
                     'found': True,
                     'job': job['id'],
                     'step': step['name'],
@@ -314,10 +352,37 @@ def gate_fact(gate, workflows):
                     'stepContinueOnError': step['continueOnError'],
                     'jobIf': job['if'],
                     'jobContinueOnError': job['continueOnError'],
-                    'suppressed': bool(re.search(r'\|\|\s*(true|exit\s+0)\b', text)),
+                    'suppressed': suppresses(text, gate['runContains']),
                 })
-                return fact
+    if not candidates:
+        return fact
+    # A real, clean step wins over a disabled or suppressed one, so a masking duplicate cannot hide the gate.
+    candidates.sort(key=lambda row: (bool(row['suppressed']), bool(row['stepIf']), bool(row['jobIf']),
+                                     row['stepContinueOnError'] not in ('', 'false'),
+                                     row['jobContinueOnError'] not in ('', 'false')))
+    fact.update(candidates[0])
     return fact
+
+
+PRINT_ONLY = re.compile(r'^\s*(echo|printf|write-host|write-output|write-warning|cat|#)\b', re.IGNORECASE)
+LINE_SUPPRESSION = re.compile(
+    r'(\|\|\s*(true|:|exit\s+0|echo\b.*)|;\s*(true|exit\s+0|:)\s*($|;)|-ErrorAction\s+SilentlyContinue)',
+    re.IGNORECASE)
+GLOBAL_SUPPRESSION = re.compile(
+    r'(\bset\s+\+e\b|\$ErrorActionPreference\s*=\s*[\'"]?SilentlyContinue)', re.IGNORECASE)
+
+
+def commands(run):
+    """The executable lines of a run block: print-only and comment lines do not run a gate."""
+    return '\n'.join(line for line in run.split('\n') if line.strip() and not PRINT_ONLY.match(line))
+
+
+def suppresses(text, patterns):
+    """Failure suppression: a global switch anywhere, or an operator on a line that carries the gate itself."""
+    if GLOBAL_SUPPRESSION.search(text):
+        return True
+    return any(LINE_SUPPRESSION.search(line) for line in text.split('\n')
+               if any(pattern in line for pattern in patterns))
 
 
 def npm_specifier_problem(directory, name, spec):
@@ -349,7 +414,7 @@ def extract_facts(repository, files, policy):
         'edges': [],
         'projectRefs': [],
         'sourceDeps': [],
-        'harness': {'workflows': [], 'classes': [], 'worker': None},
+        'harness': {'workflows': [], 'classes': [], 'workers': []},
         'exceptions': [],
         'workflows': [],
         'gates': [],
@@ -441,13 +506,14 @@ def extract_facts(repository, files, policy):
         elif kind == 'gitmodules':
             source_deps.add((path, 'git submodule declared'))
         elif kind == 'wrangler':
-            data = read_json(text, path)
-            facts['harness']['worker'] = data.get('name')
-            facts['harness']['workflows'] = sorted(
-                item.get('class_name') or item.get('name') for item in data.get('workflows', []))
+            data = tomllib.loads(text) if path.endswith('.toml') else read_json(strip_jsonc(text), path)
+            if data.get('name'):
+                facts['harness']['workers'].append(data['name'])
+            facts['harness']['workflows'] += [
+                item.get('class_name') or item.get('name') for item in data.get('workflows', [])]
             classes = [item.get('class_name') for item in data.get('durable_objects', {}).get('bindings', [])]
             classes += [item.get('class_name') for item in data.get('containers', [])]
-            facts['harness']['classes'] = sorted(name for name in classes if name)
+            facts['harness']['classes'] += [name for name in classes if name]
 
     for item in policy['producerManifests']:
         if item['repository'] != repository or item['path'] not in texts:
@@ -466,6 +532,8 @@ def extract_facts(repository, files, policy):
             })
     facts['produces'].sort(key=lambda row: (row['ecosystem'], row['id'].lower()))
 
+    for key in ('workflows', 'classes', 'workers'):
+        facts['harness'][key] = sorted(set(facts['harness'][key]))
     facts['localPackageNames'] = sorted(local_names)
     facts['consumes'] = [
         {'ecosystem': eco, 'id': name, 'version': version, 'relation': relation, 'locks': sorted(dirs)}
@@ -485,6 +553,7 @@ def extract_facts(repository, files, policy):
             facts['workflows'].append({
                 'path': path,
                 'triggers': workflows[path]['triggers'],
+                'filteredTriggers': workflows[path]['filteredTriggers'],
                 'calls': workflows[path]['calls'],
             })
     facts['gates'] = [gate_fact(gate, workflows) for gate in policy['gates'].get(repository, [])]
@@ -557,7 +626,8 @@ def collect_repository(provider, repository, commit, policy):
 
 def build_snapshot(provider, commits, policy):
     repositories = {name: collect_repository(provider, name, commits[name], policy) for name in policy['repositories']}
-    return {'schemaVersion': 1, 'policySha256': digest(policy), 'repositories': repositories}
+    return {'schemaVersion': 1, 'collectedOn': today_default(), 'policySha256': digest(policy),
+            'repositories': repositories}
 
 
 # -------------------------------------------------------------------------------------------- rules
@@ -588,6 +658,21 @@ class World:
                         f'{package["id"]} ({package["ecosystem"]}) is also produced by {self.producers[key]["repository"]}'))
                     continue
                 self.producers[key] = {**package, 'repository': name}
+        for key, package in self.producers.items():
+            if package.get('access', 'public') != 'public' and not any(
+                    override['ecosystem'] == key[0] and matches(override['match'], package['id'])
+                    for override in policy['consumerOverrides']):
+                self.findings.append(finding(
+                    'SI-03', package['repository'],
+                    f'{package["id"]} is registered as {package["access"]} but policy.json names no audience for it '
+                    '(failing closed)'))
+        for name in policy['repositories']:
+            for local in self.repos[name]['facts']['localPackageNames']:
+                key = ('npm', local.lower())
+                if key in self.producers and self.producers[key]['repository'] != name:
+                    self.findings.append(finding(
+                        'SI-01', name,
+                        f'package name {local} is also a package produced by {self.producers[key]["repository"]}'))
         self.graph = {}
         for key, package in self.producers.items():
             for dependency in package['dependencies']:
@@ -616,13 +701,16 @@ class World:
             return True
         return any(p['ecosystem'] == ecosystem and p['id'].lower() == name.lower() for p in facts['produces'])
 
-    def roots(self, repository):
-        """Direct consumed owned coordinates: key -> lock directories."""
+    def roots(self, repository, direct_only=True):
+        """Consumed owned coordinates: key -> lock directories.
+
+        A lock lists the complete closure, so a coordinate reached only through a third-party package is still
+        a root when `direct_only` is false; its path is then unknown beyond the lock itself."""
         roots = {}
         for row in self.repos[repository]['facts']['consumes']:
-            if row['relation'] != 'Direct':
+            if direct_only and row['relation'] != 'Direct':
                 continue
-            if row['ecosystem'] == 'maven' and not is_owned('maven', row['id']):
+            if not is_owned(row['ecosystem'], row['id']):
                 continue
             key = (row['ecosystem'], row['id'].lower())
             roots.setdefault(key, set()).update(row['locks'])
@@ -633,14 +721,15 @@ class World:
 
         Maps a node to its shortest path from a root and the lock directories of every root that reaches it."""
         reached = {}
-        for root, locks in sorted(self.roots(repository).items()):
+        direct = self.roots(repository)
+        ordered = sorted(direct.items()) + sorted(
+            (key, locks) for key, locks in self.roots(repository, direct_only=False).items() if key not in direct)
+        for root, locks in ordered:
             seen = {root}
             queue = [(root, [root])]
             while queue:
                 node, path = queue.pop(0)
                 entry = reached.setdefault(node, {'path': path, 'locks': set()})
-                if len(path) < len(entry['path']):
-                    entry['path'] = path
                 entry['locks'].update(locks)
                 for child in sorted(self.graph.get(node, ())):
                     if child not in seen:
@@ -663,6 +752,8 @@ def covered_by_exception(repos, repository, locks, rule, today):
 
 def evaluate(snapshot, policy, today=None):
     today = today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if set(snapshot.get('repositories', {})) != set(policy['repositories']):
+        return [finding('SI-10', '*', 'the snapshot does not cover exactly the seven repositories')]
     world = World(snapshot, policy)
     findings = list(world.findings)
     repos = snapshot['repositories']
@@ -756,7 +847,7 @@ def evaluate(snapshot, policy, today=None):
         if facts['harness']['workflows']:
             findings.append(finding('SI-08', repository,
                                     f'declares workflow classes {facts["harness"]["workflows"]}; only {owner} owns the Harness'))
-        for name in facts['harness']['classes'] + [facts['harness']['worker'] or '']:
+        for name in facts['harness']['classes'] + facts['harness']['workers']:
             if name and re.search(harness['namePattern'], name, re.IGNORECASE):
                 findings.append(finding('SI-08', repository, f'declares a Harness-named class or worker {name}'))
         for package in facts['produces']:
@@ -796,6 +887,17 @@ def evaluate(snapshot, policy, today=None):
     # SI-10 snapshot completeness
     if snapshot.get('schemaVersion') != 1:
         findings.append(finding('SI-10', '*', 'unsupported snapshot schemaVersion'))
+    freshness = policy['freshness']
+    collected = snapshot.get('collectedOn', '')
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', collected):
+        findings.append(finding('SI-10', '*', 'the snapshot has no collection date'))
+    else:
+        age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(collected)).days
+        if age > freshness['maxAgeDays'] or age < 0:
+            findings.append(finding(
+                'SI-10', '*',
+                f'the snapshot was collected {collected} ({age} days before {today}); the limit is '
+                f'{freshness["maxAgeDays"]} days and the owner is {freshness["owner"]}: run snapshot, review the diff'))
     if snapshot.get('policySha256') != digest(policy):
         findings.append(finding('SI-10', '*', 'the snapshot is bound to a different policy; re-run snapshot'))
     if set(repos) != set(policy['repositories']):
@@ -831,7 +933,8 @@ def evaluate(snapshot, policy, today=None):
 def pull_request_workflows(workflows):
     """Workflows triggered by a pull request, directly or through a reusable-workflow call."""
     by_path = {item['path']: item for item in workflows}
-    reachable = {item['path'] for item in workflows if 'pull_request' in item['triggers']}
+    reachable = {item['path'] for item in workflows
+                 if 'pull_request' in item['triggers'] and 'pull_request' not in item.get('filteredTriggers', [])}
     changed = True
     while changed:
         changed = False
