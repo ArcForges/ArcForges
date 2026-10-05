@@ -162,6 +162,13 @@
         "runContains": [
           "python eng/design_policy.py"
         ]
+      },
+      {
+        "id": "stage-integration",
+        "workflow": ".github/workflows/pr-gate.yml",
+        "runContains": [
+          "eng/stage_integration/stage_integration.py verify"
+        ]
       }
     ],
     "Contracts": [
