@@ -627,6 +627,8 @@ public sealed class AuditStoreTests
         Assert.Throws<ArgumentException>(() => new AuditEgressContentReference(new string('A', 63)));
         Assert.Throws<ArgumentException>(() => new AuditEgressContentReference(new string('G', 64)));
         Assert.NotEqual(AuditEgressContentReference.From("a", "bc"), AuditEgressContentReference.From("ab", "c"));
+        Assert.NotEqual(AuditEgressContentReference.From("doc/1", "rev-1"), AuditEgressContentReference.From("doc/1", "rev-2"));
+        Assert.NotEqual(AuditEgressContentReference.From("doc/1", "rev-1"), AuditEgressContentReference.From("doc/2", "rev-1"));
         Assert.Equal(AuditEgressContentReference.From("doc/1", "rev-1"), AuditEgressContentReference.From("doc/1", "rev-1"));
         Assert.Throws<ArgumentException>(() => AuditEgressContentReference.From(string.Empty, "rev-1"));
 
