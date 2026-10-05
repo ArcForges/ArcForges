@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "authority": [
+    "ArcForges-Design docs/planning/work-packages/05-architecture-and-repository-policy-tests.md#rule-wp-05.90",
+    "ArcForges-Design docs/architecture/01-solution-and-project-layout.md (section 12 package registry, AT-05, RP-03, LB-02)",
+    "ArcForges-Design docs/architecture/21-platform-and-dependency-matrix.md#rule-ns-02"
+  ],
+  "repositories": ["DesktopPlatform", "Contracts", "ArcScope", "Cloud", "AI", "Web", "Mobile"],
+  "licenceBoundaries": {
+    "DesktopPlatform": "AGPL",
+    "Contracts": "Apache",
+    "ArcScope": "AGPL",
+    "Cloud": "AGPL",
+    "AI": "AGPL",
+    "Web": "AGPL",
+    "Mobile": "Apache"
+  },
+  "strictApacheRepositories": ["Mobile"],
+  "noDesktopAssets": ["Cloud"],
+  "desktopOnly": {
+    "ids": [
+      "ArcForges.Native.*",
+      "ArcForges.DesignSystem",
+      "ArcForges.Desktop.*",
+      "ArcForges.Assistant.Avalonia",
+      "ArcForges.ContentSandbox*"
+    ],
+    "foreignIds": ["Avalonia*", "SkiaSharp*", "HarfBuzzSharp*"]
+  },
+  "foreignWatch": ["Avalonia*", "SkiaSharp*", "HarfBuzzSharp*"],
+  "harness": {
+    "owner": "AI",
+    "namePattern": "harness"
+  },
+  "producerManifests": [
+    {"repository": "DesktopPlatform", "path": "eng/packaging/packages.json", "format": "desktop-packages", "ecosystem": "nuget"},
+    {"repository": "Contracts", "path": "eng/contract-packages.json", "format": "contract-packages", "ecosystem": "nuget"}
+  ],
+  "defaultConsumers": {
+    "DesktopPlatform": ["DesktopPlatform", "ArcScope"],
+    "Contracts": "*",
+    "ArcScope": [],
+    "Cloud": [],
+    "AI": [],
+    "Web": [],
+    "Mobile": []
+  },
+  "consumerOverrides": [
+    {"ecosystem": "nuget", "match": ["ArcForges.Build.Policy"], "consumers": "*", "authority": "build-only package; no runtime dependency (section 12)"},
+    {"ecosystem": "nuget", "match": ["ArcForges.Contracts.LocalRpc.*"], "consumers": ["DesktopPlatform", "ArcScope", "Contracts"], "authority": "internal local RPC contracts: public clients and Cloud cannot import (section 12)"},
+    {"ecosystem": "nuget", "match": ["ArcForges.Contracts.CloudInternal"], "consumers": ["Cloud", "Contracts"], "authority": "private Cloud and operator bindings (section 12)"},
+    {"ecosystem": "npm", "match": ["@arcforges/ai-internal"], "consumers": ["AI", "Cloud", "Contracts"], "authority": "AI/Cloud import boundary only (section 12)"},
+    {"ecosystem": "npm", "match": ["@arcforges/operator-client"], "consumers": ["Contracts"], "authority": "operator application only, never public Web, SDK or Android (section 12)"}
+  ],
+  "allowedConditions": ["runner.os == 'Linux'", "always()"],
+  "gates": {
+    "DesktopPlatform": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/package-validation.yml", "runContains": ["tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj", "dotnet test"]},
+      {"id": "invariant-accounting", "workflow": ".github/workflows/package-validation.yml", "runContains": ["eng/accounting/accounting.py report"]},
+      {"id": "specification-integrity", "workflow": ".github/workflows/pr-gate.yml", "runContains": ["python eng/design_policy.py"]}
+    ],
+    "Contracts": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/security.yml", "runContains": ["ArcForges.Contracts.ArchitectureTests.dll --hosted"]}
+    ],
+    "ArcScope": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/ci.yml", "runContains": ["ArcForges.ArcScope.ArchitectureTests.dll --hosted"]}
+    ],
+    "Cloud": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/ci.yml", "runContains": ["ArcForges.Cloud.ArchitectureTests.EvaluatedRepositoryGate"]},
+      {"id": "forbidden-terms", "workflow": ".github/workflows/ci.yml", "runContains": ["npm run policy"]}
+    ],
+    "AI": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/ci.yml", "runContains": ["npm run check"]}
+    ],
+    "Web": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/ci.yml", "runContains": ["npm run check"]}
+    ],
+    "Mobile": [
+      {"id": "architecture-suite", "workflow": ".github/workflows/ci.yml", "runContains": ["spotlessCheck"]}
+    ]
+  },
+  "markers": {
+    "DesktopPlatform": [
+      {"id": "host-project", "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj"},
+      {"id": "engine-source", "path": "src/Build/ArcForges.Build.Policy/Architecture/PolicyEngine.cs"}
+    ],
+    "Contracts": [
+      {"id": "host-project", "path": "tests/ArchitectureTests/ArcForges.Contracts.ArchitectureTests.csproj"}
+    ],
+    "ArcScope": [
+      {"id": "host-project", "path": "tests/ArchitectureTests/ArcForges.ArcScope.ArchitectureTests.csproj"}
+    ],
+    "Cloud": [
+      {"id": "host-project", "path": "tests/ArchitectureTests/ArcForges.Cloud.ArchitectureTests.csproj"}
+    ],
+    "AI": [
+      {"id": "policy-wired-into-check", "path": "eng/project.mjs", "contains": "runPolicy"},
+      {"id": "check-script", "path": "package.json", "contains": "node eng/project.mjs check"}
+    ],
+    "Web": [
+      {"id": "policy-source", "path": "eng/policy/architecture.ts"},
+      {"id": "check-script", "path": "package.json", "contains": "npm run policy"}
+    ],
+    "Mobile": [
+      {"id": "policy-applied", "path": "build.gradle.kts", "contains": "gradle/policy/mobile-policy.gradle.kts"},
+      {"id": "policy-before-spotless", "path": "gradle/policy/mobile-policy.gradle.kts", "contains": "dependsOn(verifyMobilePolicy)"}
+    ]
+  }
+}
