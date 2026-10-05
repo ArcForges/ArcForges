@@ -47,6 +47,7 @@ struct input_bytes final {
     uint64_t short_reads = 0; // when nonzero, every read returns at most this many bytes
     arc_status_t read_status = ARC_OK;
     bool overrun = false;
+    bool zero_reads = false;
 };
 
 arc_status_t ARC_ABI_CALL read_input(void* context, uint64_t offset, void* destination, uint64_t requested,
@@ -55,6 +56,10 @@ arc_status_t ARC_ABI_CALL read_input(void* context, uint64_t offset, void* desti
     auto* input = static_cast<input_bytes*>(context);
     if (input->read_status != ARC_OK) {
         return input->read_status;
+    }
+    if (input->zero_reads) {
+        *done = 0;
+        return ARC_OK;
     }
     if (input->overrun) {
         *done = requested + 1;
@@ -155,7 +160,10 @@ std::string fetch_text(arc_handle_t document, uint32_t page, uint32_t start, uin
     if (status_out != nullptr) {
         *status_out = status;
     }
-    CHECK(output.required == buffer.size());
+    // The handle may legitimately be closed by another thread between the size query and this call (ARC_CLOSED).
+    if (status == ARC_OK) {
+        CHECK(output.required == buffer.size());
+    }
     return status == ARC_OK ? buffer : std::string{};
 }
 
@@ -332,10 +340,18 @@ void test_io_callbacks()
 {
     reset({page_with(u"a")});
     opened out;
-    input_bytes shorts{std::string("FAKEPDF1\n") + std::string(3000, 'x'), 7};
-    CHECK_STATUS(ARC_OK, open_document(shorts, out));
-    CHECK(g_script->consumed_bytes == shorts.bytes.size());
+    // A callback that returns the whole window is read in small steps by the backend.
+    input_bytes whole{std::string("FAKEPDF1\n") + std::string(3000, 'x')};
+    CHECK_STATUS(ARC_OK, open_document(whole, out));
+    CHECK(g_script->consumed_bytes == whole.bytes.size());
     CHECK_STATUS(ARC_OK, arc_pdf_close(out.handle));
+
+    // A short read in the middle of the input, or a zero-length OK read, violates the callback contract.
+    input_bytes shorts{std::string("FAKEPDF1\n") + std::string(3000, 'x'), 7};
+    CHECK_STATUS(ARC_IO, open_document(shorts, out));
+    input_bytes zero{"FAKEPDF1\nbody"};
+    zero.zero_reads = true;
+    CHECK_STATUS(ARC_IO, open_document(zero, out));
 
     input_bytes failing{"FAKEPDF1\nbody"};
     failing.read_status = ARC_IO;
@@ -447,8 +463,9 @@ void test_text_basic_and_paging()
     CHECK_STATUS(ARC_OK, status);
     CHECK(json == "{\"version\":1,\"page\":0,\"start\":0,\"next\":5,\"text\":\"hello\",\"boxes\":["
                   "{\"start\":0,\"length\":5,\"x\":1,\"y\":2,\"width\":3,\"height\":4}]}");
-    json = fetch_text(document.handle, 0, 5, 3, &status);
-    CHECK(json == "{\"version\":1,\"page\":0,\"start\":5,\"next\":8,\"text\":\" wo\",\"boxes\":[]}");
+    json = fetch_text(document.handle, 0, 5, 3,
+                      &status); // the box at 6..11 would straddle the window end, so the chunk ends where it starts
+    CHECK(json == "{\"version\":1,\"page\":0,\"start\":5,\"next\":6,\"text\":\" \",\"boxes\":[]}");
     json = fetch_text(document.handle, 0, 8, 100, &status);
     CHECK(json == "{\"version\":1,\"page\":0,\"start\":8,\"text\":\"rld\",\"boxes\":[]}");
     json = fetch_text(document.handle, 0, 11, 10, &status); // at the end: empty chunk, no next
@@ -551,9 +568,9 @@ void test_text_limits_and_hostile_backend()
     reset({page_with(u"abcd", {{0, 1, 0, 0, 1, 1}, {0, 1, 0, 0, 1, 1}, {0, 2, 0, 0, 1, 1}})});
     document = open_ok(limits_for(5000, 2));
     json = fetch_text(document.handle, 0, 0, 4, &status);
-    CHECK_STATUS(
-        ARC_OK,
-        status); // progress by one unit; a box that crosses the chunk end is not carried (documented pager rule)
+    CHECK_STATUS(ARC_OK,
+                 status); // progress by one unit; a box that crosses the chunk end is not carried
+                          // (documented pager rule)
     CHECK(json.find("\"next\":1") != std::string::npos);
     CHECK(json.find("\"length\":2") == std::string::npos);
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
@@ -614,7 +631,8 @@ void test_render()
     CHECK(pixels[4 * 4 + 0] == 10 && pixels[4 * 4 + 1] == 21);
     CHECK(pixels[(4 * 4 + 3 * 4) + 0] == 13);
 
-    // A stride wider than the row: required covers (height - 1) strides plus one row, and no byte past it is touched.
+    // A stride wider than the row: required covers (height - 1) strides plus one row, and no byte past it
+    // is touched.
     const arc_region_v1 strided = region_of(0, 0, 3, 2, 20);
     std::vector<uint8_t> big(64, 0xEE);
     arc_mut_buffer_t strided_buffer{big.data(), big.size(), 0};
@@ -766,8 +784,8 @@ void test_cancellation_and_deadline()
     const auto elapsed = std::chrono::steady_clock::now() - before;
     CHECK(elapsed >= std::chrono::milliseconds(90) && elapsed < std::chrono::seconds(10));
 
-    // A render that spins is cancelled and its buffer is wiped; a render that ignores the deadline is refused
-    // afterwards.
+    // A render that spins is cancelled and its buffer is wiped; a render that ignores the deadline is
+    // refused afterwards.
     reset({page_with(u"a")});
     g_script->render_hangs_until_stopped = true;
     opened document = open_ok();
@@ -802,6 +820,87 @@ void test_cancellation_and_deadline()
     arc_mut_buffer_t query{};
     CHECK_STATUS(ARC_CANCELLED, arc_pdf_text(document.handle, 0, 0, 10, &query, &token));
     CHECK(g_script->text_calls == 0);
+    CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
+}
+
+arc_bool_t ARC_ABI_CALL flag_cancel(void* user)
+{
+    return static_cast<std::atomic<bool>*>(user)->load() ? 1 : 0;
+}
+
+void test_review_findings()
+{
+    // A box that would straddle a chunk end moves whole into the next chunk, so every box is delivered
+    // exactly once.
+    reset({page_with(u"0123456789", {{0, 4, 0, 0, 1, 1}, {4, 4, 0, 0, 1, 1}, {8, 2, 0, 0, 1, 1}})});
+    opened document = open_ok();
+    arc_status_t status = ARC_OK;
+    for (uint32_t count : {6U, 5U}) {
+        int delivered = 0;
+        uint32_t start = 0;
+        for (int guard = 0; guard < 20; ++guard) {
+            const std::string json = fetch_text(document.handle, 0, start, count, &status);
+            CHECK_STATUS(ARC_OK, status);
+            for (size_t at = json.find("\"length\""); at != std::string::npos; at = json.find("\"length\"", at + 1)) {
+                ++delivered;
+            }
+            const size_t next = json.find("\"next\":");
+            if (next == std::string::npos || next > json.find("\"text\"")) {
+                break;
+            }
+            start = static_cast<uint32_t>(std::stoul(json.substr(next + 7)));
+        }
+        CHECK(delivered == 3);
+    }
+    std::string json = fetch_text(document.handle, 0, 0, 6, &status);
+    CHECK(json.find("\"next\":4") != std::string::npos && json.find("\"text\":\"0123\"") != std::string::npos);
+    CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
+
+    // The output limit bounds the text response.
+    reset({page_with(std::u16string(100, u'a'))});
+    arc_limits_v1 small_output = limits_for();
+    small_output.max_output_bytes = 100;
+    document = open_ok(small_output);
+    fetch_text(document.handle, 0, 0, 100, &status);
+    CHECK_STATUS(ARC_RESOURCE_LIMIT, status);
+    fetch_text(document.handle, 0, 0, 10, &status); // a shorter chunk fits under the same limit
+    CHECK_STATUS(ARC_OK, status);
+    CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
+
+    // A row stride beyond the tile bound is refused even when the tile itself is tiny.
+    reset({page_with(u"a")});
+    document = open_ok();
+    arc_pdf_page_v1 page = page_record();
+    CHECK_STATUS(ARC_OK, arc_pdf_page_info(document.handle, 0, &page));
+    const arc_region_v1 wide_stride = region_of(0, 0, 4, 1, 64ULL * 1024 * 1024 + 1);
+    std::vector<uint8_t> room(64, 0xEE);
+    arc_mut_buffer_t room_buffer{room.data(), room.size(), 0};
+    CHECK_STATUS(ARC_INVALID_ARGUMENT,
+                 arc_pdf_render(document.handle, &page, &wide_stride, 100, 100, &room_buffer, nullptr));
+    CHECK(g_script->render_calls == 0 && room[0] == 0xEE);
+    CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
+
+    // A cancellation that arrives while the backend answers the geometry call is honoured before the
+    // render.
+    reset({page_with(u"a")});
+    document = open_ok();
+    std::atomic<bool> cancelled{false};
+    g_script->on_geometry = [&] { cancelled = true; };
+    arc_cancel_token_t token{};
+    token.struct_size = sizeof(arc_cancel_token_t);
+    token.struct_version = 1;
+    token.is_cancelled = flag_cancel;
+    token.user_data = &cancelled;
+    page = page_record();
+    page.page_index = 0;
+    page.rotation = 0;
+    page.width_points = 612.0;
+    page.height_points = 792.0;
+    const arc_region_v1 tile = region_of(0, 0, 4, 4);
+    std::vector<uint8_t> pixels(64, 0xEE);
+    arc_mut_buffer_t pixel_buffer{pixels.data(), pixels.size(), 0};
+    CHECK_STATUS(ARC_CANCELLED, arc_pdf_render(document.handle, &page, &tile, 100, 100, &pixel_buffer, &token));
+    CHECK(g_script->geometry_calls == 1 && g_script->render_calls == 0);
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
 }
 
@@ -859,6 +958,7 @@ int main()
     test_render();
     test_render_failures_leave_no_partial_output();
     test_cancellation_and_deadline();
+    test_review_findings();
     test_concurrent_use_and_close();
     if (g_failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

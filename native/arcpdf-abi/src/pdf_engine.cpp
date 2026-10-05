@@ -98,7 +98,9 @@ class io_source final : public byte_source {
         if (status != ARC_OK && status != ARC_END_OF_STREAM) {
             return status < 0 ? status : ARC_IO;
         }
-        if (read > count) {
+        // The window is already clamped to the input, so a short read, however it is reported, is a defect of the
+        // callback.
+        if (read != count) {
             return ARC_IO;
         }
         *done = read;
@@ -529,6 +531,20 @@ arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uin
             inside.clear();
             auto first = std::lower_bound(boxes.begin(), boxes.end(), start,
                                           [](const text_box& box, uint32_t value) { return box.start < value; });
+            // A box that would straddle the chunk end moves whole into the next chunk: the chunk ends where it starts.
+            // A box that already straddles the window start cannot be moved and is not carried (it began in an earlier
+            // window).
+            size_t moved_end = end;
+            for (auto probe = first; probe != boxes.end() && probe->start < end; ++probe) {
+                if (probe->start > start && static_cast<uint64_t>(probe->start) + probe->length > end) {
+                    moved_end = std::min<size_t>(moved_end, keep_pairs_whole(text, start, probe->start));
+                    break;
+                }
+            }
+            if (moved_end < end) {
+                end = moved_end;
+                continue;
+            }
             for (; first != boxes.end() && first->start < end; ++first) {
                 if (static_cast<uint64_t>(first->start) + first->length <= end) {
                     inside.push_back(&*first);

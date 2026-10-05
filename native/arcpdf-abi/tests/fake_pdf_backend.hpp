@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <thread>
 
@@ -35,8 +36,9 @@ struct fake_script final {
     arc_status_t open_status = ARC_OK;       // returned instead of opening when not ARC_OK
     arc_status_t geometry_status = ARC_OK;
     arc_status_t text_status = ARC_OK;
-    uint32_t reported_pages = 0; // 0: pages.size()
-    uint64_t consumed_bytes = 0; // set by open: bytes read through the source
+    uint32_t reported_pages = 0;       // 0: pages.size()
+    std::function<void()> on_geometry; // runs inside every geometry call
+    uint64_t consumed_bytes = 0;       // set by open: bytes read through the source
     std::atomic<int> alive_documents{0};
     std::atomic<int> render_calls{0};
     std::atomic<int> text_calls{0};
@@ -68,6 +70,9 @@ class fake_document final : public document {
     arc_status_t geometry(uint32_t index, const call_context&, page_geometry& out) override
     {
         ++script_->geometry_calls;
+        if (script_->on_geometry) {
+            script_->on_geometry();
+        }
         if (script_->geometry_status != ARC_OK) {
             return script_->geometry_status;
         }

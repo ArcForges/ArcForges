@@ -454,6 +454,17 @@ public sealed class ProductionCompositionTests
     }
 
     [Fact]
+    public void ALibraryWithoutAPdfBackendOrWithoutTheFunctionalAbiIsRefused()
+    {
+        var functional = new NativeAbiVersion(1, 1);
+        ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1;backend=linked");
+        _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1;backend=none"));
+        _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1"));
+        _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(new NativeAbiVersion(1, 0), "ArcPdfNative;abi=1.0;backend=linked"));
+        _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(new NativeAbiVersion(2, 1), "ArcPdfNative;abi=2.1;backend=linked"));
+    }
+
+    [Fact]
     public void ACompositionPreparesBeforeAnyParserExists()
     {
         var prepared = 0;

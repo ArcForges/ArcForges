@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics.CodeAnalysis;
+using ArcForges.Native.Abstractions;
 using ArcForges.Native.Pdf;
 
 namespace ArcForges.ContentSandbox.Host;
@@ -37,21 +38,27 @@ internal sealed class ProductionParserProfile(PdfDocumentOpener? opener = null, 
     private static PdfDocument OpenNative(IPdfInput input, PdfLimits limits, CancellationToken cancellation) =>
         PdfDocument.Open(input, limits, default, cancellation);
 
+    /// <summary>Checks what the loaded library reports: the functional ABI (minor 1 or later) and a linked PDF backend.</summary>
+    internal static void VerifyLibrary(NativeAbiVersion version, string buildInfo)
+    {
+        ArgumentNullException.ThrowIfNull(buildInfo);
+        if (version.Major != 1 || version.Minor < 1)
+        {
+            throw new ContentParserException("The PDF library does not export the functional ABI.");
+        }
+
+        if (!buildInfo.Contains("backend=linked", StringComparison.Ordinal))
+        {
+            throw new ContentParserException("The PDF library has no parser linked.");
+        }
+    }
+
     [SuppressMessage("Design", "CA1031", Justification = "Any load failure is the same fail-closed refusal.")]
     private static void LoadNative()
     {
         try
         {
-            var version = PdfAbi.GetAbiVersion();
-            if (version.Minor < 1)
-            {
-                throw new ContentParserException("The PDF library does not export the functional ABI.");
-            }
-
-            if (!PdfAbi.HasLinkedBackend())
-            {
-                throw new ContentParserException("The PDF library has no parser linked.");
-            }
+            VerifyLibrary(PdfAbi.GetAbiVersion(), PdfAbi.GetBuildInfo());
         }
         catch (ContentParserException)
         {

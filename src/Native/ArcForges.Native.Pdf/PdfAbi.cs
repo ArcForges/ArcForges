@@ -23,9 +23,6 @@ internal static unsafe partial class PdfAbi
     /// <summary>The calling thread's last native error.</summary>
     public static NativeError GetLastError() => NativeAbi.GetError(GetErrorCore);
 
-    /// <summary>True when the loaded library has a PDF parser linked. A library without one refuses every open.</summary>
-    public static bool HasLinkedBackend() => GetBuildInfo().Contains("backend=linked", StringComparison.Ordinal);
-
     [LibraryImport("ArcPdfNative", EntryPoint = "arc_pdf_get_abi_version")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     private static partial int GetVersionCore(uint* major, uint* minor);
