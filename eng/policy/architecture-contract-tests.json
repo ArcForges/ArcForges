@@ -1755,9 +1755,19 @@
     "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.ExpiredUnheldPartitionPurgeRetainsSingleUseAuthorityAndCoverageReceipt()"
   },
   {
-    "apiSymbol": "ArcForges.Security.Audit.EgressDecisionAuditAdapter.Record(ArcForges.Security.Audit.EgressDecisionFact)",
+    "apiSymbol": "ArcForges.Security.Audit.EgressDecisionAuditAdapter.Record(ArcForges.Security.Egress.EgressAuditRecord)",
     "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
-    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.EgressAllowedAndDeniedDecisionsAppendBeforeReturnWithEveryTypedFact()"
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.AllowedAndRefusedEgressDecisionsAppendBeforeReturnWithTheProjectedFacts()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.EgressAuditSink.WriteAsync(ArcForges.Security.Egress.EgressAuditRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.TheRealEgressAuthorityAuditsAllowedAndRefusedDecisionsThroughTheDurableSink()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditEgressContentReference.From(string, string)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.TheEgressShapeRefusesInventedOrContradictoryDetailAndOnlyEgressMayLeaveRiskUnassessed()"
   },
   {
     "apiSymbol": "ArcForges.Security.Audit.CapabilityLeaseAuditAdapter.Record(ArcForges.Security.Audit.CapabilityLeaseLifecycleFact)",

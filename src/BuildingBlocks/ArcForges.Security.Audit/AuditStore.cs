@@ -23,8 +23,8 @@ public sealed class AuditStore : IDisposable
     private const string AuthorityReceiptTable = "local_audit_authority_receipts";
     private const string PurgeReceiptTable = "local_audit_purge_receipts";
     private const string GateTable = "local_audit_maintenance_gate";
-    private const string EventColumns = "sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_id,egress_authority_revision";
-    private const int SchemaVersion = 1;
+    private const string EventColumns = "sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month,egress_reason,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_kind,egress_authority_ref,egress_grant_generation,egress_content_sha256";
+    private const int SchemaVersion = 2;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Writers = new(PathComparer);
     private static readonly strdelegate_authorizer DatabaseAuthorizer = AuthorizeDatabase;
@@ -461,7 +461,7 @@ public sealed class AuditStore : IDisposable
     {
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1),schema_version INTEGER NOT NULL,realm_id TEXT NOT NULL,owner_id TEXT NOT NULL,policy_id TEXT NOT NULL,retention_days INTEGER NOT NULL);");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {GateTable}(singleton INTEGER PRIMARY KEY CHECK(singleton=1),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));");
-        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,event_type INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,capability_id TEXT NOT NULL,executor_id TEXT NOT NULL,resource_kind INTEGER NOT NULL,resource_id TEXT NOT NULL,risk INTEGER NOT NULL,decision INTEGER NOT NULL,reason INTEGER NOT NULL,origin INTEGER NOT NULL,workspace_id TEXT NULL,task_id TEXT NULL,correlation_id TEXT NULL,event_sha256 TEXT NOT NULL,policy_id TEXT NOT NULL,egress_data_class INTEGER NULL,egress_destination_class INTEGER NULL,egress_destination_id TEXT NULL,egress_authority_id TEXT NULL,egress_authority_revision INTEGER NULL,CHECK(partition_month BETWEEN 1 AND 12),CHECK((egress_data_class IS NULL AND egress_destination_class IS NULL AND egress_destination_id IS NULL AND egress_authority_id IS NULL AND egress_authority_revision IS NULL) OR (egress_data_class IS NOT NULL AND egress_destination_class IS NOT NULL AND egress_destination_id IS NOT NULL AND egress_authority_id IS NOT NULL AND egress_authority_revision IS NOT NULL AND egress_authority_revision>0)));");
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,event_type INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,capability_id TEXT NOT NULL,executor_id TEXT NOT NULL,resource_kind INTEGER NOT NULL,resource_id TEXT NOT NULL,risk INTEGER NOT NULL,decision INTEGER NOT NULL,reason INTEGER NOT NULL,origin INTEGER NOT NULL,workspace_id TEXT NULL,task_id TEXT NULL,correlation_id TEXT NULL,event_sha256 TEXT NOT NULL,policy_id TEXT NOT NULL,egress_reason INTEGER NULL,egress_data_class INTEGER NULL,egress_destination_class INTEGER NULL,egress_destination_id TEXT NULL,egress_authority_kind INTEGER NULL,egress_authority_ref TEXT NULL,egress_grant_generation TEXT NULL,egress_content_sha256 TEXT NULL,CHECK(partition_month BETWEEN 1 AND 12),CHECK((egress_reason IS NULL AND egress_data_class IS NULL AND egress_destination_class IS NULL AND egress_destination_id IS NULL AND egress_authority_kind IS NULL AND egress_authority_ref IS NULL AND egress_grant_generation IS NULL AND egress_content_sha256 IS NULL AND resource_kind<>0 AND resource_id<>'') OR (egress_reason IS NOT NULL AND egress_data_class IS NOT NULL AND egress_destination_class IS NOT NULL AND egress_authority_kind IS NOT NULL AND egress_content_sha256 IS NOT NULL AND resource_kind=0 AND resource_id='')));");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {HoldTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,hold_id TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,action INTEGER NOT NULL,reason INTEGER NOT NULL,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,origin INTEGER NOT NULL,capability_id TEXT NULL REFERENCES {AuthorityReceiptTable}(capability_id),CHECK(action IN (1,2)),CHECK(partition_month BETWEEN 1 AND 12));");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {AuthorityReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE,action INTEGER NOT NULL,policy_id TEXT NOT NULL,partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,issued_unix_seconds INTEGER NOT NULL,issued_nanoseconds INTEGER NOT NULL CHECK(issued_nanoseconds BETWEEN 0 AND 999999999),expires_unix_seconds INTEGER NOT NULL,expires_nanoseconds INTEGER NOT NULL CHECK(expires_nanoseconds BETWEEN 0 AND 999999999),hold_id TEXT NULL,authority_actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL);");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {PurgeReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE REFERENCES {AuthorityReceiptTable}(capability_id),partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,purged_unix_seconds INTEGER NOT NULL,purged_nanoseconds INTEGER NOT NULL CHECK(purged_nanoseconds BETWEEN 0 AND 999999999),event_count INTEGER NOT NULL,first_event_sequence INTEGER NOT NULL,last_event_sequence INTEGER NOT NULL,events_sha256 TEXT NOT NULL,CHECK(event_count>0));");
@@ -607,7 +607,7 @@ public sealed class AuditStore : IDisposable
         var partition = AuditPartition.For(owner, occurredAt);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT INTO {EventTable}(event_id,occurred_unix_seconds,occurred_nanoseconds,partition_year,partition_month,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_id,egress_authority_revision) VALUES($event,$seconds,$nanoseconds,$year,$month,$type,$actor,$software,$capability,$executor,$resourceKind,$resourceId,$risk,$decision,$reason,$origin,$workspace,$task,$correlation,$hash,$policy,$egressData,$egressDestinationClass,$egressDestination,$egressAuthority,$egressRevision);";
+        command.CommandText = $"INSERT INTO {EventTable}(event_id,occurred_unix_seconds,occurred_nanoseconds,partition_year,partition_month,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,egress_reason,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_kind,egress_authority_ref,egress_grant_generation,egress_content_sha256) VALUES($event,$seconds,$nanoseconds,$year,$month,$type,$actor,$software,$capability,$executor,$resourceKind,$resourceId,$risk,$decision,$reason,$origin,$workspace,$task,$correlation,$hash,$policy,$egressReason,$egressData,$egressDestinationClass,$egressDestination,$egressAuthorityKind,$egressAuthorityRef,$egressGrantGeneration,$egressContent);";
         command.Parameters.AddWithValue("$event", GuidText(eventId));
         command.Parameters.AddWithValue("$seconds", occurredAt.UnixSeconds);
         command.Parameters.AddWithValue("$nanoseconds", (long)occurredAt.Nanoseconds);
@@ -619,7 +619,7 @@ public sealed class AuditStore : IDisposable
         command.Parameters.AddWithValue("$capability", auditEvent.Capability.Value);
         command.Parameters.AddWithValue("$executor", GuidText(auditEvent.Executor.Value));
         command.Parameters.AddWithValue("$resourceKind", (int)auditEvent.Resource.Kind);
-        command.Parameters.AddWithValue("$resourceId", GuidText(auditEvent.Resource.Id));
+        command.Parameters.AddWithValue("$resourceId", auditEvent.Resource == default ? string.Empty : GuidText(auditEvent.Resource.Id));
         command.Parameters.AddWithValue("$risk", (int)auditEvent.Risk);
         command.Parameters.AddWithValue("$decision", (int)auditEvent.Decision);
         command.Parameters.AddWithValue("$reason", (int)auditEvent.Reason);
@@ -630,11 +630,14 @@ public sealed class AuditStore : IDisposable
         command.Parameters.AddWithValue("$hash", hash);
         command.Parameters.AddWithValue("$policy", GuidText(policyId));
         var egress = auditEvent.Egress;
+        command.Parameters.AddWithValue("$egressReason", egress is null ? DBNull.Value : (int)egress.Reason);
         command.Parameters.AddWithValue("$egressData", egress is null ? DBNull.Value : (int)egress.DataClass);
         command.Parameters.AddWithValue("$egressDestinationClass", egress is null ? DBNull.Value : (int)egress.DestinationClass);
-        command.Parameters.AddWithValue("$egressDestination", egress is null ? DBNull.Value : egress.Destination.Value);
-        command.Parameters.AddWithValue("$egressAuthority", egress is null ? DBNull.Value : GuidText(egress.Authority.ObjectId));
-        command.Parameters.AddWithValue("$egressRevision", egress is null ? DBNull.Value : egress.Authority.Value.Value);
+        command.Parameters.AddWithValue("$egressDestination", egress?.Destination is { } destination ? destination.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$egressAuthorityKind", egress is null ? DBNull.Value : (int)egress.AuthorityKind);
+        command.Parameters.AddWithValue("$egressAuthorityRef", egress?.AuthorityReference is { } reference ? reference.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$egressGrantGeneration", egress?.GrantGeneration is { } generation ? generation.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$egressContent", egress is null ? DBNull.Value : egress.Content.Value);
         command.ExecuteNonQuery();
     }
 
@@ -675,13 +678,22 @@ public sealed class AuditStore : IDisposable
         AuditEgressDetail? egress = null;
         if (!reader.IsDBNull(22))
         {
-            egress = new AuditEgressDetail((AuditEgressDataClass)reader.GetInt32(22),
-                (AuditEgressDestinationClass)reader.GetInt32(23), new AuditEgressDestinationId(reader.GetString(24)),
-                new Revision(ParseGuid(reader.GetString(25)), new CloudRevision(reader.GetInt64(26))));
+            egress = new AuditEgressDetail((AuditEgressReason)reader.GetInt32(22), (AuditEgressDataClass)reader.GetInt32(23),
+                (AuditEgressDestinationClass)reader.GetInt32(24),
+                reader.IsDBNull(25) ? null : new AuditEgressDestinationId(reader.GetString(25)),
+                (AuditEgressAuthorityKind)reader.GetInt32(26),
+                reader.IsDBNull(27) ? null : new AuditReferenceText(reader.GetString(27)),
+                reader.IsDBNull(28) ? null : new AuditReferenceText(reader.GetString(28)),
+                new AuditEgressContentReference(reader.GetString(29)));
         }
 
+        var resourceKind = (AuditResourceKind)reader.GetInt32(9);
+        var resourceText = reader.GetString(10);
+        var resource = egress is not null
+            ? (resourceKind == AuditResourceKind.None && resourceText.Length == 0 ? default : throw new InvalidDataException("An egress row carries a resource reference."))
+            : new AuditResourceReference(resourceKind, ParseGuid(resourceText));
         var auditEvent = new AuditEvent((AuditEventType)reader.GetInt32(4), actorChain, software,
-            capability, new AuditResourceReference((AuditResourceKind)reader.GetInt32(9), ParseGuid(reader.GetString(10))),
+            capability, resource,
             (AuditRisk)reader.GetInt32(11), (AuditDecision)reader.GetInt32(12),
             (AuditDecisionReason)reader.GetInt32(13), (AuditOrigin)reader.GetInt32(14), workspace, task, correlation, egress);
         if (executor != auditEvent.Executor) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
@@ -897,7 +909,7 @@ public sealed class AuditStore : IDisposable
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("ArcForges.local_audit.event.v3");
+            writer.Write("ArcForges.local_audit.event.v4");
             writer.Write(GuidText(policyId));
             writer.Write(eventId.ToByteArray());
             writer.Write((int)auditEvent.EventType);
@@ -928,11 +940,17 @@ public sealed class AuditStore : IDisposable
     {
         writer.Write(egress is not null);
         if (egress is null) return;
+        writer.Write((int)egress.Reason);
         writer.Write((int)egress.DataClass);
         writer.Write((int)egress.DestinationClass);
-        writer.Write(egress.Destination.Value);
-        writer.Write(egress.Authority.ObjectId.ToByteArray());
-        writer.Write(egress.Authority.Value.Value);
+        writer.Write(egress.Destination is not null);
+        if (egress.Destination is not null) writer.Write(egress.Destination.Value);
+        writer.Write((int)egress.AuthorityKind);
+        writer.Write(egress.AuthorityReference is not null);
+        if (egress.AuthorityReference is not null) writer.Write(egress.AuthorityReference.Value);
+        writer.Write(egress.GrantGeneration is not null);
+        if (egress.GrantGeneration is not null) writer.Write(egress.GrantGeneration.Value);
+        writer.Write(egress.Content.Value);
     }
 
     private static void WriteOptionalGuid(BinaryWriter writer, Guid? value)
