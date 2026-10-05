@@ -7,6 +7,7 @@ using ArcForges.Foundation.Execution;
 using ArcForges.Security;
 using ArcForges.Security.Audit;
 using ArcForges.Security.Decisions;
+using ArcForges.Security.Egress;
 using ArcForges.Security.Leases;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -284,27 +285,32 @@ public sealed class AuditStoreTests
         Assert.Throws<ObjectDisposedException>(() => fixture.Store.Append(fixture.CreateEvent()));
     }
 
-    // The following tests prove the PLT.44 typed intake contracts only. They do not prove that the real PLT.41
-    // egress enforcement path or a real PLT.43 lease runtime emits to them; neither producer is delivered here.
+    // The lease tests below prove the PLT.44 typed lease intake contract and the real PLT.43 manager through its sink.
+
+    // Egress intake: the audit side of the delivered PLT.41 egress port. These tests project real EgressAuditRecord values and also drive
+    // the real EgressAuthority against a real AuditStore through EgressAuditSink. They do not run a host composition root.
+
+    private static readonly EgressReason[] EveryRefusal =
+    [
+        EgressReason.DestinationNotDeclared, EgressReason.DestinationMalformed, EgressReason.ContentUnclassified, EgressReason.SecretMaterial,
+        EgressReason.NotAllowlisted, EgressReason.AllowlistMismatch, EgressReason.DataClassAboveAllowlist, EgressReason.AiIneligibleContent,
+        EgressReason.NoGrant, EgressReason.GrantExplicitlyDenied, EgressReason.GrantMismatch, EgressReason.GrantOutsideLifetime,
+        EgressReason.DataClassAboveGrant, EgressReason.ClassifierUnavailable, EgressReason.AllowlistUnavailable,
+        EgressReason.GrantSourceUnavailable, EgressReason.AuditUnavailable,
+    ];
 
     [Fact]
-    public void EgressAllowedAndDeniedDecisionsAppendBeforeReturnWithEveryTypedFact()
+    public void AllowedAndRefusedEgressDecisionsAppendBeforeReturnWithTheProjectedFacts()
     {
         using var fixture = new AuditFixture();
-        var adapter = new EgressDecisionAuditAdapter(fixture.Store);
-        var authority = new Revision(Guid.NewGuid(), new CloudRevision(7));
-        var correlation = new CorrelationId(Guid.NewGuid());
-        var resource = new AuditResourceReference(AuditResourceKind.Export, Guid.NewGuid());
-        (EgressDecisionOutcome Outcome, AuditDecisionReason Reason, AuditEventType Type, AuditDecision Decision)[] cases =
-        [
-            (EgressDecisionOutcome.Allowed, AuditDecisionReason.UserApproved, AuditEventType.DataEgressAuthorized, AuditDecision.Allowed),
-            (EgressDecisionOutcome.Denied, AuditDecisionReason.PolicyDenied, AuditEventType.DataEgressDenied, AuditDecision.Denied),
-        ];
+        var adapter = fixture.EgressAdapter();
+        var correlation = new CommandId(Guid.NewGuid());
+        var resource = new ResourceReference("doc/123", "rev-7");
 
-        foreach (var (outcome, reason, type, decision) in cases)
+        foreach (var reason in new[] { EgressReason.None, EgressReason.NotAllowlisted })
         {
-            var fact = fixture.CreateEgressFact(outcome, reason, authority, correlation, resource);
-            var appended = adapter.Record(fact);
+            var record = fixture.CreateEgressRecord(reason, correlation: correlation, resource: resource);
+            var appended = adapter.Record(record);
 
             // Durable before Record returned: an independent store over the same file sees exactly this row.
             using var independent = fixture.OpenSecondStore();
@@ -313,40 +319,143 @@ public sealed class AuditStoreTests
                 afterSequence: appended.Sequence - 1)));
             Assert.Equal(appended.EventId, read.EventId);
             Assert.Equal(fixture.NowInstant, read.OccurredAt);
-            Assert.Equal(type, read.Event.EventType);
-            Assert.Equal(decision, read.Event.Decision);
-            Assert.Equal(reason, read.Event.Reason);
-            Assert.Equal(AuditRisk.R3, read.Event.Risk);
-            Assert.Equal(correlation, read.Event.Correlation);
-            Assert.Equal(resource, read.Event.Resource);
-            Assert.Equal(outcome, fact.Outcome);
+            Assert.Equal(AuditRisk.NotAssessed, read.Event.Risk);
+            Assert.Equal(new CorrelationId(correlation.Value), read.Event.Correlation);
+            Assert.Equal(default(AuditResourceReference), read.Event.Resource);
+            Assert.Equal(record.Scope.Workspace, read.Event.Workspace);
+            Assert.Equal(AuditOrigin.Local, read.Event.Origin);
+            Assert.Equal(new AuditCapabilityId("egress.send"), read.Event.Capability);
             var egress = Assert.IsType<AuditEgressDetail>(read.Event.Egress);
-            Assert.Equal(AuditEgressDataClass.CanonicalUserData, egress.DataClass);
-            Assert.Equal(AuditEgressDestinationClass.CloudAiProvider, egress.DestinationClass);
-            Assert.Equal("api.provider.example:443", egress.Destination.Value);
-            Assert.Equal(authority, egress.Authority);
-            Assert.Equal(7, egress.Authority.Value.Value);
+            Assert.Equal(AuditEgressContentReference.From("doc/123", "rev-7"), egress.Content);
+            Assert.Equal(64, egress.Content.Value.Length);
+            Assert.Equal("api.example.com", egress.Destination!.Value);
+            Assert.Equal(AuditEgressDataClass.WorkspaceContent, egress.DataClass);
+            if (reason == EgressReason.None)
+            {
+                Assert.Equal(AuditEventType.DataEgressAuthorized, read.Event.EventType);
+                Assert.Equal(AuditDecision.Allowed, read.Event.Decision);
+                Assert.Equal(AuditDecisionReason.UserApproved, read.Event.Reason);
+                Assert.Equal(AuditEgressReason.Authorized, egress.Reason);
+                Assert.Equal(AuditEgressDestinationClass.ThirdParty, egress.DestinationClass);
+                Assert.Equal(AuditEgressAuthorityKind.UserConsent, egress.AuthorityKind);
+                Assert.Equal("consent-1", egress.AuthorityReference!.Value);
+                Assert.Equal("grant-generation-1", egress.GrantGeneration!.Value);
+            }
+            else
+            {
+                Assert.Equal(AuditEventType.DataEgressDenied, read.Event.EventType);
+                Assert.Equal(AuditDecision.Denied, read.Event.Decision);
+                Assert.Equal(AuditDecisionReason.PolicyDenied, read.Event.Reason);
+                Assert.Equal(AuditEgressReason.NotAllowlisted, egress.Reason);
+                Assert.Equal(AuditEgressDestinationClass.Undetermined, egress.DestinationClass);
+                Assert.Equal(AuditEgressAuthorityKind.NoAuthority, egress.AuthorityKind);
+                Assert.Null(egress.AuthorityReference);
+                Assert.Null(egress.GrantGeneration);
+            }
+
             Assert.Equal(64, read.IntegritySha256.Length);
         }
 
         using var connection = fixture.OpenRawConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM local_audit WHERE egress_destination_id='api.provider.example:443' AND egress_authority_revision=7;";
+        command.CommandText = "SELECT COUNT(*) FROM local_audit WHERE resource_kind=0 AND resource_id='' AND risk=6 AND egress_destination_id='api.example.com' AND egress_content_sha256 IS NOT NULL;";
         Assert.Equal(2L, Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void ADelegatedChainRecordsItsFinalActorAndTheFallbackIdentityIsUsedOnlyForADirectDecision()
+    {
+        using var fixture = new AuditFixture();
+        var adapter = fixture.EgressAdapter();
+        var delegated = adapter.Record(fixture.CreateEgressRecord(EgressReason.None, actor: fixture.Actor));
+        var direct = adapter.Record(fixture.CreateEgressRecord(EgressReason.None));
+
+        Assert.Equal("owned.audit/1", delegated.Event.SoftwareIdentity.Value);
+        Assert.Equal(fixture.Actor.Actors[^1].Executor, delegated.Event.Executor);
+        Assert.Equal("arcscope.desktop/1", direct.Event.SoftwareIdentity.Value);
+        Assert.Equal(fixture.Actor.CallerInstance, direct.Event.Executor);
+    }
+
+    [Fact]
+    public void EveryRefusalReasonProjectsWithExplicitMarkersAndNoInventedValue()
+    {
+        // The expectation is this test's own table of what the PLT.41 authority had determined at each refusal; it is not the
+        // production table.
+        (AuditEgressReason Egress, AuditDecisionReason Generic, AuditEgressDataClass Data, AuditEgressDestinationClass Class, bool Destination)[] expected =
+        [
+            (AuditEgressReason.DestinationNotDeclared, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.DestinationMalformed, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, false),
+            (AuditEgressReason.ContentUnclassified, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.SecretMaterial, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.SecretMaterial, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.NotAllowlisted, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.WorkspaceContent, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.AllowlistMismatch, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.WorkspaceContent, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.DataClassAboveAllowlist, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.AiIneligibleContent, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.NoGrant, AuditDecisionReason.AuthorityMissing, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.GrantExplicitlyDenied, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.GrantMismatch, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.GrantOutsideLifetime, AuditDecisionReason.PolicyExpired, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.DataClassAboveGrant, AuditDecisionReason.PolicyDenied, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.ClassifierUnavailable, AuditDecisionReason.ResourceUnavailable, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.AllowlistUnavailable, AuditDecisionReason.ResourceUnavailable, AuditEgressDataClass.WorkspaceContent, AuditEgressDestinationClass.Undetermined, true),
+            (AuditEgressReason.GrantSourceUnavailable, AuditDecisionReason.ResourceUnavailable, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+            (AuditEgressReason.AuditUnavailable, AuditDecisionReason.ResourceUnavailable, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true),
+        ];
+        Assert.Equal(EveryRefusal.Length, expected.Length);
+
+        using var fixture = new AuditFixture();
+        var adapter = fixture.EgressAdapter();
+        for (var index = 0; index < EveryRefusal.Length; index++)
+        {
+            var reason = EveryRefusal[index];
+            var want = expected[index];
+            Assert.Equal(reason.ToString(), want.Egress.ToString());
+            var appended = adapter.Record(fixture.CreateEgressRecord(reason));
+            var at = appended.OccurredAt.ToDateTimeOffset();
+            var read = Assert.Single(fixture.Store.Query(new AuditQuery(at.AddMinutes(-1), at.AddMinutes(1), 10, afterSequence: appended.Sequence - 1)));
+            var egress = Assert.IsType<AuditEgressDetail>(read.Event.Egress);
+            Assert.Equal(AuditEventType.DataEgressDenied, read.Event.EventType);
+            Assert.Equal(AuditDecision.Denied, read.Event.Decision);
+            Assert.Equal(want.Egress, egress.Reason);
+            Assert.Equal(want.Generic, read.Event.Reason);
+            Assert.Equal(want.Data, egress.DataClass);
+            Assert.Equal(want.Class, egress.DestinationClass);
+            Assert.Equal(want.Destination, egress.Destination is not null);
+            Assert.Equal(AuditEgressAuthorityKind.NoAuthority, egress.AuthorityKind);
+            Assert.Null(egress.AuthorityReference);
+            Assert.Null(egress.GrantGeneration);
+            Assert.Equal(AuditRisk.NotAssessed, read.Event.Risk);
+        }
+    }
+
+    [Fact]
+    public void EgressAuthorityKindsMapToTheirOwnAllowedReasonAndNeverToAnInventedOne()
+    {
+        using var fixture = new AuditFixture();
+        var adapter = fixture.EgressAdapter();
+        foreach (var (kind, auditKind, reason) in new[]
+        {
+            (EgressAuthorityKind.UserConsent, AuditEgressAuthorityKind.UserConsent, AuditDecisionReason.UserApproved),
+            (EgressAuthorityKind.WorkspacePolicy, AuditEgressAuthorityKind.WorkspacePolicy, AuditDecisionReason.PolicyAllowed),
+            (EgressAuthorityKind.ProductRoute, AuditEgressAuthorityKind.ProductRoute, AuditDecisionReason.PolicyAllowed),
+        })
+        {
+            var appended = adapter.Record(fixture.CreateEgressRecord(EgressReason.None, authority: kind));
+            Assert.Equal(auditKind, appended.Event.Egress!.AuthorityKind);
+            Assert.Equal(reason, appended.Event.Reason);
+        }
     }
 
     [Fact]
     public void EgressAppendFailureSurfacesBeforeAnyCallerContinuationAndWritesNothing()
     {
         using var fixture = new AuditFixture();
-        var adapter = new EgressDecisionAuditAdapter(fixture.Store);
-        var authority = new Revision(Guid.NewGuid(), new CloudRevision(1));
-        var allowed = fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority);
+        var adapter = fixture.EgressAdapter();
+        var allowed = fixture.CreateEgressRecord(EgressReason.None);
 
         // Wrong owner: the store refuses, the call throws, and the code after Record (the transfer) never runs.
         var otherOwner = AuditFixture.NewActor(new RealmId(Guid.NewGuid()), new UserId(Guid.NewGuid()), []);
-        var foreign = fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority,
-            actor: otherOwner);
+        var foreign = fixture.CreateEgressRecord(EgressReason.None, actor: otherOwner);
         var transferred = false;
         Assert.Throws<UnauthorizedAccessException>(() => { adapter.Record(foreign); transferred = true; });
         Assert.False(transferred);
@@ -375,25 +484,151 @@ public sealed class AuditStoreTests
     }
 
     [Fact]
-    public void EgressFactsRejectUnclassifiedUntypedAndContradictoryInputs()
+    public void ARecordTheClosedShapeCannotHoldIsRefusedAndNothingIsStored()
     {
         using var fixture = new AuditFixture();
-        var authority = new Revision(Guid.NewGuid(), new CloudRevision(1));
+        var adapter = fixture.EgressAdapter();
+        var allowed = fixture.CreateEgressRecord(EgressReason.None);
+        var refused = fixture.CreateEgressRecord(EgressReason.NoGrant);
+        var delegated = fixture.CreateEgressRecord(EgressReason.None, actor: fixture.Actor);
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.None, AuditDecisionReason.PolicyAllowed, authority));
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact((EgressDecisionOutcome)9, AuditDecisionReason.PolicyAllowed, authority));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyDenied, authority));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.NotApplicable, authority));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Denied, AuditDecisionReason.PolicyAllowed, authority));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Denied, AuditDecisionReason.NotApplicable, authority));
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, dataClass: AuditEgressDataClass.None));
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, dataClass: (AuditEgressDataClass)99));
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, destinationClass: AuditEgressDestinationClass.None));
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, destinationClass: (AuditEgressDestinationClass)99));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, default));
-        Assert.Throws<ArgumentOutOfRangeException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, risk: (RiskLevel)9));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, correlation: default(CorrelationId)));
-        Assert.Throws<ArgumentException>(() => fixture.CreateEgressFact(EgressDecisionOutcome.Allowed, AuditDecisionReason.PolicyAllowed, authority, actor: fixture.Actor, software: new AuditSoftwareIdentity("other.software/1")));
+        EgressAuditRecord[] unrepresentable =
+        [
+            allowed with { Kind = EgressAuditKind.None },
+            allowed with { Kind = (EgressAuditKind)9 },
+            allowed with { Reason = EgressReason.NoGrant },
+            allowed with { ReasonCode = "egress.no_grant" },
+            allowed with { RegisteredCode = "perm.egress_denied" },
+            refused with { ReasonCode = "egress.not_allowlisted" },
+            refused with { RegisteredCode = "resource.unavailable" },
+            refused with { Reason = EgressReason.None },
+            refused with { Reason = (EgressReason)99, ReasonCode = null, RegisteredCode = null },
+            refused with { Authority = EgressAuthorityKind.UserConsent },
+            refused with { AuthorityReference = "consent-1" },
+            refused with { GrantGeneration = "grant-generation-1" },
+            refused with { GrantIssuer = "owner.egress" },
+            allowed with { Authority = EgressAuthorityKind.None },
+            allowed with { Authority = (EgressAuthorityKind)9 },
+            allowed with { AuthorityReference = null },
+            allowed with { AuthorityReference = new string('r', 257) },
+            allowed with { AuthorityReference = "line\nbreak" },
+            allowed with { GrantGeneration = null },
+            allowed with { DataClass = EgressDataClass.None },
+            allowed with { DataClass = EgressDataClass.SecretMaterial },
+            allowed with { DataClass = (EgressDataClass)99 },
+            allowed with { DestinationClass = EgressDestinationClass.None },
+            allowed with { DestinationClass = (EgressDestinationClass)99 },
+            allowed with { Destination = null },
+            allowed with { Destination = "https://API.example.com" },
+            allowed with { Destination = "https://api.example.com/" },
+            allowed with { Destination = "https://api.example.com/v1" },
+            allowed with { Destination = "http://api.example.com" },
+            allowed with { Destination = "api.example.com" },
+            allowed with { Destination = "https://localhost" },
+            allowed with { CapabilityKey = "Bad Key" },
+            allowed with { Origin = DecisionOrigin.None },
+            allowed with { Executor = new InstanceId(Guid.NewGuid()) },
+            delegated with { SoftwareIdentity = "other.software/1" },
+            delegated with { SoftwareIdentity = null },
+            fixture.CreateEgressRecord(EgressReason.NoGrant) with { DataClass = EgressDataClass.None },
+            fixture.CreateEgressRecord(EgressReason.NoGrant) with { DestinationClass = EgressDestinationClass.None },
+            fixture.CreateEgressRecord(EgressReason.NoGrant) with { Destination = null },
+            fixture.CreateEgressRecord(EgressReason.NotAllowlisted) with { DestinationClass = EgressDestinationClass.ThirdParty },
+            fixture.CreateEgressRecord(EgressReason.ContentUnclassified) with { DataClass = EgressDataClass.Public },
+            fixture.CreateEgressRecord(EgressReason.SecretMaterial) with { DataClass = EgressDataClass.WorkspaceContent },
+            fixture.CreateEgressRecord(EgressReason.NoGrant) with { DataClass = EgressDataClass.SecretMaterial },
+            fixture.CreateEgressRecord(EgressReason.DestinationMalformed) with { Destination = "https://api.example.com" },
+        ];
+
+        foreach (var record in unrepresentable)
+        {
+            Assert.ThrowsAny<ArgumentException>(() => adapter.Record(record));
+        }
+
+        Assert.Throws<ArgumentNullException>(() => adapter.Record(null!));
+        using var connection = fixture.OpenRawConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM local_audit;";
+        Assert.Equal(0L, Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void TheEgressShapeRefusesInventedOrContradictoryDetailAndOnlyEgressMayLeaveRiskUnassessed()
+    {
+        using var fixture = new AuditFixture();
+        var generic = fixture.CreateEvent();
+        var content = AuditEgressContentReference.From("doc/1", "rev-1");
+        var destination = new AuditEgressDestinationId("example.org");
+        var consent = new AuditReferenceText("consent-1");
+        var generation = new AuditReferenceText("generation-1");
+        var correlation = new CorrelationId(Guid.NewGuid());
+
+        AuditEgressDetail Allowed(AuditEgressDataClass data = AuditEgressDataClass.Public,
+            AuditEgressDestinationClass destinationClass = AuditEgressDestinationClass.Public) =>
+            new(AuditEgressReason.Authorized, data, destinationClass, destination, AuditEgressAuthorityKind.UserConsent, consent, generation, content);
+
+        AuditEvent Event(AuditEventType type, AuditDecision decision, AuditDecisionReason reason, AuditEgressDetail? detail,
+            AuditRisk risk = AuditRisk.NotAssessed, AuditResourceReference? resource = null, CorrelationId? withCorrelation = null) =>
+            new(type, generic.ActorChain, generic.SoftwareIdentity, generic.Capability, resource ?? default, risk, decision, reason,
+                AuditOrigin.Local, correlation: withCorrelation ?? correlation, egress: detail);
+
+        // The exact valid shapes, including every supplied risk level and the explicit marker.
+        foreach (var risk in new[] { AuditRisk.NotAssessed, AuditRisk.R0, AuditRisk.R1, AuditRisk.R2, AuditRisk.R3, AuditRisk.R4 })
+        {
+            _ = Event(AuditEventType.DataEgressAuthorized, AuditDecision.Allowed, AuditDecisionReason.UserApproved, Allowed(), risk);
+        }
+
+        // Wrong event type, decision or generic reason for the detail.
+        Assert.Throws<ArgumentException>(() => Event(AuditEventType.DataEgressDenied, AuditDecision.Denied, AuditDecisionReason.PolicyDenied, Allowed()));
+        Assert.Throws<ArgumentException>(() => Event(AuditEventType.DataEgressAuthorized, AuditDecision.Denied, AuditDecisionReason.UserApproved, Allowed()));
+        Assert.Throws<ArgumentException>(() => Event(AuditEventType.DataEgressAuthorized, AuditDecision.Allowed, AuditDecisionReason.PolicyAllowed, Allowed()));
+        Assert.Throws<ArgumentException>(() => Event(AuditEventType.DataEgressAuthorized, AuditDecision.Allowed, AuditDecisionReason.UserApproved, null));
+        Assert.Throws<ArgumentException>(() => Event(AuditEventType.SecretUsed, AuditDecision.Allowed, AuditDecisionReason.PolicyAllowed, Allowed(),
+            resource: generic.Resource));
+        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.DataEgressAuthorized, generic.ActorChain, generic.SoftwareIdentity,
+            generic.Capability, default, AuditRisk.NotAssessed, AuditDecision.Allowed, AuditDecisionReason.UserApproved, AuditOrigin.Local, egress: Allowed()));
+        Assert.Throws<ArgumentException>(() => Event(AuditEventType.DataEgressAuthorized, AuditDecision.Allowed, AuditDecisionReason.UserApproved,
+            Allowed(), resource: generic.Resource));
+
+        // The marker is only for egress; every other event type states a real risk.
+        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.SecretUsed, generic.ActorChain, generic.SoftwareIdentity,
+            generic.Capability, generic.Resource, AuditRisk.NotAssessed, AuditDecision.Allowed, AuditDecisionReason.PolicyAllowed, AuditOrigin.Local));
+        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.CapabilityLeaseIssued, generic.ActorChain, generic.SoftwareIdentity,
+            new AuditCapabilityId("tools.invoke"), new AuditResourceReference(AuditResourceKind.CapabilityLease, Guid.NewGuid()),
+            AuditRisk.NotAssessed, AuditDecision.Allowed, AuditDecisionReason.PolicyAllowed, AuditOrigin.Local));
+
+        // Detail combinations the decision could not produce.
+        Assert.Throws<ArgumentException>(() => Allowed(AuditEgressDataClass.Unclassified));
+        Assert.Throws<ArgumentException>(() => Allowed(AuditEgressDataClass.SecretMaterial));
+        Assert.Throws<ArgumentException>(() => Allowed(destinationClass: AuditEgressDestinationClass.Undetermined));
+        Assert.Throws<ArgumentException>(() => new AuditEgressDetail(AuditEgressReason.Authorized, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Public, null, AuditEgressAuthorityKind.UserConsent, consent, generation, content));
+        Assert.Throws<ArgumentException>(() => new AuditEgressDetail(AuditEgressReason.Authorized, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Public, destination, AuditEgressAuthorityKind.NoAuthority, consent, generation, content));
+        Assert.Throws<ArgumentException>(() => new AuditEgressDetail(AuditEgressReason.NoGrant, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Public, destination, AuditEgressAuthorityKind.UserConsent, consent, generation, content));
+        Assert.Throws<ArgumentException>(() => new AuditEgressDetail(AuditEgressReason.NoGrant, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Undetermined, destination, AuditEgressAuthorityKind.NoAuthority, null, null, content));
+        Assert.Throws<ArgumentException>(() => new AuditEgressDetail(AuditEgressReason.DestinationMalformed, AuditEgressDataClass.Unclassified,
+            AuditEgressDestinationClass.Undetermined, destination, AuditEgressAuthorityKind.NoAuthority, null, null, content));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AuditEgressDetail(AuditEgressReason.None, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Public, destination, AuditEgressAuthorityKind.UserConsent, consent, generation, content));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AuditEgressDetail((AuditEgressReason)99, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Public, destination, AuditEgressAuthorityKind.UserConsent, consent, generation, content));
+        Assert.Throws<ArgumentNullException>(() => new AuditEgressDetail(AuditEgressReason.Authorized, AuditEgressDataClass.Public,
+            AuditEgressDestinationClass.Public, destination, AuditEgressAuthorityKind.UserConsent, consent, generation, null!));
+
+        // Bounded references and the content fingerprint.
+        Assert.Throws<ArgumentException>(() => new AuditReferenceText(string.Empty));
+        Assert.Throws<ArgumentException>(() => new AuditReferenceText(new string('a', 257)));
+        Assert.Throws<ArgumentException>(() => new AuditReferenceText("tab\there"));
+        Assert.Equal(256, new AuditReferenceText(new string('a', 256)).Value.Length);
+        Assert.Throws<ArgumentException>(() => new AuditEgressContentReference(new string('a', 64)));
+        Assert.Throws<ArgumentException>(() => new AuditEgressContentReference(new string('A', 63)));
+        Assert.Throws<ArgumentException>(() => new AuditEgressContentReference(new string('G', 64)));
+        Assert.NotEqual(AuditEgressContentReference.From("a", "bc"), AuditEgressContentReference.From("ab", "c"));
+        Assert.Equal(AuditEgressContentReference.From("doc/1", "rev-1"), AuditEgressContentReference.From("doc/1", "rev-1"));
+        Assert.Throws<ArgumentException>(() => AuditEgressContentReference.From(string.Empty, "rev-1"));
 
         foreach (var invalid in new[] { "https://api.example.com/v1", "Example.COM", "api.example.com/path", "user@example.com", "a b",
                      "api..example.com", "-bad.example.com", "bad-.example.com", "host:0", "host:65536", "host:", "host:1:2", ":443", string.Empty })
@@ -404,28 +639,158 @@ public sealed class AuditStoreTests
         Assert.Equal("connector-label", new AuditEgressDestinationId("connector-label").Value);
         Assert.Equal("a.b-c.example:65535", new AuditEgressDestinationId("a.b-c.example:65535").Value);
 
-        // The generic append shape cannot express an egress decision without its typed detail, or the reverse.
-        var generic = fixture.CreateEvent();
-        var detail = new AuditEgressDetail(AuditEgressDataClass.ManagedAsset, AuditEgressDestinationClass.Public,
-            new AuditEgressDestinationId("example.org"), authority);
-        var correlation = new CorrelationId(Guid.NewGuid());
-        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.DataEgressAuthorized, generic.ActorChain,
-            generic.SoftwareIdentity, generic.Capability, generic.Resource, AuditRisk.R3, AuditDecision.Allowed,
-            AuditDecisionReason.PolicyAllowed, AuditOrigin.Local, correlation: correlation));
-        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.SecretUsed, generic.ActorChain,
-            generic.SoftwareIdentity, generic.Capability, generic.Resource, AuditRisk.R3, AuditDecision.Allowed,
-            AuditDecisionReason.PolicyAllowed, AuditOrigin.Local, correlation: correlation, egress: detail));
-        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.DataEgressAuthorized, generic.ActorChain,
-            generic.SoftwareIdentity, generic.Capability, generic.Resource, AuditRisk.R3, AuditDecision.Denied,
-            AuditDecisionReason.PolicyDenied, AuditOrigin.Local, correlation: correlation, egress: detail));
-        Assert.Throws<ArgumentException>(() => new AuditEvent(AuditEventType.DataEgressDenied, generic.ActorChain,
-            generic.SoftwareIdentity, generic.Capability, generic.Resource, AuditRisk.R3, AuditDecision.Denied,
-            AuditDecisionReason.PolicyDenied, AuditOrigin.Local, egress: detail));
-
-        // No transferred content, secret value or property bag is representable by the typed fact.
-        var parameterTypes = typeof(EgressDecisionFact).GetConstructors().Single().GetParameters().Select(parameter => parameter.ParameterType);
+        // No transferred content, secret value, path or property bag is representable by the typed detail.
+        var parameterTypes = typeof(AuditEgressDetail).GetConstructors().Single().GetParameters().Select(parameter => parameter.ParameterType);
         Assert.DoesNotContain(parameterTypes, type => type == typeof(string) || type == typeof(object) || type == typeof(byte[])
             || type.IsArray || typeof(System.Collections.IEnumerable).IsAssignableFrom(type));
+    }
+
+    [Fact]
+    public void TheRealEgressAuthorityAuditsAllowedAndRefusedDecisionsThroughTheDurableSink()
+    {
+        using var fixture = new AuditFixture();
+        var rig = new EgressRig(fixture);
+        var request = rig.Request();
+        rig.Permit(request);
+
+        var allowed = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        Assert.True(allowed.Allowed);
+
+        // Refusals before classification: malformed destination, a destination the invocation did not declare, an unavailable
+        // classifier, content the classifier cannot name, and secret material.
+        var malformed = rig.Authority.DecideAsync(request, "http://not-https.example.com", CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var undeclared = rig.Authority.DecideAsync(request, "https://other.example.com", CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        rig.Classifier = (_, _, _) => throw new InvalidOperationException("classifier down");
+        var unavailable = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(null);
+        var unclassified = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.SecretMaterial, false));
+        var secret = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+        // After classification: not allowlisted, and content above the grant.
+        rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.WorkspaceContent, true));
+        rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(null);
+        var notListed = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        rig.Permit(request);
+        rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.SensitiveContent, true));
+        rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(rig.Entry(request, EgressDataClass.SensitiveContent));
+        var aboveGrant = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+        Assert.Equal(EgressReason.DestinationMalformed, malformed.Reason);
+        Assert.Equal(EgressReason.DestinationNotDeclared, undeclared.Reason);
+        Assert.Equal(EgressReason.ClassifierUnavailable, unavailable.Reason);
+        Assert.Equal(EgressReason.ContentUnclassified, unclassified.Reason);
+        Assert.Equal(EgressReason.SecretMaterial, secret.Reason);
+        Assert.Equal(EgressReason.NotAllowlisted, notListed.Reason);
+        Assert.Equal(EgressReason.DataClassAboveGrant, aboveGrant.Reason);
+
+        var rows = fixture.Store.Query(new AuditQuery(fixture.Now.AddMinutes(-1), fixture.Now.AddMinutes(1), 50));
+        Assert.Equal(8, rows.Count);
+        Assert.All(rows, row => Assert.Equal(new CorrelationId(request.CommandId.Value), row.Event.Correlation));
+        Assert.All(rows, row => Assert.Equal(AuditRisk.NotAssessed, row.Event.Risk));
+        Assert.All(rows, row => Assert.Equal("owned.audit/1", row.Event.SoftwareIdentity.Value));
+        Assert.All(rows, row => Assert.Equal(AuditEgressContentReference.From("doc/123", "rev-7"), row.Event.Egress!.Content));
+
+        void Check(int index, AuditEventType type, AuditEgressReason reason, AuditEgressDataClass data, AuditEgressDestinationClass destinationClass, bool destination)
+        {
+            Assert.Equal(type, rows[index].Event.EventType);
+            var detail = rows[index].Event.Egress!;
+            Assert.Equal(reason, detail.Reason);
+            Assert.Equal(data, detail.DataClass);
+            Assert.Equal(destinationClass, detail.DestinationClass);
+            Assert.Equal(destination, detail.Destination is not null);
+        }
+
+        Check(0, AuditEventType.DataEgressAuthorized, AuditEgressReason.Authorized, AuditEgressDataClass.WorkspaceContent, AuditEgressDestinationClass.ThirdParty, true);
+        Assert.Equal("consent-1", rows[0].Event.Egress!.AuthorityReference!.Value);
+        Assert.Equal("grant-generation-1", rows[0].Event.Egress!.GrantGeneration!.Value);
+        Assert.Equal("api.example.com", rows[0].Event.Egress!.Destination!.Value);
+        Check(1, AuditEventType.DataEgressDenied, AuditEgressReason.DestinationMalformed, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, false);
+        Check(2, AuditEventType.DataEgressDenied, AuditEgressReason.DestinationNotDeclared, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, true);
+        Check(3, AuditEventType.DataEgressDenied, AuditEgressReason.ClassifierUnavailable, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, true);
+        Check(4, AuditEventType.DataEgressDenied, AuditEgressReason.ContentUnclassified, AuditEgressDataClass.Unclassified, AuditEgressDestinationClass.Undetermined, true);
+        Check(5, AuditEventType.DataEgressDenied, AuditEgressReason.SecretMaterial, AuditEgressDataClass.SecretMaterial, AuditEgressDestinationClass.Undetermined, true);
+        Check(6, AuditEventType.DataEgressDenied, AuditEgressReason.NotAllowlisted, AuditEgressDataClass.WorkspaceContent, AuditEgressDestinationClass.Undetermined, true);
+        Check(7, AuditEventType.DataEgressDenied, AuditEgressReason.DataClassAboveGrant, AuditEgressDataClass.SensitiveContent, AuditEgressDestinationClass.ThirdParty, true);
+    }
+
+    [Fact]
+    public void AnAuditFailureRefusesAnAllowedTransferAndLeavesNoRowWhileARefusalKeepsItsOwnReason()
+    {
+        using var fixture = new AuditFixture();
+        var rig = new EgressRig(fixture);
+        var request = rig.Request();
+        rig.Permit(request);
+        fixture.Store.Dispose();
+
+        // The sink throws; the authority refuses the transfer instead of releasing it unaudited.
+        var allowed = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        Assert.False(allowed.Allowed);
+        Assert.Equal(EgressReason.AuditUnavailable, allowed.Reason);
+        Assert.Equal("resource.unavailable", allowed.RegisteredCode);
+
+        // A refusal stays the refusal it was; PLT.41 does not retry its audit write, so it has no row either.
+        rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(null);
+        var refused = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        Assert.Equal(EgressReason.NotAllowlisted, refused.Reason);
+
+        using var independent = fixture.OpenSecondStore();
+        Assert.Empty(independent.Query(new AuditQuery(fixture.Now.AddMinutes(-1), fixture.Now.AddMinutes(1), 10)));
+    }
+
+    [Fact]
+    public async Task ALateAuthorizedWriteAfterATimeoutLandsBesideTheRefusalAndAuthorizesNothing()
+    {
+        using var fixture = new AuditFixture();
+        var gate = new TaskCompletionSource();
+        var landed = new TaskCompletionSource();
+        var gated = new GatedSink(new EgressAuditSink(fixture.EgressAdapter()), gate.Task, landed);
+        var rig = new EgressRig(fixture, gated, new EgressAuthorityOptions { StepTimeout = TimeSpan.FromMilliseconds(150) });
+        var request = rig.Request();
+        rig.Permit(request);
+
+        var decision = await rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressReason.AuditUnavailable, decision.Reason);
+        Assert.Empty(fixture.Store.Query(new AuditQuery(fixture.Now.AddMinutes(-1), fixture.Now.AddMinutes(1), 10)));
+
+        gate.SetResult();
+        await landed.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var row = Assert.Single(fixture.Store.Query(new AuditQuery(fixture.Now.AddMinutes(-1), fixture.Now.AddMinutes(1), 10)));
+        Assert.Equal(AuditEventType.DataEgressAuthorized, row.Event.EventType);
+        Assert.Equal(AuditEgressReason.Authorized, row.Event.Egress!.Reason);
+        Assert.False(decision.Allowed);
+    }
+
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "Every statement is a fixed literal of this test against its own temporary database; no external value is concatenated.")]
+    [Fact]
+    public void AVersionOneFileOrAnEgressRowWithATypedResourceIsRefusedClosed()
+    {
+        using var fixture = new AuditFixture();
+        fixture.Store.Dispose();
+        using (var connection = fixture.OpenRawConnection())
+        using (var command = connection.CreateCommand())
+        {
+            // A person controlling the file can drop the trigger; the version check then refuses the file at open.
+            command.CommandText = "DROP TRIGGER local_audit_store_no_update; UPDATE local_audit_store SET schema_version=1;";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Throws<InvalidDataException>(() => fixture.OpenSecondStore());
+
+        using var other = new AuditFixture();
+        _ = new EgressAuditSink(other.EgressAdapter()).WriteAsync(other.CreateEgressRecord(EgressReason.None), CancellationToken.None);
+        using (var connection = other.OpenRawConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "DROP TRIGGER local_audit_no_update;";
+            command.ExecuteNonQuery();
+            // The table constraint refuses a typed resource on an egress row.
+            command.CommandText = "UPDATE local_audit SET resource_kind=7, resource_id='00000000000000000000000000000001' WHERE event_type=15;";
+            Assert.ThrowsAny<SqliteException>(() => command.ExecuteNonQuery());
+        }
     }
 
     [Fact]
@@ -526,8 +891,7 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 5, 6, 7, 8, 9, TimeSpan.Zero);
         fixture.SetWallClock(oldTime);
-        var egress = new EgressDecisionAuditAdapter(fixture.Store).Record(fixture.CreateEgressFact(EgressDecisionOutcome.Denied,
-            AuditDecisionReason.RiskRejected, new Revision(Guid.NewGuid(), new CloudRevision(3))));
+        var egress = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.NoGrant));
         var lease = new CapabilityLeaseAuditAdapter(fixture.Store).Record(fixture.CreateLeaseFact(CapabilityLeaseLifecycleKind.Expired,
             AuditDecisionReason.PolicyExpired, new AuditCapabilityLeaseId(Guid.NewGuid()), null));
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
@@ -550,13 +914,16 @@ public sealed class AuditStoreTests
     public void EveryRiskLevelIsStoredAndRoundTrippedLosslesslyThroughBothAdapters(RiskLevel level, AuditRisk expected, int storedValue)
     {
         using var fixture = new AuditFixture();
-        var egress = new EgressDecisionAuditAdapter(fixture.Store).Record(fixture.CreateEgressFact(EgressDecisionOutcome.Allowed,
-            AuditDecisionReason.PolicyAllowed, new Revision(Guid.NewGuid(), new CloudRevision(2)), risk: level));
+        // The delivered PLT.41 record carries no risk, so a supplied R0-R4 reaches the egress shape through the event itself.
+        var template = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.None));
+        var egress = fixture.Store.Append(new AuditEvent(AuditEventType.DataEgressAuthorized, template.Event.ActorChain,
+            template.Event.SoftwareIdentity, template.Event.Capability, default, expected, AuditDecision.Allowed,
+            AuditDecisionReason.UserApproved, AuditOrigin.Local, correlation: template.Event.Correlation, egress: template.Event.Egress));
         var lease = new CapabilityLeaseAuditAdapter(fixture.Store).Record(fixture.CreateLeaseFact(CapabilityLeaseLifecycleKind.Issued,
             AuditDecisionReason.PolicyAllowed, new AuditCapabilityLeaseId(Guid.NewGuid()), null, risk: level));
 
         var at = egress.OccurredAt.ToDateTimeOffset();
-        var page = fixture.Store.Query(new AuditQuery(at.AddMinutes(-1), at.AddMinutes(1), 10));
+        var page = fixture.Store.Query(new AuditQuery(at.AddMinutes(-1), at.AddMinutes(1), 10, afterSequence: template.Sequence));
         Assert.Equal(2, page.Count);
         Assert.All(page, record => Assert.Equal(expected, record.Event.Risk));
         Assert.Equal(expected, egress.Event.Risk);
@@ -576,9 +943,13 @@ public sealed class AuditStoreTests
         foreach (var tamper in new[]
         {
             "UPDATE local_audit SET egress_destination_id='tampered.example' WHERE event_type=15;",
-            "UPDATE local_audit SET egress_authority_revision=99 WHERE event_type=15;",
-            "UPDATE local_audit SET egress_data_class=2 WHERE event_type=15;",
+            "UPDATE local_audit SET egress_authority_ref='tampered-consent' WHERE event_type=15;",
+            "UPDATE local_audit SET egress_grant_generation='tampered' WHERE event_type=15;",
+            "UPDATE local_audit SET egress_content_sha256='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' WHERE event_type=15;",
+            "UPDATE local_audit SET egress_data_class=3 WHERE event_type=15;",
             "UPDATE local_audit SET egress_destination_class=4 WHERE event_type=15;",
+            "UPDATE local_audit SET egress_authority_kind=3 WHERE event_type=15;",
+            "UPDATE local_audit SET egress_reason=6, decision=2, reason=2, event_type=16 WHERE event_type=15;",
             "UPDATE local_audit SET risk=1 WHERE event_type=15;",
             "UPDATE local_audit SET decision=2, reason=2 WHERE event_type=15;",
             "UPDATE local_audit SET occurred_unix_seconds=occurred_unix_seconds+1 WHERE event_type=15;",
@@ -590,8 +961,7 @@ public sealed class AuditStoreTests
             using var fixture = new AuditFixture();
             var oldTime = new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero);
             fixture.SetWallClock(oldTime);
-            _ = new EgressDecisionAuditAdapter(fixture.Store).Record(fixture.CreateEgressFact(EgressDecisionOutcome.Allowed,
-                AuditDecisionReason.PolicyAllowed, new Revision(Guid.NewGuid(), new CloudRevision(5))));
+            _ = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.None));
             _ = fixture.Store.Append(fixture.CreateEvent());
             var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
             var pristine = fixture.Store.Query(new AuditQuery(oldTime.AddDays(-1), oldTime.AddMonths(1), 10));
@@ -634,8 +1004,7 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 7, 8, 9, 10, 11, TimeSpan.Zero);
         fixture.SetWallClock(oldTime);
-        _ = new EgressDecisionAuditAdapter(fixture.Store).Record(fixture.CreateEgressFact(EgressDecisionOutcome.Denied,
-            AuditDecisionReason.PolicyDenied, new Revision(Guid.NewGuid(), new CloudRevision(4))));
+        _ = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.NotAllowlisted));
         _ = new CapabilityLeaseAuditAdapter(fixture.Store).Record(fixture.CreateLeaseFact(CapabilityLeaseLifecycleKind.Revoked,
             AuditDecisionReason.UserRejected, new AuditCapabilityLeaseId(Guid.NewGuid()), null));
         _ = fixture.Store.Append(fixture.CreateEvent());
@@ -1141,6 +1510,86 @@ public sealed class AuditStoreTests
         }
     }
 
+    /// <summary>The real egress authority over controllable sources, with the audit sink under test as its sink.</summary>
+    private sealed class EgressRig
+    {
+        public const string Destination = "https://api.example.com";
+        private readonly AuditFixture fixture;
+
+        public EgressRig(AuditFixture fixture, IEgressAuditSink? sink = null, EgressAuthorityOptions? options = null)
+        {
+            this.fixture = fixture;
+            Authority = new EgressAuthority(fixture.Clock, new RigClassifier(this), new RigAllowlist(this), new RigGrants(this),
+                sink ?? new EgressAuditSink(fixture.EgressAdapter()), options);
+        }
+
+        public EgressAuthority Authority { get; }
+
+        public Func<DecisionRequest, EgressDestinationIdentity, CancellationToken, ValueTask<EgressContentFacts?>> Classifier { get; set; } =
+            (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.WorkspaceContent, true));
+
+        public Func<string, EgressDestinationIdentity, CancellationToken, ValueTask<EgressAllowlistEntry?>> Allowlist { get; set; } =
+            (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(null);
+
+        public Func<DecisionRequest, EgressDestinationIdentity, CancellationToken, ValueTask<IReadOnlyList<EgressGrantRecord>>> Grants { get; set; } =
+            (_, _, _) => ValueTask.FromResult<IReadOnlyList<EgressGrantRecord>>([]);
+
+        public DecisionRequest Request(string? destination = Destination) => new(
+            fixture.Actor, "egress.send", new DecisionScope(fixture.Actor.Owner.Realm, new WorkspaceId(Guid.NewGuid())),
+            new CommandId(Guid.NewGuid()), new ResourceReference("doc/123", "rev-7"), new string('A', 64), DecisionOrigin.Local,
+            TransportSessions.InProcess, egressDestination: destination);
+
+        public EgressAllowlistEntry Entry(DecisionRequest request, EgressDataClass max) =>
+            new(request.ScopeKey, EgressDestinationIdentity.Parse(Destination), EgressDestinationClass.ThirdParty, max, "allowlist-generation-1");
+
+        public void Permit(DecisionRequest request)
+        {
+            var entry = Entry(request, EgressDataClass.WorkspaceContent);
+            var grant = new EgressGrantRecord("owner.egress", request.PrincipalKey, request.CapabilityKey, request.ScopeKey,
+                EgressDestinationIdentity.Parse(Destination), EgressGrantState.Granted, EgressDataClass.WorkspaceContent,
+                EgressAuthorityKind.UserConsent, "consent-1", fixture.Now.AddHours(-1), fixture.Now.AddHours(1), "grant-generation-1");
+            Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(entry);
+            Grants = (_, _, _) => ValueTask.FromResult<IReadOnlyList<EgressGrantRecord>>([grant]);
+        }
+
+        private sealed class RigClassifier(EgressRig rig) : IEgressContentClassifier
+        {
+            public ValueTask<EgressContentFacts?> ClassifyAsync(DecisionRequest request, EgressDestinationIdentity destination, CancellationToken cancellationToken) =>
+                rig.Classifier(request, destination, cancellationToken);
+        }
+
+        private sealed class RigAllowlist(EgressRig rig) : IEgressAllowlist
+        {
+            public ValueTask<EgressAllowlistEntry?> FindAsync(string scopeKey, EgressDestinationIdentity destination, CancellationToken cancellationToken) =>
+                rig.Allowlist(scopeKey, destination, cancellationToken);
+        }
+
+        private sealed class RigGrants(EgressRig rig) : IEgressGrantSource
+        {
+            public ValueTask<IReadOnlyList<EgressGrantRecord>> FindAsync(DecisionRequest request, EgressDestinationIdentity destination, CancellationToken cancellationToken) =>
+                rig.Grants(request, destination, cancellationToken);
+        }
+    }
+
+    /// <summary>A sink that holds a write until released and ignores cancellation, so the authority's step timeout fires first.</summary>
+    private sealed class GatedSink(IEgressAuditSink inner, Task gate, TaskCompletionSource landed) : IEgressAuditSink
+    {
+        public async ValueTask WriteAsync(EgressAuditRecord record, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await gate.ConfigureAwait(false);
+                await inner.WriteAsync(record, CancellationToken.None).ConfigureAwait(false);
+                landed.SetResult();
+            }
+            catch (Exception exception)
+            {
+                landed.SetException(exception);
+                throw;
+            }
+        }
+    }
+
     private sealed class AuditFixture : IDisposable
     {
         private readonly string directory = Path.Combine(Path.GetTempPath(), "ArcForges-Audit-" + Guid.NewGuid().ToString("N"));
@@ -1192,16 +1641,41 @@ public sealed class AuditStoreTests
             new(new HumanPrincipal(realm, owner, HumanIdentityKind.LocalHuman), new DeviceId(Guid.NewGuid()),
                 new InstallationId(Guid.NewGuid()), SessionId.New(), new InstanceId(Guid.NewGuid()), delegated);
 
-        public EgressDecisionFact CreateEgressFact(EgressDecisionOutcome outcome, AuditDecisionReason reason,
-            Revision authority, CorrelationId? correlation = null, AuditResourceReference? resource = null,
-            AuditEgressDataClass dataClass = AuditEgressDataClass.CanonicalUserData,
-            AuditEgressDestinationClass destinationClass = AuditEgressDestinationClass.CloudAiProvider,
-            RiskLevel risk = RiskLevel.R3, ActorChain? actor = null, AuditSoftwareIdentity? software = null) =>
-            new(outcome, reason, dataClass, destinationClass, new AuditEgressDestinationId("api.provider.example:443"),
-                authority, risk, actor ?? MaintenanceActor, software ?? new AuditSoftwareIdentity("arcscope.desktop/1"),
-                new AuditCapabilityId("egress.send"), resource ?? new AuditResourceReference(AuditResourceKind.Export, Guid.NewGuid()),
-                AuditOrigin.Local, correlation ?? new CorrelationId(Guid.NewGuid()),
-                new WorkspaceId(Guid.NewGuid()), new TaskId(Guid.NewGuid()));
+        public EgressDecisionAuditAdapter EgressAdapter(AuditStore? store = null) =>
+            new(store ?? Store, new AuditSoftwareIdentity("arcscope.desktop/1"));
+
+        /// <summary>
+        /// A real PLT.41 audit record as the authority builds it for the given outcome (None is an allowed decision). The facts each
+        /// refusal had determined are this fixture's own table, independent of the production projection.
+        /// </summary>
+        public EgressAuditRecord CreateEgressRecord(EgressReason reason, ActorChain? actor = null, CommandId? correlation = null,
+            ResourceReference? resource = null, string capability = "egress.send", EgressAuthorityKind authority = EgressAuthorityKind.UserConsent)
+        {
+            var chain = actor ?? MaintenanceActor;
+            var last = chain.Actors.Count == 0 ? null : chain.Actors[^1];
+            var allowed = reason == EgressReason.None;
+            const string destination = "https://api.example.com";
+            var (dataClass, destinationClass, withDestination) = reason switch
+            {
+                EgressReason.None => (EgressDataClass.WorkspaceContent, EgressDestinationClass.ThirdParty, true),
+                EgressReason.DestinationMalformed => (EgressDataClass.None, EgressDestinationClass.None, false),
+                EgressReason.DestinationNotDeclared or EgressReason.ClassifierUnavailable
+                    or EgressReason.ContentUnclassified => (EgressDataClass.None, EgressDestinationClass.None, true),
+                EgressReason.SecretMaterial => (EgressDataClass.SecretMaterial, EgressDestinationClass.None, true),
+                EgressReason.AllowlistUnavailable or EgressReason.NotAllowlisted
+                    or EgressReason.AllowlistMismatch => (EgressDataClass.WorkspaceContent, EgressDestinationClass.None, true),
+                _ => (EgressDataClass.SensitiveContent, EgressDestinationClass.ThirdParty, true),
+            };
+            var info = allowed ? null : EgressReasons.Describe(reason);
+            return new EgressAuditRecord(
+                allowed ? EgressAuditKind.Authorized : EgressAuditKind.Refused, reason, info?.Code, info?.RegisteredCode, NowInstant, chain,
+                last?.Executor ?? chain.CallerInstance, last?.SoftwareIdentity, capability,
+                resource ?? new ResourceReference("doc/123", "rev-7"),
+                new DecisionScope(chain.Owner.Realm, new WorkspaceId(Guid.NewGuid())), DecisionOrigin.Local, chain.Device,
+                correlation ?? new CommandId(Guid.NewGuid()), withDestination ? destination : null, destinationClass, dataClass, true,
+                allowed ? authority : EgressAuthorityKind.None, allowed ? "consent-1" : null, allowed ? "owner.egress" : null,
+                allowed ? "grant-generation-1" : null, destinationClass == EgressDestinationClass.None ? null : "allowlist-generation-1");
+        }
 
         public CapabilityLeaseLifecycleFact CreateLeaseFact(CapabilityLeaseLifecycleKind kind, AuditDecisionReason reason,
             AuditCapabilityLeaseId lease, TaskId? task, RiskLevel risk = RiskLevel.R2) =>
