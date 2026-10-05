@@ -206,8 +206,8 @@ arc_status_t text_of(document_state& state, uint32_t index, const call_context& 
     for (const text_box& box : fetched.boxes) {
         if (box.start < previous || box.length == 0 || static_cast<uint64_t>(box.start) + box.length > length ||
             !finite_in(box.x, -max_page_points, max_page_points) ||
-            !finite_in(box.y, -max_page_points, max_page_points) ||
-            !finite_in(box.width, 0.0, max_page_points) || !finite_in(box.height, 0.0, max_page_points)) {
+            !finite_in(box.y, -max_page_points, max_page_points) || !finite_in(box.width, 0.0, max_page_points) ||
+            !finite_in(box.height, 0.0, max_page_points)) {
             return failure(ARC_CORRUPT, "The PDF backend returned an invalid text box");
         }
         previous = box.start;
@@ -414,9 +414,9 @@ arc_status_t ARC_ABI_CALL arc_pdf_page_info(arc_handle_t document, uint32_t inde
     });
 }
 
-arc_status_t ARC_ABI_CALL arc_pdf_render(arc_handle_t document, const arc_pdf_page_v1* page,
-                                         const arc_region_v1* tile, uint32_t full_width, uint32_t full_height,
-                                         arc_mut_buffer_t* rgba8, const arc_cancel_token_t* cancel)
+arc_status_t ARC_ABI_CALL arc_pdf_render(arc_handle_t document, const arc_pdf_page_v1* page, const arc_region_v1* tile,
+                                         uint32_t full_width, uint32_t full_height, arc_mut_buffer_t* rgba8,
+                                         const arc_cancel_token_t* cancel)
 {
     uint8_t* written_from = nullptr;
     uint64_t written_size = 0;

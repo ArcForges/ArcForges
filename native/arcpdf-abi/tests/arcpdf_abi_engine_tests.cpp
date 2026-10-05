@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Engine tests: the owned arc_pdf_* surface against a scripted fake backend (see fake_pdf_backend.hpp). They prove the
-// limits, validation, handle lifetime, cancellation, deadline and output-encoding code. They prove nothing about PDFium.
+// limits, validation, handle lifetime, cancellation, deadline and output-encoding code. They prove nothing about
+// PDFium.
 #include <arc/arc_pdf_abi.h>
 
 #include "fake_pdf_backend.hpp"
@@ -35,7 +36,7 @@ int g_failures = 0;
     do {                                                                                                               \
         const arc_status_t actual_status = (expression);                                                               \
         if (actual_status != (expected)) {                                                                             \
-            std::fprintf(stderr, "FAILED %s:%d: %s returned %d, expected %d\n", __FILE__, __LINE__, #expression,        \
+            std::fprintf(stderr, "FAILED %s:%d: %s returned %d, expected %d\n", __FILE__, __LINE__, #expression,       \
                          static_cast<int>(actual_status), static_cast<int>(expected));                                 \
             ++g_failures;                                                                                              \
         }                                                                                                              \
@@ -100,7 +101,8 @@ arc_string_view_t view(const char* text)
     return arc_string_view_t{text, std::strlen(text)};
 }
 
-fake_page page_with(const std::u16string& text, std::vector<text_box> boxes = {}, page_geometry geometry = {0, 612.0, 792.0})
+fake_page page_with(const std::u16string& text, std::vector<text_box> boxes = {},
+                    page_geometry geometry = {0, 612.0, 792.0})
 {
     fake_page page;
     page.geometry = geometry;
@@ -136,7 +138,8 @@ opened open_ok(const arc_limits_v1& limits = limits_for())
     return document;
 }
 
-std::string fetch_text(arc_handle_t document, uint32_t page, uint32_t start, uint32_t count, arc_status_t* status_out = nullptr)
+std::string fetch_text(arc_handle_t document, uint32_t page, uint32_t start, uint32_t count,
+                       arc_status_t* status_out = nullptr)
 {
     arc_mut_buffer_t query{};
     arc_status_t status = arc_pdf_text(document, page, start, count, &query, nullptr);
@@ -272,10 +275,11 @@ void test_open_validation()
     over.max_input_bytes = 4; // smaller than the input
     CHECK_STATUS(ARC_RESOURCE_LIMIT, arc_pdf_open(&io, {}, &over, &out.handle, &out.pages, nullptr));
 
-    CHECK_STATUS(ARC_INVALID_ARGUMENT, arc_pdf_open(&io, arc_string_view_t{nullptr, 3}, &limits, &out.handle, &out.pages, nullptr));
-    const std::string long_password(1025, 'p');
     CHECK_STATUS(ARC_INVALID_ARGUMENT,
-                 arc_pdf_open(&io, arc_string_view_t{long_password.data(), long_password.size()}, &limits, &out.handle, &out.pages, nullptr));
+                 arc_pdf_open(&io, arc_string_view_t{nullptr, 3}, &limits, &out.handle, &out.pages, nullptr));
+    const std::string long_password(1025, 'p');
+    CHECK_STATUS(ARC_INVALID_ARGUMENT, arc_pdf_open(&io, arc_string_view_t{long_password.data(), long_password.size()},
+                                                    &limits, &out.handle, &out.pages, nullptr));
     CHECK(out.handle == 0 && out.pages == 0);
     CHECK(g_script->alive_documents == 0);
 }
@@ -451,10 +455,22 @@ void test_text_basic_and_paging()
     CHECK_STATUS(ARC_OK, status);
     CHECK(json == "{\"version\":1,\"page\":0,\"start\":11,\"text\":\"\",\"boxes\":[]}");
 
-    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] { fetch_text(document.handle, 0, 12, 10, &status); return status; }());
-    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] { fetch_text(document.handle, 0, 0, 0, &status); return status; }());
-    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] { fetch_text(document.handle, 0, 0, 65537, &status); return status; }());
-    CHECK_STATUS(ARC_NOT_FOUND, [&] { fetch_text(document.handle, 1, 0, 10, &status); return status; }());
+    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] {
+        fetch_text(document.handle, 0, 12, 10, &status);
+        return status;
+    }());
+    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] {
+        fetch_text(document.handle, 0, 0, 0, &status);
+        return status;
+    }());
+    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] {
+        fetch_text(document.handle, 0, 0, 65537, &status);
+        return status;
+    }());
+    CHECK_STATUS(ARC_NOT_FOUND, [&] {
+        fetch_text(document.handle, 1, 0, 10, &status);
+        return status;
+    }());
 
     // Too-small buffer reports the exact size and writes nothing; the retry succeeds with the same size.
     char small[8] = {};
@@ -482,7 +498,10 @@ void test_text_surrogates_and_escaping()
     json = fetch_text(document.handle, 0, 0, 2, &status);
     CHECK(json.find("\"next\":1") != std::string::npos && json.find("\"text\":\"a\"") != std::string::npos);
     // A start inside the pair is refused.
-    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] { fetch_text(document.handle, 0, 2, 5, &status); return status; }());
+    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] {
+        fetch_text(document.handle, 0, 2, 5, &status);
+        return status;
+    }());
     // Walking the whole page by 2-unit windows reproduces the text exactly.
     std::string rebuilt;
     uint32_t start = 0;
@@ -498,35 +517,43 @@ void test_text_surrogates_and_escaping()
         }
         start = static_cast<uint32_t>(std::stoul(json.substr(next + 7)));
     }
-    CHECK(rebuilt == "a\xF0\x9F\x98\x80" "b\xF0\x9F\x98\x80");
+    CHECK(rebuilt == "a\xF0\x9F\x98\x80"
+                     "b\xF0\x9F\x98\x80");
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
 
-    const std::u16string odd = std::u16string(u"q\"\\\n") + char16_t(0x01) + char16_t(0xD800) + u"x" + char16_t(0xDC00) + char16_t(0x00E9);
+    const std::u16string odd =
+        std::u16string(u"q\"\\\n") + char16_t(0x01) + char16_t(0xD800) + u"x" + char16_t(0xDC00) + char16_t(0x00E9);
     reset({page_with(odd)});
     const opened escaped = open_ok();
     json = fetch_text(escaped.handle, 0, 0, 100, &status);
     CHECK_STATUS(ARC_OK, status);
-    CHECK(json == "{\"version\":1,\"page\":0,\"start\":0,\"text\":\"q\\\"\\\\\\u000a\\u0001\xEF\xBF\xBD" "x\xEF\xBF\xBD\xC3\xA9\",\"boxes\":[]}");
+    CHECK(json == "{\"version\":1,\"page\":0,\"start\":0,\"text\":\"q\\\"\\\\\\u000a\\u0001\xEF\xBF\xBD"
+                  "x\xEF\xBF\xBD\xC3\xA9\",\"boxes\":[]}");
     CHECK_STATUS(ARC_OK, arc_pdf_close(escaped.handle));
 }
 
 void test_text_limits_and_hostile_backend()
 {
     // Box budget: with max_items 2 a chunk of five boxes is cut before the third box.
-    reset({page_with(u"aa bb cc dd ee", {{0, 2, 0, 0, 1, 1}, {3, 2, 0, 0, 1, 1}, {6, 2, 0, 0, 1, 1}, {9, 2, 0, 0, 1, 1}, {12, 2, 0, 0, 1, 1}})});
+    reset({page_with(
+        u"aa bb cc dd ee",
+        {{0, 2, 0, 0, 1, 1}, {3, 2, 0, 0, 1, 1}, {6, 2, 0, 0, 1, 1}, {9, 2, 0, 0, 1, 1}, {12, 2, 0, 0, 1, 1}})});
     opened document = open_ok(limits_for(5000, 2));
     arc_status_t status = ARC_OK;
     std::string json = fetch_text(document.handle, 0, 0, 65536, &status);
     CHECK_STATUS(ARC_OK, status);
     CHECK(json.find("\"next\":6") != std::string::npos);
-    CHECK(json.find("\"start\":3,\"length\":2") != std::string::npos && json.find("\"start\":6,\"length\":2") == std::string::npos);
+    CHECK(json.find("\"start\":3,\"length\":2") != std::string::npos &&
+          json.find("\"start\":6,\"length\":2") == std::string::npos);
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
 
     // Many boxes at the very start of a window still make progress.
     reset({page_with(u"abcd", {{0, 1, 0, 0, 1, 1}, {0, 1, 0, 0, 1, 1}, {0, 2, 0, 0, 1, 1}})});
     document = open_ok(limits_for(5000, 2));
     json = fetch_text(document.handle, 0, 0, 4, &status);
-    CHECK_STATUS(ARC_OK, status); // progress by one unit; a box that crosses the chunk end is not carried (documented pager rule)
+    CHECK_STATUS(
+        ARC_OK,
+        status); // progress by one unit; a box that crosses the chunk end is not carried (documented pager rule)
     CHECK(json.find("\"next\":1") != std::string::npos);
     CHECK(json.find("\"length\":2") == std::string::npos);
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
@@ -540,18 +567,21 @@ void test_text_limits_and_hostile_backend()
         CHECK_STATUS(ARC_OK, arc_pdf_close(doc.handle));
         return status;
     };
-    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{2, 1, 0, 0, 1, 1}, {0, 1, 0, 0, 1, 1}}));              // unordered
-    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{2, 5, 0, 0, 1, 1}}));                                   // past the text
-    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 0, 0, 0, 1, 1}}));                                   // empty box
-    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 1, std::nan(""), 0, 1, 1}}));                        // not finite
-    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 1, 0, 0, -1, 1}}));                                  // negative extent
+    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{2, 1, 0, 0, 1, 1}, {0, 1, 0, 0, 1, 1}})); // unordered
+    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{2, 5, 0, 0, 1, 1}}));                     // past the text
+    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 0, 0, 0, 1, 1}}));                     // empty box
+    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 1, std::nan(""), 0, 1, 1}}));          // not finite
+    CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 1, 0, 0, -1, 1}}));                    // negative extent
     CHECK_STATUS(ARC_CORRUPT, hostile(u"abc", {{0, 1, 0, 0, std::numeric_limits<double>::infinity(), 1}}));
     CHECK_STATUS(ARC_RESOURCE_LIMIT, hostile(std::u16string((16U * 1024 * 1024) + 1, u'x'), {}));
 
     reset({page_with(u"abc")});
     g_script->text_status = ARC_CORRUPT;
     document = open_ok();
-    CHECK_STATUS(ARC_CORRUPT, [&] { fetch_text(document.handle, 0, 0, 10, &status); return status; }());
+    CHECK_STATUS(ARC_CORRUPT, [&] {
+        fetch_text(document.handle, 0, 0, 10, &status);
+        return status;
+    }());
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
 
     // The page text is fetched once and reused across chunks of the same page.
@@ -600,10 +630,12 @@ void test_render()
     CHECK(tiny_buffer.required == 32 && tiny[0] == 0xEE);
 
     // Validation.
-    const auto render = [&](const arc_region_v1& region, uint32_t width, uint32_t height, const arc_pdf_page_v1* record = nullptr) {
+    const auto render = [&](const arc_region_v1& region, uint32_t width, uint32_t height,
+                            const arc_pdf_page_v1* record = nullptr) {
         std::vector<uint8_t> out(1 << 20, 0xEE);
         arc_mut_buffer_t b{out.data(), out.size(), 0};
-        const arc_status_t status = arc_pdf_render(document.handle, record == nullptr ? &page : record, &region, width, height, &b, nullptr);
+        const arc_status_t status =
+            arc_pdf_render(document.handle, record == nullptr ? &page : record, &region, width, height, &b, nullptr);
         if (status != ARC_OK) {
             CHECK(std::all_of(out.begin(), out.end(), [](uint8_t v) { return v == 0xEE || v == 0; }));
         }
@@ -637,7 +669,8 @@ void test_render()
         arc_mut_buffer_t none{};
         return arc_pdf_render(document.handle, nullptr, &tile, 100, 200, &none, nullptr);
     }());
-    CHECK_STATUS(ARC_INVALID_ARGUMENT, [&] { return arc_pdf_render(document.handle, &page, &tile, 100, 200, nullptr, nullptr); }());
+    CHECK_STATUS(ARC_INVALID_ARGUMENT,
+                 [&] { return arc_pdf_render(document.handle, &page, &tile, 100, 200, nullptr, nullptr); }());
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
 
     // A grid beyond the pixel bound even though each side is within the dimension limit.
@@ -651,7 +684,8 @@ void test_render()
     std::vector<uint8_t> small_out(64);
     arc_mut_buffer_t small_buffer{small_out.data(), small_out.size(), 0};
     const arc_region_v1 corner = region_of(0, 0, 2, 2);
-    CHECK_STATUS(ARC_RESOURCE_LIMIT, arc_pdf_render(huge.handle, &huge_page, &corner, 20000, 20000, &small_buffer, nullptr));
+    CHECK_STATUS(ARC_RESOURCE_LIMIT,
+                 arc_pdf_render(huge.handle, &huge_page, &corner, 20000, 20000, &small_buffer, nullptr));
     CHECK(g_script->render_calls == 0);
     CHECK_STATUS(ARC_OK, arc_pdf_close(huge.handle));
 
@@ -665,7 +699,8 @@ void test_render()
     std::vector<uint8_t> room(64);
     arc_mut_buffer_t room_buffer{room.data(), room.size(), 0};
     const arc_region_v1 five = region_of(0, 0, 5, 1);
-    CHECK_STATUS(ARC_RESOURCE_LIMIT, arc_pdf_render(bounded.handle, &bounded_page, &five, 100, 100, &room_buffer, nullptr));
+    CHECK_STATUS(ARC_RESOURCE_LIMIT,
+                 arc_pdf_render(bounded.handle, &bounded_page, &five, 100, 100, &room_buffer, nullptr));
     CHECK(g_script->render_calls == 0);
     CHECK_STATUS(ARC_OK, arc_pdf_close(bounded.handle));
 }
@@ -683,7 +718,7 @@ void test_render_failures_leave_no_partial_output()
     CHECK_STATUS(ARC_CORRUPT, arc_pdf_render(document.handle, &page, &tile, 64, 64, &buffer, nullptr));
     CHECK(g_script->render_calls == 1);
     CHECK(std::all_of(out.begin(), out.begin() + 8 * 8 * 4, [](uint8_t v) { return v == 0; })); // pixels wiped
-    CHECK(out[8 * 8 * 4] == 0xEE);                                                              // nothing past the tile touched
+    CHECK(out[8 * 8 * 4] == 0xEE); // nothing past the tile touched
     CHECK_STATUS(ARC_OK, arc_pdf_close(document.handle));
 
     reset({page_with(u"a")});
@@ -731,7 +766,8 @@ void test_cancellation_and_deadline()
     const auto elapsed = std::chrono::steady_clock::now() - before;
     CHECK(elapsed >= std::chrono::milliseconds(90) && elapsed < std::chrono::seconds(10));
 
-    // A render that spins is cancelled and its buffer is wiped; a render that ignores the deadline is refused afterwards.
+    // A render that spins is cancelled and its buffer is wiped; a render that ignores the deadline is refused
+    // afterwards.
     reset({page_with(u"a")});
     g_script->render_hangs_until_stopped = true;
     opened document = open_ok();

@@ -22,21 +22,21 @@ struct fake_page final {
 
 struct fake_script final {
     std::vector<fake_page> pages;
-    std::string required_password;                // empty: not encrypted
+    std::string required_password; // empty: not encrypted
     bool throw_on_open = false;
     bool throw_bad_alloc_on_open = false;
     bool throw_on_render = false;
     bool null_document = false;
-    bool open_hangs_until_stopped = false;        // loops on context.check()
+    bool open_hangs_until_stopped = false; // loops on context.check()
     bool render_hangs_until_stopped = false;
-    bool render_ignores_deadline_ms = false;      // sleeps render_sleep_ms and returns OK
+    bool render_ignores_deadline_ms = false; // sleeps render_sleep_ms and returns OK
     uint32_t render_sleep_ms = 0;
-    bool render_fails_after_writing = false;      // writes the whole tile, then reports failure
-    arc_status_t open_status = ARC_OK;            // returned instead of opening when not ARC_OK
+    bool render_fails_after_writing = false; // writes the whole tile, then reports failure
+    arc_status_t open_status = ARC_OK;       // returned instead of opening when not ARC_OK
     arc_status_t geometry_status = ARC_OK;
     arc_status_t text_status = ARC_OK;
-    uint32_t reported_pages = 0;                  // 0: pages.size()
-    uint64_t consumed_bytes = 0;                  // set by open: bytes read through the source
+    uint32_t reported_pages = 0; // 0: pages.size()
+    uint64_t consumed_bytes = 0; // set by open: bytes read through the source
     std::atomic<int> alive_documents{0};
     std::atomic<int> render_calls{0};
     std::atomic<int> text_calls{0};
