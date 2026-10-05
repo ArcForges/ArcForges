@@ -1657,6 +1657,13 @@ public sealed class AuditStoreTests
         Assert.Empty(empty.Partitions);
         Assert.False(empty.MoreExpiredMonthsRemain);
 
+        // A cancelled token stops even a run with nothing to do.
+        using (var cancelledEarly = new CancellationTokenSource())
+        {
+            cancelledEarly.Cancel();
+            Assert.Throws<OperationCanceledException>(() => fixture.Runner().RunOnce(cancelledEarly.Token));
+        }
+
         var old = new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero);
         AppendAt(fixture, old);
         fixture.SetWallClock(RunnerNow);
