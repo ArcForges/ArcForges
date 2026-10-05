@@ -11,6 +11,7 @@
     <Description>ArcForges Pdf native ABI binding: bounded page, text and tile access behind the ContentSandbox helper.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox" />
     <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
     <ProjectReference Include="../ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
   </ItemGroup>

@@ -54,6 +54,7 @@ public sealed class RepositoryPolicyTests
         // The closed map: every production binding is one library:entry-point export with exactly one owner directory and exactly its declared
         // marshalling flags (UTF-16 strings, last-error capture). A binding that is not listed, is listed twice or is declared elsewhere fails.
         string image = Path.Combine(Root, "src", "Native", "ArcForges.Native.Image");
+        string pdf = Path.Combine(Root, "src", "Native", "ArcForges.Native.Pdf");
         string secrets = Path.Combine(Root, "src", "BuildingBlocks", "ArcForges.Security.Secrets");
         string broker = Path.Combine(Root, "src", "DesktopHelpers", "ArcForges.ContentSandbox.Broker", "Native");
         string helper = Path.Combine(Root, "src", "DesktopHelpers", "ArcForges.ContentSandbox", "Native");
@@ -66,6 +67,14 @@ public sealed class RepositoryPolicyTests
             ["ArcImageNative:arc_image_get_abi_version"] = (image, false, false),
             ["ArcImageNative:arc_image_get_build_info"] = (image, false, false),
             ["ArcImageNative:arc_image_get_last_error"] = (image, false, false),
+            ["ArcPdfNative:arc_pdf_get_abi_version"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_get_build_info"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_get_last_error"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_open"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_page_info"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_render"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_text"] = (pdf, false, false),
+            ["ArcPdfNative:arc_pdf_close"] = (pdf, false, false),
             ["Advapi32.dll:EqualSid"] = (broker, false, false),
             ["Advapi32.dll:FreeSid"] = (broker, false, false),
             ["Advapi32.dll:GetTokenInformation"] = (broker, false, true),

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.Diagnostics.CodeAnalysis;
 using ArcForges.Native.Abstractions;
 
 namespace ArcForges.Native.Pdf;
 
 /// <summary>The immutable PDF bytes. The native library reads them through this and never past <see cref="Length"/>.</summary>
-public interface IPdfInput
+internal interface IPdfInput
 {
     /// <summary>The byte length of the input.</summary>
     long Length { get; }
@@ -15,7 +16,7 @@ public interface IPdfInput
 }
 
 /// <summary>The budget of one document. Zero is never valid; the native profile maxima apply on top.</summary>
-public sealed record PdfLimits(
+internal sealed record PdfLimits(
     ulong MaxInputBytes,
     ulong MaxMemoryBytes,
     ulong MaxOutputBytes,
@@ -25,16 +26,16 @@ public sealed record PdfLimits(
     uint TimeoutMs);
 
 /// <summary>The geometry of one page in PDF points; rotation is 0, 90, 180 or 270.</summary>
-public readonly record struct PdfPageGeometry(uint PageIndex, uint Rotation, double WidthPoints, double HeightPoints);
+internal readonly record struct PdfPageGeometry(uint PageIndex, uint Rotation, double WidthPoints, double HeightPoints);
 
 /// <summary>A text rectangle. Start and length are UTF-16 offsets into the full page text.</summary>
-public readonly record struct PdfTextBox(uint Start, uint Length, double X, double Y, double Width, double Height);
+internal readonly record struct PdfTextBox(uint Start, uint Length, double X, double Y, double Width, double Height);
 
 /// <summary>One bounded chunk of page text. <see cref="Next"/> is the start of the following chunk, or null at the end of the page.</summary>
-public sealed record PdfTextChunk(uint Page, uint Start, uint? Next, string Text, IReadOnlyList<PdfTextBox> Boxes);
+internal sealed record PdfTextChunk(uint Page, uint Start, uint? Next, string Text, IReadOnlyList<PdfTextBox> Boxes);
 
 /// <summary>A PDF document opened with scripts and actions disabled. Implemented by <see cref="PdfDocument"/> and by test doubles.</summary>
-public interface IPdfDocument : IDisposable
+internal interface IPdfDocument : IDisposable
 {
     /// <summary>The number of pages, at least one.</summary>
     uint PageCount { get; }
@@ -50,7 +51,8 @@ public interface IPdfDocument : IDisposable
 }
 
 /// <summary>A native PDF call failed. The status is the closed ABI status; the message is diagnostic only and is never sent to a peer.</summary>
-public sealed class PdfNativeException : Exception
+[SuppressMessage("Design", "CA1064", Justification = "The binding is internal to the helper (no public API surface); the exception stays beside it.")]
+internal sealed class PdfNativeException : Exception
 {
     public PdfNativeException()
         : this(NativeStatus.Internal, string.Empty)

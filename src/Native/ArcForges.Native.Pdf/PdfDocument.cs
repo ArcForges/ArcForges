@@ -12,7 +12,7 @@ namespace ArcForges.Native.Pdf;
 /// input must stay valid until this object is disposed. Every failure is a <see cref="PdfNativeException"/> carrying the closed ABI status,
 /// or an <see cref="OperationCanceledException"/> for a cancellation. No native pointer or handle value is ever exposed.
 /// </summary>
-public sealed unsafe class PdfDocument : IPdfDocument
+internal sealed unsafe class PdfDocument : IPdfDocument
 {
     private const int MaxTextResponseBytes = 64 * 1024 * 1024;
     private const int NativeStructVersion = 1;

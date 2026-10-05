@@ -15,8 +15,7 @@ generated `ContentSandboxService` contract. This project is non-packable; packag
   keeps its registration lease, and leaves the process when the parent is lost, the session lease passes or the session is closed. Renewal and
   cancellation are declared reserved control methods, so they pass a full data lane. It listens on no network endpoint.
 - **Service (`Host/ContentSandboxServiceImpl`).** Holds exactly one invocation-scoped session whose identity, input and budget the launch fixed.
-  It chooses parsers only from the composition named by the launch (the production helper composes none; the production parser libraries are
-  added to this same host by their own task), fills only the slot grants the parent made, seals exactly the bytes written, and checks every
+  It chooses parsers only from the composition named by the launch (the production helper composes `ProductionParserProfile`: the PDF parser over the native `arc_pdf_*` library; no image parser is composed yet), fills only the slot grants the parent made, seals exactly the bytes written, and checks every
   result with the same shape rules the parent applies again. A parser that fails, overruns its deadline or is cancelled ends the invocation.
 - **Profiles.** Windows: the parent creates the process in an AppContainer and Job Object; the helper checks it cannot reach the parent process
   or the user profile. Linux (`Native/LinuxEnforcement`): the helper applies no_new_privs, resource limits, Landlock and a seccomp
@@ -53,4 +52,21 @@ Publishing needs the Visual Studio C++ tools on the path of the shell; on a mach
 
 See the Plan ledger record of PLT.45. In short: the Linux profile and launcher are compiled in hosted CI and unit-tested only; they have not been run
 on Linux. macOS has no launcher. Windows signature (Authenticode) verification of the helper is not implemented: the launcher pins the
-SHA-256 of the installed helper from the signed inventory. Real PDF and image parsers are not part of this task.
+SHA-256 of the installed helper from the signed inventory.
+
+## Production composition (NAT.14)
+
+`ProductionParserProfile` (`arcforges-parsers-v1`) is the one composition the production helper contains. Its PDF parser
+(`Host/NativePdfParser`) adapts the sandbox parser interface to the native `arc_pdf_*` library through `ArcForges.Native.Pdf`:
+it passes the launch budget on, assembles page text from bounded native chunks, validates every geometry, box and size it takes
+from the native side, and turns every native or loader failure into one parser failure. `Prepare` runs before the operating-system
+profile is applied (a restricted process cannot load a library afterwards) and ends the helper when the library cannot be loaded or
+has no PDF backend linked (`backend=none`); the helper exits with the internal-failure code and writes one diagnostic line. The hostile
+test composition is never registered in production; the fixture stays a test-only regression executable.
+
+**What is not proven.** `native/arcpdf-abi` links no PDF parser yet, so a production helper built from this tree refuses every PDF
+(the library reports `backend=none`). No real PDF was parsed, no operating-system isolation check was re-run against a real parser,
+the ACL a Windows AppContainer needs on the directory that holds the native libraries is unobserved, and Linux and macOS have no
+native library path (`NativeLoader` is win-x64 only). The offline tests drive the adapter with a scripted native document and the
+engine with a scripted backend; they prove the containment and limit code, not PDFium. Real-parser composition and acceptance are
+tracked as NAT.15.

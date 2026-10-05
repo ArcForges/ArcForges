@@ -255,12 +255,12 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/packages.lock.json": "d484757d0de8539423641c61aea8b03bbc681b39826035d3a550326205779f07",
     "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj": "9cf9cdf2e72c9c55da5b9fda99a2efc07d7d918738ca89ae24456d2e762bd660",
     "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "f43afe9ccaa7e52ee5c3a2bdeef7eec20ada355c65ab3b9c8a68fe1124a484ca",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "566d71ed786f38de30ab92b4886c007b1648a3999ae5c55c176fd77a95eeea54",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj": "c902b6c2d32ec042573459b66d6984cc92a6698e1ef7a5908a0bf98b843ce306",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "238d555c021142cfe486021ed330f4e381295f9984111e23251049fbc50cf755",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj": "9d97cbef2c2c5585c3698a2c5f7ade78aed10ff806ebc513965a97cada38bc1b",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "861aa7f22729ff1f9800431f04eaffbfe3b87a2d21548a98b52f5935c4185e85",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "71a8114d5743bd3439d49f15803ba675d77664fb08d382344f74f77bbed60cf7",
     "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
     "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
     "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -268,6 +268,8 @@
     "src/Native/ArcForges.Native.Image.Runtime.win-x64/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
     "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj": "f40721a408237dd02ae4d0a244731463245a88dfa66fb9e6fe94921090b9e651",
     "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
+    "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj": "cc7a8e5ff6f8239f076e04dbdb6fc1f4f61be5219752541758c8f11d3f1e040a",
+    "src/Native/ArcForges.Native.Pdf/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
     "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
@@ -781,19 +783,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261004-plt25",
+    "owner": "w-c20261005-nat14",
     "reviewer": "Pending independent exact-head dependency-admission review before merge.",
-    "reviewedOn": "2026-10-04",
-    "baselineCommit": "ad6468e52f0cb3918f221a1cafed354c343d6920",
-    "maintenanceAssessment": "PLT.25 activates the already-delivered library ArcForges.Contributions as a NuGet package in the existing single-version release set. It sets IsPackable to true on a project whose PackageId, package readme and licence and notice pack items were already present, appends one catalogue entry (dependency on the owned ArcForges.Capabilities plus the exact ArcForges.Contracts.Foundation 1.0.0-ci.216.1 pin that dotnet pack generates for the project) and corrects the package README. ArcForges.Capabilities was already catalogued and published and is unchanged. No PackageReference, project reference, central version, lock file, source file, framework or native input changed: the locked closure keeps identical coordinates, versions and content hashes, and only the packages.json and Contributions project input hashes change. This immutable successor chains from the receipt active on main at merge and preserves every earlier receipt.",
+    "reviewedOn": "2026-10-05",
+    "baselineCommit": "5405d80a7e49d7d5b385db6859ab9ab3c5d6dd18",
+    "maintenanceAssessment": "NAT.14 adds no third-party dependency. It adds the first-party non-packable project ArcForges.Native.Pdf (a source-generated LibraryImport binding of the owned arc_pdf_* ABI), makes the existing ArcForges.ContentSandbox helper reference it, and adds the first-party native library source native/arcpdf-abi, which links no PDF parser (backend_none: arc_pdf_open fails closed with ARC_UNSUPPORTED). No PDFium source, binary, port, vcpkg change, NuGet coordinate or Python requirement is added; the locked NuGet closure keeps every coordinate, version and content hash, and only the project-reference sections of the ContentSandbox, Fixture and Tests locks and the new Native.Pdf lock change. The one edit outside the task scope is an InternalsVisibleTo(ArcForges.Native.Pdf) line in Native.Abstractions (ADP-07 supporting binding, no behaviour change). The real PDFium dependency and its admission are the separate task NAT.15.",
     "upgradeChecks": {
-      "compilation": "With the pinned .NET SDK 10.0.400 (separate installed copy) through the workstation build slot: locked restore of Foundation, Capabilities and Contributions passed with no lock change, and dotnet pack of the three projects at 1.0.0-ci.local.1 succeeded. The generated ArcForges.Contributions nuspec dependency set (ArcForges.Capabilities, ArcForges.Contracts.Foundation 1.0.0-ci.216.1) equals the catalogue entry under packages.validate_generated_dependencies. Exact-head hosted CI remains required; nothing is claimed beyond what ran. Locally on the same worktree: ArcForges.Contributions.Tests 16/16, ArcForges.Capabilities.Tests 77/77, the ArchitectureTests RepositoryPolicyTests class 5/5 (including packable-iff-listed), dependency policy 22/22 and reconciliation 8/8 unit tests, dependency admission, provenance and reconciliation checks passed; 13 of 25 eng/packaging tests errored locally for want of a full candidate directory (hosted only) and no pass is claimed for them.",
-      "aot-trim": "ArcForges.Contributions was already IsAotCompatible, so the trim and AOT analyzers already ran with warnings as errors in the solution build. No Native AOT publish of the package ran and no hosted AOT job references it.",
-      "compatibility": "No source of ArcForges.Capabilities or ArcForges.Contributions changed; the package identity ArcForges.Contributions is the project's existing PackageId, it is a separate package that depends on ArcForges.Capabilities, and no wire schema or Contracts change is made.",
-      "licence-provenance": "The project declares AGPL-3.0-only and was already registered in the architecture, licence-boundary, runtime-ownership, active-project and first-party provenance inventories; its active-project blob is refreshed and the PLT.25 immutable receipt is the only new receipt. No external source or package is introduced.",
-      "security-sbom": "The locked aggregate keeps the same coordinates, versions and content hashes; no closure expansion occurs. Dependency admission, provenance, secret-scan and hosted CI gates remain required; publication goes through the normal main-push Publish NuGet path.",
-      "runtime-performance-migration": "One local opt-in throwaway consumer restored only the locally packed ArcForges.Contributions package (with Capabilities and Foundation from the same local candidate directory and the remaining closure from the package cache) and ran the invalid and stale invocation, composition, opaque-reference and contribution-registration refusal scenarios in the JIT. No installed-package consumer is added to CI, no Native AOT, hosted, device, GUI or live-service run, and no performance or migration claim.",
-      "framework-runtime-posture": "The pinned .NET SDK remains 10.0.400 with net10.0 targets; no framework major, runtime, Android, native ABI, compiler toolchain or central package version changed."
+      "compilation": "With the pinned .NET SDK 10.0.400 (separate installed copy at ~/.dotnet) through the workstation build slot: restore regenerated the ContentSandbox, Fixture and Tests locks and created the Native.Pdf lock; the ContentSandbox test project (which builds Native.Pdf, the helper, the fixture and the broker) compiled with warnings as errors and 169 tests ran (160 passed, 9 opt-in OS checks skipped). The native arcpdf-abi library and its two CTest executables compiled with MSVC /W4 /WX through a scratch CMake wrapper (the repository CMake preset needs the unavailable pinned vcpkg tree) and both CTest targets passed. Linux and macOS compilation of the native sources was not run locally.",
+      "aot-trim": "Native.Pdf uses source-generated LibraryImport with DisableRuntimeMarshalling, UnmanagedCallersOnly callbacks and Utf8JsonReader; no reflection, no runtime code generation. The local build compiled it with the repository analyzers (IsAotCompatible is not set on this non-packable project; the analyzers of the helper project that references it ran). The helper Native AOT publish is the existing compile-only CI job; it was not run locally.",
+      "compatibility": "No package identity, public API of a published package or schema changes. Native.Pdf is non-packable and not in eng/packaging/packages.json. Native.Abstractions gains only an InternalsVisibleTo entry. The helper keeps its launch frame, contract and exit codes; the production parser composition now contains one profile and a launch that names the hostile test profile is still refused.",
+      "licence-provenance": "All new files are first-party AGPL-3.0-only with SPDX headers, registered in the architecture, licence-boundary, runtime-ownership, active-project and first-party provenance inventories. No upstream source, notice or binary is added.",
+      "security-sbom": "The NuGet and Python closures are unchanged (same coordinates and content hashes), so no SBOM or advisory input changes. The new native library adds no dependency edge. The hostile-input surface added is the helper's PDF adapter and the engine's validation of backend output, covered by offline tests; no real PDF parser exists in this change.",
+      "runtime-performance-migration": "No runtime behaviour of any published package changes and no migration exists. No real PDF was parsed, no OS-isolation check was re-run against a real parser and no packaged consumer was executed: the only parser behind the engine in tests is a scripted fake.",
+      "framework-runtime-posture": "No framework, SDK, runtime or toolchain version changes; global.json and the vcpkg baseline are untouched."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -1049,12 +1051,12 @@
       "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/packages.lock.json": "d484757d0de8539423641c61aea8b03bbc681b39826035d3a550326205779f07",
       "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj": "9cf9cdf2e72c9c55da5b9fda99a2efc07d7d918738ca89ae24456d2e762bd660",
       "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "f43afe9ccaa7e52ee5c3a2bdeef7eec20ada355c65ab3b9c8a68fe1124a484ca",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "566d71ed786f38de30ab92b4886c007b1648a3999ae5c55c176fd77a95eeea54",
       "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj": "c902b6c2d32ec042573459b66d6984cc92a6698e1ef7a5908a0bf98b843ce306",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "238d555c021142cfe486021ed330f4e381295f9984111e23251049fbc50cf755",
       "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj": "9d97cbef2c2c5585c3698a2c5f7ade78aed10ff806ebc513965a97cada38bc1b",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "861aa7f22729ff1f9800431f04eaffbfe3b87a2d21548a98b52f5935c4185e85",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "71a8114d5743bd3439d49f15803ba675d77664fb08d382344f74f77bbed60cf7",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
       "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
       "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -1062,6 +1064,8 @@
       "src/Native/ArcForges.Native.Image.Runtime.win-x64/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
       "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj": "f40721a408237dd02ae4d0a244731463245a88dfa66fb9e6fe94921090b9e651",
       "src/Native/ArcForges.Native.Image/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
+      "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj": "cc7a8e5ff6f8239f076e04dbdb6fc1f4f61be5219752541758c8f11d3f1e040a",
+      "src/Native/ArcForges.Native.Pdf/packages.lock.json": "cd7ed1d6af3e01a3bc233a62e7ae062e55434f0892d3f61c011387cd9ed0e576",
       "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj": "fe6d0b2a9bf1cb70fc496515ea35e07356a0758898ba22a3816d696fcebf3c3a",
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
       "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
@@ -1081,7 +1085,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-57-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-25-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1092,7 +1096,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-25-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

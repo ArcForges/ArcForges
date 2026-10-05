@@ -10,7 +10,7 @@ using ArcForges.Native.Abstractions;
 namespace ArcForges.Native.Pdf;
 
 /// <summary>The raw arc_pdf_* exports of ArcPdfNative and the library preamble. Use <see cref="PdfDocument"/> for the bounded API.</summary>
-public static unsafe partial class PdfAbi
+internal static unsafe partial class PdfAbi
 {
     static PdfAbi() => NativeLoader.Register(typeof(PdfAbi).Assembly, "ArcPdfNative");
 
