@@ -90,8 +90,8 @@ internal interface IPdfParser : IDisposable
 
 /// <summary>
 /// One approved parser composition, chosen by the identifier of the launch and never by a path or a function name. The production helper
-/// of this stage composes none; the production parser libraries are added to the same host by their own task. A composition that lacks a
-/// parser kind refuses that kind.
+/// composes <see cref="ProductionParserProfile"/> (the PDF parser over the native library); the hostile test composition exists only in the
+/// test fixture. A composition that lacks a parser kind refuses that kind.
 /// </summary>
 internal interface IContentParserProfile
 {
@@ -103,13 +103,22 @@ internal interface IContentParserProfile
 
     /// <summary>A new PDF parser, or null when the composition has none.</summary>
     IPdfParser? CreatePdfParser();
+
+    /// <summary>
+    /// Runs before the operating-system profile is applied: loads and verifies whatever native libraries the composition needs, because a
+    /// restricted process can no longer load them. Throws <see cref="ContentParserException"/> when the composition cannot run; the helper
+    /// then ends before any parser exists. The default does nothing.
+    /// </summary>
+    void Prepare()
+    {
+    }
 }
 
 /// <summary>The closed set of parser compositions of one helper build.</summary>
 internal sealed class ParserProfiles(IReadOnlyList<IContentParserProfile> profiles)
 {
-    /// <summary>The compositions of the production helper: none. A launch that names one is refused.</summary>
-    internal static ParserProfiles Production { get; } = new([]);
+    /// <summary>The compositions of the production helper: the production parser composition only. A launch that names any other is refused.</summary>
+    internal static ParserProfiles Production { get; } = new([new ProductionParserProfile()]);
 
     /// <summary>The composition with this identifier, or null.</summary>
     internal IContentParserProfile? Find(string id) => profiles.FirstOrDefault(profile => string.Equals(profile.Id, id, StringComparison.Ordinal));

@@ -36,5 +36,6 @@
     <Project Path="src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj" />
+    <Project Path="src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj" />
   </Folder>
 </Solution>
