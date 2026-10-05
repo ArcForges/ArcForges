@@ -1770,6 +1770,11 @@
     "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.TheEgressShapeRefusesInventedOrContradictoryDetailAndOnlyEgressMayLeaveRiskUnassessed()"
   },
   {
+    "apiSymbol": "ArcForges.Security.Audit.AuditRetentionRunner.RunOnce(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.TheRunnerPurgesOnlyExpiredUnheldMonthsUnderTheDeclaredPolicyAndNothingElse()"
+  },
+  {
     "apiSymbol": "ArcForges.Security.Audit.CapabilityLeaseAuditAdapter.Record(ArcForges.Security.Audit.CapabilityLeaseLifecycleFact)",
     "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
     "testMethod": "ArcForges.Security.Audit.Tests.AuditStoreTests.CapabilityLeaseLifecycleKindsAppendDurablyAndPreserveTheGuidIdentity()"

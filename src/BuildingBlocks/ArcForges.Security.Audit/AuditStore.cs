@@ -160,6 +160,48 @@ public sealed class AuditStore : IDisposable
             clock.GetCurrentInstant(), clock.GetTimestamp(), lifetime);
     }
 
+    /// <summary>Fail closed unless an actor chain belongs to this file's realm and owner.</summary>
+    internal void RequireOwner(ActorChain actor)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(actor);
+        EnsureOwner(actor.Owner.Realm, actor.Owner.Id);
+    }
+
+    /// <summary>
+    /// The complete UTC months of this file's one owner that hold events and have expired under the declared retention policy at the
+    /// store's own current instant, oldest first, at most <paramref name="limit"/>. The caller chooses neither the partitions nor the time.
+    /// </summary>
+    internal IReadOnlyList<AuditPartition> ListExpiredPartitions(int limit)
+    {
+        ThrowIfDisposed();
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        using var connection = OpenConnection(queryOnly: true);
+        using var transaction = connection.BeginTransaction(deferred: true);
+        var state = new AuthorizerState();
+        SetAuthorizer(connection, state);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"SELECT DISTINCT partition_year,partition_month FROM {EventTable} ORDER BY partition_year,partition_month;";
+            using var reader = command.ExecuteReader();
+            var now = clock.GetCurrentInstant();
+            var expired = new List<AuditPartition>();
+            while (expired.Count < limit && reader.Read())
+            {
+                var partition = new AuditPartition(realm, owner, reader.GetInt32(0), reader.GetInt32(1));
+                if (IsExpired(partition, retentionPolicy.RetentionDays, now)) expired.Add(partition);
+            }
+
+            return expired.AsReadOnly();
+        }
+        finally
+        {
+            ClearAuthorizer(connection);
+        }
+    }
+
     /// <summary>Append a legal hold over an existing month partition; ordinary holds cannot be edited.</summary>
     public AuditHoldRecord PlaceLegalHold(Guid holdId, AuditPartition partition, AuditHoldReason reason,
         ActorChain actorChain, AuditSoftwareIdentity softwareIdentity, AuditOrigin origin)
