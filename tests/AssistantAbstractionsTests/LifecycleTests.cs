@@ -376,24 +376,90 @@ public sealed class LifecycleTests : IDisposable
     }
 
     [Xunit.Fact]
-    public async Task AStoreThatAcknowledgesOtherContentIsNotTrustedAsDurable()
+    public async Task AnAcknowledgementThatDoesNotMatchIsReconciledWithTheStoreNeverTrustedBlindly()
     {
-        var app = new LifecycleApp(Root);
-        await app.LaunchAsync();
+        var app = await LaunchedApp();
         var view = Value(app.Lifecycle.OpenView(AssistantWindowId.New()));
         Value(view.Edit("asked"));
         app.Store.Tamper = draft => new AssistantDraft(draft.Id, draft.Window, null, draft.Revision, "different");
 
-        A.Equal("internal.unexpected", Code(await view.CheckpointAsync()));
-        A.True(view.HasUnsavedEdits);
-        A.Equal(0, view.StoredDraft.Revision);
+        // The store did write the asked revision, so reading it back proves durability: no wedge, no lost save.
+        var saved = Value(await view.CheckpointAsync());
+        A.Equal("asked", saved.Text);
+        A.Equal(1, saved.Revision);
+        A.False(view.HasUnsavedEdits);
+        Value(view.Edit("asked again"));
+        app.Store.Tamper = null;
+        A.Equal(2, Value(await view.CheckpointAsync()).Revision);
 
-        // A different draft identity is not trusted either (a fresh view, since the store did write the first one).
+        // A store that acknowledges without storing anything is a failure, and the draft stays saveable afterwards.
+        var liar = Value(app.Lifecycle.OpenView(AssistantWindowId.New()));
+        Value(liar.Edit("never stored"));
+        app.Store.AcknowledgeWithoutWriting = true;
+        app.Store.Tamper = draft => new AssistantDraft(draft.Id, draft.Window, null, draft.Revision, "different");
+        A.Equal("internal.unexpected", Code(await liar.CheckpointAsync()));
+        A.True(liar.HasUnsavedEdits);
+        A.Null(app.Store.Stored(liar.DraftId));
+        app.Store.AcknowledgeWithoutWriting = false;
+        app.Store.Tamper = null;
+        A.Equal(1, Value(await liar.CheckpointAsync()).Revision);
+
+        // An acknowledgement for a different draft identity is not trusted either.
         var other = Value(app.Lifecycle.OpenView(AssistantWindowId.New()));
         Value(other.Edit("asked too"));
         app.Store.Tamper = draft => new AssistantDraft(AssistantDraftId.New(), draft.Window, null, draft.Revision, draft.Text);
-        A.Equal("internal.unexpected", Code(await other.CheckpointAsync()));
-        A.True(other.HasUnsavedEdits);
+        A.Equal("asked too", Value(await other.CheckpointAsync()).Text);
+    }
+
+    private async Task<LifecycleApp> LaunchedApp(TimeSpan? timeout = null)
+    {
+        var app = new LifecycleApp(Root, timeout: timeout);
+        await app.LaunchAsync();
+        return app;
+    }
+
+    [Xunit.Fact]
+    public async Task ASaveTimeoutWhoseWriteLandsLateDoesNotWedgeTheDraft()
+    {
+        var app = await LaunchedApp(TimeSpan.FromMilliseconds(200));
+        var view = Value(app.Lifecycle.OpenView(AssistantWindowId.New()));
+        Value(view.Edit("one"));
+        Value(await view.CheckpointAsync());
+
+        // The next save ignores its token and finishes only after the caller gave up.
+        var release = new TaskCompletionSource();
+        app.Store.AfterTemporaryWritten = _ => release.Task;
+        Value(view.Edit("two"));
+        A.Equal("dependency.timeout", Code(await view.CheckpointAsync()));
+        A.Equal(1, view.StoredDraft.Revision);
+        A.True(view.HasUnsavedEdits);
+
+        release.SetResult();
+        await Task.Delay(100, CancellationToken.None);
+        app.Store.AfterTemporaryWritten = null;
+        A.Equal("two", app.Store.Stored(view.DraftId)!.Text);
+
+        // The late write is recognised as this view's own: the baseline moves and the newer text is saved on top.
+        Value(view.Edit("three"));
+        var saved = Value(await view.CheckpointAsync());
+        A.Equal(3, saved.Revision);
+        A.Equal("three", saved.Text);
+        A.Equal("three", app.Store.Stored(view.DraftId)!.Text);
+        A.False(view.HasUnsavedEdits);
+    }
+
+    [Xunit.Fact]
+    public async Task ADraftDeletedBehindTheViewsBackCanBeSavedAgain()
+    {
+        var app = await LaunchedApp();
+        var view = Value(app.Lifecycle.OpenView(AssistantWindowId.New()));
+        Value(view.Edit("one"));
+        var saved = Value(await view.CheckpointAsync());
+        File.Delete(Path.Combine(app.Store.Directory, saved.Id.Value.ToString("N") + ".draft"));
+        Value(view.Edit("two"));
+
+        A.Equal(1, Value(await view.CheckpointAsync()).Revision);
+        A.Equal("two", app.Store.Stored(saved.Id)!.Text);
     }
 
     [Xunit.Fact]

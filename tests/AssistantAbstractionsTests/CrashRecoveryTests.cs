@@ -13,7 +13,9 @@ namespace AssistantAbstractionsTests;
 /// <summary>
 /// Independent application crash. A crash is simulated in-process: the application's objects are abandoned without
 /// disposal (and a write is left half done), then a new instance starts over the same data directory. No operating
-/// system process is killed here.
+/// system process is killed here. The lifecycle owns no canonical data (committed conversations belong to the host's
+/// store), so what these tests prove is the lifecycle's own part: durable drafts survive, nothing unsaved is invented,
+/// the other application is unaffected and a restart can resume each draft once.
 /// </summary>
 public sealed class CrashRecoveryTests : IDisposable
 {
@@ -30,9 +32,6 @@ public sealed class CrashRecoveryTests : IDisposable
     {
         var crashed = new LifecycleApp(Root);
         await crashed.LaunchAsync();
-        crashed.Canonical.Commit("conversation-1/turn-1");
-        crashed.Canonical.Stage("conversation-1/turn-2-not-acknowledged");
-
         var alpha = Value(crashed.Lifecycle.OpenView(AssistantWindowId.New()));
         var beta = Value(crashed.Lifecycle.OpenView(AssistantWindowId.New()));
         Value(alpha.Edit("alpha"));
@@ -54,8 +53,9 @@ public sealed class CrashRecoveryTests : IDisposable
         var restarted = crashed.Restart(Root);
         var report = await restarted.LaunchAsync();
 
-        // Committed data is exactly the acknowledged commits; the staged one is absent and nothing is torn.
-        A.Equal(["conversation-1/turn-1"], restarted.Canonical.Durable());
+        // The crashed instance never disposed its session or signalled stopping: nothing was flushed on its way out.
+        A.Equal(0, crashed.Session!.DisposeCalls);
+        A.False(crashed.Lifecycle.Stopping.IsCancellationRequested);
         // Each draft returns at its last durable revision; unsaved and interrupted edits are not invented.
         A.Equal(["alpha", "beta"], report.RecoveredDrafts.Select(draft => draft.Text).Order(StringComparer.Ordinal));
         A.All(report.RecoveredDrafts, draft => A.Equal(1, draft.Revision));
@@ -95,7 +95,6 @@ public sealed class CrashRecoveryTests : IDisposable
         var companionView = Value(companion.Lifecycle.OpenView(AssistantWindowId.New()));
         Value(companionView.Edit("companion draft"));
         Value(await companionView.CheckpointAsync());
-        companion.Canonical.Commit("companion/turn-1");
         var arcView = Value(arcScope.Lifecycle.OpenView(AssistantWindowId.New()));
         Value(arcView.Edit("arcscope draft"));
         Value(await arcView.CheckpointAsync());
@@ -112,14 +111,13 @@ public sealed class CrashRecoveryTests : IDisposable
         Value(another.Edit("second companion window"));
         A.True(Value(await companion.Lifecycle.PrepareShutdownAsync()).CanClose);
         A.False(companion.Lifecycle.Stopping.IsCancellationRequested);
-        A.Equal(["companion/turn-1"], companion.Canonical.Durable());
+        A.Equal(0, companion.Session!.DisposeCalls);
 
         // ArcScope restarts and sees only its own draft; Companion's data is not visible to it or changed by it.
         var restarted = arcScope.Restart(Root);
         var report = await restarted.LaunchAsync();
         A.Equal(["arcscope draft"], report.RecoveredDrafts.Select(draft => draft.Text));
         A.Equal("companion draft, later", companion.Store.Stored(companionView.DraftId)!.Text);
-        A.Empty(restarted.Canonical.Durable());
     }
 
     [Xunit.Fact]

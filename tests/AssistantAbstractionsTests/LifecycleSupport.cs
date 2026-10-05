@@ -58,6 +58,9 @@ internal sealed class FileDraftStore(AssistantHostIdentity owner, AssistantStore
     public Exception? SaveFault { get; set; }
     public Func<AssistantDraft, AssistantDraft>? Tamper { get; set; }
 
+    /// <summary>Acknowledges a save without storing anything (a store that lies about durability).</summary>
+    public bool AcknowledgeWithoutWriting { get; set; }
+
     public async ValueTask<Outcome<AssistantDraft>> SaveAsync(AssistantDraft draft, long expectedRevision,
         CancellationToken cancellationToken = default)
     {
@@ -94,7 +97,14 @@ internal sealed class FileDraftStore(AssistantHostIdentity owner, AssistantStore
 
         lock (_gate)
         {
-            File.Move(temporary, final, overwrite: true);
+            if (AcknowledgeWithoutWriting)
+            {
+                File.Delete(temporary);
+            }
+            else
+            {
+                File.Move(temporary, final, overwrite: true);
+            }
         }
 
         return Outcome.Success(Tamper is null ? draft : Tamper(draft));
@@ -229,37 +239,6 @@ internal sealed class RecordingSession(AssistantHostOptions options, AssistantHo
     }
 }
 
-/// <summary>
-/// Stand-in for committed local data. Only an acknowledged commit is durable; a staged one is lost by a crash and
-/// is written by an orderly flush. It models the contract the lifecycle relies on, not a real store.
-/// </summary>
-internal sealed class CanonicalLog(string path)
-{
-    private readonly List<string> _pending = [];
-
-    public void Commit(string entry)
-    {
-        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None);
-        stream.Write(Encoding.UTF8.GetBytes(entry + "\n"));
-        stream.Flush(flushToDisk: true);
-    }
-
-    public void Stage(string entry) => _pending.Add(entry);
-
-    public void FlushPending()
-    {
-        foreach (string entry in _pending)
-        {
-            Commit(entry);
-        }
-
-        _pending.Clear();
-    }
-
-    public string[] Durable() => File.Exists(path)
-        ? File.ReadAllLines(path, Encoding.UTF8) : [];
-}
-
 /// <summary>One composed application over a scratch directory, with the real lifecycle and test-only ports.</summary>
 internal sealed class LifecycleApp
 {
@@ -273,7 +252,6 @@ internal sealed class LifecycleApp
         Remote = remote ? new FakeRemoteLink(Identity) : null;
         Lifecycle = new AssistantLifecycle(Identity, Store, Remote, timeout);
         Options = TestData.Options(Identity);
-        Canonical = new CanonicalLog(System.IO.Path.Combine(root, Identity.Product.ProductId + ".canonical"));
         Factory = new FakeSessionFactory(Identity, (o, s) =>
         {
             Session = new RecordingSession(o, s, Events);
@@ -289,7 +267,6 @@ internal sealed class LifecycleApp
     public FakeRemoteLink? Remote { get; }
     public AssistantLifecycle Lifecycle { get; }
     public AssistantHostOptions Options { get; }
-    public CanonicalLog Canonical { get; }
     public FakeSessionFactory Factory { get; }
     public AssistantHostServices Services { get; }
     public RecordingSession? Session { get; private set; }

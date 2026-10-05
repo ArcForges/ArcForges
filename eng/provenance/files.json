@@ -773,6 +773,7 @@
     "tests/AssistantAbstractionsTests/FakeHost.cs",
     "tests/AssistantAbstractionsTests/HostModelTests.cs",
     "tests/AssistantAbstractionsTests/IdentityTests.cs",
+    "tests/AssistantAbstractionsTests/LifecycleHardeningTests.cs",
     "tests/AssistantAbstractionsTests/LifecycleShutdownTests.cs",
     "tests/AssistantAbstractionsTests/LifecycleSupport.cs",
     "tests/AssistantAbstractionsTests/LifecycleTests.cs",

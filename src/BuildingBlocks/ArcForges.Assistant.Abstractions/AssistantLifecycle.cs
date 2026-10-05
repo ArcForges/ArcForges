@@ -104,6 +104,9 @@ public sealed class AssistantView : IAsyncDisposable
     private AssistantDraft _stored;
     private string _text;
     private int _closed;
+    private TaskCompletionSource? _closeSource;
+    private const int MaximumUnknownAttempts = 8;
+    private readonly List<AssistantDraft> _unknownAttempts = [];
 
     internal AssistantView(AssistantLifecycle owner, AssistantWindowId window, AssistantDraft stored)
     {
@@ -208,13 +211,25 @@ public sealed class AssistantView : IAsyncDisposable
 
         try
         {
-            AssistantDraft stored = StoredDraft;
-            if (stored.Revision > 0)
+            for (int attempt = 0; ; attempt++)
             {
+                AssistantDraft stored = StoredDraft;
+                if (stored.Revision == 0)
+                {
+                    break;
+                }
+
                 var removed = await _owner.CallStoreAsync(
                     token => _owner.DraftStore.DiscardAsync(stored.Id, stored.Revision, token), cancellationToken)
                     .ConfigureAwait(false);
-                if (!removed.TryGetValue(out _))
+                if (removed.TryGetValue(out _))
+                {
+                    break;
+                }
+
+                // An unknown effect or a revision mismatch is reconciled with the store once; a real conflict stands.
+                if (attempt > 0 || cancellationToken.IsCancellationRequested || !IsUncertain(removed) ||
+                    !await ReconcileAsync(cancellationToken).ConfigureAwait(false))
                 {
                     return removed;
                 }
@@ -222,8 +237,9 @@ public sealed class AssistantView : IAsyncDisposable
 
             lock (_gate)
             {
-                _stored = new AssistantDraft(AssistantDraftId.New(), Window, stored.Conversation, 0, string.Empty);
+                _stored = new AssistantDraft(AssistantDraftId.New(), Window, _stored.Conversation, 0, string.Empty);
                 _text = string.Empty;
+                _unknownAttempts.Clear();
             }
 
             return Outcome.Success(true);
@@ -234,22 +250,47 @@ public sealed class AssistantView : IAsyncDisposable
         }
     }
 
-    /// <summary>Idempotent and non-throwing: saves unsaved text, then cancels view-bound work and detaches.</summary>
+    /// <summary>
+    /// Idempotent and non-throwing: saves unsaved text, then cancels view-bound work and detaches. A view whose
+    /// save did not complete stays visible to shutdown. A second caller waits for the close already in flight.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _closed, 1) != 0)
+        Task closing;
+        bool first = false;
+        lock (_gate)
         {
-            return;
+            if (_closeSource is null)
+            {
+                Volatile.Write(ref _closed, 1);
+                _closeSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                first = true;
+            }
+
+            closing = _closeSource.Task;
         }
 
-        CancelViewScope();
-        _stoppingSource.Dispose();
-        _owner.Detach(this);
-        await CheckpointCoreAsync(CancellationToken.None).ConfigureAwait(false);
-        if (HasUnsavedEdits)
+        if (first)
         {
-            _owner.Retain(this);
+            try
+            {
+                CancelViewScope();
+                _stoppingSource.Dispose();
+                await CheckpointCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                if (HasUnsavedEdits)
+                {
+                    _owner.Retain(this);
+                }
+
+                _owner.Detach(this);
+            }
+            finally
+            {
+                _closeSource!.SetResult();
+            }
         }
+
+        await closing.ConfigureAwait(false);
     }
 
     internal async ValueTask<Outcome<AssistantDraft>> CheckpointCoreAsync(CancellationToken cancellationToken)
@@ -261,45 +302,128 @@ public sealed class AssistantView : IAsyncDisposable
 
         try
         {
-            string text;
-            AssistantDraft stored;
-            lock (_gate)
+            for (int attempt = 0; ; attempt++)
             {
-                text = _text;
-                stored = _stored;
-            }
+                string text;
+                AssistantDraft stored;
+                lock (_gate)
+                {
+                    text = _text;
+                    stored = _stored;
+                }
 
-            if (string.Equals(text, stored.Text, StringComparison.Ordinal))
-            {
-                return Outcome.Success(stored);
-            }
+                if (string.Equals(text, stored.Text, StringComparison.Ordinal))
+                {
+                    return Outcome.Success(stored);
+                }
 
-            AssistantDraft next = stored.Successor(Window, text);
-            var result = await _owner.CallStoreAsync(
-                token => _owner.DraftStore.SaveAsync(next, stored.Revision, token), cancellationToken)
-                .ConfigureAwait(false);
-            if (!result.TryGetValue(out var saved))
-            {
-                return result;
-            }
+                AssistantDraft next = stored.Successor(Window, text);
+                var result = await _owner.CallStoreAsync(
+                    token => _owner.DraftStore.SaveAsync(next, stored.Revision, token), cancellationToken)
+                    .ConfigureAwait(false);
+                if (result.TryGetValue(out var saved) &&
+                    saved is not null && saved.Id == next.Id && saved.Revision == next.Revision &&
+                    string.Equals(saved.Text, next.Text, StringComparison.Ordinal))
+                {
+                    lock (_gate)
+                    {
+                        _stored = saved;
+                        _unknownAttempts.Clear();
+                    }
 
-            if (saved is null || saved.Id != next.Id || saved.Revision != next.Revision ||
-                !string.Equals(saved.Text, next.Text, StringComparison.Ordinal))
-            {
+                    return Outcome.Success(saved);
+                }
+
                 // A store that acknowledges something other than what was asked is not trusted as durable.
-                return Outcome.Failure<AssistantDraft>(TypedFailure.Create("internal.unexpected"));
-            }
+                Outcome<AssistantDraft> failed = result.Kind == OutcomeKind.Success
+                    ? Outcome.Failure<AssistantDraft>(TypedFailure.Create("internal.unexpected"))
+                    : result;
+                if (!IsDidNotHappen(failed))
+                {
+                    lock (_gate)
+                    {
+                        // The write may have landed; remember it so a later read of the store is recognised as ours.
+                        if (_unknownAttempts.Count < MaximumUnknownAttempts)
+                        {
+                            _unknownAttempts.Add(next);
+                        }
+                    }
+                }
 
-            lock (_gate)
-            {
-                _stored = saved;
+                if (attempt > 0 || cancellationToken.IsCancellationRequested || !IsUncertain(failed) ||
+                    !await ReconcileAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    return failed;
+                }
             }
-
-            return Outcome.Success(saved);
         }
         finally
         {
             _saveGate.Release();
+        }
+    }
+
+    private static bool IsDidNotHappen<T>(Outcome<T> outcome)
+        => outcome.Kind == OutcomeKind.Cancelled
+            ? outcome.CancellationEffect == EffectCertainty.DidNotHappen
+            : outcome.TryGetFailure(out var failure) && failure.Effect == EffectCertainty.DidNotHappen;
+
+    private static bool IsUncertain<T>(Outcome<T> outcome)
+    {
+        if (outcome.Kind == OutcomeKind.Cancelled)
+        {
+            return outcome.CancellationEffect != EffectCertainty.DidNotHappen;
+        }
+
+        return outcome.TryGetFailure(out var failure) &&
+            (failure.Code == "conflict.revision_mismatch" || failure.Effect != EffectCertainty.DidNotHappen);
+    }
+
+    /// <summary>
+    /// Re-reads the store after an unknown-effect write or a revision mismatch. A stored revision that is one of this
+    /// view's own earlier unconfirmed writes (or a draft that vanished) becomes the new baseline; anything else is a
+    /// real conflict with another writer and is left for the caller to surface. Returns whether the baseline moved.
+    /// </summary>
+    private async ValueTask<bool> ReconcileAsync(CancellationToken cancellationToken)
+    {
+        AssistantDraft stored = StoredDraft;
+        var recovery = await _owner.CallStoreAsync(_owner.DraftStore.RecoverAsync, cancellationToken).ConfigureAwait(false);
+        if (!recovery.TryGetValue(out var drafts) || drafts is null)
+        {
+            return false;
+        }
+
+        AssistantDraft? current = drafts.Where(draft => draft is not null && draft.Id == stored.Id)
+            .OrderByDescending(draft => draft.Revision).FirstOrDefault();
+        lock (_gate)
+        {
+            if (current is null)
+            {
+                if (stored.Revision == 0)
+                {
+                    return false;
+                }
+
+                _stored = new AssistantDraft(stored.Id, Window, stored.Conversation, 0, string.Empty);
+                _unknownAttempts.Clear();
+                return true;
+            }
+
+            if (current.Revision == stored.Revision && string.Equals(current.Text, stored.Text, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            bool ours = _unknownAttempts.Any(attempt => attempt.Revision == current.Revision &&
+                string.Equals(attempt.Text, current.Text, StringComparison.Ordinal));
+            if (!ours)
+            {
+                return false;
+            }
+
+            _stored = current;
+            _unknownAttempts.RemoveAll(attempt => attempt.Revision <= current.Revision);
+            return true;
         }
     }
 
@@ -471,7 +595,7 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
             var recovery = await CallStoreAsync(DraftStore.RecoverAsync, cancellationToken).ConfigureAwait(false);
             if (recovery.Kind == OutcomeKind.Cancelled && cancellationToken.IsCancellationRequested)
             {
-                Volatile.Write(ref _state, NotLaunched);
+                Interlocked.CompareExchange(ref _state, NotLaunched, Launching);
                 return Outcome.Cancelled<AssistantLaunchReport>(EffectCertainty.DidNotHappen);
             }
 
@@ -501,13 +625,30 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
             }
 
             RefreshRemote();
-            Volatile.Write(ref _state, Launched);
+            if (Interlocked.CompareExchange(ref _state, Launched, Launching) != Launching)
+            {
+                // Disposed while launching: disposal is terminal, so the session created here is released once, here.
+                var created = Session;
+                Session = null;
+                lock (_gate)
+                {
+                    _unclaimed.Clear();
+                }
+
+                if (created is not null)
+                {
+                    await DisposeSessionAsync(created).ConfigureAwait(false);
+                }
+
+                return Outcome.Failure<AssistantLaunchReport>(TypedFailure.Create("state.gone"));
+            }
+
             return Outcome.Success(new AssistantLaunchReport(recovered, RemoteState, recoveryFailure));
         }
         catch
         {
             Session = null;
-            Volatile.Write(ref _state, NotLaunched);
+            Interlocked.CompareExchange(ref _state, NotLaunched, Launching);
             throw;
         }
     }
@@ -537,6 +678,11 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
 
         lock (_gate)
         {
+            if (Volatile.Read(ref _state) == Disposed || _stopping.IsCancellationRequested)
+            {
+                return Outcome.Failure<AssistantView>(TypedFailure.Create("state.gone"));
+            }
+
             if (_views.ContainsKey(window))
             {
                 return Outcome.Failure<AssistantView>(TypedFailure.Create("conflict.duplicate_identifier"));
@@ -711,6 +857,13 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
             return;
         }
 
+        if (previous == Launching)
+        {
+            // The launch in flight sees the terminal state and releases the session it creates.
+            Signal();
+            return;
+        }
+
         AssistantView[] views;
         lock (_gate)
         {
@@ -731,19 +884,32 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Runs one store call under the operation timeout. The timeout is raced against the call, not just handed to
+    /// it as a token, so a store that ignores its token can delay a caller by at most the timeout. An abandoned call
+    /// may still finish later; its result is discarded and callers reconcile with the store before trusting it.
+    /// </summary>
     internal async ValueTask<Outcome<T>> CallStoreAsync<T>(Func<CancellationToken, ValueTask<Outcome<T>>> call,
         CancellationToken cancellationToken)
     {
         using var scope = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         scope.CancelAfter(_operationTimeout);
+        Task<Outcome<T>>? started = null;
         try
         {
-            var result = await call(scope.Token).ConfigureAwait(false);
+            started = call(scope.Token).AsTask();
+            var result = await started.WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
             return result ?? Outcome.Failure<T>(TypedFailure.Create("internal.unexpected"));
+        }
+        catch (TimeoutException)
+        {
+            Abandon(started);
+            return Outcome.Failure<T>(TypedFailure.Create("dependency.timeout"));
         }
         catch (OperationCanceledException)
         {
             // A save may have completed before the cancellation was observed, so the effect is not known.
+            Abandon(started);
             return cancellationToken.IsCancellationRequested
                 ? Outcome.Cancelled<T>(EffectCertainty.Unknown)
                 : Outcome.Failure<T>(TypedFailure.Create("dependency.timeout"));
@@ -752,6 +918,14 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
         {
             return Outcome.Failure<T>(TypedFailure.Create("internal.unexpected"));
         }
+    }
+
+    private static void Abandon(Task? started)
+    {
+        // A late failure of an abandoned call is observed and ignored; it must not become an unobserved exception.
+        started?.ContinueWith(static finished => _ = finished.Exception,
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     internal void Detach(AssistantView view)
@@ -794,13 +968,17 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
             return Outcome.Failure<AssistantWorkHandle>(TypedFailure.Create("state.gone"));
         }
 
-        var handle = new AssistantWorkHandle(this, kind, key, checkpoint);
         lock (_gate)
         {
-            _work.Add(handle);
-        }
+            if (Volatile.Read(ref _state) == Disposed || _stopping.IsCancellationRequested)
+            {
+                return Outcome.Failure<AssistantWorkHandle>(TypedFailure.Create("state.gone"));
+            }
 
-        return Outcome.Success(handle);
+            var handle = new AssistantWorkHandle(this, kind, key, checkpoint);
+            _work.Add(handle);
+            return Outcome.Success(handle);
+        }
     }
 
     private AssistantView[] DirtyViews()
@@ -865,12 +1043,16 @@ public sealed class AssistantLifecycle : IHostLifecycle, IAsyncDisposable
     {
         using var scope = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         scope.CancelAfter(_operationTimeout);
+        Task<bool>? started = null;
         try
         {
-            return await checkpoint(scope.Token).ConfigureAwait(false);
+            started = checkpoint(scope.Token).AsTask();
+            return await started.WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
+            // Includes the timeout: a checkpoint that does not answer in time is unresolved work, never a save.
+            Abandon(started);
             return false;
         }
     }
