@@ -184,7 +184,7 @@
     },
     {
       "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
-      "blob": "b1b77dd0c3be803fd3f9a35d882f3c682b21ea28"
+      "blob": "155342fc571527dc20c1615abd6630dd44d01623"
     },
     {
       "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
