@@ -755,6 +755,7 @@
     "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
     "tests/ArchitectureTests/BuildIdentityTests.cs",
     "tests/ArchitectureTests/EvaluatedPolicyTests.cs",
+    "tests/ArchitectureTests/FunctionPointerInvocationTests.cs",
     "tests/ArchitectureTests/GeneratedSourceReconstructionTests.cs",
     "tests/ArchitectureTests/GeneratedTypeRecognitionTests.cs",
     "tests/ArchitectureTests/PublicBoundaryContractTests.cs",

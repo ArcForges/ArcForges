@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace ArcForges.Build.Policy.Architecture;
 
@@ -50,6 +51,11 @@ internal static class BannedSymbolScanner
                         if (project.Aot && model.GetTypeInfo(invocation).Type?.TypeKind == TypeKind.Dynamic)
                         {
                             Add("BAN-REFLECTION", invocation, "Dynamic invocation requires runtime binding on an AOT path.");
+                        }
+                        else if (model.GetOperation(invocation) is IFunctionPointerInvocationOperation)
+                        {
+                            // A delegate* call has no managed callee symbol, so no symbol-based category applies to the call
+                            // itself. The walk still visits its arguments. Every other unresolved invocation stays fail-closed.
                         }
                         else if (invocation.Expression is not IdentifierNameSyntax { Identifier.ValueText: "nameof" })
                         {
