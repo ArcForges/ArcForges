@@ -254,7 +254,7 @@ internal sealed class FakeHost :
 }
 
 /// <summary>Session stand-in produced by the explicit factory; it forwards to the injected ports only.</summary>
-internal sealed class FakeSession(AssistantHostOptions options, AssistantHostServices services) : IAssistantSession
+internal class FakeSession(AssistantHostOptions options, AssistantHostServices services) : IAssistantSession
 {
     public AssistantHostIdentity Identity => Options.Identity;
     public AssistantHostOptions Options { get; } = options;
@@ -309,7 +309,7 @@ internal sealed class FakeSession(AssistantHostOptions options, AssistantHostSer
     public ValueTask<Outcome<AssistantShutdownSummary>> PrepareShutdownAsync(CancellationToken cancellationToken = default)
         => Services.Lifecycle.PrepareShutdownAsync(cancellationToken);
 
-    public ValueTask DisposeAsync()
+    public virtual ValueTask DisposeAsync()
     {
         Disposed = true;
         return ValueTask.CompletedTask;

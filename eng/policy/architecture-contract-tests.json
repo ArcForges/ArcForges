@@ -3128,5 +3128,100 @@
     "apiSymbol": "ArcForges.Security.CapabilityEnforcement.RegistryCapabilityCatalogue.FindAsync(string, System.Threading.CancellationToken)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.CapabilityEnforcementGateTests.TheRegistryCatalogueAnswersOnlyWithTheRegisteredDescriptorOfAnExactKey()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantDraftId.New()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.DraftModelTests.DraftIdentityIsInitializedAndUnique()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantDraftStore.SaveAsync(ArcForges.Assistant.Abstractions.AssistantDraft, long, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.TwoWindowsKeepDifferentDraftsAndSaveThemIndependently()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantDraftStore.RecoverAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.CrashRecoveryTests.AnApplicationCrashLosesNoCommittedDataAndRecoversEveryDurableDraft()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.IAssistantDraftStore.DiscardAsync(ArcForges.Assistant.Abstractions.AssistantDraftId, long, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.DiscardingADraftRemovesItAndStartsAFreshOne()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantWorkHandle.Dispose()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.LocalWorkIsCheckpointedOrExplicitlyRefused()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantView.Edit(string)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.EditIsBoundedAndNeverDurableUntilCheckpointed()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantView.CheckpointAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.AFailedSaveKeepsTheTextAndThePreviousDurableRevision()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantView.DiscardDraftAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.DiscardingADraftRemovesItAndStartsAFreshOne()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantView.DisposeAsync()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.ClosingOneViewSavesItsDraftAndLeavesSessionOtherViewsAndWorkRunning()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.LaunchAsync(ArcForges.Assistant.Abstractions.AssistantHostOptions, ArcForges.Assistant.Abstractions.AssistantHostServices, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.LaunchAndSaveWorkWithCloudUnavailableAndNoAssistantViewOpen()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.OpenView(ArcForges.Assistant.Abstractions.AssistantWindowId, ArcForges.Assistant.Abstractions.AssistantDraftId?, ArcForges.Assistant.Abstractions.AssistantConversationId?)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.OpeningAViewIsRefusedForDuplicateUnknownEarlyLateAndExcessiveRequests()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.BeginLocalWork(string, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>>?)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.LocalWorkIsCheckpointedOrExplicitlyRefused()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.BeginRemoteWork(string)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.CloudOnlyWorkContinuesAndNeverBlocksQuitting()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.GetBusyState()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.CloudOnlyWorkContinuesAndNeverBlocksQuitting()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.PrepareShutdownAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.AnIdleApplicationMayCloseAndSavesUnsavedDraftsOnTheWay()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.OnProfileChangingAsync(ArcForges.Assistant.Abstractions.AssistantProfileId, System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.AProfileSwitchIsAllowedOnlyWhenNothingOfTheCurrentProfileWouldBeLost()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.OnResumed()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleTests.LaunchWithoutALinkReportsUnavailableAndResumeObservesCloudAgain()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.RequestStopAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.AStopRequestIsRefusedWhileWorkIsUnresolvedAndAcceptedAfterwards()"
+  },
+  {
+    "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.DisposeAsync()",
+    "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+    "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.DisposalClosesEveryViewIndependentlyThenReleasesTheSessionOnce()"
   }
 ]
