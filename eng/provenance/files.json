@@ -659,6 +659,7 @@
     "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
     "src/BuildingBlocks/ArcForges.Security.Audit/AuditModels.cs",
     "src/BuildingBlocks/ArcForges.Security.Audit/AuditRetention.cs",
+    "src/BuildingBlocks/ArcForges.Security.Audit/AuditRetentionRunner.cs",
     "src/BuildingBlocks/ArcForges.Security.Audit/AuditStore.cs",
     "src/BuildingBlocks/ArcForges.Security.Audit/CapabilityLeaseAuditAdapter.cs",
     "src/BuildingBlocks/ArcForges.Security.Audit/EgressDecisionAuditAdapter.cs",

@@ -1391,6 +1391,309 @@ public sealed class AuditStoreTests
             terminal ? Instant.FromDateTimeOffset(fixture.Now.AddMinutes(1)) : null, revocation);
     }
 
+    // Retention runner: the production entry to policy-governed purge. Proved offline against a real store with the store's own
+    // manual clock; no host composition root calls it.
+
+    private static readonly DateTimeOffset RunnerNow = new(2024, 12, 20, 0, 0, 0, TimeSpan.Zero);
+
+    private static AuditPartition MonthOf(AuditFixture fixture, DateTimeOffset when) => AuditPartition.For(fixture.Actor.Owner, when);
+
+    private static void AppendAt(AuditFixture fixture, DateTimeOffset when, int count = 1)
+    {
+        fixture.SetWallClock(when);
+        for (var index = 0; index < count; index++) fixture.Store.Append(fixture.CreateEvent());
+    }
+
+    private static int CountRows(AuditFixture fixture, AuditPartition partition)
+    {
+        using var connection = fixture.OpenRawConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM local_audit WHERE partition_year=$year AND partition_month=$month;";
+        command.Parameters.AddWithValue("$year", partition.Year);
+        command.Parameters.AddWithValue("$month", partition.Month);
+        return checked((int)Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void TheRunnerPurgesOnlyExpiredUnheldMonthsUnderTheDeclaredPolicyAndNothingElse()
+    {
+        using var fixture = new AuditFixture();
+        var expired = new DateTimeOffset(2024, 3, 10, 1, 2, 3, TimeSpan.Zero);
+        var held = new DateTimeOffset(2024, 4, 10, 1, 2, 3, TimeSpan.Zero);
+        var notYetExpired = new DateTimeOffset(2024, 11, 15, 1, 2, 3, TimeSpan.Zero);
+        AppendAt(fixture, expired, 3);
+        AppendAt(fixture, held, 2);
+        var holdId = Guid.NewGuid();
+        _ = fixture.Store.PlaceLegalHold(holdId, MonthOf(fixture, held), AuditHoldReason.LegalPreservation,
+            fixture.MaintenanceActor, fixture.MaintenanceSoftware, AuditOrigin.Local);
+        AppendAt(fixture, notYetExpired, 4);
+        AppendAt(fixture, RunnerNow, 5);
+        var runner = fixture.Runner();
+
+        var first = runner.RunOnce(TestContext.Current.CancellationToken);
+
+        Assert.False(first.MoreExpiredMonthsRemain);
+        Assert.Equal(2, first.Partitions.Count);
+        Assert.Equal(MonthOf(fixture, expired), first.Partitions[0].Partition);
+        Assert.Equal(AuditRetentionOutcome.Purged, first.Partitions[0].Outcome);
+        Assert.Equal(3, first.Partitions[0].Receipt!.EventCount);
+        Assert.Equal(MonthOf(fixture, held), first.Partitions[1].Partition);
+        Assert.Equal(AuditRetentionOutcome.SkippedHeld, first.Partitions[1].Outcome);
+        Assert.Null(first.Partitions[1].Receipt);
+        Assert.Equal(1, first.PurgedCount);
+        Assert.Equal(0, CountRows(fixture, MonthOf(fixture, expired)));
+        Assert.Equal(2, CountRows(fixture, MonthOf(fixture, held)));
+        Assert.Equal(4, CountRows(fixture, MonthOf(fixture, notYetExpired)));
+        Assert.Equal(5, CountRows(fixture, MonthOf(fixture, RunnerNow)));
+
+        // The purge is audited by its authority and purge receipts, bound to the maintenance chain and software identity.
+        var receipt = Assert.Single(fixture.Store.ReadPurgeReceipts());
+        Assert.Equal(first.Partitions[0].Receipt!.EventsSha256, receipt.EventsSha256);
+        Assert.Equal(fixture.MaintenanceActor.CallerInstance, receipt.Authority.AuthorityActor.CallerInstance);
+        Assert.Equal(fixture.MaintenanceSoftware, receipt.Authority.SoftwareIdentity);
+        Assert.Equal(AuditMaintenanceAction.PurgeExpiredPartition, receipt.Authority.Action);
+
+        // A second run finds the purged month empty and the held month still held: nothing changes.
+        var second = runner.RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(0, second.PurgedCount);
+        Assert.Equal(AuditRetentionOutcome.SkippedHeld, Assert.Single(second.Partitions).Outcome);
+        Assert.Equal(2, CountRows(fixture, MonthOf(fixture, held)));
+
+        // Releasing the hold (the internal authority) lets the next run purge the month.
+        _ = fixture.Store.ReleaseLegalHold(fixture.Capability(AuditMaintenanceAction.ReleaseLegalHold, MonthOf(fixture, held), holdId));
+        var third = runner.RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(AuditRetentionOutcome.Purged, Assert.Single(third.Partitions).Outcome);
+        Assert.Equal(0, CountRows(fixture, MonthOf(fixture, held)));
+        Assert.Equal(4, CountRows(fixture, MonthOf(fixture, notYetExpired)));
+        Assert.Equal(5, CountRows(fixture, MonthOf(fixture, RunnerNow)));
+        Assert.Equal(2, fixture.Store.ReadPurgeReceipts().Count);
+    }
+
+    [Fact]
+    public void TheRunnerPurgesAtTheExactPolicyBoundaryAndNeverEarlier()
+    {
+        using var fixture = new AuditFixture();
+        AppendAt(fixture, new DateTimeOffset(2024, 5, 10, 0, 0, 0, TimeSpan.Zero));
+        var month = MonthOf(fixture, new DateTimeOffset(2024, 5, 10, 0, 0, 0, TimeSpan.Zero));
+        var runner = fixture.Runner();
+
+        // Month end (2024-06-01) plus the 30 retention days is 2024-07-01T00:00:00Z.
+        fixture.SetWallClock(new DateTimeOffset(2024, 6, 30, 23, 59, 59, TimeSpan.Zero));
+        Assert.Empty(runner.RunOnce(TestContext.Current.CancellationToken).Partitions);
+        Assert.Equal(1, CountRows(fixture, month));
+
+        fixture.SetWallClock(new DateTimeOffset(2024, 7, 1, 0, 0, 0, TimeSpan.Zero));
+        var result = runner.RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(AuditRetentionOutcome.Purged, Assert.Single(result.Partitions).Outcome);
+        Assert.Equal(0, CountRows(fixture, month));
+    }
+
+    [Fact]
+    public void TheRunnerAcceptsNoCallerChosenPartitionTimeOrCapability()
+    {
+        var methods = typeof(AuditRetentionRunner).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        var run = Assert.Single(methods);
+        Assert.Equal("RunOnce", run.Name);
+        Assert.Equal([typeof(CancellationToken)], run.GetParameters().Select(parameter => parameter.ParameterType));
+        var constructor = Assert.Single(typeof(AuditRetentionRunner).GetConstructors());
+        Assert.Equal([typeof(AuditStore), typeof(ActorChain), typeof(AuditSoftwareIdentity)],
+            constructor.GetParameters().Select(parameter => parameter.ParameterType));
+        Assert.DoesNotContain(typeof(AuditRetentionRunner).GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
+            field => !field.IsLiteral);
+        Assert.DoesNotContain(typeof(AuditRetentionRunner).GetProperties(BindingFlags.Public | BindingFlags.Instance), property => property.CanWrite);
+    }
+
+    [Fact]
+    public void TheRunnerRefusesAnotherOwnersChainAMismatchedIdentityAndNullsAndDeletesNothing()
+    {
+        using var fixture = new AuditFixture();
+        AppendAt(fixture, new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero));
+        var month = MonthOf(fixture, new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero));
+        fixture.SetWallClock(RunnerNow);
+        var otherOwner = AuditFixture.NewActor(new RealmId(Guid.NewGuid()), new UserId(Guid.NewGuid()), []);
+        var sameRealmOtherUser = AuditFixture.NewActor(fixture.Actor.Owner.Realm, new UserId(Guid.NewGuid()), []);
+
+        Assert.Throws<UnauthorizedAccessException>(() => new AuditRetentionRunner(fixture.Store, otherOwner, fixture.MaintenanceSoftware));
+        Assert.Throws<UnauthorizedAccessException>(() => new AuditRetentionRunner(fixture.Store, sameRealmOtherUser, fixture.MaintenanceSoftware));
+        Assert.Throws<ArgumentException>(() => new AuditRetentionRunner(fixture.Store, fixture.Actor, fixture.MaintenanceSoftware));
+        Assert.Throws<ArgumentNullException>(() => new AuditRetentionRunner(null!, fixture.MaintenanceActor, fixture.MaintenanceSoftware));
+        Assert.Throws<ArgumentNullException>(() => new AuditRetentionRunner(fixture.Store, null!, fixture.MaintenanceSoftware));
+        Assert.Throws<ArgumentNullException>(() => new AuditRetentionRunner(fixture.Store, fixture.MaintenanceActor, null!));
+        Assert.Equal(1, CountRows(fixture, month));
+
+        // A delegated chain with its own identity is accepted and recorded as the authority.
+        var delegated = new AuditRetentionRunner(fixture.Store, fixture.Actor, fixture.OwnerSoftware);
+        var result = delegated.RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(AuditRetentionOutcome.Purged, Assert.Single(result.Partitions).Outcome);
+        Assert.Equal(fixture.Actor.Actors[^1].Executor, Assert.Single(fixture.Store.ReadPurgeReceipts()).Authority.AuthorityActor.Actors[^1].Executor);
+    }
+
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "Every statement is a fixed literal of this test against its own temporary database; no external value is concatenated.")]
+    [Fact]
+    public void ACorruptMonthFailsVerificationAloneAndNeverBlocksOrDeletesAnyOtherMonth()
+    {
+        using var fixture = new AuditFixture();
+        var corrupt = new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero);
+        var healthy = new DateTimeOffset(2024, 4, 10, 0, 0, 0, TimeSpan.Zero);
+        AppendAt(fixture, corrupt, 2);
+        AppendAt(fixture, healthy, 2);
+        AppendAt(fixture, RunnerNow, 1);
+        using (var connection = fixture.OpenRawConnection())
+        using (var command = connection.CreateCommand())
+        {
+            // A person controlling the file can drop the trigger; verification must then refuse the altered month.
+            command.CommandText = "DROP TRIGGER local_audit_no_update; UPDATE local_audit SET risk=1 WHERE partition_month=3 AND sequence=(SELECT MIN(sequence) FROM local_audit WHERE partition_month=3);";
+            command.ExecuteNonQuery();
+        }
+
+        var result = fixture.Runner().RunOnce(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, result.Partitions.Count);
+        Assert.Equal(AuditRetentionOutcome.FailedVerification, result.Partitions[0].Outcome);
+        Assert.Equal(AuditRetentionOutcome.Purged, result.Partitions[1].Outcome);
+        Assert.Equal(2, CountRows(fixture, MonthOf(fixture, corrupt)));
+        Assert.Equal(0, CountRows(fixture, MonthOf(fixture, healthy)));
+        Assert.Equal(1, CountRows(fixture, MonthOf(fixture, RunnerNow)));
+        Assert.Single(fixture.Store.ReadPurgeReceipts());
+        Assert.Single(fixture.Store.ReadMaintenanceReceipts());
+    }
+
+    [Fact]
+    public void EveryMonthGetsItsOwnSingleUseCapabilityAndAuthorityReceipt()
+    {
+        using var fixture = new AuditFixture();
+        var months = new[] { new DateTimeOffset(2024, 1, 5, 0, 0, 0, TimeSpan.Zero), new DateTimeOffset(2024, 2, 5, 0, 0, 0, TimeSpan.Zero), new DateTimeOffset(2024, 3, 5, 0, 0, 0, TimeSpan.Zero) };
+        foreach (var month in months) AppendAt(fixture, month);
+        fixture.SetWallClock(RunnerNow);
+
+        var result = fixture.Runner().RunOnce(TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, result.PurgedCount);
+        Assert.Equal(months.Select(month => MonthOf(fixture, month)), result.Partitions.Select(partition => partition.Partition));
+        var receipts = fixture.Store.ReadMaintenanceReceipts();
+        Assert.Equal(3, receipts.Count);
+        Assert.Equal(3, receipts.Select(receipt => receipt.CapabilityId).Distinct().Count());
+        Assert.Equal(3, receipts.Select(receipt => receipt.Partition).Distinct().Count());
+        Assert.All(receipts, receipt => Assert.Equal(AuditMaintenanceAction.PurgeExpiredPartition, receipt.Action));
+        Assert.All(receipts, receipt => Assert.Equal(fixture.Policy.PolicyId, receipt.PolicyId));
+        Assert.Equal(3, fixture.Store.ReadPurgeReceipts().Count);
+    }
+
+    [Fact]
+    public async Task ConcurrentWritersLoseNoRowsWhileTheRunnerPurgesAndTwoRunnersPurgeEachMonthOnce()
+    {
+        using var fixture = new AuditFixture();
+        AppendAt(fixture, new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero), 3);
+        AppendAt(fixture, new DateTimeOffset(2024, 4, 10, 0, 0, 0, TimeSpan.Zero), 3);
+        fixture.SetWallClock(RunnerNow);
+        using var second = fixture.OpenSecondStore();
+        var firstRunner = fixture.Runner();
+        var secondRunner = new AuditRetentionRunner(second, fixture.MaintenanceActor, fixture.MaintenanceSoftware);
+        var token = TestContext.Current.CancellationToken;
+
+        var writers = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            for (var index = 0; index < 25; index++) fixture.Store.Append(fixture.CreateEvent());
+        }, token)).ToArray();
+        var firstRun = Task.Run(() => firstRunner.RunOnce(token), token);
+        var secondRun = Task.Run(() => secondRunner.RunOnce(token), token);
+        await Task.WhenAll(writers);
+        var runs = new[] { await firstRun.ConfigureAwait(true), await secondRun.ConfigureAwait(true) };
+
+        // Every concurrent append survived, both expired months are gone, and each was purged by exactly one run.
+        Assert.Equal(200, CountRows(fixture, MonthOf(fixture, RunnerNow)));
+        Assert.Equal(0, CountRows(fixture, MonthOf(fixture, new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero))));
+        Assert.Equal(0, CountRows(fixture, MonthOf(fixture, new DateTimeOffset(2024, 4, 10, 0, 0, 0, TimeSpan.Zero))));
+        Assert.Equal(2, runs.Sum(run => run.PurgedCount));
+        Assert.Equal(2, fixture.Store.ReadPurgeReceipts().Count);
+        Assert.All(runs.SelectMany(run => run.Partitions),
+            result => Assert.True(result.Outcome is AuditRetentionOutcome.Purged or AuditRetentionOutcome.Refused));
+        var rows = fixture.Store.Query(new AuditQuery(RunnerNow.AddDays(-1), RunnerNow.AddDays(1), 1000));
+        Assert.Equal(200, rows.Count);
+    }
+
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+        Justification = "Every statement is a fixed literal of this test against its own temporary database; no external value is concatenated.")]
+    [Fact]
+    public void AuditStaysImmutableThroughRetentionAndTheMaintenanceGateIsClosedAfterARun()
+    {
+        using var fixture = new AuditFixture();
+        AppendAt(fixture, new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero), 2);
+        AppendAt(fixture, RunnerNow, 2);
+        var result = fixture.Runner().RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(1, result.PurgedCount);
+
+        using var connection = fixture.OpenRawConnection();
+        foreach (var statement in new[]
+        {
+            "DELETE FROM local_audit;",
+            "DELETE FROM local_audit WHERE partition_month=12;",
+            "UPDATE local_audit SET risk=1;",
+            "UPDATE local_audit_maintenance_gate SET enabled=1;",
+            "DELETE FROM local_audit_purge_receipts;",
+            "DELETE FROM local_audit_authority_receipts;",
+        })
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = statement;
+            Assert.ThrowsAny<SqliteException>(() => command.ExecuteNonQuery());
+        }
+
+        using var check = connection.CreateCommand();
+        check.CommandText = "SELECT (SELECT enabled FROM local_audit_maintenance_gate),(SELECT COUNT(*) FROM local_audit),(SELECT COUNT(*) FROM local_audit_purge_receipts);";
+        using var reader = check.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(0L, reader.GetInt64(0));
+        Assert.Equal(2L, reader.GetInt64(1));
+        Assert.Equal(1L, reader.GetInt64(2));
+    }
+
+    [Fact]
+    public void TheRunnerFailsClosedForACancelledTokenADisposedStoreAndANothingToDoStore()
+    {
+        using var fixture = new AuditFixture();
+        var empty = fixture.Runner().RunOnce(TestContext.Current.CancellationToken);
+        Assert.Empty(empty.Partitions);
+        Assert.False(empty.MoreExpiredMonthsRemain);
+
+        var old = new DateTimeOffset(2024, 3, 10, 0, 0, 0, TimeSpan.Zero);
+        AppendAt(fixture, old);
+        fixture.SetWallClock(RunnerNow);
+        var runner = fixture.Runner();
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            Assert.Throws<OperationCanceledException>(() => runner.RunOnce(cancelled.Token));
+        }
+
+        Assert.Equal(1, CountRows(fixture, MonthOf(fixture, old)));
+        fixture.Store.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => runner.RunOnce(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void ABacklogLargerThanOneRunIsFinishedByFurtherRunsAndNeverSkipsAMonth()
+    {
+        using var fixture = new AuditFixture();
+        var first = new DateTimeOffset(2000, 1, 15, 0, 0, 0, TimeSpan.Zero);
+        const int months = AuditRetentionRunner.MaximumMonthsPerRun + 1;
+        for (var index = 0; index < months; index++) AppendAt(fixture, first.AddMonths(index));
+        fixture.SetWallClock(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var runner = fixture.Runner();
+
+        var one = runner.RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(AuditRetentionRunner.MaximumMonthsPerRun, one.PurgedCount);
+        Assert.True(one.MoreExpiredMonthsRemain);
+        Assert.Equal(MonthOf(fixture, first), one.Partitions[0].Partition);
+
+        var two = runner.RunOnce(TestContext.Current.CancellationToken);
+        Assert.Equal(1, two.PurgedCount);
+        Assert.False(two.MoreExpiredMonthsRemain);
+        Assert.Equal(MonthOf(fixture, first.AddMonths(months - 1)), Assert.Single(two.Partitions).Partition);
+        Assert.Equal(months, fixture.Store.ReadPurgeReceipts(1000).Count);
+    }
+
     /// <summary>The real lease manager over an in-memory lease store, with the audit sink under test as its only event sink.</summary>
     private sealed class LeaseRig
     {
@@ -1710,6 +2013,8 @@ public sealed class AuditStoreTests
 
         public AuditStore OpenWith(RealmId realm, UserId owner, AuditRetentionPolicy policy) =>
             new(databasePath, realm, owner, policy, clock);
+
+        public AuditRetentionRunner Runner() => new(Store, MaintenanceActor, MaintenanceSoftware);
 
         public AuditStore OpenSecondStore() => new(databasePath, Actor.Owner.Realm, Actor.Owner.Id, Policy, clock);
 
