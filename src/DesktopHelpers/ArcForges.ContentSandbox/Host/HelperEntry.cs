@@ -66,6 +66,18 @@ internal static class HelperEntry
 
                 await using (resources.ConfigureAwait(false))
                 {
+                    // Native parser libraries are loaded now, while the process can still open them; the profile that follows cannot.
+                    try
+                    {
+                        parsers.Find(frame.ParserProfile)?.Prepare();
+                    }
+                    catch (ContentParserException exception)
+                    {
+                        var cause = exception.InnerException is null ? string.Empty : " / " + exception.InnerException.GetType().Name;
+                        await Console.Error.WriteLineAsync("parser: " + exception.Message + cause).ConfigureAwait(false);
+                        return ContentSandboxContract.ExitInternalFailure;
+                    }
+
                     if (!ProfileEnforcement.TryApplyAndVerify(frame, bootstrap.Descriptor.Parent))
                     {
                         return ContentSandboxContract.ExitIsolationUnavailable;

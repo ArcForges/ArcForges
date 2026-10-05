@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 
 [assembly: InternalsVisibleTo("ArcForges.Native.Image")]
+[assembly: InternalsVisibleTo("ArcForges.Native.Pdf")]
 
 namespace ArcForges.Native.Abstractions;
 

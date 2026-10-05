@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Source-generated binding of the arc_pdf_* ABI of ArcPdfNative. NOT packable: it becomes a package only when a real PDF
+    backend is admitted and linked (the task that does so adds the package entry and the Runtime.<rid> siblings).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <Description>ArcForges Pdf native ABI binding: bounded page, text and tile access behind the ContentSandbox helper.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
+    <ProjectReference Include="../ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
+  </ItemGroup>
+  <PropertyGroup>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+</Project>

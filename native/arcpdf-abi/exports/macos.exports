@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+_arc_pdf_get_abi_version
+_arc_pdf_get_build_info
+_arc_pdf_get_last_error
+_arc_pdf_open
+_arc_pdf_page_info
+_arc_pdf_render
+_arc_pdf_text
+_arc_pdf_close
