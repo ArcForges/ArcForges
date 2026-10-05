@@ -599,10 +599,11 @@ internal static class AuditEventShape
 
         if (egressType)
         {
+            ArgumentNullException.ThrowIfNull(egress);
             var allowed = type == AuditEventType.DataEgressAuthorized;
             if (correlation is null) throw new ArgumentException("An egress decision requires its correlation identity.", nameof(correlation));
             if (decision != (allowed ? AuditDecision.Allowed : AuditDecision.Denied)
-                || allowed != (egress!.Reason == AuditEgressReason.Authorized)
+                || allowed != (egress.Reason == AuditEgressReason.Authorized)
                 || reason != AuditEgressReasons.Generic(egress.Reason, egress.AuthorityKind))
             {
                 throw new ArgumentException("Egress decision and reason do not match the event type.", nameof(decision));

@@ -646,35 +646,35 @@ public sealed class AuditStoreTests
     }
 
     [Fact]
-    public void TheRealEgressAuthorityAuditsAllowedAndRefusedDecisionsThroughTheDurableSink()
+    public async Task TheRealEgressAuthorityAuditsAllowedAndRefusedDecisionsThroughTheDurableSink()
     {
         using var fixture = new AuditFixture();
         var rig = new EgressRig(fixture);
         var request = rig.Request();
         rig.Permit(request);
 
-        var allowed = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var allowed = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
         Assert.True(allowed.Allowed);
 
         // Refusals before classification: malformed destination, a destination the invocation did not declare, an unavailable
         // classifier, content the classifier cannot name, and secret material.
-        var malformed = rig.Authority.DecideAsync(request, "http://not-https.example.com", CancellationToken.None).AsTask().GetAwaiter().GetResult();
-        var undeclared = rig.Authority.DecideAsync(request, "https://other.example.com", CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var malformed = await rig.Authority.DecideAsync(request, "http://not-https.example.com", TestContext.Current.CancellationToken);
+        var undeclared = await rig.Authority.DecideAsync(request, "https://other.example.com", TestContext.Current.CancellationToken);
         rig.Classifier = (_, _, _) => throw new InvalidOperationException("classifier down");
-        var unavailable = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var unavailable = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
         rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(null);
-        var unclassified = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var unclassified = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
         rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.SecretMaterial, false));
-        var secret = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var secret = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
 
         // After classification: not allowlisted, and content above the grant.
         rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.WorkspaceContent, true));
         rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(null);
-        var notListed = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var notListed = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
         rig.Permit(request);
         rig.Classifier = (_, _, _) => ValueTask.FromResult<EgressContentFacts?>(new EgressContentFacts(EgressDataClass.SensitiveContent, true));
-        rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(rig.Entry(request, EgressDataClass.SensitiveContent));
-        var aboveGrant = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(EgressRig.Entry(request, EgressDataClass.SensitiveContent));
+        var aboveGrant = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
 
         Assert.Equal(EgressReason.DestinationMalformed, malformed.Reason);
         Assert.Equal(EgressReason.DestinationNotDeclared, undeclared.Reason);
@@ -715,7 +715,7 @@ public sealed class AuditStoreTests
     }
 
     [Fact]
-    public void AnAuditFailureRefusesAnAllowedTransferAndLeavesNoRowWhileARefusalKeepsItsOwnReason()
+    public async Task AnAuditFailureRefusesAnAllowedTransferAndLeavesNoRowWhileARefusalKeepsItsOwnReason()
     {
         using var fixture = new AuditFixture();
         var rig = new EgressRig(fixture);
@@ -724,14 +724,14 @@ public sealed class AuditStoreTests
         fixture.Store.Dispose();
 
         // The sink throws; the authority refuses the transfer instead of releasing it unaudited.
-        var allowed = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var allowed = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
         Assert.False(allowed.Allowed);
         Assert.Equal(EgressReason.AuditUnavailable, allowed.Reason);
         Assert.Equal("resource.unavailable", allowed.RegisteredCode);
 
         // A refusal stays the refusal it was; PLT.41 does not retry its audit write, so it has no row either.
         rig.Allowlist = (_, _, _) => ValueTask.FromResult<EgressAllowlistEntry?>(null);
-        var refused = rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var refused = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
         Assert.Equal(EgressReason.NotAllowlisted, refused.Reason);
 
         using var independent = fixture.OpenSecondStore();
@@ -749,14 +749,14 @@ public sealed class AuditStoreTests
         var request = rig.Request();
         rig.Permit(request);
 
-        var decision = await rig.Authority.DecideAsync(request, EgressRig.Destination, CancellationToken.None);
+        var decision = await rig.Authority.DecideAsync(request, EgressRig.Destination, TestContext.Current.CancellationToken);
 
         Assert.False(decision.Allowed);
         Assert.Equal(EgressReason.AuditUnavailable, decision.Reason);
         Assert.Empty(fixture.Store.Query(new AuditQuery(fixture.Now.AddMinutes(-1), fixture.Now.AddMinutes(1), 10)));
 
         gate.SetResult();
-        await landed.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await landed.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         var row = Assert.Single(fixture.Store.Query(new AuditQuery(fixture.Now.AddMinutes(-1), fixture.Now.AddMinutes(1), 10)));
         Assert.Equal(AuditEventType.DataEgressAuthorized, row.Event.EventType);
         Assert.Equal(AuditEgressReason.Authorized, row.Event.Egress!.Reason);
@@ -766,7 +766,7 @@ public sealed class AuditStoreTests
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
         Justification = "Every statement is a fixed literal of this test against its own temporary database; no external value is concatenated.")]
     [Fact]
-    public void AVersionOneFileOrAnEgressRowWithATypedResourceIsRefusedClosed()
+    public async Task AVersionOneFileOrAnEgressRowWithATypedResourceIsRefusedClosed()
     {
         using var fixture = new AuditFixture();
         fixture.Store.Dispose();
@@ -775,21 +775,21 @@ public sealed class AuditStoreTests
         {
             // A person controlling the file can drop the trigger; the version check then refuses the file at open.
             command.CommandText = "DROP TRIGGER local_audit_store_no_update; UPDATE local_audit_store SET schema_version=1;";
-            command.ExecuteNonQuery();
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         Assert.Throws<InvalidDataException>(() => fixture.OpenSecondStore());
 
         using var other = new AuditFixture();
-        _ = new EgressAuditSink(other.EgressAdapter()).WriteAsync(other.CreateEgressRecord(EgressReason.None), CancellationToken.None);
+        await new EgressAuditSink(other.EgressAdapter()).WriteAsync(other.CreateEgressRecord(EgressReason.None), TestContext.Current.CancellationToken);
         using (var connection = other.OpenRawConnection())
         using (var command = connection.CreateCommand())
         {
             command.CommandText = "DROP TRIGGER local_audit_no_update;";
-            command.ExecuteNonQuery();
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
             // The table constraint refuses a typed resource on an egress row.
             command.CommandText = "UPDATE local_audit SET resource_kind=7, resource_id='00000000000000000000000000000001' WHERE event_type=15;";
-            Assert.ThrowsAny<SqliteException>(() => command.ExecuteNonQuery());
+            await Assert.ThrowsAnyAsync<SqliteException>(() => command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
         }
     }
 
@@ -1539,7 +1539,7 @@ public sealed class AuditStoreTests
             new CommandId(Guid.NewGuid()), new ResourceReference("doc/123", "rev-7"), new string('A', 64), DecisionOrigin.Local,
             TransportSessions.InProcess, egressDestination: destination);
 
-        public EgressAllowlistEntry Entry(DecisionRequest request, EgressDataClass max) =>
+        public static EgressAllowlistEntry Entry(DecisionRequest request, EgressDataClass max) =>
             new(request.ScopeKey, EgressDestinationIdentity.Parse(Destination), EgressDestinationClass.ThirdParty, max, "allowlist-generation-1");
 
         public void Permit(DecisionRequest request)
