@@ -113,6 +113,21 @@ def catalogue():
     return packages
 
 
+
+def publication_entries(native_artifact, commit):
+    """Publish all managed producers and only source-verified active native coordinates."""
+    native.verify_identity(native_artifact, commit)
+    entries = catalogue()
+    active = {row["id"] for row in native_artifact["packages"]}
+    admitted = {entry["id"] for entry in entries if entry["kind"] == "native"}
+    require(active.issubset(admitted), "Unregistered native producer cannot be activated.")
+    result = [entry for entry in entries if entry["kind"] != "native" or entry["id"] in active]
+    selected = {entry["id"] for entry in result}
+    require(all(dependency in selected for entry in result for dependency in entry.get("dependencies", [])),
+            "Active producer set omits a mandatory owned dependency.")
+    return result
+
+
 def inspect(path, entry, expected_version, commit):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
@@ -189,12 +204,12 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
         base=os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_REF", "").startswith("refs/tags/") else None)
     require(not audit["dirty"], "Commit reviewed changes before producing source-bound NuGet candidates.")
     commit = source_commit()
-    native.verify_stage(native_directory, commit)
+    native_artifact_document = native.verify_stage(native_directory, commit)
     identity = build_identity.build_identity(ROOT)
     axes = build_identity.resolve_axes(ROOT, json.loads((ROOT / 'eng/version-sources.json').read_text(encoding='utf-8')),
                                       packages=build_identity.dependency_versions(ROOT, native_directory))
     packages = []
-    for entry in catalogue():
+    for entry in publication_entries(native_artifact_document, commit):
         args = ["dotnet", "pack", entry["project"], "-c", "Release", "--no-restore", "-o", str(directory),
                 f"-p:PackageVersion={package_version}", f"-p:Version={package_version}", f"-p:RepositoryCommit={commit}"]
         if entry["kind"] == "native":
@@ -256,7 +271,7 @@ def verify(directory, package_version, commit=None):
     native_artifact = json.loads(native_bytes)
     native.verify_identity(native_artifact, commit)
     native.verify_package_handoff(directory, native_artifact, commit)
-    entries = catalogue()
+    entries = publication_entries(native_artifact, commit)
     build_identity.verify_source_build(ROOT, manifest['build'])
     documents = []
     for entry in entries:

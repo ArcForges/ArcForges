@@ -658,7 +658,12 @@ def verify_identity(artifact, commit):
             "Native artifact source/RID mismatch.")
         expected = set(native_provenance.profile()["packages"])
     build_identity.verify_source_build(ROOT, artifact['build'])
-    require(len(artifact["packages"]) == len(expected) and {p["id"] for p in artifact["packages"]} == expected,
+    require(isinstance(artifact["packages"], list) and artifact["packages"]
+            and all(isinstance(row, dict) and isinstance(row.get("id"), str) for row in artifact["packages"]),
+            "Invalid native artifact package inventory.")
+    actual = {row["id"] for row in artifact["packages"]}
+    require(len(actual) == len(artifact["packages"])
+            and (actual.issubset(expected) if artifact.get("schemaVersion") == 2 else actual == expected),
             "Native artifact package set mismatch.")
 
 

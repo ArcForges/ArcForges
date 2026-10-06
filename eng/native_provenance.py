@@ -13,6 +13,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import ssl
 import subprocess
@@ -1115,8 +1116,62 @@ def verify_pdf_runtime_input(directory: Path, source_commit: str, root: Path = R
                     == retained["platformRuntime"]["files"][name]["sha256"], "PDF CRT actual byte hash differs")
         for legal in retained["platformRuntime"]["legal"]:
             require(files.get(legal["output"]) == legal["sourceSha256"], "PDF CRT original redistribution grant differs")
+    else:
+        _pdf_owned_portable_admission(value, binaries, files, root)
     value["inspectedBinaries"] = sorted(binaries, key=lambda row: row["name"])
     return value
+
+
+
+def _pdf_owned_portable_admission(value, binaries, files, root):
+    """The owned compiler recipe and CRT are separate from the upstream SDK attestation."""
+    rid = value["rid"]
+    path = "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json"
+    raw = provenance.read(root, path)
+    profile_value = provenance.document(raw)
+    require(profile_value["schemaVersion"] == 1 and profile_value["id"] == "pdf-runtime-producer-v1"
+            and profile_value["family"] == "arc_pdf" and set(profile_value["rids"]) == {
+                "win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64"},
+            "Unadmitted owned PDF producer profile")
+    recipe = value["ownedProducerRecipe"]
+    provenance.fields(recipe, "producerProfileSha256 cacheSha256 configuration nativeProfile nativeFamilies triplet pdfium tools generatedIdentitySha256")
+    require(recipe["producerProfileSha256"] == sha(raw, "lf"), "PDF owned producer authority differs")
+    expected = profile_value["rids"][rid]
+    for name in ("configuration", "nativeProfile", "nativeFamilies", "triplet", "pdfium"):
+        require(recipe[name] == expected[name], "PDF owned recipe differs: " + name)
+    for name in ("cacheSha256", "generatedIdentitySha256"): provenance.digest(recipe[name])
+    tools = recipe["tools"]
+    provenance.fields(tools, "cmake ninja compilers")
+    for name in ("cmake", "ninja"):
+        provenance.fields(tools[name], "name version sha256")
+        require(tools[name]["version"] == expected["buildTools"][name]
+                and isinstance(tools[name]["name"], str) and tools[name]["name"] in (name, name + ".exe"),
+                "PDF actual tool identity differs")
+        provenance.digest(tools[name]["sha256"])
+    require(set(tools["compilers"]) == {"C", "CXX"}, "PDF compiler closure differs")
+    for compiler in tools["compilers"].values():
+        provenance.fields(compiler, "name family version sha256 declarationSha256")
+        require(compiler["family"] == expected["compiler"]["family"] and isinstance(compiler["version"], str)
+                and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", compiler["version"]), "PDF compiler family/version differs")
+        require(isinstance(compiler["name"], str) and "/" not in compiler["name"] and "\\" not in compiler["name"],
+                "Invalid PDF compiler identity")
+        provenance.digest(compiler["sha256"]); provenance.digest(compiler["declarationSha256"])
+    signatures = value["compilerRuntimeSignatures"]
+    if rid.startswith("win-"):
+        runtime = profile_value["compilerRuntime"][rid]
+        require(value["compilerRuntimeAdmission"] == runtime, "PDF exact native CRT authority differs")
+        supplied = {row["name"].lower(): row for row in binaries if row["name"].lower() in runtime["files"]}
+        require(set(signatures) == set(supplied), "PDF actual CRT signature closure differs")
+        for name, row in supplied.items():
+            require(row["sha256"] == runtime["files"][name]["sha256"]
+                    and signatures[name] == {**runtime["files"][name], "signature": "valid"},
+                    "PDF exact CRT bytes/version/publisher differ")
+        for legal in profile_value["runtimeLegal"]:
+            require(files.get(legal["output"]) == legal["sourceSha256"], "PDF original CRT redistribution grant differs")
+    else:
+        require(value["compilerRuntimeAdmission"] is None and signatures == {},
+                "Portable system runtime cannot invent a bundled Windows CRT admission")
+    return profile_value
 
 
 def _pdf_system_policy(rid, root):
