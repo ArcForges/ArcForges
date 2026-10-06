@@ -3340,7 +3340,6 @@
     "testMethod": "ArcForges.Security.Tests.CapabilityApprovalBindingTests.InvalidInputsCannotProduceAnApprovalBinding()"
   },
   {
-<<<<<<< HEAD
     "apiSymbol": "ArcForges.Desktop.Shell.Localization.ShellResourceScope.Resolve(ArcForges.Desktop.Shell.Localization.LocalizedText, System.Globalization.CultureInfo?)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.ResourceScopeTests.ExactEmbeddedBindingRefusesUnavailableResourcesAndDoesNotFallBackToShellKeys()"
@@ -3349,7 +3348,8 @@
     "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.ShellAccessibilityAudit.Evaluate(ArcForges.Desktop.Shell.Localization.ShellResourceScope, System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.Accessibility.ShellSurface>, System.Globalization.CultureInfo?)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.ResourceScopeTests.ResourceBoundAuditUsesActualModuleNamesAndRefusesEveryLookupFailure()"
-=======
+  },
+  {
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcRegistration.Create(ArcForges.LocalRpc.LocalRpcLaunch, System.Guid)",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.ExplicitParentInstanceIsRequiredAndMisboundActualProcessManifestFailsClosed()"
@@ -3378,6 +3378,5 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcParentBootstrapHost.DisposeAsync()",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.ActualSharedServiceAuthenticatesRenewsAndReturnsTheFrozenParentManifest()"
->>>>>>> 5b6f4d8 ([PLT.11] Register owned public contracts and first-party composition sources)
   }
 ]

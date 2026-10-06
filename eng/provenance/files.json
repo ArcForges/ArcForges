@@ -495,8 +495,6 @@
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcProcessIdentity.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcRefusal.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcRegistration.cs",
-    "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcBootstrapService.cs",
-    "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcParentBootstrapHost.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcRegistrationGate.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcRouting.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcServer.cs",
@@ -506,7 +504,6 @@
     "src/BuildingBlocks/ArcForges.LocalRpc/StreamAcceptSources.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/StreamConnectionContext.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
-    "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ProductionBootstrapTests.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/Tests/BoundsHarness.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/Tests/BoundsProbe.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/Tests/BrokerFixtures.cs",
@@ -1041,7 +1038,11 @@
     "tests/tooling/test_native_abi_inventory.py",
     "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityApprovalBindingTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/HelperResourceLifetime.cs",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/WindowsLifetimeTests.cs"
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/WindowsLifetimeTests.cs",
+    "eng/policy/dependency-reviews/plt-11-r1.json",
+    "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcBootstrapService.cs",
+    "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcParentBootstrapHost.cs",
+    "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ProductionBootstrapTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
