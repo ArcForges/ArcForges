@@ -151,6 +151,12 @@ def _pe(r):
         begin, limit, _ = mapped(address)
         return r.string(begin, limit)
 
+    def export_flags(address):
+        matches = [flags for start, virtual_size, _, _, flags in sections
+                   if start <= address < start + virtual_size]
+        require(len(matches) == 1, "Unmapped or ambiguous PE export address.")
+        return matches[0]
+
     def directory(index):
         if index >= directories:
             return 0, 0
@@ -208,7 +214,8 @@ def _pe(r):
             if address <= target < address + size:
                 name(target)  # Bound the forwarding string, too.
                 forwarded.append(export_name)
-            elif mapped(target)[2] & 0x20000000:
+            elif export_flags(target) & 0x20000000:
+                mapped(target)  # Callable code must have actual bytes, unlike zero-fill data.
                 exports.append(export_name)
             else:
                 data.append(export_name)

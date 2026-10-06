@@ -145,6 +145,15 @@ class NativeBinaryTests(unittest.TestCase):
         data[0x850:0x85b] = b"engine.dll\0"
         self.assertEqual(("KERNEL32.dll", "engine.dll"), binary.inspect_bytes(bytes(data), "win-x64").imports)
 
+    def test_pe_zero_fill_data_exports_are_metadata_and_callable_code_requires_bytes(self):
+        data = pe(target=0x1f00)
+        put(data, 0x188 + 8, "<I", 0x1000)
+        put(data, 0x188 + 36, "<I", 0x40000040)
+        self.assertEqual(("fn",), binary.inspect_bytes(bytes(data), "win-x64").data_exports)
+        put(data, 0x188 + 36, "<I", 0x60000020)
+        with self.assertRaisesRegex(ValueError, "Unmapped"):
+            binary.inspect_bytes(bytes(data), "win-x64")
+
     def test_pe_unterminated_import_invalid_ordinal_and_unmapped_exports_fail(self):
         for offset, fmt, value in ((0x98 + 120 + 4, "<I", 20), (0x350, "<H", 2), (0x340, "<I", 0xf000)):
             data = pe()
