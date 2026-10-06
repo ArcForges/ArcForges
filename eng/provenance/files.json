@@ -1016,7 +1016,12 @@
     "docs/ci-python-security-2026-10-06.md",
     "eng/policy/dependency-reviews/gov-23-r1.json",
     "eng/provenance/records/gov-23-python-discovery-r1.json",
-    "eng/provenance/records/gov-23-virtualenv-r1.json"
+    "eng/provenance/records/gov-23-virtualenv-r1.json",
+    "docs/security-managed-publication.md",
+    "eng/policy/create_plt59_dependency_receipt.py",
+    "eng/policy/dependency-reviews/plt-59-r1.json",
+    "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/README.md",
+    "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/README.md"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

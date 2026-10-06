@@ -2,6 +2,9 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Security.Audit</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <AssemblyName>ArcForges.Security.Audit</AssemblyName>
     <RootNamespace>ArcForges.Security.Audit</RootNamespace>
     <Description>Owner-scoped append-only local security audit storage.</Description>
@@ -11,6 +14,10 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
     <Compile Remove="Tests/**/*.cs" />
     <InternalsVisibleTo Include="ArcForges.Security.Audit.Tests" />
     <InternalsVisibleTo Include="ArcForges.Security.Tests" />

@@ -2,6 +2,10 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>ArcForges.Security</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Typed security decisions, current actor verification, capability leases and owner-side enforcement.</Description>
     <AssemblyName>ArcForges.Security</AssemblyName>
     <RootNamespace>ArcForges.Security</RootNamespace>
   </PropertyGroup>
@@ -10,6 +14,11 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Tests/**" />
+    <None Remove="LocalRpcBoundary/**;CapabilityEnforcement/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
     <Compile Remove="Tests/**/*.cs" />
     <Compile Remove="LocalRpcBoundary/**/*.cs" />
     <Compile Remove="CapabilityEnforcement/**/*.cs" />

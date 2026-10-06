@@ -2,15 +2,22 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <PackageId>ArcForges.ContentSandbox.Broker</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Parent-owned content-helper lifecycle, brokered IO and operating-system boundary adapters.</Description>
     <AssemblyName>ArcForges.ContentSandbox.Broker</AssemblyName>
     <RootNamespace>ArcForges.ContentSandbox.Broker</RootNamespace>
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
     <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
     <InternalsVisibleTo Include="ArcForges.ContentSandbox.HostileFixture" />
     <ProjectReference Include="../ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj" />

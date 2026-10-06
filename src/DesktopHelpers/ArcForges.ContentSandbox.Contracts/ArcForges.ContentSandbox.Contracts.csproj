@@ -2,14 +2,21 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <PackageId>ArcForges.ContentSandbox.Contracts</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Bounded parent-helper protocol and production parser contracts.</Description>
     <AssemblyName>ArcForges.ContentSandbox.Contracts</AssemblyName>
     <RootNamespace>ArcForges.ContentSandbox.Contracts</RootNamespace>
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
     <IsAotCompatible>true</IsAotCompatible>
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
     <PackageReference Include="ArcForges.Contracts.LocalRpc.Platform" />
     <PackageReference Include="ArcForges.Contracts.LocalRpc.Sandbox" />
     <ProjectReference Include="../../BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj" />

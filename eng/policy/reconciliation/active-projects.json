@@ -128,7 +128,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj",
-      "blob": "a7ffa7b5cb74ae2e1a06e36bfe90601f3e05fa83"
+      "blob": "4141e16301f1f44c391d50e5b6b6d3633366014c"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
@@ -136,15 +136,15 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
-      "blob": "6fa763b2351dd3c38064e876e2a1f226da03aa69"
+      "blob": "09f6d89836b4ec09e465bd54bae558a1f6e152ca"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj",
-      "blob": "7d6bf7b7b5819ea151b1c423116bd829d2f0681c"
+      "blob": "c6d58c11942eb782343af03c220f8a5cf8714c0b"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj",
-      "blob": "bc7ed6a6f21d3ca852bebc52bf7f1446b12f53bd"
+      "blob": "96e13af909f33be52dc8722baf7082811552276c"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
@@ -156,11 +156,11 @@
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
-      "blob": "f4298e2955bca926d8c0557eec5bf6345ce9264f"
+      "blob": "26e8865add4e13293d68ac8dcf0aa70961111104"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
-      "blob": "eccb93c0d14acaac921ae8063a43d1da2bab58d5"
+      "blob": "b23ff89a056f690780f87daf15f2df997f016556"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
@@ -232,7 +232,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
-      "blob": "000dd0712e2ba402fbcad65bf06ae1ce9ae57276"
+      "blob": "200fa88c9f98eb543960612a6b7718cf94922516"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",

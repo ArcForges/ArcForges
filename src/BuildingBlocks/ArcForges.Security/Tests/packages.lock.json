@@ -41,21 +41,21 @@
       },
       "ArcForges.Contracts.PublicApi": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.216.1",
-        "contentHash": "cj1wcu/v8bSGL0pGbKYMcJGFFs7SGF3jsG6GXm49cpj3Cal/tl2orj5jdoDBweOH0LeWZisNfFhfXkvnKR9wfQ==",
+        "resolved": "1.0.0-ci.324.1",
+        "contentHash": "pHt1bnk8VA23vOenZlDsotoyHZMUstNOOp1DltQcovzENyU1YoK4H10LKaGZG5Q2WwecJBXqB1rfKeVxEtjsww==",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1",
+          "ArcForges.Contracts.Foundation": "1.0.0-ci.324.1",
           "Google.Protobuf": "3.36.1",
           "Grpc.Core.Api": "2.84.0"
         }
       },
       "ArcForges.Sdk.Contracts": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.216.1",
-        "contentHash": "aN/9J61hb7TTPnOBugNHD4Ic3aBc/3zTIsmseTdaCNO/RiaOTwFnsteg7UKg4pYAfuiL3AkTjjSrxmZ3rNIPMg==",
+        "resolved": "1.0.0-ci.324.1",
+        "contentHash": "kb6YXJgRCanaq8b0Zd5MH2TTaf9Ap9mW21KxztqZOVAtIyMpRxCxlDzPowKZXHPbqaz9lHrGgU7nt/Nsv0oQNQ==",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1",
-          "ArcForges.Contracts.PublicApi": "1.0.0-ci.216.1",
+          "ArcForges.Contracts.Foundation": "1.0.0-ci.324.1",
+          "ArcForges.Contracts.PublicApi": "1.0.0-ci.324.1",
           "Google.Protobuf": "3.36.1",
           "Grpc.Core.Api": "2.84.0"
         }
@@ -266,13 +266,13 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.Foundation": "[1.0.0, )",
-          "ArcForges.Sdk.Contracts": "[1.0.0-ci.216.1, )"
+          "ArcForges.Sdk.Contracts": "[1.0.0-ci.324.1, )"
         }
       },
       "arcforges.foundation": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1, )"
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.324.1, )"
         }
       },
       "arcforges.localrpc": {
@@ -319,9 +319,9 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.216.1, )",
-        "resolved": "1.0.0-ci.216.1",
-        "contentHash": "+RGxNiaoOBt+j2IOSpUa2WWD4Bnkk8Ten7jbOVFwdUVF8jUQRCCvAGhrPTzZpnr6Sk5MSoA95+pJYgN8T+jEtg==",
+        "requested": "[1.0.0-ci.324.1, )",
+        "resolved": "1.0.0-ci.324.1",
+        "contentHash": "z0Vgu7TzX0BqYcr6cbbhQW52Riy4RdOHwQDR5Z3uS+QnZKS6oYKDhRyrVAuG2zjQb3ND2yf+N//haMerWgdArA==",
         "dependencies": {
           "Google.Protobuf": "3.36.1"
         }
