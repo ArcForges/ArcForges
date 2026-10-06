@@ -140,6 +140,26 @@ public sealed class ProductionBootstrapTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task InvalidManifestOrFailedRealServerStartupRevokesTheLaunch(bool invalidManifest)
+    {
+        using var world = new RegWorld();
+        var launch = world.Authority.Launch("failed-start", world.Identity, LocalRpcLaunchTransport.SuppliedStreams);
+        var manifest = Parent.Manifest(world.Identity, Guid.NewGuid(), launch.Descriptor.Parent);
+        var supplier = new LocalRpcStreamSupplier();
+        var builder = LocalRpcServer.CreateBuilder(supplier);
+        if (invalidManifest) manifest.SchemaVersion = "";
+        else builder.RegisterControl(LocalRpcControlOperation.Health, "not.served.Service", "Health");
+        if (invalidManifest)
+            await Assert.ThrowsAsync<ArgumentException>(() => LocalRpcParentBootstrapHost.StartAsync(launch, manifest, builder, Ct));
+        else
+            await Assert.ThrowsAsync<InvalidOperationException>(() => LocalRpcParentBootstrapHost.StartAsync(launch, manifest, builder, Ct));
+        Assert.True(launch.Revoked.IsCancellationRequested);
+        Assert.True(launch.SecretIsZeroed());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task ActualServiceRefusesAnUngatedOrForeignRegistration(bool foreign)
     {
         using var world = new RegWorld();

@@ -1,14 +1,14 @@
 # ArcForges.LocalRpc
 
 Generated gRPC over HTTP/2 between a parent and the helper or extension children it owns, carried only by
-a Windows Named Pipe or a Unix domain socket. It is packaged as the NuGet package `ArcForges.LocalRpc` in the repository's single-version release set (PLT.16); consumers pin the exact version and keep their committed lock files. The package targets `net10.0` with the `Microsoft.AspNetCore.App` shared framework, depends only on `Grpc.AspNetCore.Server` and `Grpc.Net.Client` at the versions admitted in `eng/packaging/packages.json`, and references no ArcForges contract or other ArcForges package.
+a Windows Named Pipe or a Unix domain socket. It is packaged as the NuGet package `ArcForges.LocalRpc` in the repository's single-version release set (PLT.16); consumers pin the exact version and keep their committed lock files. The package targets `net10.0` with the `Microsoft.AspNetCore.App` shared framework and the exact generated `ArcForges.Contracts.LocalRpc.Platform`, `Grpc.AspNetCore.Server` and `Grpc.Net.Client` dependencies admitted in `eng/packaging/packages.json`.
 
 This is transport and framing (WP-08.00), the parent-owned launch identity (WP-08.01), the call bounds on top of
 them (WP-08.04), the child registration lifecycle (WP-08.02), static routing with version refusal (WP-08.03) and the disconnect,
 cancel and retry semantics of commands (WP-08.05) and the brokered large-data mechanism (WP-08.06). It does not define a
-contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The library
-references no contract package: the registration code works on bytes, ids and the generated service's method names, and the owner's generated
-`LocalBootstrapService` implementation is the thin mapping between its messages and the registration (the tests contain one).
+contract: the services it serves are the generated `ArcForges.Contracts.LocalRpc.*` bindings, registered explicitly by their owner. The registration primitives work on bytes and ids. `LocalRpcBootstrapService` supplies the production generated bootstrap mapping with complete shape validation, bound to exactly one registration and the parent's frozen actual runtime manifest. `LocalRpcParentBootstrapHost.StartAsync` installs that service and the registration gate on an explicitly configured private server builder. Applications add only their declared generated services before starting the host.
+
+The parent manifest must identify the launch's actual parent process and the registration's actual parent instance; it is never manufactured from the child's requested identity. Challenge and confirm use the existing one-use launch secret and actual registered connection. Lease renewal uses the reserved control lane. Missing or foreign registration gates and malformed bootstrap requests are refused before a grant. Expiry, disconnect, superseded launch and disposal revoke the registration and stop the owned server; `Completion` joins cleanup and reports failures. Failed startup revokes the launch. The trusted OS launcher continues to own actual child termination and containment, and observes completion accordingly. An in-memory stream test proves the protocol and lifecycle, not OS peer credentials or isolation.
 
 ## What it provides
 

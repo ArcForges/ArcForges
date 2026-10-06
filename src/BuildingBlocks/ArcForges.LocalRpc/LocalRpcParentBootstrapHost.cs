@@ -38,13 +38,14 @@ public sealed class LocalRpcParentBootstrapHost : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(launch);
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(builder);
-        var frozen = server.Clone();
-        if (!ContractShapeValidation.IsValid(frozen)) throw new ArgumentException("The complete actual parent runtime manifest is required.", nameof(server));
-        var registration = LocalRpcRegistration.Create(launch, BootstrapWire.FromId(frozen.InstanceId));
+        LocalRpcRegistration? registration = null;
         LocalRpcServer? transport = null;
         LocalRpcParentBootstrapHost? host = null;
         try
         {
+            var frozen = server.Clone();
+            if (!ContractShapeValidation.IsValid(frozen)) throw new ArgumentException("The complete actual parent runtime manifest is required.", nameof(server));
+            registration = LocalRpcRegistration.Create(launch, BootstrapWire.FromId(frozen.InstanceId));
             var service = new LocalRpcBootstrapService(registration, frozen);
             cancellationToken.ThrowIfCancellationRequested();
             if (registration.Ended.IsCancellationRequested) throw new InvalidOperationException("The registration has already ended; relaunch under a fresh identity.");
@@ -63,7 +64,11 @@ public sealed class LocalRpcParentBootstrapHost : IAsyncDisposable
             if (host is not null) await host.DisposeAsync().ConfigureAwait(false);
             else
             {
-                try { await registration.DisposeAsync().ConfigureAwait(false); }
+                try
+                {
+                    if (registration is not null) await registration.DisposeAsync().ConfigureAwait(false);
+                    else launch.Revoke();
+                }
                 finally { if (transport is not null) await transport.DisposeAsync().ConfigureAwait(false); }
             }
             throw;
