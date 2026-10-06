@@ -149,6 +149,12 @@ public sealed class NonWireMetadataBindingTests
     [Xunit.InlineData("mutable-actor")]
     [Xunit.InlineData("escaped-snapshot")]
     [Xunit.InlineData("stored-snapshot")]
+    [Xunit.InlineData("cast-snapshot")]
+    [Xunit.InlineData("parenthesized-snapshot")]
+    [Xunit.InlineData("collection-snapshot")]
+    [Xunit.InlineData("cast-alias")]
+    [Xunit.InlineData("arrow-snapshot")]
+    [Xunit.InlineData("return-snapshot")]
     public void ReviewedHashDoesNotAdmitMutableArbitraryOrSerializedShapes(string mutation)
     {
         string source = mutation switch
@@ -167,6 +173,17 @@ public sealed class NonWireMetadataBindingTests
                 .Replace("public string OperationId", "private static void Escape(string[] value) {}\npublic string OperationId", StringComparison.Ordinal),
             "stored-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "ActorKinds = Array.AsReadOnly(snapshot);\n External.Value = snapshot;", StringComparison.Ordinal)
                 + "\ninternal static class External { public static object? Value; }",
+            "cast-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "Escape((object)snapshot); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                .Replace("public string OperationId", "private static void Escape(object value) {}\npublic string OperationId", StringComparison.Ordinal),
+            "parenthesized-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "Escape(((snapshot))); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                .Replace("public string OperationId", "private static void Escape(object value) {}\npublic string OperationId", StringComparison.Ordinal),
+            "collection-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "Escape(new object[] { snapshot }); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                .Replace("public string OperationId", "private static void Escape(object value) {}\npublic string OperationId", StringComparison.Ordinal),
+            "cast-alias" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "var alias = (string[])snapshot; ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal),
+            "arrow-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "object Borrow() => (object)snapshot; External.Value = Borrow(); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                + "\ninternal static class External { public static object? Value; }",
+            "return-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "object Borrow() { return (object)snapshot; } External.Value = Borrow(); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                + "\ninternal static class External { public static object? Value; }",
             _ => throw new ArgumentException("Unknown fixture mutation.", nameof(mutation)),
         };
         using var fixture = new Fixture(source);
@@ -178,6 +195,8 @@ public sealed class NonWireMetadataBindingTests
     [Xunit.InlineData("comparer")]
     [Xunit.InlineData("stub")]
     [Xunit.InlineData("extra-method")]
+    [Xunit.InlineData("static-constructor")]
+    [Xunit.InlineData("static-all")]
     public void CatalogRequiresImmutableStorageOrdinalKeysAndActualLookup(string mutation)
     {
         string source = mutation switch
@@ -186,6 +205,8 @@ public sealed class NonWireMetadataBindingTests
             "comparer" => Catalog.Replace("StringComparer.Ordinal", "StringComparer.OrdinalIgnoreCase", StringComparison.Ordinal),
             "stub" => Catalog.Replace("return ById.TryGetValue(operationId, out policy);", "policy = All[0]; return true;", StringComparison.Ordinal),
             "extra-method" => Catalog.Replace("public static bool TryGet", "public static void Register(Policy value) {}\npublic static bool TryGet", StringComparison.Ordinal),
+            "static-constructor" => Catalog.Replace("public static bool TryGet", "static Catalog() { ById = All.ToFrozenDictionary(operation => operation.OperationId, StringComparer.OrdinalIgnoreCase); }\npublic static bool TryGet", StringComparison.Ordinal),
+            "static-all" => Catalog.Replace("public static bool TryGet", "static Catalog() { All = Array.AsReadOnly<Policy>([]); }\npublic static bool TryGet", StringComparison.Ordinal),
             _ => throw new ArgumentException("Unknown fixture mutation.", nameof(mutation)),
         };
         using var fixture = new Fixture(catalog: source);
@@ -204,6 +225,14 @@ public sealed class NonWireMetadataBindingTests
     [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(new { Value = (object)Catalog.All[0] });")]
     [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(Iterate());")]
     [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(AsyncBox());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(new InitializedWrapper());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(new GetterWrapper());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(new ArrowGetterWrapper());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(new GetterWrapper().Value);")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(new ArrowGetterWrapper().Value);")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(Catalog.All.Cast<object>().Select(value => value).ToArray());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(System.Linq.Enumerable.Select(Catalog.All.Cast<object>(), value => value).ToArray());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(Catalog.All.Cast<object>().Select(Identity).ToArray());")]
     public void ErasedScalarCollectionFactoryAndWrapperMetadataCannotBeSerialized(string body)
     {
         string extra = """
@@ -213,6 +242,7 @@ public sealed class NonWireMetadataBindingTests
             internal static class Sender
             {
                 private static object Box(object value) => value;
+                private static object Identity(object value) => value;
                 private static System.Collections.Generic.IEnumerable<object> Iterate() { yield return Catalog.All[0]; }
                 private static async System.Threading.Tasks.Task<object> AsyncBox() { await System.Threading.Tasks.Task.Yield(); return Catalog.All[0]; }
                 private static string Send() { BODY }
@@ -222,6 +252,9 @@ public sealed class NonWireMetadataBindingTests
                 public Wrapper(object value) { Value = value; }
                 public object Value { get; }
             }
+            internal sealed class InitializedWrapper { public object Value { get; } = Catalog.All[0]; }
+            internal sealed class GetterWrapper { public object Value { get { return Catalog.All[0]; } } }
+            internal sealed class ArrowGetterWrapper { public object Value { get => Catalog.All[0]; } }
             """.Replace("BODY", body, StringComparison.Ordinal);
         using var fixture = new Fixture(extra: extra);
         Xunit.Assert.Contains(fixture.Check(), finding => finding.Message.Contains("escapes through", StringComparison.Ordinal));
@@ -231,6 +264,21 @@ public sealed class NonWireMetadataBindingTests
     public void CanonicalScalarProjectionRemainsAllowed()
     {
         using var fixture = new Fixture(extra: "using System.Linq; using Metadata; internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize(Catalog.All.Select(policy => policy.OperationId).ToArray()); }");
+        Xunit.Assert.Empty(fixture.Check());
+    }
+
+    [Xunit.Fact]
+    public void ScalarGetterProjectionRemainsAllowed()
+    {
+        using var fixture = new Fixture(extra: "using Metadata; internal sealed class Wrapper { public object Value { get { return Catalog.All[0].OperationId; } } } internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize(new Wrapper()); }");
+        Xunit.Assert.Empty(fixture.Check());
+    }
+
+    [Xunit.Fact]
+    public void ErasedScalarProjectionAndReadonlySnapshotResultsRemainAllowed()
+    {
+        using var fixture = new Fixture(Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "var copy = snapshot.ToArray(); ActorKinds = Array.AsReadOnly(copy);", StringComparison.Ordinal),
+            extra: "using System.Linq; using Metadata; internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize(Catalog.All.Cast<object>().Select(value => ((Policy)value).OperationId).ToArray()); }");
         Xunit.Assert.Empty(fixture.Check());
     }
 

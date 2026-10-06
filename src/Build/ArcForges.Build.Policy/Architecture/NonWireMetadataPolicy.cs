@@ -185,7 +185,7 @@ internal static class NonWireMetadataPolicy
 
     private static bool CatalogShape(INamedTypeSymbol type, Microsoft.CodeAnalysis.CSharp.CSharpCompilation compilation, HashSet<INamedTypeSymbol> policies)
     {
-        if (!type.IsStatic || !Plain(type)) return false;
+        if (!type.IsStatic || !Plain(type) || type.StaticConstructors.Any(constructor => !constructor.IsImplicitlyDeclared)) return false;
         var properties = type.GetMembers().OfType<IPropertySymbol>().ToArray();
         var methods = type.GetMembers().OfType<IMethodSymbol>().Where(method => method.MethodKind == MethodKind.Ordinary).ToArray();
         var fields = type.GetMembers().OfType<IFieldSymbol>().Where(field => !field.IsImplicitlyDeclared).ToArray();
@@ -247,6 +247,8 @@ internal static class NonWireMetadataPolicy
 
     private static bool Fresh(ExpressionSyntax expression, SemanticModel model, HashSet<ISymbol> visited)
     {
+        if (expression is ParenthesizedExpressionSyntax parentheses) return Fresh(parentheses.Expression, model, visited);
+        if (expression is CastExpressionSyntax cast) return Fresh(cast.Expression, model, visited);
         if (expression is ArrayCreationExpressionSyntax or ImplicitArrayCreationExpressionSyntax or CollectionExpressionSyntax) return true;
         if (expression is ConditionalExpressionSyntax conditional) return Fresh(conditional.WhenTrue, model, visited) && Fresh(conditional.WhenFalse, model, visited);
         if (expression is InvocationExpressionSyntax invocation) return Canonical(model, invocation, "System.Array", "Empty")
@@ -261,12 +263,30 @@ internal static class NonWireMetadataPolicy
             if (use.Ancestors().OfType<AssignmentExpressionSyntax>().Any(assignment => assignment.Right.Span.Contains(use.Span)
                 && model.GetTypeInfo(assignment.Right).Type is { IsReferenceType: true, SpecialType: not SpecialType.System_String }
                 && (assignment.Right is not InvocationExpressionSyntax readonlyCall || !Canonical(model, readonlyCall, "System.Array", "AsReadOnly")))) return false;
-            if (use.Parent is EqualsValueClauseSyntax or ReturnStatementSyntax or YieldStatementSyntax) return false;
-            var argument = use.Ancestors().OfType<ArgumentSyntax>().FirstOrDefault();
-            if (argument?.Expression == use && argument.Parent?.Parent is InvocationExpressionSyntax call
-                && !Canonical(model, call, "System.Array", "AsReadOnly") && !Canonical(model, call, "System.Linq.Enumerable", "ToArray")) return false;
+            if (use.Ancestors().OfType<EqualsValueClauseSyntax>().Any(value => !SafeSnapshotResult(value.Value, model))) return false;
+            if (use.Ancestors().OfType<ReturnStatementSyntax>().Any(returned => returned.Expression is { } value && !SafeSnapshotResult(value, model))
+                || use.Ancestors().OfType<YieldStatementSyntax>().Any(returned => returned.Expression is { } value && !SafeSnapshotResult(value, model))
+                || use.Ancestors().OfType<ArrowExpressionClauseSyntax>().Any(arrow => !SafeSnapshotResult(arrow.Expression, model))) return false;
+            foreach (var argument in use.Ancestors().OfType<ArgumentSyntax>())
+            {
+                if (SafeSnapshotResult(argument.Expression, model)) continue;
+                ExpressionSyntax input = argument.Expression;
+                while (input is ParenthesizedExpressionSyntax or CastExpressionSyntax)
+                    input = input is ParenthesizedExpressionSyntax parenthesized ? parenthesized.Expression : ((CastExpressionSyntax)input).Expression;
+                if (input != use || argument.Parent?.Parent is not InvocationExpressionSyntax call
+                    || !Canonical(model, call, "System.Array", "AsReadOnly") && !Canonical(model, call, "System.Linq.Enumerable", "ToArray")) return false;
+            }
         }
         return true;
+    }
+
+    private static bool SafeSnapshotResult(ExpressionSyntax expression, SemanticModel model)
+    {
+        while (expression is ParenthesizedExpressionSyntax or CastExpressionSyntax)
+            expression = expression is ParenthesizedExpressionSyntax parentheses ? parentheses.Expression : ((CastExpressionSyntax)expression).Expression;
+        return model.GetTypeInfo(expression).Type is { IsValueType: true } or { SpecialType: SpecialType.System_String }
+            || expression is InvocationExpressionSyntax invocation && (Canonical(model, invocation, "System.Array", "AsReadOnly")
+                || Canonical(model, invocation, "System.Linq.Enumerable", "ToArray"));
     }
 
     private static bool Canonical(SemanticModel model, InvocationExpressionSyntax invocation, string type, string name) =>
@@ -306,6 +326,7 @@ internal static class NonWireMetadataPolicy
                 foreach (var node in tree.GetRoot().DescendantNodes())
                 {
                     if (node is VariableDeclaratorSyntax { Initializer: { } initializer } variable) Add(model.GetDeclaredSymbol(variable), initializer.Value, model);
+                    else if (node is PropertyDeclarationSyntax { Initializer: { } propertyInitializer } property) Add(model.GetDeclaredSymbol(property), propertyInitializer.Value, model);
                     else if (node is AssignmentExpressionSyntax assignment) Add(model.GetSymbolInfo(assignment.Left).Symbol, assignment.Right, model);
                     else if (node is ForEachStatementSyntax loop) Add(model.GetDeclaredSymbol(loop), loop.Expression, model);
                     else if (node is ReturnStatementSyntax { Expression: { } value } returned)
@@ -329,6 +350,21 @@ internal static class NonWireMetadataPolicy
                                 : Array.FindIndex(method.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.ValueText);
                             if (position >= 0 && position < method.Parameters.Length) Add(method.Parameters[position].OriginalDefinition, argument.Expression, model);
                         }
+                    if (node is InvocationExpressionSyntax projection && Canonical(model, projection, "System.Linq.Enumerable", "Select")
+                        && model.GetSymbolInfo(projection).Symbol is IMethodSymbol select)
+                    {
+                        var selector = projection.ArgumentList.Arguments.LastOrDefault()?.Expression;
+                        var source = select.ReducedFrom is not null && projection.Expression is MemberAccessExpressionSyntax receiver
+                            ? receiver.Expression : projection.ArgumentList.Arguments.FirstOrDefault()?.Expression;
+                        var parameter = selector switch
+                        {
+                            SimpleLambdaExpressionSyntax simple => model.GetDeclaredSymbol(simple.Parameter),
+                            ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
+                            AnonymousMethodExpressionSyntax anonymous => anonymous.ParameterList?.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
+                            _ => model.GetSymbolInfo(selector!).Symbol is IMethodSymbol selected ? selected.Parameters.FirstOrDefault() : null,
+                        };
+                        if (source is not null) Add(parameter, source, model);
+                    }
                 }
             }
         }
@@ -396,7 +432,11 @@ internal static class NonWireMetadataPolicy
             symbol = symbol.OriginalDefinition;
             if (visited.Count >= 128) { Exhausted = true; return false; }
             if (!Step() || !visited.Add(symbol)) return false;
-            try { return _sources.TryGetValue(symbol, out var values) && values.Any(value => Expression(value.Expression, value.Model, visited)); }
+            try
+            {
+                return symbol is IPropertySymbol { GetMethod: { } getter } && Symbol(getter, visited)
+                    || _sources.TryGetValue(symbol, out var values) && values.Any(value => Expression(value.Expression, value.Model, visited));
+            }
             finally { _ = visited.Remove(symbol); }
         }
 

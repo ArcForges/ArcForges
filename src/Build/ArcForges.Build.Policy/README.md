@@ -44,10 +44,13 @@ SHA256. Both the compiler snapshot and strict UTF8 disk bytes must match after C
 normalization and removal of one optional leading BOM; every other byte is significant. Foreign,
 linked, partial, ambiguous and duplicate sources, unknown kinds and simultaneous wire bindings fail.
 The scalar policy has the fixed authorization facts and cloned read-only string collections.
-Catalogs have immutable snapshots, an ordinal frozen index and its actual `TryGetValue` lookup.
+Catalogs have immutable snapshots, an ordinal frozen index and its actual `TryGetValue` lookup;
+explicit static constructors cannot replace the reviewed index or snapshot after initialization.
 Arbitrary/mutable DTOs, extra APIs, serializer attributes/registrations and wire/RPC payload use fail.
 Semantic transport checks follow object casts, aliases, collections and owned factory/constructor
-wrappers; analysis exhaustion fails closed. Scalar projections remain valid. These bindings confer
+wrappers, property initializers and erased LINQ identity projections. Mutable snapshot escapes
+through nested casts, containers, aliases or return paths fail; analysis exhaustion fails closed.
+Scalar projections and actual read-only or cloned snapshots remain valid. These bindings confer
 no runtime authorization and never replace a wire schema or descriptor. Without bindings the
 existing generated-wire rule is unchanged; hosts must consume this policy's actual published package.
 
