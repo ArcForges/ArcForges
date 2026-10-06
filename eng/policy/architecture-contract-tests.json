@@ -3243,5 +3243,80 @@
     "apiSymbol": "ArcForges.Capabilities.CapabilityInvocationBinding.RestoreResult(ArcForges.Contracts.PublicApi.V1.CapabilityResult, ArcForges.Capabilities.InvocationResultVersion)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.InvocationRestoreTests.RestoreResultValidatesExactSchemaBudgetAndVersionWithoutCallingOwner()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpHttpExporter.Create(ArcForges.Observability.Desktop.OtlpExporterOptions, ArcForges.Observability.ObservabilityContext, ArcForges.Observability.Desktop.TelemetryConsent)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.RealProductionFactoryStartsWithoutGrantOrCollectorAvailability()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpHttpExporter.Send(ArcForges.Observability.StructuredSignal)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.MissingConsentProducesNoTransportCallAndNoClaimOfReadiness()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpHttpExporter.Send(ArcForges.Observability.ScrubbedSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.RealOtlpSerializationExportsReviewedSpansAndLogsWithExactWireShapes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpHttpExporter.Write(ArcForges.Observability.ScrubbedSpan)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.ActualHostKeepsLocalDiagnosticsWithoutConsentAndPurgesTraceBufferOnWithdrawal()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpHttpExporter.Purge()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.RevocationCancelsInFlightAndPurgesQueuedRecordsAcrossImmediateRegrant()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpHttpExporter.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.ConcurrentProducersRespectBothQueueBudgetsAndKeepCallerNonblocking()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopObservabilityHost.Open(ArcForges.Observability.Desktop.DesktopDiagnosticsOptions, ArcForges.Observability.TracePolicyOptions, ArcForges.Observability.Desktop.OtlpExporterOptions, System.Func<System.Diagnostics.ActivitySource, bool>)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.RealProductionFactoryStartsWithoutGrantOrCollectorAvailability()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DesktopObservabilityHost.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.ActualHostKeepsLocalDiagnosticsWithoutConsentAndPurgesTraceBufferOnWithdrawal()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DependencyHealthMonitor.CheckAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.UncooperativeDependencyIsBoundedToOneOutstandingCallAcrossRepeatedChecks()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DependencyHealthMonitor.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.CallerCancellationAndConcurrentShutdownDoNotInventHealthOrLeakWaiters()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.IRequiredDependencyProbe.ProbeAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.DependencyFailuresUnknownAndInvalidStatusesFailClosed()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.DiagnosticDirectoryProbe.ProbeAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.ActualDiagnosticDirectoryReadWriteProbeDoesNotTouchExistingData()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.IOtlpCollectorCredentials.AcquireAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.CollectorCredentialIsRefreshedForEachAttemptAndNeverEntersExportedJson()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpCollectorCredential.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.CollectorCredentialIsRefreshedForEachAttemptAndNeverEntersExportedJson()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.Desktop.OtlpCollectorCredential.Dispose()",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.UncooperativeCredentialOwnerIsBoundedAndCannotDelayShutdownOrLeakLateSecret()"
   }
 ]

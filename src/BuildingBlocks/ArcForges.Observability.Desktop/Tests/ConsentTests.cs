@@ -11,6 +11,7 @@ namespace ArcForges.Observability.Desktop.Tests;
 public sealed class ConsentTests
 {
     private const string ConsentFile = "telemetry-consent.json";
+    private static readonly string[] NetworkReferences = ["System.Net.Http", "System.Net.Primitives"];
 
     [Fact]
     public void ConsentAbsentSendsNoSignalOffTheDeviceYetLocalDiagnosticsStillRecord()
@@ -46,11 +47,14 @@ public sealed class ConsentTests
     }
 
     [Fact]
-    public void TheLibraryReferencesNoNetworkAssemblyHasNoPInvokeAndHoldsNoUploaderOrTransportField()
+    public void OnlyTheProductionExporterOwnsNetworkTransportAndLocalDiagnosticsHoldNoUploader()
     {
         Assembly library = typeof(DesktopDiagnostics).Assembly;
-        Assert.DoesNotContain(library.GetReferencedAssemblies(),
-            reference => reference.Name!.StartsWith("System.Net", StringComparison.Ordinal));
+        // PLT.58 admits the actual OTLP/HTTP owner. The earlier PLT.52 blanket no-network assertion described the
+        // primitive-only stage; keep a closed network reference set and isolate the client field to its real owner.
+        Assert.Equal(NetworkReferences, library.GetReferencedAssemblies()
+            .Where(reference => reference.Name!.StartsWith("System.Net", StringComparison.Ordinal))
+            .Select(reference => reference.Name).Order(StringComparer.Ordinal));
 
         // A tripwire, not a proof: it catches an added network reference, native call or typed uploader or transport field.
         foreach (Type type in library.GetTypes())
@@ -66,6 +70,11 @@ public sealed class ConsentTests
             foreach (FieldInfo field in type.GetFields(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
             {
                 Assert.NotEqual(typeof(IDiagnosticReportUploader), field.FieldType);
+                if (field.FieldType.Namespace?.StartsWith("System.Net", StringComparison.Ordinal) == true)
+                {
+                    Assert.Equal(typeof(OtlpHttpExporter), type);
+                    Assert.Equal(typeof(HttpClient), field.FieldType);
+                }
             }
         }
 

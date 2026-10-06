@@ -125,6 +125,7 @@ public sealed class TracePolicy : IDisposable
     private long _consentSuppressed;
     private long _exportFailures;
     private bool _disposed;
+    private readonly string _epochKey = "ArcForges.TracePolicy.Epoch." + Guid.NewGuid().ToString("N");
 
     /// <param name="options">The sampling and buffer configuration.</param>
     /// <param name="identity">The application, build, instance and environment these signals are attributed to (SG-05).</param>
@@ -213,14 +214,19 @@ public sealed class TracePolicy : IDisposable
         {
             ShouldListenTo = shouldListenTo,
             Sample = SampleAtHead,
+            ActivityStarted = activity =>
+            {
+                if (_consent is IRevocableTelemetryConsent revocable)
+                    activity.SetCustomProperty(_epochKey, _consent.IsGranted ? revocable.CollectionEpoch : -1L);
+            },
             ActivityStopped = Stopped,
         };
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             _listeners.Add(listener);
+            ActivitySource.AddActivityListener(listener);
         }
-
-        ActivitySource.AddActivityListener(listener);
         return listener;
     }
 
@@ -232,46 +238,53 @@ public sealed class TracePolicy : IDisposable
     public void OnSpanEnded(Activity activity)
     {
         ArgumentNullException.ThrowIfNull(activity);
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!_consent.IsGranted)
+        lock (_gate)
         {
-            Withdraw();
-            return;
-        }
-
-        ScrubbedSpan span = RedactionProcessor.Scrub(activity);
-        bool failed = span.Status == ActivityStatusCode.Error;
-        if (failed)
-        {
-            Guarded(() => RecordErrorFact(span));
-        }
-
-        if (activity.Recorded)
-        {
-            if (Export(span))
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            long? epoch = _consent is IRevocableTelemetryConsent revocable
+                ? activity.GetCustomProperty(_epochKey) as long? ?? revocable.CollectionEpoch : null;
+            if (!MayCollect(epoch))
             {
-                Interlocked.Increment(ref _headSampled);
+                Withdraw();
+                return;
             }
 
-            return;
-        }
+            ScrubbedSpan span = RedactionProcessor.Scrub(activity);
+            bool failed = span.Status == ActivityStatusCode.Error;
+            if (failed)
+            {
+                Guarded(() => RecordErrorFact(span));
+            }
 
-        var release = new List<ScrubbedSpan>();
-        BufferOutcome outcome = _buffer.Offer(span, failed || span.Duration >= _options.SlowSpanThreshold, release);
-        foreach (ScrubbedSpan released in release)
-        {
-            Export(released);
-        }
+            if (!MayCollect(epoch)) { Withdraw(); return; }
 
-        // A promoting span is never refused for size, so the only error span that is not retained is a late one.
-        if (failed && outcome == BufferOutcome.Late)
-        {
-            Interlocked.Increment(ref _errorSpansNotRetained);
+            if (activity.Recorded)
+            {
+                if (Export(span, epoch))
+                {
+                    Interlocked.Increment(ref _headSampled);
+                }
+
+                return;
+            }
+
+            var release = new List<ScrubbedSpan>();
+            BufferOutcome outcome = _buffer.Offer(span, failed || span.Duration >= _options.SlowSpanThreshold, release);
+            foreach (ScrubbedSpan released in release)
+            {
+                Export(released, epoch);
+            }
+
+            // A promoting span is never refused for size, so the only error span that is not retained is a late one.
+            if (failed && outcome == BufferOutcome.Late)
+            {
+                Interlocked.Increment(ref _errorSpansNotRetained);
+            }
         }
     }
 
     /// <summary>Discards every span held in the diagnostic buffer, as when consent is withdrawn.</summary>
-    public void PurgeBuffer() => _buffer.Purge();
+    public void PurgeBuffer() { lock (_gate) _buffer.Purge(); }
 
     public void Dispose()
     {
@@ -344,9 +357,9 @@ public sealed class TracePolicy : IDisposable
 
     private void Stopped(Activity activity) => Guarded(() => OnSpanEnded(activity));
 
-    private bool Export(ScrubbedSpan span)
+    private bool Export(ScrubbedSpan span, long? epoch)
     {
-        if (!_consent.IsGranted)
+        if (!MayCollect(epoch))
         {
             Withdraw();
             return false;
@@ -365,6 +378,9 @@ public sealed class TracePolicy : IDisposable
             return false;
         }
     }
+
+    private bool MayCollect(long? epoch) => _consent.IsGranted
+        && (epoch is null || _consent is IRevocableTelemetryConsent revocable && epoch == revocable.CollectionEpoch);
 
     private void Guarded(Action action)
     {

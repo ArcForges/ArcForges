@@ -12,6 +12,12 @@ public interface ITelemetryConsent
     bool IsGranted { get; }
 }
 
+/// <summary>Optional revocation fence for hosts with revocable consent; the epoch advances before withdrawal I/O.</summary>
+public interface IRevocableTelemetryConsent : ITelemetryConsent
+{
+    long CollectionEpoch { get; }
+}
+
 /// <summary>Consent states for hosts whose telemetry does not depend on a user's choice.</summary>
 public static class TelemetryConsent
 {
