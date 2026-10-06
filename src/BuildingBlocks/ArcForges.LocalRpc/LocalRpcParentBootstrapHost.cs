@@ -32,12 +32,17 @@ public sealed class LocalRpcParentBootstrapHost : IAsyncDisposable
     /// Creates the registration from the parent's actual runtime manifest, adds the real generated service to the explicitly configured
     /// private builder and starts it. Failed startup revokes the launch. No supplied child process, stream or application identity is invented.
     /// </summary>
-    public static async Task<LocalRpcParentBootstrapHost> StartAsync(LocalRpcLaunch launch, EndpointManifest server,
+    public static Task<LocalRpcParentBootstrapHost> StartAsync(LocalRpcLaunch launch, EndpointManifest server,
         LocalRpcServerBuilder builder, CancellationToken cancellationToken = default)
+        => StartAsync(launch, server, builder, BootstrapWire.ReadParentStartedAtUtc, cancellationToken);
+
+    internal static async Task<LocalRpcParentBootstrapHost> StartAsync(LocalRpcLaunch launch, EndpointManifest server,
+        LocalRpcServerBuilder builder, Func<LocalRpcProcessIdentity, DateTimeOffset?> parentStartedAtUtc, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(launch);
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(parentStartedAtUtc);
         LocalRpcRegistration? registration = null;
         LocalRpcServer? transport = null;
         LocalRpcParentBootstrapHost? host = null;
@@ -46,7 +51,7 @@ public sealed class LocalRpcParentBootstrapHost : IAsyncDisposable
             var frozen = server.Clone();
             if (!ContractShapeValidation.IsValid(frozen)) throw new ArgumentException("The complete actual parent runtime manifest is required.", nameof(server));
             registration = LocalRpcRegistration.Create(launch, BootstrapWire.FromId(frozen.InstanceId));
-            var service = new LocalRpcBootstrapService(registration, frozen);
+            var service = new LocalRpcBootstrapService(registration, frozen, parentStartedAtUtc);
             cancellationToken.ThrowIfCancellationRequested();
             if (registration.Ended.IsCancellationRequested) throw new InvalidOperationException("The registration has already ended; relaunch under a fresh identity.");
             transport = builder.RequireRegistration(registration).AddService(service).Build();

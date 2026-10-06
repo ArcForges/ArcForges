@@ -5,6 +5,7 @@ using ArcForges.Contracts.LocalRpc.Platform.V1;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
+using System.Diagnostics;
 
 namespace ArcForges.LocalRpc.Tests;
 
@@ -117,7 +118,7 @@ public sealed class ProductionBootstrapTests
         var supplier = new LocalRpcStreamSupplier();
         var manifest = Parent.Manifest(world.Identity, Guid.NewGuid(), launch.Descriptor.Parent);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => LocalRpcParentBootstrapHost.StartAsync(
-            launch, manifest, LocalRpcServer.CreateBuilder(supplier), cancellation.Token));
+            launch, manifest, LocalRpcServer.CreateBuilder(supplier), Parent.StartedAt, cancellation.Token));
         Assert.True(launch.Revoked.IsCancellationRequested);
     }
 
@@ -131,10 +132,10 @@ public sealed class ProductionBootstrapTests
         await using var registration = LocalRpcRegistration.Create(launch, instance);
         var manifest = Parent.Manifest(world.Identity, instance, launch.Descriptor.Parent);
         manifest.ProcessId++;
-        Assert.Throws<ArgumentException>(() => new LocalRpcBootstrapService(registration, manifest));
+        Assert.Throws<ArgumentException>(() => new LocalRpcBootstrapService(registration, manifest, Parent.StartedAt));
         manifest.ProcessId--;
         manifest.InstanceId = Wire.ToId(Guid.NewGuid());
-        Assert.Throws<ArgumentException>(() => new LocalRpcBootstrapService(registration, manifest));
+        Assert.Throws<ArgumentException>(() => new LocalRpcBootstrapService(registration, manifest, Parent.StartedAt));
     }
 
     [Theory]
@@ -150,11 +151,38 @@ public sealed class ProductionBootstrapTests
         if (invalidManifest) manifest.SchemaVersion = "";
         else builder.RegisterControl(LocalRpcControlOperation.Health, "not.served.Service", "Health");
         if (invalidManifest)
-            await Assert.ThrowsAsync<ArgumentException>(() => LocalRpcParentBootstrapHost.StartAsync(launch, manifest, builder, Ct));
+            await Assert.ThrowsAsync<ArgumentException>(() => LocalRpcParentBootstrapHost.StartAsync(launch, manifest, builder, Parent.StartedAt, Ct));
         else
-            await Assert.ThrowsAsync<InvalidOperationException>(() => LocalRpcParentBootstrapHost.StartAsync(launch, manifest, builder, Ct));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => LocalRpcParentBootstrapHost.StartAsync(launch, manifest, builder, Parent.StartedAt, Ct));
         Assert.True(launch.Revoked.IsCancellationRequested);
         Assert.True(launch.SecretIsZeroed());
+    }
+
+    [Fact]
+    public void ActualParentProcessReaderPreservesUtcAndRefusesAnIncorrectStableIdentity()
+    {
+        using var process = Process.GetCurrentProcess();
+        var identity = LocalRpcProcessIdentity.FromProcess(process);
+        var actual = BootstrapWire.ReadParentStartedAtUtc(identity);
+        Assert.NotNull(actual);
+        Assert.InRange(Math.Abs(actual.Value.UtcTicks - process.StartTime.ToUniversalTime().Ticks), 0, LocalRpcProcessIdentity.StartTimeTolerance.Ticks);
+        Assert.Null(BootstrapWire.ReadParentStartedAtUtc(identity with { StartTimeUtcTicks = identity.StartTimeUtcTicks + TimeSpan.FromMinutes(1).Ticks }));
+    }
+
+    [Fact]
+    public async Task BootRelativeParentIdentityCannotBeInterpretedAsTheWireUtcTimestamp()
+    {
+        var bootIdentity = new LocalRpcProcessIdentity(4242, TimeSpan.FromMinutes(5).Ticks);
+        using var world = new RegWorld(parent: bootIdentity);
+        var launch = world.Authority.Launch("boot-parent", world.Identity, LocalRpcLaunchTransport.SuppliedStreams);
+        var instance = Guid.NewGuid();
+        await using var registration = LocalRpcRegistration.Create(launch, instance);
+        var manifest = Parent.Manifest(world.Identity, instance, bootIdentity);
+        var actualFixtureUtc = new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero);
+        manifest.ProcessStartedAt = Wire.ToInstant(actualFixtureUtc);
+        Assert.Throws<ArgumentException>(() => new LocalRpcBootstrapService(registration, manifest, Parent.StartedAt));
+        Assert.NotNull(new LocalRpcBootstrapService(registration, manifest, _ => actualFixtureUtc));
+        Assert.Throws<ArgumentException>(() => new LocalRpcBootstrapService(registration, manifest, _ => null));
     }
 
     [Theory]
@@ -166,7 +194,7 @@ public sealed class ProductionBootstrapTests
         var ownLaunch = world.Authority.Launch("service-owner", world.Identity, LocalRpcLaunchTransport.SuppliedStreams);
         var instance = Guid.NewGuid();
         await using var own = LocalRpcRegistration.Create(ownLaunch, instance);
-        var service = new LocalRpcBootstrapService(own, Parent.Manifest(world.Identity, instance, ownLaunch.Descriptor.Parent));
+        var service = new LocalRpcBootstrapService(own, Parent.Manifest(world.Identity, instance, ownLaunch.Descriptor.Parent), Parent.StartedAt);
         var otherLaunch = world.Authority.Launch("service-foreign", world.Identity, LocalRpcLaunchTransport.SuppliedStreams);
         await using var other = LocalRpcRegistration.Create(otherLaunch, Guid.NewGuid());
         var supplier = new LocalRpcStreamSupplier();
@@ -218,7 +246,7 @@ public sealed class ProductionBootstrapTests
             var manifest = Manifest(world.Identity, Guid.NewGuid(), launch.Descriptor.Parent);
             var probe = new ProbeBrokerService();
             var host = await LocalRpcParentBootstrapHost.StartAsync(launch, manifest,
-                LocalRpcServer.CreateBuilder(supplier).AddService(probe), cancellation);
+                LocalRpcServer.CreateBuilder(supplier).AddService(probe), StartedAt, cancellation);
             return new(world, launch, supplier, child, host, manifest, probe);
         }
         internal LocalRpcClientChannel Channel() => LocalRpcClientChannel.CreateFromStreams(_ =>
@@ -247,6 +275,7 @@ public sealed class ProductionBootstrapTests
             var nonce = confirmed.Value.PeerNonce.ToByteArray();
             return (new(_child, _child.AcceptGrant(nonce), nonce, BootstrapWire.FromInstant(confirmed.Value.ExpiresAt), invoker), challenge);
         }
+        internal static DateTimeOffset? StartedAt(LocalRpcProcessIdentity process) => new DateTimeOffset(process.StartTimeUtcTicks, TimeSpan.Zero);
         internal static RequestMeta Meta() => new() { CorrelationId = Wire.ToId(Guid.NewGuid()), CommandId = Wire.ToId(Guid.NewGuid()) };
         internal static EndpointManifest Manifest(LocalRpcLaunchIdentity identity, Guid instance, LocalRpcProcessIdentity process)
         {

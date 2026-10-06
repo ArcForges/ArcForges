@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
+using System.ComponentModel;
+using System.Diagnostics;
 using ArcForges.Contracts.LocalRpc.Platform.Shapes;
 using ArcForges.Contracts.LocalRpc.Platform.V1;
 using Google.Protobuf;
@@ -15,15 +17,23 @@ public sealed class LocalRpcBootstrapService : LocalBootstrapService.LocalBootst
 
     /// <summary>Freezes the parent's actual manifest. Its instance is the registration's ParentInstanceId and its process is the launch's parent.</summary>
     public LocalRpcBootstrapService(LocalRpcRegistration registration, EndpointManifest server)
+        : this(registration, server, BootstrapWire.ReadParentStartedAtUtc) { }
+
+    internal LocalRpcBootstrapService(LocalRpcRegistration registration, EndpointManifest server,
+        Func<LocalRpcProcessIdentity, DateTimeOffset?> parentStartedAtUtc)
     {
         ArgumentNullException.ThrowIfNull(registration);
         ArgumentNullException.ThrowIfNull(server);
+        ArgumentNullException.ThrowIfNull(parentStartedAtUtc);
         var frozen = server.Clone();
+        var parent = registration.Launch.Descriptor.Parent;
+        var started = parentStartedAtUtc(parent);
         if (!ContractShapeValidation.IsValid(frozen)
             || BootstrapWire.FromId(frozen.InstanceId) != registration.ParentInstanceId
             || BootstrapWire.FromId(frozen.Endpoint.InstanceId) != registration.ParentInstanceId
             || frozen.ProcessId != (ulong)registration.Launch.Descriptor.Parent.ProcessId
-            || Math.Abs(BootstrapWire.FromInstant(frozen.ProcessStartedAt).UtcTicks - registration.Launch.Descriptor.Parent.StartTimeUtcTicks)
+            || started is null
+            || Math.Abs(BootstrapWire.FromInstant(frozen.ProcessStartedAt).UtcTicks - started.Value.UtcTicks)
                 > LocalRpcProcessIdentity.StartTimeTolerance.Ticks)
         {
             throw new ArgumentException("The complete server manifest must describe this registration's actual parent.", nameof(server));
@@ -115,6 +125,23 @@ public sealed class LocalRpcBootstrapService : LocalBootstrapService.LocalBootst
 
 internal static class BootstrapWire
 {
+    // Linux's launch identity uses stable ticks since boot. Its wire Instant remains an actual UTC timestamp;
+    // never interpret the launch identity as a UTC date or infer one from the current wall clock.
+    internal static DateTimeOffset? ReadParentStartedAtUtc(LocalRpcProcessIdentity parent)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(parent.ProcessId);
+            if (process.HasExited || !LocalRpcProcessIdentity.FromProcess(process).Names(parent)) return null;
+            var started = new DateTimeOffset(process.StartTime.ToUniversalTime());
+            return !process.HasExited && LocalRpcProcessIdentity.FromProcess(process).Names(parent) ? started : null;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            return null;
+        }
+    }
+
     internal static Guid FromId(Id? value) => value?.Value.Length == 16 ? new Guid(value.Value.Span, bigEndian: true) : Guid.Empty;
     internal static Id ToId(Guid value) => new() { Value = ByteString.CopyFrom(value.ToByteArray(bigEndian: true)) };
     internal static Instant ToInstant(DateTimeOffset value) => new()
