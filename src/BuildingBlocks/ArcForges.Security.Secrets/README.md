@@ -1,6 +1,6 @@
 # Per-application secrets (PLT.40)
 
-This nonpackable first-party building block stores opaque `SecretRef` values in the
+This managed first-party package stores opaque `SecretRef` values in the
 owning app installation's credential namespace. The namespace includes realm,
 account, product, device, installation, partition and secret identity. Composition
 maps its trusted `AppIdentity` into the closed local `SecretApplicationDimension`
@@ -8,6 +8,10 @@ storage dimension (not a second product-identity authority); arbitrary product s
 are rejected, and the secrets package does not depend on the application-composition layer.
 A reference has no readable identifier or plaintext representation; session sign-out
 revokes use (`RevokeAllConnectorGrants`) without deleting the local vault.
+
+PLT.59 admits the implemented managed package to normal lockstep publication.
+Real credential-store/product acceptance remains separate; an unavailable
+store is an explicit refusal and never a successful memory-only substitute.
 
 The broker exposes store/delete and a short-lived connector-use grant, not a
 secret-returning method. A grant is issued by the foreground direct-human host,

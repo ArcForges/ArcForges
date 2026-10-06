@@ -1,7 +1,9 @@
 # ArcForges.ContentSandbox.Broker
 
 The parent side of the content helper (WP-11.09, PLT.45): restricted launch, the closed resource inventory, registration, the session, brokered
-buffers and supervision. Non-packable until PLT.46.
+buffers and supervision. PLT.59 admits this implemented managed package to normal
+lockstep publication. Native/helper runtime and release trust remain separate
+producers; PLT.46 retains complete product and OS acceptance.
 
 ```csharp
 await using var launcher = new ContentSandboxLauncher(new ContentSandboxLaunchOptions

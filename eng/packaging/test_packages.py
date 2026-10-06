@@ -135,7 +135,7 @@ class ExternalDependencyGuards(unittest.TestCase):
 
 class AssistantAbstractionsPackageGuards(unittest.TestCase):
     owned_version = "2.0.0-ci.20.1"
-    external_version = "1.0.0-ci.216.1"
+    external_version = "1.0.0-ci.324.1"
     owned_edges = ["ArcForges.Foundation", "ArcForges.Application.Abstractions"]
 
     def entry(self):

@@ -2,14 +2,21 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <PackageId>ArcForges.Security.CapabilityEnforcement</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Security decision and final-owner gates for typed capability invocations.</Description>
     <AssemblyName>ArcForges.Security.CapabilityEnforcement</AssemblyName>
     <RootNamespace>ArcForges.Security.CapabilityEnforcement</RootNamespace>
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
     <IsAotCompatible>true</IsAotCompatible>
     <LicenceBoundary>AGPL</LicenceBoundary>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Tests/**" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../../../../NOTICE.md" Pack="true" PackagePath="/" />
     <ProjectReference Include="../ArcForges.Security.csproj" />
     <ProjectReference Include="../../ArcForges.Capabilities/ArcForges.Capabilities.csproj" />
   </ItemGroup>

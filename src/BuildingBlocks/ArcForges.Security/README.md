@@ -1,6 +1,6 @@
 # Principals and actor-chain provenance (PLT.36)
 
-This nonpackable mechanism constructs a complete, immutable actor chain at an
+This managed package constructs a complete, immutable actor chain at an
 entry point and carries it explicitly. Identity evidence does not authenticate a
 caller or authorize an operation. Agent profiles are configuration, never human
 principals. Delegated execution retains the human owner and each intervening actor.
@@ -8,6 +8,11 @@ principals. Delegated execution retains the human owner and each intervening act
 Offline queue and serialization tests cover lossless propagation and malformed
 input refusal. They do not prove live process authentication, persisted queues,
 product integration, or the later PLT.38 enforcement decision pipeline.
+
+PLT.59 admits the existing implementation to the lockstep NuGet publisher with
+the compatible production Contracts peer closure. Publication does not grant
+authority or certify full product/OS acceptance; callers compose the actual
+current actor, permission, approval, lease and final-owner gates.
 
 ## Instruction provenance (PLT.42)
 

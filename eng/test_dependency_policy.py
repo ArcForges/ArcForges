@@ -31,6 +31,7 @@ class SecretScanAllowlistTests(unittest.TestCase):
         '8ff03fdcaf23b09386fac47dd5e3e4f9689a665a569137f726456c9e59a9ecef',
         'd6798bbbcf980fab4467c6d831871b075e55aeef6e09c7df67c4d72cd2334120',
     )
+    SUCCESSOR_PROJECT_HASH = '7b3577f9fc163d52e3c5a433976220c5231f35c97cdadd195cebf932e3ebae89'
 
     @classmethod
     def setUpClass(cls):
@@ -69,7 +70,7 @@ class SecretScanAllowlistTests(unittest.TestCase):
             '(^|/)tests/.*/Fixtures/',
         ])
         expected = (
-            (self.POLICY_PATH, 4),
+            (self.POLICY_PATH, 6),
             (self.RECEIPT_PATH, 2),
         )
         self.assertEqual(len(task_groups), len(expected) + 1)
@@ -86,6 +87,10 @@ class SecretScanAllowlistTests(unittest.TestCase):
                     for indent in indentations
                     for project_path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
                 }
+                if path == self.POLICY_PATH:
+                    expected_regexes.update(self._exact_regex(self._line(
+                        self.PROJECT_PATHS[0], self.SUCCESSOR_PROJECT_HASH, indent))
+                        for indent in (4, 6))
                 self.assertEqual(set(group['regexes']), expected_regexes)
         any_receipt = task_groups[-1]
         self.assertEqual(any_receipt['description'], self.ANY_RECEIPT_DESCRIPTION)
@@ -96,8 +101,8 @@ class SecretScanAllowlistTests(unittest.TestCase):
         self.assertEqual(set(any_receipt['regexes']), {
             self._exact_regex(self._line(project_path, digest, 6))
             for project_path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
-        })
-        self.assertEqual(len(any_receipt['regexes']), 2)
+        } | {self._exact_regex(self._line(self.PROJECT_PATHS[0], self.SUCCESSOR_PROJECT_HASH, 6))})
+        self.assertEqual(len(any_receipt['regexes']), 3)
 
     def test_exact_six_observed_lines_match_only_the_generic_api_key_rule(self):
         policy_lines = [
@@ -175,6 +180,7 @@ class SecretScanAllowlistTests(unittest.TestCase):
             self._line(path, digest, 6)
             for path, digest in zip(self.PROJECT_PATHS, self.PROJECT_HASHES)
         }
+        lines.add(self._line(self.PROJECT_PATHS[0], self.SUCCESSOR_PROJECT_HASH, 6))
         found = 0
         for receipt in sorted(directory.glob('*.json')):
             relative = receipt.relative_to(ROOT).as_posix()
@@ -186,6 +192,28 @@ class SecretScanAllowlistTests(unittest.TestCase):
                         self.assertTrue(self._allowed(relative, line))
                         self.assertTrue(self._allowed(relative, '\n' + line))
         self.assertGreaterEqual(found, 4)
+
+    def test_publication_hash_successor_preserves_exact_path_line_and_rule_boundaries(self):
+        project = self.PROJECT_PATHS[0]
+        for path, indents in ((self.POLICY_PATH, (4, 6)),
+                              ('eng/policy/dependency-reviews/plt-59-r1.json', (6,))):
+            for indent in indents:
+                valid = self._line(project, self.SUCCESSOR_PROJECT_HASH, indent)
+                self.assertTrue(self._allowed(path, valid))
+                self.assertTrue(self._allowed(path, '\n' + valid))
+                for rejected_path, rejected_line, rule in (
+                    (path, valid, 'another-rule'),
+                    ('eng/policy/other.json', valid, 'generic-api-key'),
+                    ('eng/policy/dependency-reviews/sub/plt-59-r1.json', valid, 'generic-api-key'),
+                    (path, valid.replace(project, self.PROJECT_PATHS[1]), 'generic-api-key'),
+                    (path, valid.replace(self.SUCCESSOR_PROJECT_HASH, 'a' * 64), 'generic-api-key'),
+                    (path, valid + ' credential=example-not-a-secret', 'generic-api-key'),
+                    (path, ' ' + valid, 'generic-api-key'),
+                    (path, '\n\n' + valid, 'generic-api-key'),
+                    (path, valid + '\n', 'generic-api-key'),
+                ):
+                    with self.subTest(path=rejected_path, line=rejected_line, rule=rule):
+                        self.assertFalse(self._allowed(rejected_path, rejected_line, rule))
 
     def test_wrong_key_digest_path_swaps_suffix_and_unrelated_hash_are_rejected(self):
         project_path, tests_path = self.PROJECT_PATHS
