@@ -157,7 +157,7 @@ jobs:
             cmake --install artifacts/cmake/win-x64/%%p || exit /b 1
           )
 
-          ctest --test-dir artifacts/cmake/win-x64/shim-static --output-on-failure -R "^(arc_native_abi_c17_layout_tests|arc_native_abi_cpp20_tests|arcpdf_abi_engine_tests|arcpdf_abi_unsupported_tests)$" || exit /b 1
+          ctest --test-dir artifacts/cmake/win-x64/shim-static --output-on-failure -R "^(arc_native_abi_c17_layout_tests|arc_native_abi_cpp20_tests|arcpdf_abi_engine_tests|arcpdf_abi_pdfium_tests|arcpdf_abi_unsupported_tests)$" || exit /b 1
           dotnet test --project tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj --filter Category=NativeAbiLayout --no-restore || exit /b 1
 
           sccache --show-stats || exit /b 1
