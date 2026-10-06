@@ -62,7 +62,8 @@ public sealed unsafe class ImageReader : IImageReader
     [ThreadStatic]
     private static InputState? _callbackInput;
     private bool _reading;
-    private bool _closeRequested;
+    private bool _closing;
+    private Task? _disposeTask;
 
     private ImageReader(ImageSafeHandle handle, ImageMetadata metadata, InputState input)
     {
@@ -73,11 +74,15 @@ public sealed unsafe class ImageReader : IImageReader
 
     public ImageMetadata Metadata { get; }
 
-    public static ValueTask<ImageReader> OpenAsync(IImageInput input, ImageLimits limits, uint subimage, uint mip, ImagePixelFormat format, CancellationToken cancellation) =>
-        new(Task.Run(() => Open(input, limits, subimage, mip, format, cancellation), cancellation));
+    public static ValueTask<ImageReader> OpenAsync(IImageInput input, ImageLimits limits, uint subimage, uint mip, ImagePixelFormat format, CancellationToken cancellation)
+    {
+        RefuseQueuedCallbackWork();
+        return new(Task.Run(() => Open(input, limits, subimage, mip, format, cancellation), cancellation));
+    }
 
     public static ImageReader Open(IImageInput input, ImageLimits limits, uint subimage, uint mip, ImagePixelFormat format, CancellationToken cancellation)
     {
+        RefuseCallbackBorrow();
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(limits);
         var length = input.Length;
@@ -95,17 +100,31 @@ public sealed unsafe class ImageReader : IImageReader
         {
             NativeIoV1 io = new()
             {
-                StructSize = (uint)sizeof(NativeIoV1), StructVersion = 1,
-                Context = GCHandle.ToIntPtr(inputRoot), Length = (ulong)length, MaxLength = (ulong)length, ReadAt = &ReadAt,
+                StructSize = (uint)sizeof(NativeIoV1),
+                StructVersion = 1,
+                Context = GCHandle.ToIntPtr(inputRoot),
+                Length = (ulong)length,
+                MaxLength = (ulong)length,
+                ReadAt = &ReadAt,
             };
             NativeImageOptionsV1 options = new()
             {
-                StructSize = (uint)sizeof(NativeImageOptionsV1), StructVersion = 1, Subimage = subimage, Mip = mip, Format = (uint)format,
+                StructSize = (uint)sizeof(NativeImageOptionsV1),
+                StructVersion = 1,
+                Subimage = subimage,
+                Mip = mip,
+                Format = (uint)format,
                 Limits = new NativeLimitsV1
                 {
-                    StructSize = (uint)sizeof(NativeLimitsV1), StructVersion = 1,
-                    MaxInputBytes = limits.MaxInputBytes, MaxMemoryBytes = limits.MaxMemoryBytes, MaxOutputBytes = limits.MaxOutputBytes,
-                    MaxWidth = limits.MaxWidth, MaxHeight = limits.MaxHeight, MaxItems = limits.MaxItems, TimeoutMs = limits.TimeoutMs,
+                    StructSize = (uint)sizeof(NativeLimitsV1),
+                    StructVersion = 1,
+                    MaxInputBytes = limits.MaxInputBytes,
+                    MaxMemoryBytes = limits.MaxMemoryBytes,
+                    MaxOutputBytes = limits.MaxOutputBytes,
+                    MaxWidth = limits.MaxWidth,
+                    MaxHeight = limits.MaxHeight,
+                    MaxItems = limits.MaxItems,
+                    TimeoutMs = limits.TimeoutMs,
                 },
             };
             var token = Token(cancelRoot);
@@ -156,31 +175,46 @@ public sealed unsafe class ImageReader : IImageReader
         }
     }
 
+    /// <summary>Reserves the single borrow immediately; concurrent reads fail with Busy instead of waiting.</summary>
     public int ReadRegion(uint x, uint y, uint width, uint height, ulong rowStride, Span<byte> destination, CancellationToken cancellation)
     {
-        if (ReferenceEquals(_callbackInput, _input))
-        {
-            throw new ImageNativeException(NativeStatus.Busy, "The reader cannot be borrowed from its input callback.");
-        }
+        ClaimBorrow();
+        return ReadBorrowed(x, y, width, height, rowStride, destination, cancellation);
+    }
 
+    private void ClaimBorrow()
+    {
+        RefuseCallbackBorrow();
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(_handle.IsClosed, this);
+            ObjectDisposedException.ThrowIf(_closing || _handle.IsClosed, this);
             if (_reading)
             {
-                throw new ImageNativeException(NativeStatus.Busy, "The reader cannot be borrowed from its input callback.");
+                throw new ImageNativeException(NativeStatus.Busy, "The reader already has a reserved or active borrow.");
             }
 
+            _reading = true;
+        }
+    }
+
+    private int ReadBorrowed(uint x, uint y, uint width, uint height, ulong rowStride, Span<byte> destination, CancellationToken cancellation)
+    {
+        try
+        {
             cancellation.ThrowIfCancellationRequested();
             var root = GCHandle.Alloc(cancellation);
-            _reading = true;
             try
             {
                 var token = Token(root);
                 NativeRegionV1 region = new()
                 {
-                    StructSize = (uint)sizeof(NativeRegionV1), StructVersion = 1,
-                    X = x, Y = y, Width = width, Height = height, RowStride = rowStride,
+                    StructSize = (uint)sizeof(NativeRegionV1),
+                    StructVersion = 1,
+                    X = x,
+                    Y = y,
+                    Width = width,
+                    Height = height,
+                    RowStride = rowStride,
                 };
                 fixed (byte* pointer = destination)
                 {
@@ -202,62 +236,119 @@ public sealed unsafe class ImageReader : IImageReader
             finally
             {
                 root.Free();
-                _reading = false;
-                if (Volatile.Read(ref _closeRequested))
-                {
-                    _handle.Dispose();
-                    _closeRequested = false;
-                }
-
-                GC.KeepAlive(_handle);
             }
+        }
+        finally
+        {
+            ReleaseBorrow();
+            GC.KeepAlive(_handle);
         }
     }
 
-    /// <summary>Closes after borrowed work drains. A synchronous input callback defers its close until that borrow returns.</summary>
+    private void ReleaseBorrow()
+    {
+        lock (_gate)
+        {
+            _reading = false;
+            if (_closing)
+            {
+                _handle.Dispose();
+            }
+
+            Monitor.PulseAll(_gate);
+        }
+    }
+
+    /// <summary>Closes after reserved and active work drains. Only this reader's synchronous input callback may defer its close.</summary>
+    [SuppressMessage("Design", "CA1065", Justification = "Cross-reader callback close must fail before waiting; otherwise two native callbacks can deadlock. Ordinary disposal remains idempotent.")]
     public void Dispose()
     {
-        if (ReferenceEquals(_callbackInput, _input))
+        if (_callbackInput is not null)
         {
-            Volatile.Write(ref _closeRequested, true);
+            if (!ReferenceEquals(_callbackInput, _input))
+            {
+                throw new InvalidOperationException("An input callback cannot close another image reader.");
+            }
+
+            lock (_gate)
+            {
+                _closing = true;
+            }
+
             return;
         }
 
+        DrainClose();
+    }
+
+    private void DrainClose()
+    {
         lock (_gate)
         {
-            if (_reading)
+            _closing = true;
+            while (_reading)
             {
-                _closeRequested = true;
-                return;
+                Monitor.Wait(_gate);
             }
 
             _handle.Dispose();
         }
     }
 
+    /// <summary>Reserves before scheduling, so each reader admits at most one queued or active read.</summary>
     public ValueTask<int> ReadRegionAsync(uint x, uint y, uint width, uint height, ulong rowStride, Memory<byte> destination, CancellationToken cancellation)
     {
         RefuseQueuedCallbackWork();
-        return new(Task.Run(() => ReadRegion(x, y, width, height, rowStride, destination.Span, cancellation), cancellation));
+        ClaimBorrow();
+        Task<int>? task = null;
+        try
+        {
+            // Do not pass cancellation to Task.Run: even a cancelled queued borrow must execute its finally and release the reservation.
+            task = Task.Run(() => ReadBorrowed(x, y, width, height, rowStride, destination.Span, cancellation));
+            return new(task);
+        }
+        finally
+        {
+            if (task is null)
+            {
+                ReleaseBorrow();
+            }
+        }
     }
 
     public ValueTask DisposeAsync()
     {
         RefuseQueuedCallbackWork();
-        return new(Task.Run(Dispose));
+        lock (_gate)
+        {
+            _closing = true;
+            _disposeTask ??= Task.Run(DrainClose);
+            return new(_disposeTask);
+        }
     }
 
-    private void RefuseQueuedCallbackWork()
+    private static void RefuseCallbackBorrow()
     {
-        if (ReferenceEquals(_callbackInput, _input))
+        if (_callbackInput is not null)
         {
-            throw new InvalidOperationException("The reader cannot queue another operation from its input callback.");
+            throw new ImageNativeException(NativeStatus.Busy, "No image reader can be borrowed or opened from an image input callback.");
+        }
+    }
+
+    private static void RefuseQueuedCallbackWork()
+    {
+        if (_callbackInput is not null)
+        {
+            throw new InvalidOperationException("An image input callback cannot queue another image operation.");
         }
     }
 
     private static NativeCancelToken Token(GCHandle root) => new()
     {
-        StructSize = (uint)sizeof(NativeCancelToken), StructVersion = 1, IsCancelled = &Cancelled, UserData = GCHandle.ToIntPtr(root),
+        StructSize = (uint)sizeof(NativeCancelToken),
+        StructVersion = 1,
+        IsCancelled = &Cancelled,
+        UserData = GCHandle.ToIntPtr(root),
     };
 
     private static (int Status, ulong Handle) NativeOpen(NativeIoV1* io, NativeImageOptionsV1* options, NativeBuffer* output, NativeCancelToken* token)

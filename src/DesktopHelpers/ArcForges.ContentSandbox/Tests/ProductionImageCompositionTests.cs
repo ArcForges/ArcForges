@@ -296,3 +296,130 @@ public sealed class ProductionImageCompositionTests
         // The native reader is scripted. This proves the real adapter/host/broker composition only; actual codecs are tested separately.
     }
 }
+
+/// <summary>Opt-in real DLL component regressions. Stage a hash-verified ArcImageNative runtime beside this test executable,
+/// then set ARCFORGES_IMAGE_COMPONENT=1. These checks claim no helper deployment or OS isolation.</summary>
+public sealed class ImageReaderComponentTests
+{
+    private static readonly ImageLimits Limits = new(1024 * 1024, 512 * 1024 * 1024, 64 * 1024 * 1024, 65535, 65535, 4096, 30000);
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static ComponentInput Input()
+    {
+        Assert.SkipUnless(Environment.GetEnvironmentVariable("ARCFORGES_IMAGE_COMPONENT") == "1",
+            "Opt in with a real ArcImageNative DLL and its hash manifest staged beside the test executable.");
+        return new(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAQAAAADEAYAAADkZHKFAAAAL0lEQVR4nC3MwQkAMAzDQE2WzQzZK8O1D+slDowBeG+ZbaNPA7MdtNGngfjQRp/+tdoqN5XOcOUAAAAASUVORK5CYII="));
+    }
+
+    [Fact]
+    public async Task ConcurrentPublicBorrowsRefuseAndCloseDrainsTheActiveBorrow()
+    {
+        var input = Input();
+        using var reader = await ImageReader.OpenAsync(input, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct);
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        input.OnRead = () =>
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10), Ct))
+            {
+                throw new TimeoutException("The controlled component borrow was not released.");
+            }
+        };
+        var read = reader.ReadRegionAsync(0, 0, 1, 1, 4, new byte[4], Ct).AsTask();
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10), Ct));
+            Assert.Equal(NativeStatus.Busy, Assert.Throws<ImageNativeException>(() => reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct)).Status);
+            Assert.Equal(NativeStatus.Busy, Assert.Throws<ImageNativeException>(() => { _ = reader.ReadRegionAsync(0, 0, 1, 1, 4, new byte[4], Ct).AsTask(); }).Status);
+            var close = reader.DisposeAsync().AsTask();
+            Assert.Same(close, reader.DisposeAsync().AsTask());
+            Assert.Throws<ObjectDisposedException>(() => reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+            Assert.False(close.IsCompleted);
+            release.Set();
+            Assert.Equal(4, await read.WaitAsync(TimeSpan.FromSeconds(15), Ct));
+            await close.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+            Assert.Throws<ObjectDisposedException>(() => reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+        }
+        finally
+        {
+            release.Set();
+            await read.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        }
+    }
+
+    [Fact]
+    public async Task TwoNativeCallbacksCannotCrossBorrowCloseOpenOrQueue()
+    {
+        var leftInput = Input();
+        var rightInput = Input();
+        using var left = await ImageReader.OpenAsync(leftInput, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct);
+        using var right = await ImageReader.OpenAsync(rightInput, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct);
+        using var barrier = new Barrier(2);
+        var leftRefused = 0;
+        var rightRefused = 0;
+        Action Cross(ImageReader other, ComponentInput source, Action<int> record) => () =>
+        {
+            source.OnRead = null;
+            if (!barrier.SignalAndWait(TimeSpan.FromSeconds(10), Ct))
+            {
+                throw new TimeoutException("Both real readers did not enter input callbacks.");
+            }
+
+            var count = 0;
+            try { other.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct); }
+            catch (ImageNativeException error) when (error.Status == NativeStatus.Busy) { count++; }
+            try { _ = other.ReadRegionAsync(0, 0, 1, 1, 4, new byte[4], Ct).AsTask(); }
+            catch (InvalidOperationException) { count++; }
+            try { other.Dispose(); }
+            catch (InvalidOperationException) { count++; }
+            try { _ = other.DisposeAsync().AsTask(); }
+            catch (InvalidOperationException) { count++; }
+            try { using var opened = ImageReader.Open(source, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct); }
+            catch (ImageNativeException error) when (error.Status == NativeStatus.Busy) { count++; }
+            try { _ = ImageReader.OpenAsync(source, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct).AsTask(); }
+            catch (InvalidOperationException) { count++; }
+            record(count);
+        };
+        leftInput.OnRead = Cross(right, leftInput, count => leftRefused = count);
+        rightInput.OnRead = Cross(left, rightInput, count => rightRefused = count);
+        var a = left.ReadRegionAsync(0, 0, 1, 1, 4, new byte[4], Ct).AsTask();
+        var b = right.ReadRegionAsync(0, 0, 1, 1, 4, new byte[4], Ct).AsTask();
+        var results = await Task.WhenAll(a, b).WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        Assert.Equal((4, 4), (results[0], results[1]));
+        Assert.Equal((6, 6), (leftRefused, rightRefused));
+        Assert.Equal(4, left.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+        Assert.Equal(4, right.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+    }
+
+    [Fact]
+    public async Task CancelledQueuedBorrowReleasesAndOwnCallbackCloseDefers()
+    {
+        var input = Input();
+        using var reader = await ImageReader.OpenAsync(input, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reader.ReadRegionAsync(0, 0, 1, 1, 4, new byte[4], cancellation.Token).AsTask());
+        Assert.Equal(4, reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+        var callbacks = 0;
+        input.OnRead = () => { callbacks++; reader.Dispose(); };
+        Assert.Equal(4, reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+        Assert.True(callbacks > 0);
+        Assert.Throws<ObjectDisposedException>(() => reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+    }
+
+    private sealed class ComponentInput(byte[] bytes) : IImageInput
+    {
+        internal Action? OnRead { get; set; }
+
+        public long Length => bytes.Length;
+
+        public int ReadAt(long offset, Span<byte> destination)
+        {
+            OnRead?.Invoke();
+            var count = Math.Min(destination.Length, bytes.Length - checked((int)offset));
+            bytes.AsSpan((int)offset, count).CopyTo(destination);
+            return count;
+        }
+    }
+}

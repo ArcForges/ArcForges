@@ -15,9 +15,13 @@ SafeHandle; close drains borrowed operations before releasing input roots. Cance
 is polled at callback/decode boundaries. Codec hangs or native crashes require the
 helper supervisor's OS termination and invocation cleanup.
 
-Input callbacks must return without waiting on another operation on that reader.
-Reentrant reads report Busy; queued reads or closes from a callback are refused.
-A synchronous callback close is deferred until the current borrowed read drains.
+Only one read may be reserved or active per reader. Concurrent reads report Busy
+before scheduling; cancellation releases a queued reservation, and close blocks new
+borrows while draining existing work. Duplicate asynchronous closes share one task.
+Input callbacks must return without waiting on any image operation. Opening or
+borrowing any reader from a callback reports Busy; queuing any image operation and
+closing another reader are refused. A synchronous callback close of its own reader
+is deferred until the current borrowed read drains.
 Repeated and backwards regions retain the same immutable brokered input, including
 when an upstream PNG reader internally reopens to rewind.
 
