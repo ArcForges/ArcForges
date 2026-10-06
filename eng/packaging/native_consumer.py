@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +13,127 @@ import xml.etree.ElementTree as ET
 
 import packages
 import native
+import image_runtime
+import native_binary
+
+
+def image_host_rid():
+    system = {"Windows": "win", "Linux": "linux", "Darwin": "osx"}.get(platform.system())
+    machine = {"AMD64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64", "ARM64": "arm64"}.get(platform.machine())
+    packages.require(system is not None and machine is not None, "This native consumer host is not admitted.")
+    return system + "-" + machine
+
+
+def image_diagnostic_admission(rid, compile_only=False):
+    packages.require(not os.environ.get("GITHUB_ACTIONS") and os.environ.get("CI", "").lower() != "true",
+                     "Image package consumers are explicit local diagnostics only; CI execution is prohibited.")
+    packages.require(rid in native_binary.RIDS, "Image diagnostic RID is not admitted.")
+    host = image_host_rid()
+    packages.require(host == rid or (compile_only and host.startswith("win-") and rid.startswith("win-")),
+                     "A foreign RID cannot be executed or compiled without an admitted cross-toolchain.")
+    return host
+
+
+def consume_image(directory, version, commit, rid, compile_only=False):
+    """Actual candidate C#/AOT/C17 adapters; foreign execution never substitutes for a host."""
+    image_diagnostic_admission(rid, compile_only)
+    entry = next((row for row in packages.catalogue() if row["id"] == "ArcForges.Native.Image.Runtime." + rid), None)
+    packages.require(entry is not None, "This Image RID has no admitted actual package in the publication registry.")
+    manifest = packages.verify(directory, version, commit)
+    _, materials = image_runtime.profile()
+    recipe = materials["recipes"]["rids"][rid]
+    root = Path(tempfile.mkdtemp(prefix="arcforges-image-consumer-")).resolve()
+    packages.require(not root.is_relative_to(packages.ROOT), "Image consumer must not inherit producer build files.")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+    env["NUGET_PACKAGES"], env["NUGET_HTTP_CACHE_PATH"] = str(root / ".packages"), str(root / ".http-cache")
+    (root / "global.json").write_bytes((packages.ROOT / "global.json").read_bytes())
+    configuration = ET.parse(packages.ROOT / "NuGet.config")
+    sources = configuration.getroot().find("packageSources")
+    packages.require(sources is not None, "Owning NuGet source contract is missing.")
+    ET.SubElement(sources, "add", key="image-candidate", value=str(directory))
+    mapping = configuration.getroot().find("packageSourceMapping")
+    if mapping is not None:
+        local = ET.SubElement(mapping, "packageSource", key="image-candidate")
+        for row in packages.catalogue():
+            ET.SubElement(local, "package", pattern=row["id"])
+    configuration.write(root / "NuGet.config", encoding="utf-8", xml_declaration=True)
+    identities = ["ArcForges.Build.Policy", "ArcForges.Native.Image", entry["id"]]
+    (root / "Directory.Packages.props").write_text(
+        '<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup><ItemGroup>'
+        + ''.join('<PackageVersion Include="' + name + '" Version="' + version + '" />' for name in identities)
+        + '</ItemGroup></Project>', encoding="utf-8")
+    project = root / "ImageConsumer.csproj"
+    project.write_text('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>'
+                       '<OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>'
+                       '<RuntimeIdentifier>' + rid + '</RuntimeIdentifier><PublishAot>true</PublishAot>'
+                       '<AllowUnsafeBlocks>true</AllowUnsafeBlocks><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>'
+                       '<TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup><ItemGroup>'
+                       + ''.join('<PackageReference Include="' + name + '"'
+                       + (' PrivateAssets="all"' if name == 'ArcForges.Build.Policy' else '') + '/>' for name in identities)
+                       + '</ItemGroup></Project>', encoding="utf-8")
+    (root / "Program.cs").write_text('''using System;
+using ArcForges.Native.Image;
+using ArcForges.Native.Abstractions;
+if (ImageAbi.GetAbiVersion() != new NativeAbiVersion(1, 1)) throw new Exception("Image ABI mismatch");
+Console.WriteLine(ImageAbi.GetBuildInfo());
+Console.WriteLine("package-image-abi-ok");
+''', encoding="utf-8")
+    packages.run("dotnet", "restore", str(project), cwd=root, env=env)
+    output = root / "published"
+    packages.run("dotnet", "publish", str(project), "-c", "Release", "--no-restore", "-o", str(output), cwd=root, env=env)
+    native = root / ".packages" / entry["id"].lower() / version.lower()
+    # Cross compilation consumes exact archived headers/import libraries; it is not an OS result.
+    source = root / "image-consumer.c"
+    source.write_text('''#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <arc/arc_slate_image_abi.h>
+int main(void) {
+  uint32_t major=0, minor=0;
+  if (arc_image_get_abi_version(&major,&minor)!=ARC_OK || major!=1 || minor!=1) return 1;
+  char text[4096]={0}; arc_mut_buffer_t output={text,sizeof(text),0};
+  if (arc_image_get_build_info(&output)!=ARC_OK || output.required>=sizeof(text)) return 2;
+  puts("package-image-abi-ok"); return 0;
+}
+''', encoding="utf-8")
+    c_output = output / ("ImageConsumerC.exe" if rid.startswith("win-") else "ImageConsumerC")
+    if rid.startswith("win-"):
+        vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        location = subprocess.check_output([str(vswhere), "-latest", "-products", "*", "-requires",
+                                           "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"], text=True).strip()
+        packages.require(location, "The actual admitted Windows compiler was not found.")
+        environment = "x64" if rid == "win-x64" else "x64_arm64"
+        command = root / "compile-image.cmd"
+        command.write_text('@echo off\ncall "' + location + '\\VC\\Auxiliary\\Build\\vcvarsall.bat" ' + environment
+                           + ' -vcvars_ver=14.51.36231 >nul || exit /b 1\ncl /nologo /TC /std:c17 /W4 /WX /I"'
+                           + str(native / "include") + '" "' + str(source) + '" /Fe:"' + str(c_output)
+                           + '" /link "' + str(native / "sdk" / rid / "lib/ArcImageNative.lib") + '"\nexit /b %errorlevel%\n', encoding="utf-8")
+        packages.run("cmd", "/d", "/c", str(command), cwd=root, env=env)
+    else:
+        compiler = "clang" if rid.startswith("linux-") else "cc"
+        runtime = native / "runtimes" / rid / "native"
+        packages.run(compiler, "-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-I" + str(native / "include"),
+                     str(source), str(runtime / recipe["library"]), "-Wl,-rpath," + str(runtime), "-o", str(c_output), cwd=root, env=env)
+        # Mach-O's @rpath install identity is resolved by the explicit package runtime directory above.
+    for row in manifest["packages"]:
+        if row["id"] not in identities:
+            continue
+        restored = root / ".packages" / row["id"].lower() / version.lower() / (row["id"].lower() + "." + version.lower() + ".nupkg")
+        packages.require(restored.is_file() and restored.read_bytes() == (directory / row["file"]).read_bytes(),
+                         "Image consumer restored different candidate bytes.")
+    evidence = {"sourceCommit": commit, "version": version, "rid": rid, "mode": "compile-only" if compile_only else "actual-host",
+                "c17Sha256": hashlib.sha256(c_output.read_bytes()).hexdigest(), "consumerRoot": str(root),
+                "limitation": "ABI identity consumers do not prove image decode, OS isolation, deployment or whole-product acceptance."}
+    if not compile_only:
+        executable = output / ("ImageConsumer.exe" if rid.startswith("win-") else "ImageConsumer")
+        for program in (executable, c_output):
+            result = subprocess.run([str(program)], cwd=root, env=env, capture_output=True, text=True, timeout=30)
+            packages.require(result.returncode == 0 and "package-image-abi-ok" in result.stdout,
+                             "Actual Image package consumer failed: " + result.stdout + result.stderr)
+        evidence["aotSha256"] = hashlib.sha256(executable.read_bytes()).hexdigest()
+    (root / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    print("Image candidate consumer evidence: " + str(root), flush=True)
+    return evidence
 
 
 def execute(executable, directory, env, failure=False):
@@ -223,5 +345,12 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit")
     parser.add_argument("--directory", type=Path, default=packages.ROOT / "artifacts/packages")
+    parser.add_argument("--image-rid", choices=tuple(native_binary.RIDS))
+    parser.add_argument("--compile-only", action="store_true")
     args = parser.parse_args()
-    consume(args.directory.resolve(), packages.version(args.version), args.commit or packages.source_commit())
+    if args.image_rid:
+        consume_image(args.directory.resolve(), packages.version(args.version), args.commit or packages.source_commit(),
+                      args.image_rid, args.compile_only)
+    else:
+        packages.require(not args.compile_only, "Compile-only is a closed Image adapter option.")
+        consume(args.directory.resolve(), packages.version(args.version), args.commit or packages.source_commit())

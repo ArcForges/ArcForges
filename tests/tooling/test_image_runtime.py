@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "eng/packaging"))
 import image_runtime as image
 import native_binary
+import native_consumer
 
 
 class ImageRuntimeTests(unittest.TestCase):
@@ -256,6 +257,23 @@ class ImageRuntimeTests(unittest.TestCase):
                 image.verify_package(entry, lambda path: b"{}", set(), "0" * 40)
         entry = {"rid": "win-x64", "id": "ArcForges.Native.Image.Runtime.win-x64", "library": "ArcImageNative"}
         self.assertRaisesRegex(ValueError, "receipt", image.verify_package, entry, lambda path: b"{}", set(), "0" * 40)
+
+    def test_actual_host_diagnostic_refuses_foreign_execution_ci_and_unpublished_rids(self):
+        if os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI", "").lower() == "true":
+            self.assertRaisesRegex(ValueError, "CI execution", native_consumer.image_diagnostic_admission, "win-x64")
+            return
+        host = native_consumer.image_host_rid()
+        self.assertEqual(host, native_consumer.image_diagnostic_admission(host))
+        foreign = "linux-x64" if host.startswith("win-") else "win-x64"
+        self.assertRaisesRegex(ValueError, "foreign RID", native_consumer.image_diagnostic_admission, foreign)
+        self.assertRaisesRegex(ValueError, "not admitted", native_consumer.image_diagnostic_admission, "unreviewed-rid")
+        if host.startswith("win-"):
+            other = "win-arm64" if host == "win-x64" else "win-x64"
+            self.assertEqual(host, native_consumer.image_diagnostic_admission(other, True))
+            if not any(row["id"] == "ArcForges.Native.Image.Runtime." + other
+                       for row in native_consumer.packages.catalogue()):
+                self.assertRaisesRegex(ValueError, "no admitted actual package", native_consumer.consume_image,
+                                       Path("unavailable-candidate"), "1.0.0", "0" * 40, other, True)
 
 
 @unittest.skipUnless(os.name == "nt" and os.environ.get("ARCFORGES_IMAGE_ARM_CRT"),
