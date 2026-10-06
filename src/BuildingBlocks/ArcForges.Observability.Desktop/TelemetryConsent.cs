@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
 using ArcForges.Foundation;
@@ -15,7 +16,7 @@ namespace ArcForges.Observability.Desktop;
 /// Observability assembly also has a static class named <c>TelemetryConsent</c> (for hosts that need no consent); a file that imports
 /// both namespaces must qualify one of them.
 /// </summary>
-public sealed class TelemetryConsent : ITelemetryConsent
+public sealed class TelemetryConsent : IRevocableTelemetryConsent
 {
     internal const string FileName = "telemetry-consent.json";
     private const int RecordVersion = 1;
@@ -41,6 +42,7 @@ public sealed class TelemetryConsent : ITelemetryConsent
 
     /// <summary>True only while the user's consent stands.</summary>
     public bool IsGranted => State == TelemetryConsentState.Granted;
+    public long CollectionEpoch => Revocations;
 
     /// <summary>When the state last changed, or null if the user has never changed it.</summary>
     public Instant? ChangedAt
@@ -56,6 +58,9 @@ public sealed class TelemetryConsent : ITelemetryConsent
 
     /// <summary>Raised after the state changed. A host drops any telemetry it has queued when consent is no longer granted.</summary>
     public event EventHandler? Changed;
+
+    // Production queue/trace purge occurs before durable I/O, so a slow or failing disk cannot delay withdrawal.
+    internal event Action? Revoking;
 
     /// <summary>The gate under which every client send runs; revocation waits on it so no send is in flight afterwards.</summary>
     internal object SendGate { get; } = new();
@@ -114,6 +119,7 @@ public sealed class TelemetryConsent : ITelemetryConsent
         }
 
         Interlocked.Increment(ref _revocations);
+        NotifyRevoking();
         lock (SendGate)
         {
             // Draining barrier only: any send holding this gate has completed, and none starts while it is Revoked.
@@ -156,6 +162,16 @@ public sealed class TelemetryConsent : ITelemetryConsent
         string temporary = _path + ".tmp";
         File.WriteAllBytes(temporary, buffer.WrittenSpan.ToArray());
         File.Move(temporary, _path, overwrite: true);
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "An internal purge/cancellation callback must never prevent durable revocation or another owner's purge; live state and the revocation epoch are already fenced.")]
+    private void NotifyRevoking()
+    {
+        foreach (Action callback in Revoking?.GetInvocationList().Cast<Action>() ?? [])
+        {
+            try { callback(); }
+            catch (Exception) { }
+        }
     }
 
     private static (TelemetryConsentState State, Instant? ChangedAt) Load(string path)

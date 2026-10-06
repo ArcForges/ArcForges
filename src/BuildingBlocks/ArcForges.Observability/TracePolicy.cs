@@ -125,6 +125,7 @@ public sealed class TracePolicy : IDisposable
     private long _consentSuppressed;
     private long _exportFailures;
     private bool _disposed;
+    private readonly string _epochKey = "ArcForges.TracePolicy.Epoch." + Guid.NewGuid().ToString("N");
 
     /// <param name="options">The sampling and buffer configuration.</param>
     /// <param name="identity">The application, build, instance and environment these signals are attributed to (SG-05).</param>
@@ -213,42 +214,67 @@ public sealed class TracePolicy : IDisposable
         {
             ShouldListenTo = shouldListenTo,
             Sample = SampleAtHead,
+            ActivityStarted = activity => Guarded(() => OnSpanStarted(activity)),
             ActivityStopped = Stopped,
         };
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             _listeners.Add(listener);
+            ActivitySource.AddActivityListener(listener);
         }
-
-        ActivitySource.AddActivityListener(listener);
         return listener;
     }
 
     /// <summary>
+    /// Captures this policy's consent epoch at actual span start. A host using its own listener must call this from
+    /// ActivityStarted, never backfill a missing stamp at span end. Attach wires both callbacks automatically.
+    /// A stamp is write-once: a later grant cannot relabel a span begun without consent or before withdrawal.
+    /// </summary>
+    public void OnSpanStarted(Activity activity)
+    {
+        ArgumentNullException.ThrowIfNull(activity);
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_consent is IRevocableTelemetryConsent revocable && activity.GetCustomProperty(_epochKey) is null)
+            {
+                long epoch = revocable.CollectionEpoch;
+                bool granted = _consent.IsGranted && epoch == revocable.CollectionEpoch;
+                activity.SetCustomProperty(_epochKey, granted ? epoch : -1L);
+            }
+        }
+    }
+
+    /// <summary>
     /// Applies the policy to one finished span. <see cref="Attach"/> calls this for every span it hears; a host that
-    /// drives its own listener may call it directly. It never throws for a failing sink: the span is counted in
+    /// drives its own listener must pair it with <see cref="OnSpanStarted"/> at actual start for revocable consent.
+    /// Unmarked spans are refused with revocable consent. It never throws for a failing sink: the span is counted in
     /// <see cref="TracePolicyStatistics.ExportFailures"/> instead, because telemetry must not break the instrumented code.
     /// </summary>
     public void OnSpanEnded(Activity activity)
     {
         ArgumentNullException.ThrowIfNull(activity);
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!_consent.IsGranted)
+        lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
+        long? epoch = activity.GetCustomProperty(_epochKey) as long?;
+        if ((_consent is IRevocableTelemetryConsent && epoch is null) || !MayCollect(epoch))
         {
             Withdraw();
             return;
         }
 
-        ScrubbedSpan span = RedactionProcessor.Scrub(activity);
+        ScrubbedSpan span = RedactionProcessor.Scrub(activity).WithCollectionEpoch(epoch);
         bool failed = span.Status == ActivityStatusCode.Error;
         if (failed)
         {
-            Guarded(() => RecordErrorFact(span));
+            Guarded(() => RecordErrorFact(span, epoch));
         }
+
+        if (!MayCollect(epoch)) { Withdraw(); return; }
 
         if (activity.Recorded)
         {
-            if (Export(span))
+            if (Export(span, epoch))
             {
                 Interlocked.Increment(ref _headSampled);
             }
@@ -257,10 +283,15 @@ public sealed class TracePolicy : IDisposable
         }
 
         var release = new List<ScrubbedSpan>();
-        BufferOutcome outcome = _buffer.Offer(span, failed || span.Duration >= _options.SlowSpanThreshold, release);
+        BufferOutcome outcome;
+        lock (_gate)
+        {
+            if (_disposed || !MayCollect(epoch)) { Withdraw(); return; }
+            outcome = _buffer.Offer(span, failed || span.Duration >= _options.SlowSpanThreshold, release);
+        }
         foreach (ScrubbedSpan released in release)
         {
-            Export(released);
+            Export(released, released.CollectionEpoch);
         }
 
         // A promoting span is never refused for size, so the only error span that is not retained is a late one.
@@ -271,7 +302,7 @@ public sealed class TracePolicy : IDisposable
     }
 
     /// <summary>Discards every span held in the diagnostic buffer, as when consent is withdrawn.</summary>
-    public void PurgeBuffer() => _buffer.Purge();
+    public void PurgeBuffer() { lock (_gate) _buffer.Purge(); }
 
     public void Dispose()
     {
@@ -344,9 +375,9 @@ public sealed class TracePolicy : IDisposable
 
     private void Stopped(Activity activity) => Guarded(() => OnSpanEnded(activity));
 
-    private bool Export(ScrubbedSpan span)
+    private bool Export(ScrubbedSpan span, long? epoch)
     {
-        if (!_consent.IsGranted)
+        if (!MayCollect(epoch))
         {
             Withdraw();
             return false;
@@ -365,6 +396,9 @@ public sealed class TracePolicy : IDisposable
             return false;
         }
     }
+
+    private bool MayCollect(long? epoch) => _consent.IsGranted
+        && (epoch is null || _consent is IRevocableTelemetryConsent revocable && epoch == revocable.CollectionEpoch);
 
     private void Guarded(Action action)
     {
@@ -386,7 +420,7 @@ public sealed class TracePolicy : IDisposable
         _buffer.Purge();
     }
 
-    private void RecordErrorFact(ScrubbedSpan span)
+    private void RecordErrorFact(ScrubbedSpan span, long? epoch)
     {
         var fields = new Dictionary<string, object?>(_identityFields, StringComparer.Ordinal);
         foreach (KeyValuePair<string, object?> tag in span.Tags)
@@ -398,7 +432,7 @@ public sealed class TracePolicy : IDisposable
             && name is string text && Enum.TryParse(text, ignoreCase: false, out SignalService parsed) && Enum.IsDefined(parsed)
             ? parsed
             : null;
-        _events.Write(new StructuredSignal(ErrorFactEventName, SignalLevel.Error, _time.GetUtcNow(), fields));
+        _events.Write(new StructuredSignal(ErrorFactEventName, SignalLevel.Error, _time.GetUtcNow(), fields, epoch));
         TagList labels = MetricLabelPolicy.CreateTags(service);
         _errorCounter.Add(1, in labels);
         Interlocked.Increment(ref _errorFacts);

@@ -994,7 +994,17 @@
     "src/BuildingBlocks/ArcForges.Security.Audit/DecisionAuditDetails.cs",
     "src/BuildingBlocks/ArcForges.Security.Audit/DecisionAuditSinks.cs",
     "src/BuildingBlocks/ArcForges.Security.Audit/Tests/AuditDecisionTests.cs",
-    "src/BuildingBlocks/ArcForges.Capabilities/Tests/InvocationRestoreTests.cs"
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/InvocationRestoreTests.cs",
+    "docs/observability-production-composition.md",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/DependencyHealthMonitor.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/DesktopObservabilityHost.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpCollectorCredential.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpExporterOptions.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpHttpExporter.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpJson.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpMetricCollector.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/OtlpExporterTests.cs",
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ProductionCompositionTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

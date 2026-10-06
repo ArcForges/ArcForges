@@ -9,8 +9,7 @@ The package (net10.0, AGPL-3.0-only) is admitted in `eng/packaging/packages.json
 main-push pipeline with every other admitted package at one prerelease version; consumers pin that exact version. It
 depends on `ArcForges.Observability` and `ArcForges.Foundation` at the same version and on `ArcForges.Contracts.Foundation`
 (exact pin recorded in the catalogue). `ArcForges.Observability` brings `ArcForges.Capabilities` and, through the Contracts SDK
-packages, `Google.Protobuf` and `Grpc.Core.Api`; there is no direct third-party package reference and no exporter or
-OpenTelemetry dependency.
+packages, `Google.Protobuf` and `Grpc.Core.Api`; there is no direct third-party package reference and no OpenTelemetry package dependency. PLT.58 supplies the production OTLP/HTTP JSON exporter and desktop host composition.
 
 `DesktopDiagnostics.Open` takes a `DesktopDiagnosticsOptions` whose required `Directory` and `Identity` (an
 `ObservabilityContext`) name the host-owned local directory and the application identity. It holds three kinds of state
@@ -44,14 +43,14 @@ well-formed `granted` record, which is honoured at the next start. Any code in t
 `TelemetryConsent` implements `ArcForges.Observability.ITelemetryConsent`, the live consent state that the Observability
 `TracePolicy` (PLT.50) reads on every span. That interface has no change notification, and the trace policy asks the host to
 call `PurgeBuffer` when consent is revoked; a host does that from `TelemetryConsent.Changed` when `IsGranted` is false. This
-wiring is documented here and not exercised by this project's tests. The Observability assembly also has a static class named
+wiring is implemented and exercised by DesktopObservabilityHost and its production composition tests. The Observability assembly also has a static class named
 `TelemetryConsent` (`NotRequired`, for Cloud hosts); a file that imports both namespaces must qualify one of the two names.
 
 `CreateTelemetry(transport)` returns the only path by which client telemetry (events and spans) leaves this library (an approved report leaves only through `ApprovedDiagnosticReport.SendAsync`): a `ConsentGatedTelemetry` sink
 for a `SignalEmitter`, with `Export(Activity)` for the host's span exporter (spans are copied through the Observability
 scrubbing processor first). Events at Information and above are written to the local store, best effort, and Debug and Trace events only during a verbose session; the host's `IClientTelemetryTransport` is called only while
-consent is granted (events at Information and above only) and should enqueue and return, because a revocation waits for sends in progress, and so does the first synchronous part of an uploader. This library queues
-nothing, so a host that queues telemetry must drop its queue when `TelemetryConsent.Changed` reports that consent is no
+consent is granted (events at Information and above only) and should enqueue and return, because a revocation waits for sends in progress, and so does the first synchronous part of an uploader. DesktopDiagnostics itself queues
+nothing, so an alternative host transport that queues telemetry must drop its queue when `TelemetryConsent.Changed` reports that consent is no
 longer granted. Metrics export is host-owned and must consult `TelemetryConsent.IsGranted` the same way.
 
 ## Reports and crashes
@@ -85,3 +84,12 @@ internal members (including a null-by-default internal hook that the consent tes
 the published binary; they are not part of the package contract and may change without notice. Nothing in this repository
 calls `TracePolicy.PurgeBuffer` from `TelemetryConsent.Changed`: the host wiring does that. No installed-package consumer
 runs in CI.
+
+## Production exporter and host (PLT.58)
+
+DesktopObservabilityHost.Open composes these primitives with the actual bounded, sanitized OTLP/HTTP JSON exporter,
+TracePolicy, finite metric collector and readiness adapters. Consent withdrawal purges uploads and trace buffers before
+persistence I/O; revocation epochs prevent replay after an immediate re-grant. OtlpHttpExporter alone owns the real
+nonredirecting HTTPS client. Its queue is memory-only, includes in-flight byte/count accounting, has bounded retries,
+response parsing and shutdown, and reports actual collector delivery health. See
+[production composition](../../../docs/observability-production-composition.md) for authentication, lifecycle and product ownership.
