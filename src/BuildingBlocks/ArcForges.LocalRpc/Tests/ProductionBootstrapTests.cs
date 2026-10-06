@@ -6,6 +6,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using System.Diagnostics;
+using Xunit;
 
 namespace ArcForges.LocalRpc.Tests;
 
@@ -261,7 +262,7 @@ public sealed class ProductionBootstrapTests
         {
             var (client, accepted) = InMemoryDuplexStream.CreatePair();
             Assert.True(supplier.TrySupply(accepted));
-            return ValueTask.FromResult(client);
+            return ValueTask.FromResult<Stream>(client);
         });
         using var child = LocalRpcChildBootstrap.FromResource((foreign ? otherLaunch : ownLaunch).HandoffBootstrapResource());
         var request = new LocalBootstrapServiceChallengeRequest
@@ -306,11 +307,16 @@ public sealed class ProductionBootstrapTests
                 LocalRpcServer.CreateBuilder(supplier).AddService(probe), StartedAt, cancellation);
             return new(world, launch, supplier, child, host, manifest, probe);
         }
-        internal LocalRpcClientChannel Channel() => LocalRpcClientChannel.CreateFromStreams(_ =>
+        internal LocalRpcClientChannel Channel() => LocalRpcClientChannel.CreateFromStreams(async _ =>
         {
             var (client, server) = InMemoryDuplexStream.CreatePair();
-            if (!_supplier.TrySupply(server)) { server.Dispose(); client.Dispose(); throw new InvalidOperationException("The closed parent refused the stream."); }
-            return ValueTask.FromResult(client);
+            if (!_supplier.TrySupply(server))
+            {
+                await server.DisposeAsync();
+                await client.DisposeAsync();
+                throw new InvalidOperationException("The closed parent refused the stream.");
+            }
+            return client;
         });
         internal LocalBootstrapServiceChallengeRequest Request() => new()
         {

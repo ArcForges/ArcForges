@@ -21,7 +21,7 @@ public sealed class LocalRpcParentBootstrapHost : IAsyncDisposable
     {
         Registration = registration;
         _server = server;
-        _ended = registration.Ended.Register(static owner => { _ = ((LocalRpcParentBootstrapHost)owner!).DisposeAsync(); }, this);
+        _ended = registration.Ended.Register(static owner => { _ = ((LocalRpcParentBootstrapHost)owner!).DisposeAsync().AsTask(); }, this);
     }
 
     public LocalRpcRegistration Registration { get; }
@@ -98,7 +98,7 @@ public sealed class LocalRpcParentBootstrapHost : IAsyncDisposable
         catch (Exception error) { failure = error; }
         try { await _server.DisposeAsync().ConfigureAwait(false); }
         catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
-        _ended.Dispose();
+        await _ended.DisposeAsync().ConfigureAwait(false);
         if (failure is null) _completion.TrySetResult();
         else _completion.TrySetException(failure);
     }
