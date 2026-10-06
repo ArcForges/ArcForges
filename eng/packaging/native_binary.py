@@ -277,7 +277,7 @@ def _elf(r):
         value = single(tag)
         if value is not None:
             paths.extend(name(value).split(":"))
-    exports, data, absolute = [], [], []
+    exports, data, absolute, forwarded = [], [], [], []
     symbol_address, symbol_stride = single(6), single(11)
     require(symbol_address is not None and symbol_stride == 24, "Invalid ELF dynamic symbol contract.")
     symbol_offset = mapped(symbol_address, 24)[0]
@@ -289,6 +289,9 @@ def _elf(r):
         if section_kind == 11:
             require(stride == 24 and size % stride == 0 and size // stride <= MAX_TABLE and link < section_count,
                     "Invalid ELF dynamic symbol table.")
+            linked = r.unpack("<IIQQQQIIQQ", sections + link * 64)
+            require(linked[1] == 3 and linked[4] == string_begin and linked[5] == string_size,
+                    "ELF linked symbol strings differ from dynamic strings.")
             symbol_sections.append((offset, size))
     require(len(symbol_sections) == 1 and symbol_sections[0][0] == symbol_offset,
             "ELF dynamic symbols differ from the file table.")
@@ -301,7 +304,7 @@ def _elf(r):
             absolute.append(symbol_name)
         elif info & 15 in (2, 10):
             require(mapped(address)[1] & 1, "ELF callable export is not executable.")
-            exports.append(symbol_name)
+            (forwarded if info & 15 == 10 else exports).append(symbol_name)
         else:
             data.append(symbol_name)
     requirements = []
@@ -329,7 +332,7 @@ def _elf(r):
         require((index + 1 < need_count) == bool(next_need), "Invalid ELF version chain.")
         need_address += next_need
     return BinaryInfo("ELF64", "x86_64" if machine == 62 else "aarch64", _sorted(exports),
-                      _sorted(imports), identity, tuple(paths), data_exports=_sorted(data),
+                      _sorted(imports), identity, tuple(paths), forwarded_exports=_sorted(forwarded), data_exports=_sorted(data),
                       absolute_exports=_sorted(absolute), version_requirements=_sorted(requirements))
 
 

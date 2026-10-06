@@ -176,8 +176,17 @@ class NativeBinaryTests(unittest.TestCase):
         data[0x500 + 24 + 4] = 0x11
         self.assertEqual(("fn",), binary.inspect_bytes(bytes(data), "linux-x64").data_exports)
         data = elf()
+        data[0x500 + 24 + 4] = 0x1a
+        self.assertEqual(("fn",), binary.inspect_bytes(bytes(data), "linux-x64").forwarded_exports)
+        data = elf()
         put(data, 64 + 4, "<I", 4)
         with self.assertRaisesRegex(ValueError, "executable"):
+            binary.inspect_bytes(bytes(data), "linux-x64")
+
+    def test_elf_dynamic_and_linked_strings_must_match(self):
+        data = elf()
+        put(data, 0x800 + 64 + 32, "<Q", 0x410)
+        with self.assertRaisesRegex(ValueError, "linked"):
             binary.inspect_bytes(bytes(data), "linux-x64")
 
     def test_elf_endianness_unbounded_sections_and_bad_dynamic_strings_fail(self):
