@@ -351,8 +351,35 @@ internal static class HostileAttacks
             "input-write" => InputWritable(),
             "env" => Environment(),
             "identity" => Identity(),
+            "storage-write" => PrivateStorage(write: true),
+            "storage-read" => PrivateStorage(write: false),
             _ => "attack:DENIED:unknown",
         };
+    }
+
+    private static string PrivateStorage(bool write)
+    {
+        try
+        {
+            var root = System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrEmpty(root))
+            {
+                return "storage:DENIED:NoPrivateFolder";
+            }
+
+            var marker = Path.Combine(root, "arcforges-owned-lifetime-marker.bin");
+            if (write)
+            {
+                File.WriteAllText(marker, "private previous parser lifetime");
+                return "storage-write:WRITTEN";
+            }
+
+            return File.Exists(marker) ? "storage-read:PERSISTED" : "storage-read:ABSENT";
+        }
+        catch (Exception exception)
+        {
+            return "storage:DENIED:" + exception.GetType().Name;
+        }
     }
 
     private static string ReadFile(string path)

@@ -260,4 +260,13 @@ internal static unsafe partial class WindowsNative
     [LibraryImport("Userenv.dll", EntryPoint = "DeriveAppContainerSidFromAppContainerName", StringMarshalling = StringMarshalling.Utf16)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     internal static partial int DeriveAppContainerSidFromAppContainerName(string name, out nint sid);
+
+    [LibraryImport("Userenv.dll", EntryPoint = "DeleteAppContainerProfile", StringMarshalling = StringMarshalling.Utf16)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static partial int DeleteAppContainerProfile(string name);
+
+    [LibraryImport("Userenv.dll", EntryPoint = "GetAppContainerFolderPath", StringMarshalling = StringMarshalling.Utf16)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static partial int GetAppContainerFolderPath(string sid, out nint path);
+
 }

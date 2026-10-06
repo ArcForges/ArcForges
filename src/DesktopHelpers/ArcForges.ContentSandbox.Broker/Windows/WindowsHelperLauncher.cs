@@ -28,6 +28,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 {
     private const int PipeConnectMilliseconds = 10_000;
     private const int DiagnosticBytes = 4096;
+    private const uint AttributeJobList = 0x0002000D; // Installed Windows SDK WinBase.h, ProcThreadAttributeJobList (13), input attribute.
 
     // DEP, heap-termination, bottom-up and high-entropy ASLR, strict handle checks, no extension points,
     // no remote or low-label image loads. Dynamic-code prohibition is left off: the Native AOT runtime and native parser libraries are
@@ -105,6 +106,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
     }
 
     [SupportedOSPlatform("windows")]
+    [SuppressMessage("Usage", "CA2213", Justification = "HelperResourceLifetime owns all field disposal through release callbacks; the process and kernel wait are closed only after actual exit, including quarantine continuation.")]
     private sealed class WindowsProvisionedHelper(AppContainerLease container) : IProvisionedHelper
     {
         private readonly TaskCompletionSource<int> _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -118,7 +120,11 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
         private long _job;
         private Process? _process;
         private Task _diagnosticReader = Task.CompletedTask;
-        private int _disposed;
+        private readonly object _disposeGate = new();
+        private HelperResourceLifetime? _lifetime;
+        private ProcessExitWait? _processWait;
+        private bool _childCreated;
+        private Exception? _terminationFailure;
 
         public LocalRpcProcessIdentity Identity { get; private set; }
 
@@ -185,12 +191,21 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                     inputReadOnly,
                 };
                 inherited.AddRange(_slots.Select(slot => slot.SectionHandle));
+                container.BeginLaunch();
+                _job = CreateJob(request.Limits);
                 information = CreateRestrictedProcess(
                     request.HelperPath,
                     container.Sid,
                     [.. inherited],
                     stdin.ClientSafePipeHandle.DangerousGetHandle(),
-                    diagnostics.ClientSafePipeHandle.DangerousGetHandle());
+                    diagnostics.ClientSafePipeHandle.DangerousGetHandle(),
+                    (nint)_job);
+
+                _childCreated = true;
+                // Own the actual kernel process handle before any later launch step can fail.
+                _processWait = new ProcessExitWait(information.Process);
+                information.Process = 0;
+                _process = Process.GetProcessById((int)information.ProcessId);
 
                 stdin.DisposeLocalCopyOfClientHandle();
                 diagnostics.DisposeLocalCopyOfClientHandle();
@@ -205,19 +220,13 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                     entries.Add(new ContentSandboxHandleEntry((ContentSandboxHandleRole)((int)ContentSandboxHandleRole.Slot0 + index), (ulong)_slots[index].SectionHandle));
                 }
 
-                VerifyAppContainer(information.Process, container.Sid);
-                _job = CreateJob(request.Limits);
-                if (!AssignProcessToJobObject((nint)_job, information.Process))
-                {
-                    throw Fail("The helper could not be placed in its Job Object.");
-                }
-
-                if (!IsProcessInJob(information.Process, (nint)_job, out var inJob) || !inJob)
+                VerifyAppContainer(_processWait.NativeHandle, container.Sid);
+                if (!IsProcessInJob(_processWait.NativeHandle, (nint)_job, out var inJob) || !inJob)
                 {
                     throw Fail("The helper is not in its Job Object.");
                 }
 
-                _process = Process.GetProcessById((int)information.ProcessId);
+                container.RecordChild(_process);
                 Identity = LocalRpcProcessIdentity.FromProcess(_process);
                 _process.EnableRaisingEvents = true;
                 _process.Exited += OnExited;
@@ -247,13 +256,13 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             catch (Exception exception) when (exception is not ContentSandboxLaunchException and not OperationCanceledException)
             {
                 var note = await DescribeEndAsync().ConfigureAwait(false);
-                KillCreated(information.Process);
+                KillCreated(_processWait?.NativeHandle ?? information.Process);
                 Terminate();
                 throw new ContentSandboxLaunchException("resource.unavailable", "The restricted helper could not be started" + note + ".", exception);
             }
             catch
             {
-                KillCreated(information.Process);
+                KillCreated(_processWait?.NativeHandle ?? information.Process);
                 Terminate();
                 throw;
             }
@@ -311,61 +320,140 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
 
         public void Terminate()
         {
-            var job = Interlocked.Read(ref _job);
-            if (job != 0)
+            lock (_disposeGate)
             {
-                _ = TerminateJobObject((nint)job, 1);
-            }
-            else
-            {
-                try
+                var job = Interlocked.Read(ref _job);
+                if (job != 0)
                 {
-                    _process?.Kill(entireProcessTree: true);
+                    if (!TerminateJobObject((nint)job, 1))
+                    {
+                        _terminationFailure ??= Fail("The helper Job Object could not be terminated.");
+                    }
                 }
-                catch (Exception exception) when (exception is InvalidOperationException or Win32Exception or NotSupportedException)
+                else
                 {
-                    // The process already ended.
+                    var process = _processWait;
+                    if (process is not null && !process.Exited.IsCompletedSuccessfully)
+                    {
+                        var held = false;
+                        try
+                        {
+                            process.SafeWaitHandle.DangerousAddRef(ref held);
+                            if (!TerminateProcess(process.NativeHandle, 1) && !process.WaitOne(0))
+                            {
+                                _terminationFailure ??= Fail("The retained helper process could not be terminated.");
+                            }
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // The verified exited instance has already released its retained handle.
+                        }
+                        finally
+                        {
+                            if (held)
+                            {
+                                process.SafeWaitHandle.DangerousRelease();
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            lock (_disposeGate)
             {
-                return;
+                _lifetime ??= new HelperResourceLifetime(
+                    TerminateForCleanup,
+                    CloseJob,
+                    _processWait?.Exited ?? (_childCreated
+                        ? Task.FromException(new InvalidOperationException("The created child's kernel exit handle was not retained."))
+                        : Task.CompletedTask),
+                    () => new ValueTask(_diagnosticReader),
+                    [
+                        () => DisposeStreamAsync(_control),
+                        () => DisposeStreamAsync(_service),
+                        () => DisposeStreamAsync(_diagnostics),
+                        .. _slots.Select<MappedSlot, Func<ValueTask>>(slot => () =>
+                        {
+                            slot.Dispose();
+                            return ValueTask.CompletedTask;
+                        }),
+                    ],
+                    ReleaseIdentity,
+                    TimeSpan.FromSeconds(10),
+                    TimeSpan.FromSeconds(1));
+                return _lifetime.DisposeAsync();
             }
+        }
 
-            Terminate();
-            if (_process is not null)
+        private void TerminateForCleanup()
+        {
+            lock (_disposeGate)
+            {
+                Terminate();
+                if (_terminationFailure is not null)
+                {
+                    throw _terminationFailure;
+                }
+            }
+        }
+
+        private void CloseJob()
+        {
+            lock (_disposeGate)
+            {
+                var job = Interlocked.Exchange(ref _job, 0);
+                if (job != 0 && !CloseHandle((nint)job))
+                {
+                    throw Fail("The helper Job Object could not be closed.");
+                }
+            }
+        }
+
+        private void ReleaseIdentity()
+        {
+            try
+            {
+                container.ConfirmExit();
+                container.Dispose();
+            }
+            finally
             {
                 try
                 {
-                    await _exited.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                    _processWait?.Dispose();
                 }
-                catch (TimeoutException)
+                finally
                 {
-                    // The tree is gone or unreachable; the identity below is released either way.
+                    _process?.Dispose();
                 }
             }
+        }
 
-            await _diagnosticReader.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-            await DisposeStreamAsync(_control).ConfigureAwait(false);
-            await DisposeStreamAsync(_service).ConfigureAwait(false);
-            await DisposeStreamAsync(_diagnostics).ConfigureAwait(false);
-            foreach (var slot in _slots)
+        /// <summary>The retained kernel handle is the exit authority, including partial launch failures before managed identity setup.</summary>
+        private sealed class ProcessExitWait : WaitHandle
+        {
+            internal ProcessExitWait(nint handle)
             {
-                slot.Dispose();
+                SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle: true);
+                Exited = ObserveExitAsync();
             }
 
-            if (_job != 0)
-            {
-                _ = CloseHandle((nint)_job);
-                _job = 0;
-            }
+            internal nint NativeHandle => SafeWaitHandle.DangerousGetHandle();
 
-            _process?.Dispose();
-            container.Dispose();
+            internal Task Exited { get; }
+
+            private async Task ObserveExitAsync()
+            {
+                // The bounded pool has at most eight retained waits. Poll the actual kernel signal
+                // without occupying a worker thread or depending on event registration succeeding.
+                while (!WaitOne(0))
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+                }
+            }
         }
 
         private void OnExited(object? sender, EventArgs args)
@@ -404,9 +492,9 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                     }
                 }
             }
-            catch (IOException)
+            catch (Exception exception) when (exception is IOException or ObjectDisposedException)
             {
-                // The write end closed with the process.
+                // The write end closed with the process or the lifetime owner closed the pipe.
             }
         }
 
@@ -453,15 +541,15 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             }
         }
 
-        private static unsafe ProcessInformation CreateRestrictedProcess(string helperPath, nint appContainerSid, nint[] inheritedHandles, nint standardInput, nint standardOutput)
+        private static unsafe ProcessInformation CreateRestrictedProcess(string helperPath, nint appContainerSid, nint[] inheritedHandles, nint standardInput, nint standardOutput, nint job)
         {
             nuint size = 0;
-            _ = InitializeProcThreadAttributeList(0, 3, 0, ref size);
+            _ = InitializeProcThreadAttributeList(0, 4, 0, ref size);
             var list = (nint)NativeMemory.Alloc(size);
             var initialized = false;
             try
             {
-                if (!InitializeProcThreadAttributeList(list, 3, 0, ref size))
+                if (!InitializeProcThreadAttributeList(list, 4, 0, ref size))
                 {
                     throw Fail("The attribute list could not be made.");
                 }
@@ -484,6 +572,12 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
                     if (!UpdateProcThreadAttribute(list, 0, (nuint)AttributeMitigationPolicy, (nint)(&mitigation), sizeof(ulong), 0, 0))
                     {
                         throw Fail("The mitigation policy could not be set.");
+                    }
+
+                    // The child is born in the kill-on-close Job: parent death cannot orphan it between creation and assignment.
+                    if (!UpdateProcThreadAttribute(list, 0, AttributeJobList, (nint)(&job), (nuint)sizeof(nint), 0, 0))
+                    {
+                        throw Fail("The atomic Job Object assignment could not be set.");
                     }
 
                     var startup = new StartupInfoExW { AttributeList = list };

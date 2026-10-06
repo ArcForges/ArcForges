@@ -14,6 +14,7 @@ namespace ArcForges.ContentSandbox.Tests;
 /// </summary>
 public sealed class LinuxProfileTests
 {
+    private const int SelfPid = 19741;
     private const uint Eperm = SeccompProgram.RetErrnoEperm;
 
     private static uint Run(IReadOnlyList<BpfInstruction> program, uint architecture, uint number, ulong argument0 = 0)
@@ -31,6 +32,7 @@ public sealed class LinuxProfileTests
                         0 => number,
                         4 => architecture,
                         16 => (uint)argument0,
+                        20 => (uint)(argument0 >> 32),
                         _ => throw new InvalidOperationException("The filter reads only the number, the architecture and the first argument."),
                     };
                     counter++;
@@ -61,7 +63,7 @@ public sealed class LinuxProfileTests
     public void EveryDeniedCallFailsWithPermissionDeniedAndEveryOtherCallPasses(string name)
     {
         var (architecture, audit) = Resolve(name);
-        var program = SeccompProgram.Build(architecture);
+        var program = SeccompProgram.Build(architecture, SelfPid);
         var denied = SeccompProgram.Denied(architecture);
         Assert.Equal(denied.Count, denied.Distinct().Count());
         foreach (var number in denied)
@@ -70,7 +72,7 @@ public sealed class LinuxProfileTests
         }
 
         foreach (var number in Enumerable.Range(0, 450).Select(value => (uint)value).Except(denied)
-            .Where(value => value != SeccompProgram.Clone(architecture) && value != 435))
+            .Where(value => value != SeccompProgram.Clone(architecture) && value != 435 && value != (architecture == LinuxArchitecture.X64 ? 234u : 131u)))
         {
             Assert.Equal(SeccompProgram.RetAllow, Run(program, audit, number));
         }
@@ -79,7 +81,7 @@ public sealed class LinuxProfileTests
     [Fact]
     public void EveryX32CallNumberIsDeniedAndSignallingAndDescriptorTakingAreDeniedOnBothFamilies()
     {
-        var x64 = SeccompProgram.Build(LinuxArchitecture.X64);
+        var x64 = SeccompProgram.Build(LinuxArchitecture.X64, SelfPid);
         foreach (var number in new uint[] { 0x40000000 | 59, 0x40000000 | 41, 0x40000000 | 101, 0x40000000, 0x40000000 | 1, 0xFFFFFFFF })
         {
             Assert.Equal(Eperm, Run(x64, SeccompProgram.AuditArchX64, number));
@@ -90,15 +92,32 @@ public sealed class LinuxProfileTests
             Assert.Equal(Eperm, Run(x64, SeccompProgram.AuditArchX64, number));
         }
 
-        var arm = SeccompProgram.Build(LinuxArchitecture.Arm64);
+        var arm = SeccompProgram.Build(LinuxArchitecture.Arm64, SelfPid);
         foreach (var number in new uint[] { 129, 130, 424, 434, 438 })
         {
             Assert.Equal(Eperm, Run(arm, SeccompProgram.AuditArchArm64, number));
         }
 
-        // tgkill is the runtime's own thread suspension and stays possible (recorded as not covered).
-        Assert.Equal(SeccompProgram.RetAllow, Run(x64, SeccompProgram.AuditArchX64, 234));
-        Assert.Equal(SeccompProgram.RetAllow, Run(arm, SeccompProgram.AuditArchArm64, 131));
+        // Runtime suspension can signal only threads in this process.
+        Assert.Equal(SeccompProgram.RetAllow, Run(x64, SeccompProgram.AuditArchX64, 234, SelfPid));
+        Assert.Equal(SeccompProgram.RetAllow, Run(arm, SeccompProgram.AuditArchArm64, 131, SelfPid));
+    }
+
+    [Theory]
+    [MemberData(nameof(Architectures))]
+    public void SignalRequiresOwnPidAndAZeroHighWord(string name)
+    {
+        var (architecture, audit) = Resolve(name);
+        var program = SeccompProgram.Build(architecture, SelfPid);
+        var number = architecture == LinuxArchitecture.X64 ? 234u : 131u;
+        Assert.Equal(SeccompProgram.RetAllow, Run(program, audit, number, SelfPid));
+        foreach (var pid in new ulong[] { 0, SelfPid - 1, SelfPid + 1, uint.MaxValue, ((ulong)1 << 32) | SelfPid, ulong.MaxValue })
+        {
+            Assert.Equal(Eperm, Run(program, audit, number, pid));
+        }
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => SeccompProgram.Build(architecture, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SeccompProgram.Build(architecture, -1));
     }
 
     [Theory]
@@ -106,7 +125,7 @@ public sealed class LinuxProfileTests
     public void AForeignArchitectureKillsTheProcess(string name)
     {
         var (architecture, audit) = Resolve(name);
-        var program = SeccompProgram.Build(architecture);
+        var program = SeccompProgram.Build(architecture, SelfPid);
         Assert.Equal(SeccompProgram.RetKillProcess, Run(program, audit ^ 0x1, 0));
         Assert.Equal(SeccompProgram.RetKillProcess, Run(program, name == "X64" ? SeccompProgram.AuditArchArm64 : SeccompProgram.AuditArchX64, 0));
     }
@@ -116,7 +135,7 @@ public sealed class LinuxProfileTests
     public void ThreadsMayBeCreatedButProcessesMayNot(string name)
     {
         var (architecture, audit) = Resolve(name);
-        var program = SeccompProgram.Build(architecture);
+        var program = SeccompProgram.Build(architecture, SelfPid);
         var clone = SeccompProgram.Clone(architecture);
         Assert.Equal(SeccompProgram.RetAllow, Run(program, audit, clone, SeccompProgram.CloneThread | 0x100));
         Assert.Equal(Eperm, Run(program, audit, clone, 0x11));
@@ -134,7 +153,7 @@ public sealed class LinuxProfileTests
     [InlineData(318u)]
     [InlineData(231u)]
     public void TheCallsAManagedRuntimeNeedsOnX64StayAllowed(uint number) =>
-        Assert.Equal(SeccompProgram.RetAllow, Run(SeccompProgram.Build(LinuxArchitecture.X64), SeccompProgram.AuditArchX64, number));
+        Assert.Equal(SeccompProgram.RetAllow, Run(SeccompProgram.Build(LinuxArchitecture.X64, SelfPid), SeccompProgram.AuditArchX64, number));
 
     [Fact]
     public void TheDeniedClassesAreTheNetworkProcessTraceMountKernelAndKeyringOnes()
@@ -166,7 +185,7 @@ public sealed class LinuxProfileTests
     [Fact]
     public void AProgramIsSerializedAsEightByteLittleEndianInstructions()
     {
-        var program = SeccompProgram.Build(LinuxArchitecture.X64);
+        var program = SeccompProgram.Build(LinuxArchitecture.X64, SelfPid);
         var bytes = SeccompProgram.Serialize(program);
         Assert.Equal(program.Count * 8, bytes.Length);
         Assert.Equal([0x20, 0x00, 0, 0, 4, 0, 0, 0], bytes[..8]);

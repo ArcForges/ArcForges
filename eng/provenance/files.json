@@ -1032,7 +1032,9 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox/Host/NativeImageParser.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ProductionImageCompositionTests.cs",
     "tests/tooling/test_native_abi_inventory.py",
-    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityApprovalBindingTests.cs"
+    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityApprovalBindingTests.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/HelperResourceLifetime.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/WindowsLifetimeTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
