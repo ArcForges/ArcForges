@@ -80,6 +80,18 @@
         "sdk/win-x64/lib/ArcImageNative.lib",
         "buildTransitive/ArcForges.Native.Image.Runtime.win-x64.targets",
         "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_image_close",
+        "arc_image_get_abi_version",
+        "arc_image_get_build_info",
+        "arc_image_get_last_error",
+        "arc_image_open",
+        "arc_image_read"
       ]
     },
     {

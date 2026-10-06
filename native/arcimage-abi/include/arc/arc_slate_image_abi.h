@@ -15,6 +15,11 @@ ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_get_last_error(arc_error_info
 ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_options_v1* options,
                                                         arc_handle_t* image, arc_mut_buffer_t* metadata,
                                                         const arc_cancel_token_t* cancel);
+/* RGBA8 is unassociated in the reported source transfer; RGBA32F is linear premultiplied.
+ * Input/cancellation
+ * callbacks must not reenter functional image calls (ARC_BUSY).
+ * Error/cancel results expose neither an owned handle
+ * nor partial pixel bytes. */
 ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1* region,
                                                         arc_mut_buffer_t* pixels, const arc_cancel_token_t* cancel);
 ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_close(arc_handle_t image);

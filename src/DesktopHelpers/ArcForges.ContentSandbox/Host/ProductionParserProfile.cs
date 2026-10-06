@@ -52,7 +52,7 @@ internal sealed class ProductionParserProfile(PdfDocumentOpener? opener = null, 
         }
 
         var tokens = buildInfo.Split(';', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var required in new[] { "abi=1.1", "openimageio=3.1.14.0", "formats=png,tiff,exr", "rgba8", "rgba32fLinearPremultiplied", "maxTileBytes=67108864", "maxHandles=64" })
+        foreach (var required in new[] { "abi=1.1", "openimageio=3.1.14.0", "formats=png,tiff,exr", "rgba8", "rgba8UnassociatedSourceTransfer", "rgba32fLinearPremultiplied", "maxTileBytes=67108864", "maxHandles=64" })
         {
             if (!tokens.Contains(required, StringComparer.Ordinal))
             {

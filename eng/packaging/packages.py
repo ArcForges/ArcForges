@@ -97,6 +97,11 @@ def catalogue():
     owned_ids = {entry["id"].lower() for entry in packages}
     for entry in packages:
         require(entry["kind"] in {"build", "managed", "native"}, "Unreviewed package kind.")
+        if entry["kind"] == "native":
+            _, exports = native.abi_contract(entry)
+            native.verify_abi(entry, entry.get("exports", []), entry.get("abi", {}))
+            require(entry.get("exports") == sorted(exports),
+                    "Native publication registry must declare its exact implemented ABI inventory.")
         dependency_versions(entry, "0.0.0")
         require(all(name.lower() in owned_ids for name in entry.get("dependencies", [])),
                 "Owned dependency is absent from the publication allowlist.")
@@ -157,8 +162,7 @@ def inspect(path, entry, expected_version, commit):
                 require(all(name in files or native.system_dependency(name) for name in details["imports"]),
                         "Missing non-system native dependency.")
             owned = files[entry["library"].lower() + ".dll"]
-            require(set(owned["exports"]) == {entry["prefix"] + suffix for suffix in
-                    ["_get_abi_version", "_get_build_info", "_get_last_error"]}, "Owned ABI exports mismatch.")
+            native.verify_abi(entry, owned["exports"], document.get("abi", {}))
             sbom = json.loads(archive.read("sbom.json"))
             require(sbom["sourceCommit"] == commit and sbom["binaryFiles"] == document["files"], "Native SBOM identity mismatch.")
             for dependency in sbom["buildDependencies"]:

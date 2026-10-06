@@ -570,23 +570,31 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
                         return fail(ARC_CORRUPT, "Nonfinite image sample");
                     }
                 unsigned char* target = result.data() + y * region->row_stride + x * pixel_size;
+                const bool associated = alpha >= 0 && !s.get_int_attribute("oiio:UnassociatedAlpha", 0);
                 if (value.options.format == ARC_FORMAT_RGBA8) {
-                    for (int c = 0; c < 4; ++c)
-                        target[c] = static_cast<unsigned char>(std::lround(std::clamp(rgba[c], 0.0F, 1.0F) * 255.0F));
+                    for (int c = 0; c < 4; ++c) {
+                        double component = rgba[c];
+                        if (c < 3 && associated)
+                            component = rgba[3] > 0 ? component / rgba[3] : 0;
+                        target[c] = static_cast<unsigned char>(std::lround(std::clamp(component, 0.0, 1.0) * 255.0));
+                    }
                 } else {
                     if (rgba[3] < 0.0F || rgba[3] > 1.0F) {
                         output->required = 0;
                         return fail(ARC_CORRUPT, "Image alpha lies outside the float output profile");
                     }
-                    const bool associated = std::string_view(value.codec->format_name()) == "openexr" &&
-                                            !s.get_int_attribute("oiio:UnassociatedAlpha", 0);
                     for (int c = 0; c < 3; ++c) {
+                        // Linear associated samples are already the exact float output profile.
+                        if (associated && gamma == 1.0F)
+                            continue;
+                        // Transfer operates on straight color, before the one output association.
+                        if (associated)
+                            rgba[c] = rgba[3] > 0 ? rgba[c] / rgba[3] : 0;
                         if (gamma == -1.0F)
                             rgba[c] = linearize(rgba[c]);
                         else if (gamma != 1.0F)
                             rgba[c] = std::copysign(std::pow(std::abs(rgba[c]), gamma), rgba[c]);
-                        if (!associated)
-                            rgba[c] *= rgba[3];
+                        rgba[c] *= rgba[3];
                         if (!std::isfinite(rgba[c])) {
                             output->required = 0;
                             return fail(ARC_CORRUPT, "Image color conversion produced a nonfinite sample");

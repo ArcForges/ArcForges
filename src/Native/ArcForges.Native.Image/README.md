@@ -4,7 +4,9 @@ Owned ABI 1.1 bindings for PNG, TIFF and EXR metadata and bounded region reads t
 OpenImageIO/OpenEXR/Imath. Existing version/build/error exports remain compatible.
 `ImageReader.Open` and `OpenAsync` take immutable brokered callback input, typed limits,
 subimage/mip and a closed output format. `ReadRegion`/`ReadRegionAsync` return packed
-RGBA8 or linear premultiplied RGBA32F with an explicit row stride. Source channel names,
+unassociated RGBA8 in the reported source transfer, or linear premultiplied RGBA32F,
+with an explicit row stride. Associated nonlinear input is unassociated before its
+transfer conversion and premultiplied once for float output. Source channel names,
 types and bit depths remain in immutable metadata; output conversion loss is explicit.
 
 Instantiate readers only inside the approved restricted ContentSandbox helper. This

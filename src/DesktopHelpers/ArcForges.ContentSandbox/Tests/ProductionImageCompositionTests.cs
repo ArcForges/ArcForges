@@ -108,7 +108,9 @@ public sealed class ImageMetadataContractTests
 
 public sealed class NativeImageAdapterTests
 {
-    private static ParserContext Context(CancellationToken cancellation = default) => new(new ContentSandboxLimits(), cancellation);
+    private static ParserContext Context() => new(new ContentSandboxLimits(), Xunit.TestContext.Current.CancellationToken);
+
+    private static ParserContext ContextWith(CancellationToken cancellation) => new(new ContentSandboxLimits(), cancellation);
 
     private static ParserInput Input() => new(new Mapping(new byte[16]), 16);
 
@@ -145,6 +147,7 @@ public sealed class NativeImageAdapterTests
         Assert.Equal((32u, 24u, 4), (info.Width, info.Height, info.Channels.Count));
         Assert.Equal("uint16", info.Channels[0].SampleType);
         Assert.Contains(info.Tags, tag => tag.Key == "channel.0.bits" && tag.Value == "16");
+        Assert.Contains(info.Tags, tag => tag.Key == "outputAlpha" && tag.Value == "unassociated");
         Assert.Contains("image.conversion_loss", info.Warnings);
         _ = Assert.Throws<ContentParserException>(() => parser.Open(Input(), 0, 0, 1, Context()));
     }
@@ -215,7 +218,7 @@ public sealed class NativeImageAdapterTests
         var reader = new ScriptedImageReader { BeforeRead = () => { entered.Set(); release.Wait(cancellation); } };
         using var parser = new NativeImageParser((_, _, _, _, _, _) => reader);
         _ = parser.Open(Input(), 0, 0, 1, Context());
-        var read = Task.Run(() => parser.ReadTile(new SandboxRegion { Width = 2, Height = 1, RowStride = 8 }, 1, new byte[8], Context(cancellation)), cancellation);
+        var read = Task.Run(() => parser.ReadTile(new SandboxRegion { Width = 2, Height = 1, RowStride = 8 }, 1, new byte[8], ContextWith(cancellation)), cancellation);
         Assert.True(entered.Wait(TimeSpan.FromSeconds(5), cancellation));
         var close = Task.Run(() => { closing.Set(); parser.Dispose(); }, cancellation);
         Assert.True(closing.Wait(TimeSpan.FromSeconds(5), cancellation));
@@ -240,9 +243,9 @@ public sealed class NativeImageAdapterTests
         var reader = new ScriptedImageReader { WaitForCancellation = true };
         var parser = new NativeImageParser((_, _, _, _, _, _) => reader);
         _ = parser.Open(Input(), 0, 0, 1, Context());
-        using var cancellation = new CancellationTokenSource();
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Xunit.TestContext.Current.CancellationToken);
         cancellation.CancelAfter(30);
-        _ = Assert.ThrowsAny<OperationCanceledException>(() => parser.ReadTile(new SandboxRegion { Width = 2, Height = 1, RowStride = 8 }, 1, new byte[8], Context(cancellation.Token)));
+        _ = Assert.ThrowsAny<OperationCanceledException>(() => parser.ReadTile(new SandboxRegion { Width = 2, Height = 1, RowStride = 8 }, 1, new byte[8], ContextWith(cancellation.Token)));
         parser.Dispose();
         parser.Dispose();
         Assert.Equal(1, reader.Disposed);
@@ -252,7 +255,7 @@ public sealed class NativeImageAdapterTests
     [Fact]
     public void PreparationChecksTheExactImageFunctionalProfile()
     {
-        const string good = "abi=1.1;openimageio=3.1.14.0;formats=png,tiff,exr;rgba8;rgba32fLinearPremultiplied;maxTileBytes=67108864;maxHandles=64";
+        const string good = "abi=1.1;openimageio=3.1.14.0;formats=png,tiff,exr;rgba8;rgba8UnassociatedSourceTransfer;rgba32fLinearPremultiplied;maxTileBytes=67108864;maxHandles=64";
         ProductionParserProfile.VerifyImageLibrary(new NativeAbiVersion(1, 1), good);
         foreach (var invalid in new[] { string.Empty, good.Replace("formats=png,tiff,exr", "formats=png", StringComparison.Ordinal),
             good.Replace("openimageio=3.1.14.0", "openimageio=caller", StringComparison.Ordinal), good.Replace(";rgba8;", ";", StringComparison.Ordinal) })

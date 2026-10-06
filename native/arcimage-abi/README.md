@@ -16,6 +16,11 @@ or closing their own active call. This also avoids cross-reader callback lock cy
 Cancellation/deadline checks do not claim to interrupt every upstream codec instruction.
 Hostile reads run in the supervised restricted helper.
 
+RGBA8 is unassociated in the reported source transfer; RGBA32F is linear premultiplied.
+Nonlinear associated input is unassociated before transfer and associated once for float
+output. Associated linear samples preserve their float values; byte output is explicitly
+lossy, including clipping HDR channels and unassociation of zero-alpha samples.
+
 The local opt-in arcslate_image_codec_tests target exercises actual OIIO PNG/TIFF/EXR 16-bit
 inputs (including ZIP/LZMA and multipage TIFF, EXR mip levels), unaligned edge tiles, RGBA32F,
 metadata, malformed content, dimensions, failed

@@ -62,6 +62,8 @@ internal sealed class NativeImageParser(ImageReaderOpener opener) : IImageParser
                 info.Tags.Add(new SandboxTag { Key = "codec", Value = metadata.Codec });
                 info.Tags.Add(new SandboxTag { Key = "sourceColorSpace", Value = metadata.SourceColorSpace });
                 info.Tags.Add(new SandboxTag { Key = "outputFormat", Value = outputFormat.ToString(CultureInfo.InvariantCulture) });
+                info.Tags.Add(new SandboxTag { Key = "outputColorSpace", Value = outputFormat == 2 ? "linear" : metadata.SourceColorSpace });
+                info.Tags.Add(new SandboxTag { Key = "outputAlpha", Value = outputFormat == 2 ? "premultiplied" : "unassociated" });
                 if (metadata.ConversionLoss)
                 {
                     info.Warnings.Add("image.conversion_loss");

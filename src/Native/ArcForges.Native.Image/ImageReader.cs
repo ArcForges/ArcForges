@@ -7,7 +7,7 @@ using ArcForges.Native.Abstractions;
 
 namespace ArcForges.Native.Image;
 
-/// <summary>Closed output profiles. Float pixels are linear, premultiplied RGBA.</summary>
+/// <summary>Closed output profiles. Byte pixels are unassociated in the reported source transfer; float pixels are linear premultiplied.</summary>
 public enum ImagePixelFormat
 {
     None = 0,

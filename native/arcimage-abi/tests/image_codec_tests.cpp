@@ -179,7 +179,7 @@ void codec_tests(const std::filesystem::path& directory)
         if (read_status != ARC_OK)
             throw std::runtime_error(std::string(extension) + " edge tile: " + std::to_string(read_status) + " " +
                                      last_error());
-        const auto expected_red = std::string_view(extension) == "exr" ? 96 : 191;
+        const auto expected_red = 191;
         require(std::abs(static_cast<int>(pixels[0]) - expected_red) <= 1 && pixels[3] >= 127 && pixels[3] <= 128 &&
                     pixels[16] == 0,
                 "tile pixels/stride/alpha wrong");
@@ -415,6 +415,40 @@ void mip_tests(const std::filesystem::path& directory)
     require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_RESOURCE_LIMIT && refused == 0,
             "EXR mip inventory item cap failed");
 }
+void associated_alpha_tests(const std::filesystem::path& directory)
+{
+    const auto file = directory / "associated.tif";
+    auto writer = OIIO::ImageOutput::create(file.string());
+    require(writer != nullptr, "associated TIFF writer missing");
+    OIIO::ImageSpec spec(2, 1, 4, OIIO::TypeDesc::FLOAT);
+    spec.alpha_channel = 3;
+    // The absent UnassociatedAlpha tag means the TIFF ExtraSamples tag is associated.
+    float source[8]{.25F, .125F, .05F, .5F, 0, 0, 0, 0};
+    require(writer->open(file.string(), spec) && writer->write_image(OIIO::TypeDesc::FLOAT, source) && writer->close(),
+            "associated TIFF fixture write failed");
+    std::ifstream stream(file, std::ios::binary);
+    input data;
+    data.bytes = std::vector<unsigned char>(std::istreambuf_iterator<char>(stream), {});
+    auto handle = open(data, options());
+    arc_region_v1 region{.struct_size = sizeof(region), .struct_version = 1, .width = 2, .height = 1, .row_stride = 8};
+    unsigned char bytes[8]{};
+    arc_mut_buffer_t output{bytes, sizeof(bytes), 0};
+    require(arc_image_read(handle, &region, &output, nullptr) == ARC_OK && bytes[0] == 128 && bytes[3] == 128 &&
+                bytes[4] == 0 && bytes[7] == 0,
+            "RGBA8 must unassociate source alpha exactly once");
+    require(arc_image_close(handle) == ARC_OK, "associated byte close failed");
+    std::string metadata;
+    handle = open(data, options(ARC_FORMAT_RGBA32F_LINEAR_PREMULTIPLIED), &metadata);
+    require(metadata.find("\"sourceColorSpace\":\"sRGB\"") != std::string::npos,
+            "untagged TIFF must report the admitted default transfer");
+    region.row_stride = 32;
+    float linear[8]{};
+    output = {linear, sizeof(linear), 0};
+    require(arc_image_read(handle, &region, &output, nullptr) == ARC_OK && std::abs(linear[0] - .10702057F) < .00001F &&
+                linear[3] == .5F && linear[4] == 0 && linear[7] == 0,
+            "associated nonlinear TIFF must unassociate before transfer and premultiply exactly once");
+    require(arc_image_close(handle) == ARC_OK, "associated float close failed");
+}
 void invalid_float_tests(const std::filesystem::path& directory)
 {
     for (int example = 0; example < 3; ++example) {
@@ -463,6 +497,7 @@ int main()
         codec_tests(directory);
         subimage_tests(directory);
         mip_tests(directory);
+        associated_alpha_tests(directory);
         invalid_float_tests(directory);
         lifetime_tests(directory);
         std::filesystem::remove_all(directory);

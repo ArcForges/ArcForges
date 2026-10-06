@@ -39,7 +39,8 @@ def abi_contract(entry):
 
 def verify_abi(entry, exports, abi=None):
     version, expected = abi_contract(entry)
-    require(len(exports) == len(expected) and set(exports) == expected,
+    require(isinstance(exports, (list, tuple)) and all(isinstance(export, str) for export in exports) and
+            len(exports) == len(expected) and set(exports) == expected,
             "Owned native export set differs from the admitted ABI.")
     if abi is not None:
         require(isinstance(abi, dict) and set(abi) == {"major", "minor"} and
