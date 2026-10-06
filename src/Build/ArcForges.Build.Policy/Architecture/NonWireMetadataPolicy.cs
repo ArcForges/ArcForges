@@ -284,13 +284,17 @@ internal static class NonWireMetadataPolicy
     {
         while (expression is ParenthesizedExpressionSyntax or CastExpressionSyntax)
             expression = expression is ParenthesizedExpressionSyntax parentheses ? parentheses.Expression : ((CastExpressionSyntax)expression).Expression;
-        return model.GetTypeInfo(expression).Type?.SpecialType is SpecialType.System_String or SpecialType.System_Boolean
-                or SpecialType.System_Char or SpecialType.System_Byte or SpecialType.System_SByte or SpecialType.System_Int16
-                or SpecialType.System_UInt16 or SpecialType.System_Int32 or SpecialType.System_UInt32 or SpecialType.System_Int64
-                or SpecialType.System_UInt64 or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_Decimal
+        return Primitive(model.GetTypeInfo(expression).Type)
             || expression is InvocationExpressionSyntax invocation && (Canonical(model, invocation, "System.Array", "AsReadOnly")
                 || Canonical(model, invocation, "System.Linq.Enumerable", "ToArray"));
     }
+
+    private static bool Primitive(ITypeSymbol? type) => type?.SpecialType is SpecialType.System_String or SpecialType.System_Boolean
+        or SpecialType.System_Char or SpecialType.System_Byte or SpecialType.System_SByte or SpecialType.System_Int16
+        or SpecialType.System_UInt16 or SpecialType.System_Int32 or SpecialType.System_UInt32 or SpecialType.System_Int64
+        or SpecialType.System_UInt64 or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_Decimal
+        || type is INamedTypeSymbol named && named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+            && named.DeclaringSyntaxReferences.Length == 0 && Core(named.ContainingAssembly) && Primitive(named.TypeArguments[0]);
 
     private static bool Canonical(SemanticModel model, InvocationExpressionSyntax invocation, string type, string name) =>
         model.GetSymbolInfo(invocation).Symbol is IMethodSymbol method && method.Name == name
@@ -450,8 +454,10 @@ internal static class NonWireMetadataPolicy
         {
             if (!Step()) return false;
             var type = model.GetTypeInfo(expression).Type;
-            if (type?.SpecialType is SpecialType.System_String or SpecialType.System_Boolean or SpecialType.System_Byte or SpecialType.System_Int32
-                or SpecialType.System_Int64 or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_Double or SpecialType.System_Single) return false;
+            if (Primitive(type)) return false;
+            if (model.GetSymbolInfo(expression).Symbol is IPropertySymbol { Name: "ActorKinds" or "PatScopes" } strings
+                && _metadata.Any(metadata => Same(metadata, strings.ContainingType)) && List(strings.Type, out var element)
+                && element.SpecialType == SpecialType.System_String) return false;
             if (type is not null && Reaches(type, new HashSet<string>(StringComparer.Ordinal))) return true;
             if (expression is CastExpressionSyntax cast) return Expression(cast.Expression, model, visited);
             if (expression is ParenthesizedExpressionSyntax parentheses) return Expression(parentheses.Expression, model, visited);

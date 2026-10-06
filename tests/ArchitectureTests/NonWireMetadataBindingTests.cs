@@ -275,6 +275,18 @@ public sealed class NonWireMetadataBindingTests
         Xunit.Assert.Empty(fixture.Check());
     }
 
+    [Xunit.Theory]
+    [Xunit.InlineData("(object)Catalog.All[0].StepUp")]
+    [Xunit.InlineData("Catalog.All.Select(policy => policy.StepUp).ToArray()")]
+    [Xunit.InlineData("(object)Catalog.All[0].ActorKinds")]
+    [Xunit.InlineData("Catalog.All.Select(policy => policy.ActorKinds.ToArray()).ToArray()")]
+    [Xunit.InlineData("Catalog.All.Select(policy => policy.PatScopes).ToArray()")]
+    public void ExactNullablePrimitiveAndApprovedStringListFactsRemainUsable(string value)
+    {
+        using var fixture = new Fixture(extra: "using System.Linq; using Metadata; internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize(" + value + "); }");
+        Xunit.Assert.Empty(fixture.Check());
+    }
+
     [Xunit.Fact]
     public void ScalarGetterProjectionRemainsAllowed()
     {
