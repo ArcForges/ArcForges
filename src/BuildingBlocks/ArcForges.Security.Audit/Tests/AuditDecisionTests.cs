@@ -129,6 +129,42 @@ public sealed class AuditDecisionTests
     }
 
     [Fact]
+    public async Task CancellationWhileAnExternalWriterOwnsTheDatabaseIsClassifiedAndWritesNothing()
+    {
+        using var f = new Fixture();
+        using var external = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = f.Path, Pooling = false }.ToString());
+        await external.OpenAsync(TestContext.Current.CancellationToken);
+        using var heldWriter = await external.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken);
+        // Taking a real write lock also verifies the transaction's mode rather than relying on provider defaults.
+        using (var takeLock = external.CreateCommand())
+        {
+            takeLock.Transaction = (SqliteTransaction)heldWriter;
+            takeLock.CommandText = "PRAGMA user_version=0;";
+            await takeLock.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = Task.Run(async () =>
+        {
+            started.SetResult();
+            await new SecurityDecisionAuditSink(f.Store, f.Software).WriteAsync(
+                f.Security(EnforcementPoint.ServiceDecision, DecisionReasons.Describe(DecisionReason.S02PolicyDisabled), null), cancellation.Token);
+        }, TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken);
+        Assert.False(pending.IsCompleted);
+        await cancellation.CancelAsync();
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await pending.WaitAsync(TimeSpan.FromSeconds(35), TestContext.Current.CancellationToken));
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.IsType<SqliteException>(exception.InnerException);
+        await heldWriter.RollbackAsync(TestContext.Current.CancellationToken);
+        Assert.Empty(f.Read());
+        using var reopened = f.Open();
+        Assert.Empty(f.Read(reopened));
+    }
+
+    [Fact]
     public void LegacyMigrationPreservesEveryHistoricalDigestAndFutureOrForeignSchemasFailBeforeDdl()
     {
         using var f = new Fixture();

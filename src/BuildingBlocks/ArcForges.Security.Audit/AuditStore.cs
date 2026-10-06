@@ -604,23 +604,27 @@ public sealed class AuditStore : IDisposable
                 var active = (SqliteConnection)value!;
                 if (active.Handle is { } handle) raw.sqlite3_interrupt(handle);
             }, connection);
-            using var transaction = connection.BeginTransaction(deferred: false);
-            var state = new AuthorizerState();
-            SetAuthorizer(connection, state);
             try
             {
-                var result = action(connection, transaction, state, input);
                 cancellationToken.ThrowIfCancellationRequested();
-                transaction.Commit();
-                return result;
+                using var transaction = connection.BeginTransaction(deferred: false);
+                var state = new AuthorizerState();
+                SetAuthorizer(connection, state);
+                try
+                {
+                    var result = action(connection, transaction, state, input);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    transaction.Commit();
+                    return result;
+                }
+                finally
+                {
+                    ClearAuthorizer(connection);
+                }
             }
             catch (SqliteException exception) when (cancellationToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException("Audit transaction was interrupted.", exception, cancellationToken);
-            }
-            finally
-            {
-                ClearAuthorizer(connection);
             }
         }
         finally
