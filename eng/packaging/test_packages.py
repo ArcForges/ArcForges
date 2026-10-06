@@ -14,6 +14,33 @@ import zipfile
 import packages
 
 
+class NonWireMetadataPackageGuards(unittest.TestCase):
+    def test_actual_build_policy_catalogue_requires_the_nonwire_helper(self):
+        entry = next(item for item in packages.catalogue() if item["id"] == "ArcForges.Build.Policy")
+        helper = "tools/architecture/NonWireMetadataPolicy.cs"
+        self.assertEqual(1, entry["requiredFiles"].count(helper))
+        version, commit = "1.0.0-ci.1.1", "a" * 40
+        specification = ET.Element("package")
+        metadata = ET.SubElement(specification, "metadata")
+        for name, value in [("id", entry["id"]), ("version", version), ("readme", "README.md")]:
+            ET.SubElement(metadata, name).text = value
+        ET.SubElement(metadata, "repository", url=packages.REPOSITORY, commit=commit)
+        ET.SubElement(metadata, "license", type="expression").text = "AGPL-3.0-only"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "metadata-content-guard.nupkg"
+            for include_helper in [False, True]:
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("guard.nuspec", ET.tostring(specification))
+                    for name in entry["requiredFiles"]:
+                        if name != helper or include_helper:
+                            archive.writestr(name, "Synthetic presence-guard fixture, not a production candidate.")
+                if include_helper:
+                    self.assertEqual(64, len(packages.inspect(path, entry, version, commit)))
+                else:
+                    with self.assertRaisesRegex(ValueError, "Missing package content"):
+                        packages.inspect(path, entry, version, commit)
+
+
 class ExternalDependencyGuards(unittest.TestCase):
     owned_version = "2.0.0-ci.20.1"
     external_version = "1.0.0-ci.216.1"
