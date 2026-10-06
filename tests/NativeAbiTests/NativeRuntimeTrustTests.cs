@@ -72,6 +72,21 @@ public sealed class NativeRuntimeTrustTests
         Assert.Throws<InvalidDataException>(() => Verify(trust, envelope, Manifest, identity with { PackageVersion = "1.0.0-ci.107.1" }));
     }
 
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("1.0")]
+    [InlineData("01.0.0")]
+    [InlineData("1.0.0-")]
+    [InlineData("1.0.0-ci..1")]
+    [InlineData("1.0.0-ci.01")]
+    [InlineData("1.0.0+metadata")]
+    public void NoncanonicalReleaseVersionsCannotAcquirePublisherAuthorization(string version)
+    {
+        using var signer = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var identity = Identity() with { PackageVersion = version };
+        Assert.Throws<InvalidDataException>(() => new NativePublisherSigner(signer, "release-1").Sign(identity, Manifest, TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public void EvenValidSignaturesCannotAdmitUnknownOrDuplicateFieldsOrNoncanonicalPayloads()
     {

@@ -63,9 +63,12 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
 
     public string Rid => _arm ? "linux-arm64" : "linux-x64";
 
+    INativeRuntimeFileLease INativeRuntimeLoadPlatform.Open(string directory, string name, CancellationToken cancellationToken) =>
+        OpenSnapshot(directory, name, cancellationToken);
+
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000", Justification = "The complete sealed-file owner transfers to the returned lease; finally disposes both partially constructed owners on every preparation failure.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1508", Justification = "Owners are null on the success transfer path, but remain non-null on constructor/read/write/seal/cancellation exception paths and must be cleaned in finally.")]
-    public INativeRuntimeFileLease Open(string directory, string name, CancellationToken cancellationToken)
+    internal SealedFile OpenSnapshot(string directory, string name, CancellationToken cancellationToken)
     {
         // The signed directory is pinned by the constructor; directory is never inferred from a sealed executable pathname.
         lock (_gate)
@@ -147,7 +150,7 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
     }
 
     private static byte[] Utf8(string value) => new UTF8Encoding(false, true).GetBytes(value + "\0");
-    private sealed class SealedFile(FileStream bytes, string loaderPath) : INativeRuntimeFileLease
+    internal sealed class SealedFile(FileStream bytes, string loaderPath) : INativeRuntimeFileLease
     {
         public Stream Bytes => bytes;
         public string LoaderPath => loaderPath;

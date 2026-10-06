@@ -495,7 +495,7 @@ internal sealed record NativeRuntimeIdentity(string Rid, string Library, string 
     {
         if (Rid is not ("win-x64" or "win-arm64" or "linux-x64" or "linux-arm64" or "osx-x64" or "osx-arm64")
             || Library is not ("ArcImageNative" or "ArcPdfNative")
-            || string.IsNullOrEmpty(PackageVersion) || PackageVersion.Length > 128 || PackageVersion.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '-'))
+            || !Version(PackageVersion)
             || !Digest(SourceCommit, 40) || !Digest(ProfileSha256, 64) || !Digest(ManifestSha256, 64))
         {
             throw new InvalidDataException("The production native runtime identity is invalid.");
@@ -504,6 +504,24 @@ internal sealed record NativeRuntimeIdentity(string Rid, string Library, string 
 
     private static bool Digest(string value, int length) => value is not null && value.Length == length
         && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool Version(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 128 || value.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '-')))
+        {
+            return false;
+        }
+
+        var separator = value.IndexOf('-', StringComparison.Ordinal);
+        var numbers = (separator < 0 ? value : value[..separator]).Split('.');
+        if (numbers.Length != 3 || numbers.Any(part => part.Length == 0 || part.Any(c => !char.IsAsciiDigit(c)) || part.Length > 1 && part[0] == '0'))
+        {
+            return false;
+        }
+
+        return separator < 0 || value[(separator + 1)..].Split('.').All(part => part.Length != 0
+            && !(part.Length > 1 && part[0] == '0' && part.All(char.IsAsciiDigit)));
+    }
 }
 
 /// <summary>Approved immutable publisher keys; material is copied and validated rather than borrowed from an envelope.</summary>
@@ -821,7 +839,15 @@ internal sealed class NativeVerifiedRuntime : IDisposable
 
         using var document = JsonDocument.Parse(manifest.ToArray(), new JsonDocumentOptions { MaxDepth = 16 });
         var root = document.RootElement;
-        RequireClosed(root, ["schemaVersion", "sourceCommit", "rid", "library", "abi", "files"]);
+        RequireClosed(root, root.TryGetProperty("vcpkgCommit", out var vcpkg)
+            ? ["schemaVersion", "sourceCommit", "rid", "library", "abi", "files", "vcpkgCommit"]
+            : ["schemaVersion", "sourceCommit", "rid", "library", "abi", "files"]);
+        if (vcpkg.ValueKind != JsonValueKind.Undefined && (identity.Library != "ArcImageNative"
+            || vcpkg.ValueKind != JsonValueKind.String || vcpkg.GetString() is not { Length: 40 } commit
+            || commit.Any(c => c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))))
+        {
+            throw new InvalidDataException("The signed Image producer source identity is invalid.");
+        }
         if (root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("sourceCommit").GetString() != identity.SourceCommit
             || root.GetProperty("rid").GetString() != identity.Rid || root.GetProperty("library").GetString() != identity.Library)
         {
@@ -846,7 +872,7 @@ internal sealed class NativeVerifiedRuntime : IDisposable
         foreach (var file in files.EnumerateArray())
         {
             RequireUnique(file);
-            string[] allowedMetadata = ["name", "sha256", "machine", "imports", "exports", "format", "identity", "runpaths", "forwardedExports", "dataExports", "unnamedExports", "absoluteExports", "versionRequirements", "minimumOs"];
+            string[] allowedMetadata = ["name", "sha256", "machine", "imports", "exports", "format", "identity", "runpaths", "forwardedExports", "dataExports", "unnamedExports", "absoluteExports", "versionRequirements", "minimumOs", "sourceSpdxPath"];
             if (file.EnumerateObject().Any(property => !allowedMetadata.Contains(property.Name, StringComparer.Ordinal)))
             {
                 throw new InvalidDataException("The native file metadata contains an unknown field.");
@@ -892,13 +918,19 @@ internal sealed class NativeVerifiedRuntime : IDisposable
             throw new InvalidDataException("The native parser does not declare its exact functional export contract.");
         }
 
-        foreach (var invalid in new[] { "forwardedExports", "dataExports", "unnamedExports", "absoluteExports" })
+        foreach (var invalid in new[] { "forwardedExports", "dataExports", "unnamedExports" })
         {
             if (ownedRow.TryGetProperty(invalid, out var extras)
                 && (extras.ValueKind == JsonValueKind.Array ? extras.GetArrayLength() != 0 : extras.GetInt32() != 0))
             {
                 throw new InvalidDataException("Owned parser exports must be callable and directly owned.");
             }
+        }
+
+        if (ownedRow.TryGetProperty("absoluteExports", out var absolute)
+            && Strings(absolute, 16).Any(name => !identity.Rid.StartsWith("linux-", StringComparison.Ordinal) || name != "ARCFORGES_1.0"))
+        {
+            throw new InvalidDataException("The parser contains an unadmitted absolute export; only ELF version metadata is permitted.");
         }
 
         var order = new List<string>();
@@ -910,7 +942,8 @@ internal sealed class NativeVerifiedRuntime : IDisposable
             if (!visiting.Add(name)) { throw new InvalidDataException("The native dependency closure contains a cycle."); }
             foreach (var import in Strings(rows[name].GetProperty("imports"), 4096))
             {
-                var bundled = import.StartsWith("@loader_path/", StringComparison.Ordinal) ? import[13..] : import;
+                var bundled = import.StartsWith("@loader_path/", StringComparison.Ordinal) ? import[13..]
+                    : import.StartsWith("@rpath/", StringComparison.Ordinal) ? import[7..] : import;
                 if (rows.ContainsKey(bundled)) { Visit(bundled); }
                 else if (!allowedSystemImports.Contains(import)) { throw new InvalidDataException("The native dependency is outside the approved closure: " + import); }
             }
