@@ -452,6 +452,45 @@ def _tools(inputs, recipe, identity, root, cancelled):
             "generatedIdentitySha256": digest(generated, cancelled)}
 
 
+def _compiled_inventory(sbom, triplet, admitted):
+    require(isinstance(triplet, str) and re.fullmatch("[a-z0-9-]+", triplet), "Invalid compiled Image SPDX triplet.")
+    require(isinstance(sbom.get("files"), list) and len(sbom["files"]) <= MAX_FILES,
+            "Unbounded installed Image dependency inventory.")
+    rows = []
+    for item in sbom["files"]:
+        if not item.get("SPDXID", "").startswith("SPDXRef-binary-file-"):
+            continue
+        relative = str(_sbom_path(item["fileName"]))
+        if PurePosixPath(relative).parts[0] not in ("bin", "lib", "include", "share"):
+            continue
+        checksums = [value["checksumValue"] for value in item["checksums"] if value["algorithm"] == "SHA256"]
+        require(len(checksums) == 1 and re.fullmatch("[0-9a-f]{64}", checksums[0]),
+                "Missing or ambiguous compiled Image SPDX checksum.")
+        path = triplet + "/" + relative
+        require(path.casefold() not in admitted and len(admitted) < MAX_FILES,
+                "Ambiguous, aliased or unbounded compiled Image SPDX material.")
+        admitted[path.casefold()] = (path, checksums[0])
+        rows.append((relative, checksums[0]))
+    return rows
+
+
+def _compiled_expected(admitted, path):
+    _path(path)
+    row = admitted.get(path.casefold())
+    require(row is not None and row[0] == path, "Image dependency is absent or aliased in admitted compiled SPDX material.")
+    return row[1]
+
+
+def _verify_compiled_runtime(row, triplet, compiled, content):
+    source_path = row.get("sourceSpdxPath")
+    require(isinstance(source_path, str) and source_path.startswith(triplet + "/") and
+            len(PurePosixPath(source_path).parts) >= 3 and PurePosixPath(source_path).parts[1] in ("bin", "lib"),
+            "Missing Image runtime compiled-source binding.")
+    require(_compiled_expected(compiled, source_path) == row["sha256"] and
+            hashlib.sha256(content).hexdigest() == row["sha256"],
+            "Packaged Image runtime differs from admitted compiled SPDX material.")
+
+
 def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, cancelled):
     # The pin and source tree are checked at their real producer trust handoff.
     actual = subprocess.check_output(["git", "-C", str(inputs.vcpkg), "rev-parse", "HEAD"], text=True).strip()
@@ -462,7 +501,7 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
     import native
     database = native.installed_packages(inputs.installed_directory)
     closure = native.dependency_closure(database, ["opencolorio", "openimageio", "openexr", "imath"], recipe["triplet"])
-    records = []
+    records, compiled = [], {}
     for name, triplet in closure:
         _cancel(cancelled)
         require(name in base["components"], "Unreviewed Image dependency/feature closure: " + name)
@@ -493,15 +532,9 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
         expected_legal = {item["sha256"] for item in component["legal"]}
         require(digest(share / "copyright", cancelled, lf=True) in expected_legal,
                 "Image dependency legal material differs from reviewed originals: " + name)
-        for item in sbom.get("files", []):
-            if not item.get("SPDXID", "").startswith("SPDXRef-binary-file-"):
-                continue
-            relative = str(_sbom_path(item["fileName"]))
-            if PurePosixPath(relative).parts[0] not in ("bin", "lib", "include", "share"):
-                continue
-            checksums = [value["checksumValue"] for value in item["checksums"] if value["algorithm"] == "SHA256"]
-            require(len(checksums) == 1 and digest(_regular(inputs.installed_directory / triplet / relative,
-                    inputs.installed_directory / triplet), cancelled) == checksums[0],
+        for relative, expected in _compiled_inventory(sbom, triplet, compiled):
+            require(digest(_regular(inputs.installed_directory / triplet / relative,
+                    inputs.installed_directory / triplet), cancelled) == expected,
                     "Actual compiled/header Image dependency differs from its SBOM: " + name + "/" + relative)
         for resource in component["resources"]:
             source = _regular(inputs.downloads / resource["cacheName"], inputs.downloads)
@@ -523,7 +556,7 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
                         "sbom": "licenses/" + stem + ".spdx.json", "buildInfo": "licenses/" + stem + ".abi.txt"})
     require({item["name"] for item in records} == set(base["components"]), "Image dependency closure omits approved inputs.")
     _copy(inputs.vcpkg / "LICENSE.txt", staging / "licenses/provenance/vcpkg-LICENSE.txt", cancelled)
-    return records
+    return records, compiled
 
 
 def _inventory(directory, cancelled=None):
@@ -685,6 +718,18 @@ def _promote(staging, destination):
     _recover_promotion(destination)
 
 
+def _cached_stage(destination, source_commit, rid, root, cancelled):
+    try:
+        cached = verify_stage(destination, source_commit, root)
+    except StageCancelled:
+        raise
+    except ValueError:
+        _cancel(cancelled)
+        return None  # A successor is fully verified before the old candidate is moved.
+    _cancel(cancelled)
+    return cached if cached["rid"] == rid else None
+
+
 def stage(destination, rid, inputs, root=ROOT, cancelled=None):
     root, destination = Path(root).resolve(), Path(destination).absolute()
     value, material = profile(root)
@@ -703,19 +748,16 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
         _recover_promotion(destination)
         _cancel(cancelled)
         if destination.exists():
-            try:
-                cached = verify_stage(destination, identity["sourceCommit"], root)
-                if cached["rid"] == rid:
-                    return cached
-            except ValueError:
-                pass  # A successor is fully staged/verified before the old candidate is moved.
+            cached = _cached_stage(destination, identity["sourceCommit"], rid, root, cancelled)
+            if cached is not None:
+                return cached
         staging = Path(tempfile.mkdtemp(prefix="." + destination.name + ".image-stage-", dir=destination.parent))
         try:
             package = staging / recipe["package"]
             runtime = package / "runtimes" / rid / "native"
             tools = _tools(inputs, recipe, identity, root, cancelled)
             source_profile, features = _selection(rid, value, material)
-            upstream = _upstreams(package, inputs, rid, recipe, source_profile, features, root, cancelled)
+            upstream, compiled = _upstreams(package, inputs, rid, recipe, source_profile, features, root, cancelled)
             triplet = value["triplets"][rid]
             for kind, directory in (("owned", root), ("upstream", inputs.vcpkg)):
                 if triplet[kind + "Path"] is not None:
@@ -751,6 +793,7 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
                 original = available[key]
                 info = native_binary.inspect(original, rid)
                 _searchpaths(info, rid, policy)
+                expected, source_binding = None, {}
                 if key == _key(recipe["library"], rid):
                     _owned(info, recipe)
                     require(build_identity.native_suffix(identity).encode("ascii") in original.read_bytes(),
@@ -760,8 +803,11 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
                 else:
                     require(original.resolve().is_relative_to((inputs.installed_directory / recipe["triplet"]).resolve()),
                             "Image bundled dependency has no admitted installed source.")
-                source_hash = _copy(original, runtime / original.name, cancelled)
-                selected[key] = {"name": original.name, "sha256": source_hash, **info.as_manifest()}
+                    relative = original.resolve().relative_to(inputs.installed_directory.resolve()).as_posix()
+                    expected = _compiled_expected(compiled, relative)
+                    source_binding = {"sourceSpdxPath": relative}
+                source_hash = _copy(original, runtime / original.name, cancelled, expected)
+                selected[key] = {"name": original.name, "sha256": source_hash, **info.as_manifest(), **source_binding}
                 for dependency in info.imports:
                     bundled = _dependency(dependency, rid, policy)
                     if bundled is not None:
@@ -897,11 +943,14 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
             "Image SBOM omits the reviewed dependency closure.")
     require(len(sbom["buildDependencies"]) == len(base["components"]),
             "Duplicate Image SBOM dependencies.")
+    compiled = {}
     for dependency in sbom["buildDependencies"]:
         component = base["components"][dependency["name"]]
         require(dependency["version"] == component["version"] and dependency["features"] == features[dependency["name"]] and
                 dependency["record"] == component["record"], "Image packaged dependency/source/feature identity differs.")
-        native_provenance.check_sources(base, dependency["name"], _json(read(dependency["sbom"])))
+        dependency_spdx = _json(read(dependency["sbom"]))
+        native_provenance.check_sources(base, dependency["name"], dependency_spdx)
+        _compiled_inventory(dependency_spdx, dependency["triplet"], compiled)
         abi_content = read(dependency["buildInfo"]).decode("utf-8")
         require([line.split()[1:] for line in abi_content.splitlines() if line.startswith("cmake ")] ==
                 [[base["buildTools"]["vcpkgCMake"]]], "Packaged Image dependency used an unreviewed vcpkg CMake version.")
@@ -916,6 +965,12 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
         for extra in component["extras"]:
             require(hashlib.sha256(read(extra["output"]).replace(b"\r\n", b"\n")).hexdigest() == extra["sha256"],
                     "Packaged Image original legal companion differs.")
+    for row in manifest["files"]:
+        key = _key(row["name"], rid)
+        if key == _key(recipe["library"], rid) or (rid.startswith("win-") and key in value["compilerRuntime"][rid]["files"]):
+            require("sourceSpdxPath" not in row, "Unexpected compiled SPDX binding on owned/compiler Image binary.")
+            continue
+        _verify_compiled_runtime(row, recipe["triplet"], compiled, read(prefix + row["name"]))
     for relative in ("native/arcimage-abi/include/arc/arc_slate_image_abi.h", "native/shared/include/arc/arc_native_abi.h"):
         require(hashlib.sha256(read("include/arc/" + Path(relative).name).replace(b"\r\n", b"\n")).hexdigest() ==
                 digest(Path(root) / relative, lf=True), "Packaged Image C17 header differs from source.")

@@ -14,6 +14,7 @@ import tarfile
 import time
 import urllib.error
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "eng/packaging"))
@@ -23,6 +24,111 @@ import native_consumer
 
 
 class ImageRuntimeTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("ARCFORGES_IMAGE_C17_COMPONENT") and os.name == "nt",
+                         "Explicit existing loaded-codec C17 component diagnostic only; never CI/package acceptance.")
+    def test_actual_existing_c17_loaded_codec_refuses_wrong_build_suffix(self):
+        native_consumer.image_diagnostic_admission("win-x64")
+        component_root = Path(os.environ["ARCFORGES_IMAGE_C17_COMPONENT"])
+        build = component_root / "artifacts/cmake/image"
+        import ctypes
+        library_path = build / "native/arcimage-abi/ArcImageNative.dll"
+        diagnostic_manifest = json.loads((component_root / "artifacts/managed-image-diagnostics/ArcImageNative.manifest.json").read_text())
+        self.assertEqual(diagnostic_manifest["files"][0]["sha256"], hashlib.sha256(library_path.read_bytes()).hexdigest())
+        library = ctypes.CDLL(str(library_path))
+
+        class Buffer(ctypes.Structure):
+            _fields_ = [("data", ctypes.c_void_p), ("capacity", ctypes.c_size_t), ("required", ctypes.c_size_t)]
+
+        text = ctypes.create_string_buffer(4096)
+        buffer = Buffer(ctypes.cast(text, ctypes.c_void_p), len(text), 0)
+        library.arc_image_get_build_info.argtypes = [ctypes.POINTER(Buffer)]
+        self.assertEqual(0, library.arc_image_get_build_info(ctypes.byref(buffer)))
+        observed = text.value.decode("ascii")
+        suffix = observed[observed.index(";source="):]
+        vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        location = subprocess.check_output([str(vswhere), "-latest", "-products", "*", "-requires",
+                                           "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property",
+                                           "installationPath"], text=True).strip()
+        self.assertTrue(location)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            import shutil
+            shutil.copyfile(build / "native/arcimage-abi/ArcImageNative.dll", output / "ArcImageNative.dll")
+            for name, expected in (("actual", suffix), ("foreign", suffix + ";foreign=true")):
+                source, executable = output / (name + ".c"), output / (name + ".exe")
+                source.write_text(native_consumer._image_c_source(expected), encoding="utf-8")
+                command = output / (name + ".cmd")
+                command.write_text('@echo off\ncall "' + location + '\\VC\\Auxiliary\\Build\\vcvarsall.bat" x64 '
+                                   '-vcvars_ver=14.51.36231 >nul || exit /b 1\ncl /nologo /TC /std:c17 /W4 /WX '
+                                   '/I"' + str(component_root / "native/arcimage-abi/include") + '" '
+                                   '/I"' + str(component_root / "native/shared/include") + '" "' + str(source) + '" '
+                                   '/Fe:"' + str(executable) + '" /link "'
+                                   + str(build / "native/arcimage-abi/ArcImageNative.lib") + '"\nexit /b %errorlevel%\n',
+                                   encoding="utf-8")
+                result = subprocess.run(["cmd", "/d", "/c", str(command)], cwd=output,
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                native_consumer._image_execute(executable, output, dict(os.environ), failure=name == "foreign")
+
+    def test_cancellation_during_unavailable_producer_artifact_verification_cannot_return_warm_cache(self):
+        # The finalized upstream producer artifact is unavailable during this source component check.
+        # Only that artifact verifier is scripted; actual cache bytes and cancellation are retained.
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            (cache / "retained").write_bytes(b"existing producer bytes")
+            cancelled = threading.Event()
+
+            def unavailable_producer_verifier(*args):
+                cancelled.set()
+                return {"rid": "win-x64"}
+
+            with patch.object(image, "verify_stage", unavailable_producer_verifier):
+                self.assertRaises(image.StageCancelled, image._cached_stage,
+                                  cache, "0" * 40, "win-x64", ROOT, cancelled.is_set)
+            self.assertEqual(b"existing producer bytes", (cache / "retained").read_bytes())
+
+    def test_runtime_copy_and_retained_handoff_bind_actual_bytes_to_closed_compiled_spdx(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "dependency.dll"
+            content = b"real compiled-material fixture bytes"
+            source.write_bytes(content)
+            checksum = hashlib.sha256(content).hexdigest()
+            triplet, relative = "x64-windows-static-md", "bin/dependency.dll"
+            sbom = {"files": [{"SPDXID": "SPDXRef-binary-file-1", "fileName": "./" + relative,
+                               "checksums": [{"algorithm": "SHA256", "checksumValue": checksum}]}]}
+            compiled = {}
+            image._compiled_inventory(sbom, triplet, compiled)
+            binding = triplet + "/" + relative
+            expected = image._compiled_expected(compiled, binding)
+            source.write_bytes(b"changed after initial upstream validation")
+            self.assertRaisesRegex(ValueError, "hash", image._copy, source, root / "runtime/dependency.dll",
+                                   expected=expected)
+            self.assertFalse((root / "runtime/dependency.dll").exists())
+            self.assertRaisesRegex(ValueError, "absent", image._compiled_expected, compiled, triplet + "/bin/extra.dll")
+            self.assertRaisesRegex(ValueError, "aliased", image._compiled_expected, compiled, triplet + "/bin/Dependency.dll")
+            self.assertRaisesRegex(ValueError, "Ambiguous", image._compiled_inventory, sbom, triplet, compiled)
+            row = {"name": "dependency.dll", "sha256": checksum, "sourceSpdxPath": binding}
+            image._verify_compiled_runtime(row, triplet, compiled, content)
+            self.assertRaisesRegex(ValueError, "differs", image._verify_compiled_runtime, row, triplet, compiled,
+                                   source.read_bytes())
+            self.assertRaisesRegex(ValueError, "absent", image._verify_compiled_runtime, row, triplet, {}, content)
+            self.assertRaisesRegex(ValueError, "binding", image._verify_compiled_runtime,
+                                   {"name": "dependency.dll", "sha256": checksum}, triplet, compiled, content)
+
+    def test_actual_diagnostic_child_cannot_inherit_native_loader_injection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            if os.name == "nt":
+                program = root / "probe.cmd"
+                program.write_text('@echo off\nif defined LD_PRELOAD exit /b 2\nif defined DYLD_LIBRARY_PATH exit /b 3\necho package-image-abi-ok\n', encoding="utf-8")
+            else:
+                program = root / "probe"
+                program.write_text('#!/bin/sh\n[ -z "$LD_PRELOAD$DYLD_LIBRARY_PATH" ] || exit 2\necho package-image-abi-ok\n', encoding="utf-8")
+                program.chmod(0o700)
+            env = {**os.environ, "LD_PRELOAD": "foreign.so", "DYLD_LIBRARY_PATH": "/foreign"}
+            native_consumer._image_execute(program, root, env)
+
     def test_inventory_bounds_actual_directory_entries_and_depth_before_collecting_them(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

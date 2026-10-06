@@ -53,7 +53,10 @@ def image_restored_candidates(directory, cache, version, manifest):
 
 
 def _image_execute(program, root, env, failure=False):
-    result = subprocess.run([str(program)], cwd=root, env=env, capture_output=True, text=True, timeout=30)
+    runtime_env = {key: value for key, value in env.items()
+                   if not key.upper().startswith(("LD_", "DYLD_", "_RLD_"))
+                   and key.upper() not in ("LIBPATH", "SHLIB_PATH")}
+    result = subprocess.run([str(program)], cwd=root, env=runtime_env, capture_output=True, text=True, timeout=30)
     if failure:
         packages.require(result.returncode != 0 and "package-image-abi-ok" not in result.stdout,
                          "Invalid Image runtime was accepted: " + result.stdout + result.stderr)
@@ -61,6 +64,24 @@ def _image_execute(program, root, env, failure=False):
         packages.require(result.returncode == 0 and "package-image-abi-ok" in result.stdout,
                          "Actual Image package consumer failed: " + result.stdout + result.stderr)
     return result
+
+
+def _image_c_source(expected_suffix):
+    return '''#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <arc/arc_slate_image_abi.h>
+int main(void) {
+  uint32_t major=0, minor=0;
+  if (arc_image_get_abi_version(&major,&minor)!=ARC_OK || major!=1 || minor!=1) return 1;
+  char text[4096]={0}; arc_mut_buffer_t output={text,sizeof(text),0};
+  if (arc_image_get_build_info(&output)!=ARC_OK || output.required>=sizeof(text)) return 2;
+  const char expected[] = ''' + json.dumps(expected_suffix) + ''';
+  size_t length=strlen(text), expected_length=sizeof(expected)-1;
+  if (length<expected_length || strcmp(text+length-expected_length,expected)!=0) return 3;
+  puts("package-image-abi-ok"); return 0;
+}
+'''
 
 
 def consume_image(directory, version, commit, rid, compile_only=False):
@@ -120,18 +141,7 @@ Console.WriteLine("package-image-abi-ok");
     native = root / ".packages" / entry["id"].lower() / version.lower()
     # Cross compilation consumes exact archived headers/import libraries; it is not an OS result.
     source = root / "image-consumer.c"
-    source.write_text('''#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-#include <arc/arc_slate_image_abi.h>
-int main(void) {
-  uint32_t major=0, minor=0;
-  if (arc_image_get_abi_version(&major,&minor)!=ARC_OK || major!=1 || minor!=1) return 1;
-  char text[4096]={0}; arc_mut_buffer_t output={text,sizeof(text),0};
-  if (arc_image_get_build_info(&output)!=ARC_OK || output.required>=sizeof(text)) return 2;
-  puts("package-image-abi-ok"); return 0;
-}
-''', encoding="utf-8")
+    source.write_text(_image_c_source(expected_suffix), encoding="utf-8")
     c_output = output / ("ImageConsumerC.exe" if rid.startswith("win-") else "ImageConsumerC")
     if rid.startswith("win-"):
         vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
