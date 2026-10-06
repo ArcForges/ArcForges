@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Foundation.Errors;
 using ArcForges.Security.Audit;
 using ArcForges.Security.CapabilityEnforcement;
 using ArcForges.Security.Decisions;
 using ArcForges.Security.Egress;
 using ArcForges.Security.Leases;
-using ArcForges.Contracts.Foundation.V1;
-using ArcForges.Foundation.Errors;
 using Xunit;
 
 namespace ArcForges.Security.Tests;
