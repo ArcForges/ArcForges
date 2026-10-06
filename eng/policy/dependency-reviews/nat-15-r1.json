@@ -3,10 +3,10 @@
     "owner": "w-codex-20261006-security",
     "reviewer": "Independent exact-head NAT.15 reviewer required before merge.",
     "reviewedOn": "2026-10-06",
-    "baselineCommit": "56243df6ef505bb84968409d08c814ed9d86abda",
+    "baselineCommit": "9e2bdd43313dfd69fe9257043fc79ff1d52fc64c",
     "maintenanceAssessment": "NAT.15 replaces only the PDF parserless release configuration with admitted PDFium 155.0.8044.0 (chromium/8044), no V8/XFA, no dispatched actions or system-font callbacks. The production bundle is acquired by the producer through fixed hashes and verified GitHub Sigstore/SLSA workflow/recipe/invocation; the attestation does not bind the separately observed PDFium source commit. All archive members and full legal documents are pinned, and the SPDX 2.3 aggregate binary-bundle SBOM explicitly avoids invented bundled component versions. Existing NuGet/Python versions and hashes, SDK, vcpkg baseline, Image closure and public package identities are preserved. Runtime package publication belongs to NAT.25 from the immutable composition input; no previously published bytes are patched.",
     "upgradeChecks": {
-      "compilation": "Pinned MSVC 14.51.36231 compiled the actual PDFium-linked ABI and native tests with /W4 /WX. Both CTests passed: the isolated scripted engine and actual PDFium page/text/pixels/error/cancellation/deadline/lifetime/concurrent document tests. Pinned .NET SDK 10.0.400 built the helper/test closure with warnings as errors: 173 tests, 161 offline passes and 12 local OS tests skipped in the ordinary run. Production OS tests were then explicitly enabled and passed all 4 actual-library tests with zero skips. Root full vcpkg preset compilation is delegated to the existing producer CI; no new toolchain was provisioned locally. The actual hosted root production compile completed and all four selected CTests passed, including the real PDFium component parser; first run seal correctly failed on a preset UNINITIALIZED vs PATH cache typing mismatch, now corrected with the explicit PATH preset. Applicable final CI and actual seal remain required. Subsequent actual hosted run37507818693 at0fd02eae passed the owned rootCMake4.3.3 build and all four CTests, and sealed/uploaded31PDFcomposition files bound to the actual PR merge source78fefa66ce332ba8f75b74269100cab15a67c850. Final staged-byte hardening successor requires its own latest-head CI.",
+      "compilation": "Pinned MSVC 14.51.36231 compiled the actual PDFium-linked ABI and native tests with /W4 /WX. Both CTests passed: the isolated scripted engine and actual PDFium page/text/pixels/error/cancellation/deadline/lifetime/concurrent document tests. Pinned .NET SDK 10.0.400 built the helper/test closure with warnings as errors: 173 tests, 161 offline passes and 12 local OS tests skipped in the ordinary run. Production OS tests were then explicitly enabled and passed all 4 actual-library tests with zero skips. Root full vcpkg preset compilation is delegated to the existing producer CI; no new toolchain was provisioned locally. The actual hosted root production compile completed and all four selected CTests passed, including the real PDFium component parser; first run seal correctly failed on a preset UNINITIALIZED vs PATH cache typing mismatch, now corrected with the explicit PATH preset. Applicable final CI and actual seal remain required. Subsequent actual hosted run37507818693 at0fd02eae passed the owned rootCMake4.3.3 build and all four CTests, and sealed/uploaded31PDFcomposition files bound to the actual PR merge source78fefa66ce332ba8f75b74269100cab15a67c850. Final staged-byte hardening successor requires its own latest-head CI. Rebased on actual merged PLT57 9e2bdd43313dfd69fe9257043fc79ff1d52fc64c and resealed the unchanged package closure against its active plt-57-r2 predecessor; new latest-head CI is required.",
       "aot-trim": "The production ContentSandbox helper successfully published Native AOT for win-x64 with the inherited source-generated PDF binding. The actual AOT executable loaded the real native ABI and PDFium inside Windows AppContainer/Job containment and returned correct page/text/RGBA outputs. Linux/macOS execution was not performed; no evidence is claimed for unadmitted runtime profiles.",
       "compatibility": "The owned arc_pdf_* ABI, public LocalRpc payloads, helper profile/launch/exit contracts and signed hard limits stay unchanged. Producer configuration now identifies actual PDFium. The parserless library remains explicitly selectable for isolated fixtures, never a fallback production parser. Runtime package identities/publication are a later immutable producer handoff.",
       "licence-provenance": "The exact aggregate PDFium bundle admits BSD/MIT/Apache/LLVM-exception/FreeType/Unicode/AGG/libpng/zlib/IJG terms. All 15 complete upstream legal texts are preserved with LF normalization only. Archive and attestation hashes remain raw and exact. Aggregate SPDX SBOM and licence/provenance records retain the full attribution, FreeType acknowledgement and LLVM exception. Independent exact-head admission review is required before merge.",
@@ -244,7 +244,7 @@
       "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
-      "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj": "16db2e79a289f9954d871f5d96ff6fef69f9f3a9e05218026b34408f5a4190c7",
+      "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj": "896ca974a7ac7d28d704d764c50e1bfbc209c31b71e9fc6cbb2d3671d164308b",
       "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj": "e170254575a6b0723efb271ab7c1216f006c7a816677bd5b447cfff258e79082",
       "src/BuildingBlocks/ArcForges.Security.Audit/Tests/packages.lock.json": "1c93de4dbc04b8f0a15fef30f352c476b7543ff26f381cbdd348c0803fc092fd",
       "src/BuildingBlocks/ArcForges.Security.Audit/packages.lock.json": "ba8caa1127c0dc5f1036d45aea694e80008a6395dbe6c5a1d96e3fc4a2bf4352",
@@ -257,8 +257,8 @@
       "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/packages.lock.json": "d853a740c8ddb1da79ae2aad7d54fcecf80ed0a73dac94df14443c29d4eae7f7",
       "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj": "16b8227d01b3a11c82c7111c7da3cbf5d9d8701a3c449c47ca40dd3f245638d9",
       "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/packages.lock.json": "c9cd093bc0d4fe58c08f1bd0fc591d4f3086c8f302b6a374b319efcc9ec1d3e9",
-      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "0a151cdf32bf378434d9e82659d24df6a8802b52d8163bd97cfefb208236433a",
-      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "790d82612130bcf77c69c55ea91686a1dd63531ad54c422bc6304c2815e40e39",
+      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "e4ba91225551f7d3076aff09f04d37e34a4632c9706bd11a784f6ece97f983a2",
+      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "2b8bff322806785494fd1755265499382ebc69825b90a50bfefb4cbb06174802",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
@@ -306,7 +306,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-57-r2.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
