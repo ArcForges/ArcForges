@@ -438,7 +438,7 @@ public sealed class ProductionCompositionTests
     {
         var production = ParserProfiles.Production;
         var composed = Assert.IsType<ProductionParserProfile>(production.Find(ProductionParserProfile.ProfileId));
-        Assert.Null(composed.CreateImageParser());
+        using var image = Assert.IsType<NativeImageParser>(composed.CreateImageParser());
         using var pdf = composed.CreatePdfParser();
         Assert.NotNull(pdf);
         Assert.Null(production.Find(HostileFixture.HostileProfile.ProfileId));

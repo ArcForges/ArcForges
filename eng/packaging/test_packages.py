@@ -209,6 +209,42 @@ class AssistantAbstractionsPackageGuards(unittest.TestCase):
             packages.validate_generated_dependencies(self.metadata(correct), altered, self.owned_version)
 
 
+class FunctionalNativeRegistryGuards(unittest.TestCase):
+    """Offline registry contracts only; temporary metadata is not a compiled native artifact."""
+
+    def test_actual_registry_declares_closed_functional_families(self):
+        for entry in packages.catalogue():
+            if entry["kind"] == "native":
+                version, exports = packages.native.abi_contract(entry)
+                self.assertEqual({"major": 1, "minor": 1}, version)
+                self.assertEqual(version, entry["abi"])
+                self.assertEqual(sorted(exports), entry["exports"])
+
+    def test_registry_cannot_admit_probe_missing_duplicate_foreign_or_unversioned_exports(self):
+        entry = {"id": "ArcForges.Native.Image.Runtime.win-x64", "kind": "native", "project": "fixture.csproj",
+                 "prefix": "arc_image", "library": "ArcImageNative", "dependencies": []}
+        version, exports = packages.native.abi_contract(entry)
+        entry.update(abi=version, exports=sorted(exports))
+        mutations = [{"exports": sorted(exports)[:3]}, {"exports": sorted(exports) + ["upstream_cpp_symbol"]},
+                     {"exports": sorted(exports) + [sorted(exports)[0]]}, {"exports": None},
+                     {"abi": {"major": 1, "minor": 0}}, {"abi": {"major": 1, "minor": 2}},
+                     {"abi": {"major": True, "minor": 1}}, {"abi": {}},
+                     {"prefix": "caller"}, {"library": "ArcPdfNative"}]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "eng/packaging").mkdir(parents=True)
+            (root / "fixture.csproj").write_text("<Project />", encoding="utf-8")
+            inventory = root / "eng/packaging/packages.json"
+            with patch.object(packages, "ROOT", root):
+                inventory.write_text(json.dumps({"schemaVersion": 1, "packages": [entry]}), encoding="utf-8")
+                self.assertEqual([entry], packages.catalogue())
+                for mutation in mutations:
+                    invalid = {**entry, **mutation}
+                    inventory.write_text(json.dumps({"schemaVersion": 1, "packages": [invalid]}), encoding="utf-8")
+                    with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                        packages.catalogue()
+
+
 class PackageGuards(unittest.TestCase):
     def fixture(self):
         source = Path(os.environ.get("ARCFORGES_PACKAGE_DIRECTORY", packages.ROOT / "artifacts/packages"))
@@ -290,6 +326,21 @@ class PackageGuards(unittest.TestCase):
         target, manifest = self.mutate_native(tamper)
         with self.assertRaisesRegex(ValueError, "source/RID/library"):
             packages.verify(target, manifest["version"], manifest["sourceCommit"])
+
+    def test_native_manifest_requires_exact_functional_minor_and_closed_major(self):
+        for abi in [{"major": 1, "minor": 0}, {"major": 1, "minor": 2}, {"major": 2, "minor": 1}, None]:
+            def tamper(files, _, abi=abi):
+                document = json.loads(files["native-manifest.json"])
+                if abi is None:
+                    document.pop("abi")
+                else:
+                    document["abi"] = abi
+                encoded = json.dumps(document).encode()
+                files["native-manifest.json"] = encoded
+                files["runtimes/win-x64/native/ArcImageNative.manifest.json"] = encoded
+            target, manifest = self.mutate_native(tamper)
+            with self.subTest(abi=abi), self.assertRaisesRegex(ValueError, "ABI manifest version"):
+                packages.verify(target, manifest["version"], manifest["sourceCommit"])
 
     def test_inexact_managed_runtime_pair_is_rejected(self):
         def tamper(files, manifest):

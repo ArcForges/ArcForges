@@ -30,4 +30,16 @@ public static unsafe partial class ImageAbi
     [LibraryImport("ArcImageNative", EntryPoint = "arc_image_get_last_error")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     private static partial int GetErrorCore(ref NativeErrorBuffer output);
+
+    [LibraryImport("ArcImageNative", EntryPoint = "arc_image_open")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int Open(NativeIoV1* io, NativeImageOptionsV1* options, ulong* image, NativeBuffer* metadata, NativeCancelToken* cancel);
+
+    [LibraryImport("ArcImageNative", EntryPoint = "arc_image_read")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int Read(ulong image, NativeRegionV1* region, NativeBuffer* pixels, NativeCancelToken* cancel);
+
+    [LibraryImport("ArcImageNative", EntryPoint = "arc_image_close")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int Close(ulong image);
 }

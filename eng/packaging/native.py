@@ -23,6 +23,32 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def abi_contract(entry):
+    """Closed functional contracts, shared by staging and package verification. No arbitrary export allowlist is accepted."""
+    families = {
+        "arc_image": ("ArcImageNative", ("open", "read", "close")),
+        "arc_pdf": ("ArcPdfNative", ("open", "page_info", "render", "text", "close")),
+    }
+    prefix = entry.get("prefix")
+    require(isinstance(prefix, str) and prefix in families, "Unknown owned native ABI family.")
+    library, operations = families[prefix]
+    require(entry.get("library") == library, "Native ABI family/library mismatch.")
+    exports = {prefix + "_" + suffix for suffix in ("get_abi_version", "get_build_info", "get_last_error", *operations)}
+    return {"major": 1, "minor": 1}, exports
+
+
+def verify_abi(entry, exports, abi=None):
+    version, expected = abi_contract(entry)
+    require(isinstance(exports, (list, tuple)) and all(isinstance(export, str) for export in exports) and
+            len(exports) == len(expected) and set(exports) == expected,
+            "Owned native export set differs from the admitted ABI.")
+    if abi is not None:
+        require(isinstance(abi, dict) and set(abi) == {"major", "minor"} and
+                all(type(value) is int for value in abi.values()) and abi == version,
+                "Native ABI manifest version differs from the admitted functional contract.")
+    return version
+
+
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -279,8 +305,7 @@ def stage(directory, vcpkg, installed_root):
                 if not system_dependency(dependency):
                     pending.append(dependency)
         owned = selected[entry["library"].lower() + ".dll"]
-        require(set(owned["exports"]) == {entry["prefix"] + suffix for suffix in ["_get_abi_version", "_get_build_info", "_get_last_error"]},
-                "Owned native export set differs from the admitted ABI.")
+        abi_version = verify_abi(entry, owned["exports"])
         for original, relative in [(ROOT / entry["header"], "include/arc/" + Path(entry["header"]).name),
                                    (ROOT / "native/shared/include/arc/arc_native_abi.h", "include/arc/arc_native_abi.h"),
                                    (binary_root / "lib" / (entry["library"] + ".lib"), "sdk/win-x64/lib/" + entry["library"] + ".lib")]:
@@ -289,7 +314,7 @@ def stage(directory, vcpkg, installed_root):
             shutil.copyfile(original, target)
         records = upstream_records(vcpkg, installed_root, database, entry, destination, profile)
         metadata = {"schemaVersion": 1, "sourceCommit": commit, "rid": "win-x64", "library": entry["library"],
-                    "abi": {"major": 1, "minor": 0}, "vcpkgCommit": actual,
+                    "abi": abi_version, "vcpkgCommit": actual,
                     "files": sorted(selected.values(), key=lambda f: f["name"])}
         write_json(destination / "native-manifest.json", metadata)
         write_json(runtime / (entry["library"] + ".manifest.json"), metadata)

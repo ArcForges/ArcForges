@@ -257,6 +257,7 @@
           "ArcForges.ContentSandbox.Contracts": "[1.0.0, )",
           "ArcForges.Foundation": "[1.0.0, )",
           "ArcForges.LocalRpc": "[1.0.0, )",
+          "ArcForges.Native.Image": "[1.0.0, )",
           "ArcForges.Native.Pdf": "[1.0.0, )"
         }
       },
@@ -297,6 +298,12 @@
       },
       "arcforges.native.abstractions": {
         "type": "Project"
+      },
+      "arcforges.native.image": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Native.Abstractions": "[1.0.0, )"
+        }
       },
       "arcforges.native.pdf": {
         "type": "Project",

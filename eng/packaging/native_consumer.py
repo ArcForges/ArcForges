@@ -11,6 +11,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 import packages
+import native
 
 
 def execute(executable, directory, env, failure=False):
@@ -88,7 +89,8 @@ using ArcForges.Native.Abstractions;
             name = entry["dependencies"][0]
             family = name.split(".")[-1]
             api = f"{name}.{family}Abi"
-            program += f'''if ({api}.GetAbiVersion() != new NativeAbiVersion(1, 0)) throw new Exception("ABI mismatch");
+            abi, _ = native.abi_contract(entry)
+            program += f'''if ({api}.GetAbiVersion() != new NativeAbiVersion({abi["major"]}, {abi["minor"]})) throw new Exception("ABI mismatch");
 Console.WriteLine({api}.GetBuildInfo());
 if (!{api}.GetBuildInfo().EndsWith({json.dumps(expected_suffix)}, StringComparison.Ordinal)) throw new Exception("Native build identity mismatch");
 var metadata{family} = System.Reflection.CustomAttributeExtensions.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>(typeof({api}).Assembly).ToDictionary(a => a.Key, a => a.Value);
@@ -183,9 +185,10 @@ def c_consumer(root, published, entries, version, env, expected_suffix):
         libraries.append('"' + str(installed / "sdk/win-x64/lib" / (entry["library"] + ".lib")) + '"')
         source += '#include <arc/' + Path(entry["header"]).name + '>\n'
         prefix = entry["prefix"]
+        abi, _ = native.abi_contract(entry)
         body += f'''{{
   uint32_t major = 0, minor = 0;
-  if ({prefix}_get_abi_version(&major, &minor) != ARC_OK || major != 1 || minor != 0) return 1;
+  if ({prefix}_get_abi_version(&major, &minor) != ARC_OK || major != {abi["major"]} || minor != {abi["minor"]}) return 1;
   arc_mut_buffer_t query = {{0}};
   if ({prefix}_get_build_info(&query) != ARC_BUFFER_TOO_SMALL || query.required > 4096 || query.required == 0) return 2;
   char text[4096] = {{0}};

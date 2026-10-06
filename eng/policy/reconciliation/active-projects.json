@@ -24,7 +24,7 @@
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
-      "blob": "2af2a384ad1d1dc509a4c86921983ca6ed067931"
+      "blob": "25daa22f1ac7e6d2a0952f0568fa6c50a1be30d8"
     },
     {
       "path": "native/arcpdf-abi/CMakeLists.txt",
@@ -32,7 +32,7 @@
     },
     {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
-      "blob": "0bb08be2c7631e3771239e36a71a9ea31dc19f39"
+      "blob": "e6272687a6d2edf67065774b8ca5a77b0f0aa26d"
     },
     {
       "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
@@ -152,7 +152,7 @@
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
-      "blob": "daf4e45e7e188048e44acfef682015b48a812109"
+      "blob": "6c3d3fa13e117efed2be59bb15c97eefae22c1b9"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
@@ -180,7 +180,7 @@
     },
     {
       "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-      "blob": "9132f77575e4d1940f4648f7f208d86cf6087bca"
+      "blob": "8e456e3b26cb6916f9770813ae4d826f54fb1ede"
     },
     {
       "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",

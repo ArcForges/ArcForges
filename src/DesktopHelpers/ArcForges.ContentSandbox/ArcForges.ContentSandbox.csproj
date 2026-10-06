@@ -2,7 +2,8 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
     The first-party Native AOT content helper host (WP-11.09). It runs only when a parent launches it in its restricted profile, with a closed
-    inventory of inherited streams and mappings. It composes the production parsers (WP-13.13): the PDF parser over the native arc_pdf_* library. The retained five-RID bootstrap is not proof of platform support: the OS-enforced evidence is recorded in the Plan ledger.
+    inventory of inherited streams and mappings. It composes the production PDF and still-image parsers over the owned native ABIs.
+    The retained five-RID bootstrap is not proof of platform support: the OS-enforced evidence is recorded in the Plan ledger.
   -->
   <Import Project="..\..\..\eng\build\desktop-aot.props" />
   <Import Project="..\..\..\eng\build\desktop-rids.props" />
@@ -23,6 +24,7 @@
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.Foundation\ArcForges.Foundation.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\ArcForges.LocalRpc\ArcForges.LocalRpc.csproj" />
     <ProjectReference Include="..\..\Native\ArcForges.Native.Pdf\ArcForges.Native.Pdf.csproj" />
+    <ProjectReference Include="..\..\Native\ArcForges.Native.Image\ArcForges.Native.Image.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <LicenceBoundary>AGPL</LicenceBoundary>

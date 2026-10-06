@@ -96,6 +96,12 @@
       "arcforges.native.abstractions": {
         "type": "Project"
       },
+      "arcforges.native.image": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Native.Abstractions": "[1.0.0, )"
+        }
+      },
       "arcforges.native.pdf": {
         "type": "Project",
         "dependencies": {
