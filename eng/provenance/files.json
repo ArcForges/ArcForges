@@ -1024,7 +1024,10 @@
     "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/README.md",
     "src/Build/ArcForges.Build.Policy/Architecture/NonWireMetadataPolicy.cs",
     "tests/ArchitectureTests/NonWireMetadataBindingTests.cs",
-    "eng/policy/dependency-reviews/gov-24-r1.json"
+    "eng/policy/dependency-reviews/gov-24-r1.json",
+    "native/arcimage-abi/src/image_reader.cpp",
+    "native/arcimage-abi/tests/image_codec_tests.cpp",
+    "src/Native/ArcForges.Native.Image/ImageReader.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

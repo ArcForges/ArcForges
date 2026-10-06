@@ -4,3 +4,6 @@ EXPORTS
     arc_image_get_abi_version
     arc_image_get_build_info
     arc_image_get_last_error
+    arc_image_open
+    arc_image_read
+    arc_image_close

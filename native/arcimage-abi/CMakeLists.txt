@@ -42,6 +42,12 @@ install(TARGETS arcslate_image_abi
     ARCHIVE DESTINATION lib)
 
 if(ARCFORGES_BUILD_TESTS)
+    add_executable(arcimage_codec_tests "tests/image_codec_tests.cpp")
+    arcforges_declare_target_licence(arcimage_codec_tests)
+    set_target_properties(arcimage_codec_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)
+    target_compile_features(arcimage_codec_tests PRIVATE cxx_std_20)
+    target_link_libraries(arcimage_codec_tests PRIVATE arcslate_image_abi OpenImageIO::OpenImageIO)
+    # The actual codec runtime diagnostics are local opt-in, outside CTest/hosted CI.
     add_executable(arcslate_image_abi_tests "tests/arcslate_image_abi_tests.cpp")
     arcforges_declare_target_licence(arcslate_image_abi_tests)
     set_target_properties(arcslate_image_abi_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)

@@ -1,9 +1,24 @@
 # ArcForges.Native.Image
 
-Source-generated bindings for the existing ABI preamble: version, dependency build information and
-thread-local error queries. No media processing, image processing or timeline editing API is claimed.
+Owned ABI 1.1 bindings for PNG, TIFF and EXR metadata and bounded region reads through
+OpenImageIO/OpenEXR/Imath. Existing version/build/error exports remain compatible.
+`ImageReader.Open` and `OpenAsync` take immutable brokered callback input, typed limits,
+subimage/mip and a closed output format. `ReadRegion`/`ReadRegionAsync` return packed
+RGBA8 or linear premultiplied RGBA32F with an explicit row stride. Source channel names,
+types and bit depths remain in immutable metadata; output conversion loss is explicit.
 
-Pin the exact package version centrally and commit package locks. Also reference `ArcForges.Native.Image.Runtime.win-x64` at the same exact version and build/publish for `win-x64`. Call `ImageAbi.GetAbiVersion()`, `GetBuildInfo()` or `GetLastError()` in namespace `ArcForges.Native.Image`.
-The runtime package supplies app-local DLLs and a hash manifest. Loading never searches PATH or the
-current working directory. Final product installation owns signing, read-only application paths and
-any later hostile-content sandbox. Current native queries do not parse untrusted content.
+Instantiate readers only inside the approved restricted ContentSandbox helper. This
+binding is not OS isolation. It owns the generation token and callback roots in a
+SafeHandle; close drains borrowed operations before releasing input roots. Cancellation
+is polled at callback/decode boundaries. Codec hangs or native crashes require the
+helper supervisor's OS termination and invocation cleanup.
+
+Pin this package and its explicitly admitted Runtime.<rid> sibling at the same exact
+published version. The retained loader requires win-x64 with an app-local hash manifest;
+it never searches PATH or the current directory. Other RID production and package-only
+acceptance remain NAT.22/NAT.30 responsibilities. Source does not prove new RID support.
+
+The adapter uses the existing authored image open/info/tile/buffer-seal/ack/finish
+protocol. No native pointer or opaque process token becomes a wire ID. Parent admission,
+slot geometry, digest/coverage verification and final output acceptance remain the
+ContentSandbox broker's responsibility.

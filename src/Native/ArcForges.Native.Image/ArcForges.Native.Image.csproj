@@ -6,9 +6,11 @@
     <IsPackable>true</IsPackable>
     <PackageId>ArcForges.Native.Image</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Description>ArcForges Image existing native ABI version, build-information and error bindings.</Description>
+    <Description>Bounded PNG, TIFF and EXR metadata and tile decoding in the restricted ContentSandbox helper.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox" />
+    <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
     <ProjectReference Include="../ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
     <None Include="README.md" Pack="true" PackagePath="/" />
     <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
