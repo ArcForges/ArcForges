@@ -22,9 +22,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - rid: win-x64
+            runner: windows-latest
+            triplet: x64-windows-static-md
+            msvc_target: x64
+            crt_arch: x64
           - rid: win-arm64
             runner: windows-latest
             triplet: arm64-windows-static-md
+            msvc_target: x64_arm64
+            crt_arch: arm64
           - rid: linux-x64
             runner: ubuntu-24.04
             triplet: x64-linux
@@ -36,6 +43,8 @@ jobs:
     env:
       IMAGE_RID: ${{ matrix.rid }}
       IMAGE_TRIPLET: ${{ matrix.triplet }}
+      IMAGE_MSVC_TARGET: ${{ matrix.msvc_target }}
+      IMAGE_CRT_ARCH: ${{ matrix.crt_arch }}
       VCPKG_MAX_CONCURRENCY: '4'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -73,7 +82,8 @@ jobs:
       - name: Install the actual Image dependency closure
         shell: pwsh
         run: |
-          $installed = Join-Path $env:GITHUB_WORKSPACE "artifacts/vcpkg-installed/$env:IMAGE_RID"
+          $installedRelative = if ($env:IMAGE_RID -eq 'win-x64') { 'artifacts/vcpkg-installed' } else { "artifacts/vcpkg-installed/$env:IMAGE_RID" }
+          $installed = Join-Path $env:GITHUB_WORKSPACE $installedRelative
           $arguments = @('install', "opencolorio[core]:$env:IMAGE_TRIPLET", "openimageio[core]:$env:IMAGE_TRIPLET", "openexr[core]:$env:IMAGE_TRIPLET", "imath[core]:$env:IMAGE_TRIPLET", "--x-install-root=$installed", "--overlay-triplets=$env:GITHUB_WORKSPACE/eng/native/vcpkg/triplets")
           $vcpkg = if ($IsWindows) { "$env:VCPKG_ROOT/vcpkg.exe" } else { "$env:VCPKG_ROOT/vcpkg" }
           & $vcpkg @arguments
@@ -82,7 +92,7 @@ jobs:
         with:
           cmakeVersion: '4.3.3'
           ninjaVersion: '1.13.1'
-      - name: Compile and install the owned ARM64 Windows Image ABI
+      - name: Compile and install the owned Windows Image ABI on its declared architecture
         if: runner.os == 'Windows'
         shell: cmd
         run: |
@@ -90,11 +100,11 @@ jobs:
           set "ARCFORGES_IMAGE_VCPKG_ROOT=%VCPKG_ROOT%"
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "ARCFORGES_IMAGE_VS=%%i"
           if not defined ARCFORGES_IMAGE_VS exit /b 1
-          call "%ARCFORGES_IMAGE_VS%\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64 -vcvars_ver=14.51.36231 || exit /b 1
+          call "%ARCFORGES_IMAGE_VS%\VC\Auxiliary\Build\vcvarsall.bat" %IMAGE_MSVC_TARGET% -vcvars_ver=14.51.36231 || exit /b 1
           set "VCPKG_ROOT=%ARCFORGES_IMAGE_VCPKG_ROOT%"
-          cmake --preset image-win-arm64-v1 -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= || exit /b 1
-          cmake --build --preset image-win-arm64-v1 || exit /b 1
-          cmake --install artifacts/cmake/image/win-arm64 --component ImageRuntime || exit /b 1
+          cmake --preset image-%IMAGE_RID%-v1 -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= || exit /b 1
+          cmake --build --preset image-%IMAGE_RID%-v1 || exit /b 1
+          cmake --install artifacts/cmake/image/%IMAGE_RID% --component ImageRuntime || exit /b 1
       - name: Compile and install the owned Linux Image ABI on its actual architecture
         if: runner.os == 'Linux'
         shell: bash
@@ -112,7 +122,7 @@ jobs:
           if ($IsWindows) {
             $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
             $installation = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
-            $runtime = Join-Path $installation 'VC/Redist/MSVC/14.51.36231/arm64/Microsoft.VC145.CRT'
+            $runtime = Join-Path $installation "VC/Redist/MSVC/14.51.36231/$env:IMAGE_CRT_ARCH/Microsoft.VC145.CRT"
             $arguments += @('--compiler-runtime', $runtime)
           }
           python @arguments
