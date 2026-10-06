@@ -155,6 +155,8 @@ public sealed class NonWireMetadataBindingTests
     [Xunit.InlineData("cast-alias")]
     [Xunit.InlineData("arrow-snapshot")]
     [Xunit.InlineData("return-snapshot")]
+    [Xunit.InlineData("tuple-snapshot")]
+    [Xunit.InlineData("struct-snapshot")]
     public void ReviewedHashDoesNotAdmitMutableArbitraryOrSerializedShapes(string mutation)
     {
         string source = mutation switch
@@ -184,6 +186,11 @@ public sealed class NonWireMetadataBindingTests
                 + "\ninternal static class External { public static object? Value; }",
             "return-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "object Borrow() { return (object)snapshot; } External.Value = Borrow(); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
                 + "\ninternal static class External { public static object? Value; }",
+            "tuple-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "Escape((snapshot, 0)); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                .Replace("public string OperationId", "private static void Escape(object value) {}\npublic string OperationId", StringComparison.Ordinal),
+            "struct-snapshot" => Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "Escape(new Carrier { Value = snapshot }); ActorKinds = Array.AsReadOnly(snapshot);", StringComparison.Ordinal)
+                .Replace("public string OperationId", "private static void Escape(object value) {}\npublic string OperationId", StringComparison.Ordinal)
+                + "\ninternal struct Carrier { public object Value; }",
             _ => throw new ArgumentException("Unknown fixture mutation.", nameof(mutation)),
         };
         using var fixture = new Fixture(source);
@@ -277,7 +284,7 @@ public sealed class NonWireMetadataBindingTests
     [Xunit.Fact]
     public void ErasedScalarProjectionAndReadonlySnapshotResultsRemainAllowed()
     {
-        using var fixture = new Fixture(Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "var copy = snapshot.ToArray(); ActorKinds = Array.AsReadOnly(copy);", StringComparison.Ordinal),
+        using var fixture = new Fixture(Policy.Replace("ActorKinds = Array.AsReadOnly(snapshot);", "var count = snapshot.Length; var copy = snapshot.ToArray(); ActorKinds = Array.AsReadOnly(copy);", StringComparison.Ordinal),
             extra: "using System.Linq; using Metadata; internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize(Catalog.All.Cast<object>().Select(value => ((Policy)value).OperationId).ToArray()); }");
         Xunit.Assert.Empty(fixture.Check());
     }
