@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Security.Audit;
+using ArcForges.Security.CapabilityEnforcement;
 using ArcForges.Security.Decisions;
 using ArcForges.Security.Egress;
 using ArcForges.Security.Leases;

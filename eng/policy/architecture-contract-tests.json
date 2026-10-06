@@ -3240,7 +3240,7 @@
     "testMethod": "ArcForges.Security.Audit.Tests.AuditDecisionTests.CancelledOrDisposedIntakeNeverReportsSuccess()"
   },
   {
-    "apiSymbol": "ArcForges.Capabilities.CapabilityInvocationBinding.RestoreResult(ArcForges.Sdk.Contracts.V1.CapabilityResult, ArcForges.Capabilities.InvocationResultVersion)",
+    "apiSymbol": "ArcForges.Capabilities.CapabilityInvocationBinding.RestoreResult(ArcForges.Contracts.PublicApi.V1.CapabilityResult, ArcForges.Capabilities.InvocationResultVersion)",
     "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
     "testMethod": "ArcForges.Capabilities.Tests.InvocationRestoreTests.RestoreResultValidatesExactSchemaBudgetAndVersionWithoutCallingOwner()"
   }

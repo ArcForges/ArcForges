@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.PublicApi.V1;
 using ArcForges.Foundation.Errors;
-using ArcForges.Sdk.Contracts.V1;
 using Google.Protobuf;
 using Xunit;
 

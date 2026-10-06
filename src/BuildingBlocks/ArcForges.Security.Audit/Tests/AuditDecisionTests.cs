@@ -34,7 +34,8 @@ public sealed class AuditDecisionTests
         var delegated = new DelegatedActor(ActorKind.Agent, Guid.NewGuid(), new InstanceId(Guid.NewGuid()), "owned.assistant/1");
         var chain = new ActorChain(f.Actor.Owner, f.Actor.Device, f.Actor.Installation, f.Actor.Session, f.Actor.CallerInstance, [delegated]);
         await sink.WriteAsync(f.Security(EnforcementPoint.OwnerFinalValidation, DecisionReasons.Describe(DecisionReason.S11OwnerRefused), null)
-            with { Actors = chain, Executor = delegated.Executor, SoftwareIdentity = delegated.SoftwareIdentity }, TestContext.Current.CancellationToken);
+            with
+        { Actors = chain, Executor = delegated.Executor, SoftwareIdentity = delegated.SoftwareIdentity }, TestContext.Current.CancellationToken);
         var rows = f.Read();
         Assert.Contains(rows, row => ((AuditSecurityDecisionDetail)row.Event.DecisionDetail!).Record.FailedStep == DecisionStep.OwnerValidation
             && row.Event.Risk == AuditRisk.NotAssessed);
