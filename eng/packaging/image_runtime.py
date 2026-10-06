@@ -978,7 +978,7 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
             require(hashlib.sha512(read("sources/" + resource["cacheName"])).hexdigest() == resource["sha512"],
                     "Packaged Image corresponding source archive differs.")
         for extra in component["extras"]:
-            require(hashlib.sha256(read(extra["output"]).replace(b"\r\n", b"\n")).hexdigest() == extra["sha256"],
+            require(hashlib.sha256(read(extra["output"])).hexdigest() == extra["sha256"],
                     "Packaged Image original legal companion differs.")
     for row in manifest["files"]:
         key = _key(row["name"], rid)
@@ -999,7 +999,7 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
             if key in runtime_files:
                 require(row["sha256"] == runtime_files[key]["sha256"], "Image compiler-runtime content differs from admission.")
         for legal in base["platformRuntime"]["legal"]:
-            require(hashlib.sha256(read(legal["output"]).replace(b"\r\n", b"\n")).hexdigest() == legal["sha256"],
+            require(hashlib.sha256(read(legal["output"])).hexdigest() == legal["sha256"],
                     "Image Microsoft redistribution grant differs.")
     return receipt
 

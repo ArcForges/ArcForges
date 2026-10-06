@@ -70,6 +70,36 @@ class ImageRuntimeTests(unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 native_consumer._image_execute(executable, output, dict(os.environ), failure=name == "foreign")
 
+    @unittest.skipUnless(os.environ.get("ARCFORGES_IMAGE_REAL_STAGE"),
+                         "Explicit actual source-bound producer stage; no runtime/OS/signature acceptance.")
+    def test_actual_full_stage_keeps_raw_binary_legal_and_refuses_newline_rewritten_grant(self):
+        directory = Path(os.environ["ARCFORGES_IMAGE_REAL_STAGE"])
+        source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=image.ROOT, text=True).strip()
+        artifact = image.verify_stage(directory, source)
+        value, material = image.profile()
+        base, _ = image._selection(artifact["rid"], value, material)
+        grant = next(row for row in base["components"]["tiff"]["extras"]
+                     if row["output"].endswith("berkeley-bsd-amendment.pdf"))
+        package = directory / artifact["packages"][0]["id"]
+        original = (package / grant["output"]).read_bytes()
+        self.assertEqual("raw", grant["encoding"])
+        self.assertIn(b"\r\n", original)
+        self.assertEqual(grant["sha256"], hashlib.sha256(original).hexdigest())
+        rewritten = original.replace(b"\r\n", b"\n")
+        self.assertNotEqual(grant["sha256"], hashlib.sha256(rewritten).hexdigest())
+        names = {row["path"] for row in artifact["packages"][0]["files"]}
+        entry = {"id": artifact["packages"][0]["id"], "rid": artifact["rid"], "library": "ArcImageNative"}
+
+        def read(name):
+            return (package / name).read_bytes()
+
+        # Every library, source archive, recipe, SPDX document and legal positive is real.
+        # The hostile read view changes only one original raw PDF; no dependency is mocked.
+        image.verify_package(entry, read, names, source)
+        with self.assertRaisesRegex(ValueError, "original legal companion differs"):
+            image.verify_package(entry, lambda name: rewritten if name == grant["output"] else read(name),
+                                 names, source)
+
     def test_cancellation_during_unavailable_producer_artifact_verification_cannot_return_warm_cache(self):
         # The finalized upstream producer artifact is unavailable during this source component check.
         # Only that artifact verifier is scripted; actual cache bytes and cancellation are retained.
