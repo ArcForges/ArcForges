@@ -240,6 +240,7 @@ public sealed class NonWireMetadataBindingTests
     [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(Catalog.All.Cast<object>().Select(value => value).ToArray());")]
     [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(System.Linq.Enumerable.Select(Catalog.All.Cast<object>(), value => value).ToArray());")]
     [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(Catalog.All.Cast<object>().Select(Identity).ToArray());")]
+    [Xunit.InlineData("return System.Text.Json.JsonSerializer.Serialize(((object)Catalog.All[0], 0));")]
     public void ErasedScalarCollectionFactoryAndWrapperMetadataCannotBeSerialized(string body)
     {
         string extra = """

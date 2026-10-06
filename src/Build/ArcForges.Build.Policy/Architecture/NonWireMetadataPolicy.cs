@@ -455,6 +455,7 @@ internal static class NonWireMetadataPolicy
             if (type is not null && Reaches(type, new HashSet<string>(StringComparer.Ordinal))) return true;
             if (expression is CastExpressionSyntax cast) return Expression(cast.Expression, model, visited);
             if (expression is ParenthesizedExpressionSyntax parentheses) return Expression(parentheses.Expression, model, visited);
+            if (expression is TupleExpressionSyntax tuple) return tuple.Arguments.Any(argument => Expression(argument.Expression, model, visited));
             if (expression is CollectionExpressionSyntax collection)
                 return collection.Elements.Any(element => element switch
                 {
