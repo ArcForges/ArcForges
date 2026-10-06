@@ -16,6 +16,8 @@
     "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
     "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
     "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+    "eng/native/vcpkg/pdfium-build.v1.json": "c71137dffec1f831122cfdbdf411b1522509b47e0083b72ff702b6a951d17637",
+    "eng/native/vcpkg/pdfium-sbom.v1.json": "ea5628646c7f89caf495e68cd75d17be0004a2fac339e889c7ea57d57f435ee9",
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
@@ -29,6 +31,7 @@
     "eng/provenance/records/contracts-apache-legal-r1.json": "d436592a4d2f88a0de71a04bcf1c7f52cdf313049ef1b713e525a3ef57025b59",
     "eng/provenance/records/contracts-provenance-tools-r1.json": "734af233a171876f4f246e0d7f99c7bc5366be65da9801acbd2a1f5a7588bfce",
     "eng/provenance/records/contracts-provenance-tools-r2.json": "c83a17cc144e82979a35e0a66cadc1577acfe65aa557c08aa9142a54ac6113d2",
+    "eng/provenance/records/contracts-provenance-tools-r3.json": "a732fbc22163874095ec89425ae0af777f340c5c09439d49c57bcd666e10a5de",
     "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
     "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
     "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
@@ -109,6 +112,7 @@
     "eng/provenance/records/native-opentimelineio-r1.json": "72074bcf82b6e813c3aaf4f8fe741498cd0865089f96720f9a832559982f5f0b",
     "eng/provenance/records/native-opentimelineio-r2.json": "747303a95d89615a8080d45dc98b1faef71e081fa467c74fd98acca847e00671",
     "eng/provenance/records/native-opentimelineio-r3.json": "3fa020da888e7e7942b1eb528d534018159e4d0befc2a7d4505ad04fd352f3b3",
+    "eng/provenance/records/native-pdfium-r1.json": "33a41e8bf7cfc224629cc99dcb59c027b291d7fb2e92316df3b42eed2b789a51",
     "eng/provenance/records/native-pkgconf-r1.json": "92fefa78ecc8a7cb6c5fb44308800f2d231e49520b92b931e5964ac193aaa7c1",
     "eng/provenance/records/native-pkgconf-r2.json": "19801f80373877c21932d2ff5dd506193464f2b21d21ec2d821ec6f0e27246b7",
     "eng/provenance/records/native-pkgconf-r3.json": "9f91d9226843ada3def1eeab75f9d4489dfed944dfa2845ca048707925eadc95",
@@ -783,19 +787,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-codex-20261006-audit",
-    "reviewer": "w-codex-20261006-security",
+    "owner": "w-codex-20261006-security",
+    "reviewer": "Independent exact-head NAT.15 reviewer required before merge.",
     "reviewedOn": "2026-10-06",
-    "baselineCommit": "56243df6ef505bb84968409d08c814ed9d86abda",
-    "maintenanceAssessment": "PLT.57 implements complete production decision/result intake in the existing Audit producer and validated Capabilities durable-success restoration. Exact dependency identities, versions and hashes remain unchanged. Real SQLite security/result/egress/lease audit components share one owner-scoped store; product host facts and lease storage are explicit fixtures, with APP.03 actual product acceptance separate.",
+    "baselineCommit": "8e2d27389f07c579a3d5259a986591eb7b31e28a",
+    "maintenanceAssessment": "NAT.15 replaces only the PDF parserless release configuration with admitted PDFium 155.0.8044.0 (chromium/8044), no V8/XFA, no dispatched actions or system-font callbacks. The production bundle is acquired by the producer through fixed hashes and verified GitHub Sigstore/SLSA workflow/recipe/invocation; the attestation does not bind the separately observed PDFium source commit. All archive members and full legal documents are pinned, and the SPDX 2.3 aggregate binary-bundle SBOM explicitly avoids invented bundled component versions. Existing NuGet/Python versions and hashes, SDK, vcpkg baseline, Image closure and public package identities are preserved. Runtime package publication belongs to NAT.25 from the immutable composition input; no previously published bytes are patched.",
     "upgradeChecks": {
-      "compilation": "Pinned installed SDK 10.0.400, Release, locked restores and warnings-as-errors: Security 928/928, Audit 52/52 and Capabilities 79/79 tests initially passed; after independent review fixed cancellation at blocked SQLite transaction entry, the changed Audit suite passed 53/53 (1060 component tests total, none skipped), including a real external writer lock, exact OperationCanceledException/token classification and no row after reopen. Whole DesktopPlatform.slnx restore/build passed with zero warnings/errors. Architecture passed 134/135: its sole failure is the intentionally fail-closed absence of same-source hosted canonical naming/secret receipts (RP-01/08/09) and native configure evidence (AT-09); no RP-10 or code finding remains. Independent exact-head source/admission review and all applicable final hosted checks, including the evidence-importing architecture gate, are required. Reviewer field identifies the assigned independent reviewer, not an approval claim.",
-      "aot-trim": "Production detail codec uses closed static binary arms with no reflection or property bags. Applicable hosted Native AOT/trim gates remain required.",
-      "compatibility": "Existing AuditEvent constructor and Append(AuditEvent) remain; new closed detail types, production sinks, cancellable Append overload and validated binding RestoreResult are additive APIs. Old schema2 rows migrate atomically without changing their v4 digests; new closed decision rows use v5 detail integrity. Package identities and wire contracts remain unchanged.",
-      "licence-provenance": "New first-party production/test sources carry AGPL-3.0-only SPDX and are registered in owned-source inventory; historical receipts and notices remain.",
-      "security-sbom": "No NuGet/Python closure change. Actual component tests verify no effect when audit authorization fails, complete decision facts and durable results; fixture host inputs do not prove production deployment or OS isolation.",
-      "runtime-performance-migration": "New typed decision details are byte-bounded; writes serialize with cancellation and SQLite interrupt, and replay never invokes an owner. Component tests cover additive migration, persistence, fail-closed errors, producer-null refusal, cancellation, concurrency, retention and lease lifecycle. Full ArcScope acceptance remains APP.03.",
-      "framework-runtime-posture": "No SDK/framework/runtime/native/toolchain change. global.json remains 10.0.400; existing installed user SDK used."
+      "compilation": "Pinned MSVC 14.51.36231 compiled the actual PDFium-linked ABI and native tests with /W4 /WX. Both CTests passed: the isolated scripted engine and actual PDFium page/text/pixels/error/cancellation/deadline/lifetime/concurrent document tests. Pinned .NET SDK 10.0.400 built the helper/test closure with warnings as errors: 173 tests, 161 offline passes and 12 local OS tests skipped in the ordinary run. Production OS tests were then explicitly enabled and passed all 4 actual-library tests with zero skips. Root full vcpkg preset compilation is delegated to the existing producer CI; no new toolchain was provisioned locally. The actual hosted root production compile completed and all four selected CTests passed, including the real PDFium component parser; first run seal correctly failed on a preset UNINITIALIZED vs PATH cache typing mismatch, now corrected with the explicit PATH preset. Applicable final CI and actual seal remain required. Subsequent actual hosted run37507818693 at0fd02eae passed the owned rootCMake4.3.3 build and all four CTests, and sealed/uploaded31PDFcomposition files bound to the actual PR merge source78fefa66ce332ba8f75b74269100cab15a67c850. Final staged-byte hardening successor requires its own latest-head CI. Rebased on actual merged PLT57 9e2bdd43313dfd69fe9257043fc79ff1d52fc64c and resealed the unchanged package closure against its active plt-57-r2 predecessor; new latest-head CI is required.",
+      "aot-trim": "The production ContentSandbox helper successfully published Native AOT for win-x64 with the inherited source-generated PDF binding. The actual AOT executable loaded the real native ABI and PDFium inside Windows AppContainer/Job containment and returned correct page/text/RGBA outputs. Linux/macOS execution was not performed; no evidence is claimed for unadmitted runtime profiles.",
+      "compatibility": "The owned arc_pdf_* ABI, public LocalRpc payloads, helper profile/launch/exit contracts and signed hard limits stay unchanged. Producer configuration now identifies actual PDFium. The parserless library remains explicitly selectable for isolated fixtures, never a fallback production parser. Runtime package identities/publication are a later immutable producer handoff.",
+      "licence-provenance": "The exact aggregate PDFium bundle admits BSD/MIT/Apache/LLVM-exception/FreeType/Unicode/AGG/libpng/zlib/IJG terms. All 15 complete upstream legal texts are preserved with LF normalization only. Archive and attestation hashes remain raw and exact. Aggregate SPDX SBOM and licence/provenance records retain the full attribution, FreeType acknowledgement and LLVM exception. Independent exact-head admission review is required before merge.",
+      "security-sbom": "The parser runs only in the existing restricted helper. All PDFium entry points are serialized across documents; input is privately copied and retained through document lifetime; scripts/actions are never dispatched and system font callbacks cannot open host font files. Cooperative cancellation/deadline checks cover input progress, text/box loops and progressive rendering/row conversion, with existing helper/OS hard limits for non-interruptible third-party operations. Actual local PDFium errors, IO short reads, budget/deadline/cancel failures, concurrency and caller callback draining are tested. The reviewed aggregate SPDX SBOM describes the exact compiled bundle without unsupported component-version claims. Strict bounded download/HTTPS/trust/cache/prefix/archive/root-producer-recipe component tests passed 55/55, mocking only external dependencies. Actual pinned 45-member PDFium archive also passed closed bounded extraction and prefix verification. Root recipe sealing rejects component fixture wrappers, wrong tools, debug or parserless configurations, and mismatched SDK/install prefixes. Independent review corrections reverify actual cached archive/attestation bytes and exact canonical closed receipt plus strict Sigstore trust at sealing; monotonic attempt/operation deadlines and read1 progress/socket budgets prevent endless trickle transfers. Actual cached admission handoff reverification passed with the real gh verifier. Before atomic promotion, copied runtime/admission receipt/attestation/profile/SBOM and full PDFium/compiler legal bytes are checked against their previously admitted facts; actual temporary-file corruption/missing/oversize negatives passed, closing validation-to-copy races.",
+      "runtime-performance-migration": "Actual first-party PDF fixtures returned correct page/text/RGBA in the real local Windows production AOT helper, malformed input failed without affecting the next invocation, abrupt actual helper loss failed closed and recovered, and the actual parser helper ended when the launching parent died. Abrupt-loss testing is parent-induced termination, not proof that a particular hostile PDF crashed PDFium. Broad hostile-corpus crash/hang testing, Linux isolation observation and whole-product end-to-end acceptance remain deferred; their absence is not represented as a mocked OS or deployment success. No persistence migration is added.",
+      "framework-runtime-posture": "The SDK/framework/toolchain versions and baseline are unchanged. Only win-x64 is admitted for this exact PDFium producer profile; other RID producers, signing and clean-cache published consumer acceptance are separate NAT.25 delivery obligations."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -812,6 +816,8 @@
       "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
       "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
       "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+      "eng/native/vcpkg/pdfium-build.v1.json": "c71137dffec1f831122cfdbdf411b1522509b47e0083b72ff702b6a951d17637",
+      "eng/native/vcpkg/pdfium-sbom.v1.json": "ea5628646c7f89caf495e68cd75d17be0004a2fac339e889c7ea57d57f435ee9",
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
@@ -825,6 +831,7 @@
       "eng/provenance/records/contracts-apache-legal-r1.json": "d436592a4d2f88a0de71a04bcf1c7f52cdf313049ef1b713e525a3ef57025b59",
       "eng/provenance/records/contracts-provenance-tools-r1.json": "734af233a171876f4f246e0d7f99c7bc5366be65da9801acbd2a1f5a7588bfce",
       "eng/provenance/records/contracts-provenance-tools-r2.json": "c83a17cc144e82979a35e0a66cadc1577acfe65aa557c08aa9142a54ac6113d2",
+      "eng/provenance/records/contracts-provenance-tools-r3.json": "a732fbc22163874095ec89425ae0af777f340c5c09439d49c57bcd666e10a5de",
       "eng/provenance/records/design-policy-export-r1.json": "8146b3e232890bc712de566049e672c0f6d783c86b4afb04052a130e4ceaeb06",
       "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
       "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
@@ -905,6 +912,7 @@
       "eng/provenance/records/native-opentimelineio-r1.json": "72074bcf82b6e813c3aaf4f8fe741498cd0865089f96720f9a832559982f5f0b",
       "eng/provenance/records/native-opentimelineio-r2.json": "747303a95d89615a8080d45dc98b1faef71e081fa467c74fd98acca847e00671",
       "eng/provenance/records/native-opentimelineio-r3.json": "3fa020da888e7e7942b1eb528d534018159e4d0befc2a7d4505ad04fd352f3b3",
+      "eng/provenance/records/native-pdfium-r1.json": "33a41e8bf7cfc224629cc99dcb59c027b291d7fb2e92316df3b42eed2b789a51",
       "eng/provenance/records/native-pkgconf-r1.json": "92fefa78ecc8a7cb6c5fb44308800f2d231e49520b92b931e5964ac193aaa7c1",
       "eng/provenance/records/native-pkgconf-r2.json": "19801f80373877c21932d2ff5dd506193464f2b21d21ec2d821ec6f0e27246b7",
       "eng/provenance/records/native-pkgconf-r3.json": "9f91d9226843ada3def1eeab75f9d4489dfed944dfa2845ca048707925eadc95",
@@ -1085,7 +1093,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-57-r2.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1096,7 +1104,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-57-r2.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-15-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

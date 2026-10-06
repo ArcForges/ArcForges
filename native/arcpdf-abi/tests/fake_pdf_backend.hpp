@@ -37,6 +37,7 @@ struct fake_script final {
     arc_status_t geometry_status = ARC_OK;
     arc_status_t text_status = ARC_OK;
     uint32_t reported_pages = 0;       // 0: pages.size()
+    bool geometry_reads_input = false; // hold a live caller callback during close (drain regression)
     std::function<void()> on_geometry; // runs inside every geometry call
     uint64_t consumed_bytes = 0;       // set by open: bytes read through the source
     std::atomic<int> alive_documents{0};
@@ -58,7 +59,8 @@ inline arc_status_t wait_for_stop(const call_context& context)
 
 class fake_document final : public document {
   public:
-    explicit fake_document(std::shared_ptr<fake_script> script) : script_(std::move(script))
+    fake_document(std::shared_ptr<fake_script> script, std::shared_ptr<byte_source> source)
+        : script_(std::move(script)), source_(std::move(source))
     {
         ++script_->alive_documents;
     }
@@ -70,6 +72,13 @@ class fake_document final : public document {
     arc_status_t geometry(uint32_t index, const call_context&, page_geometry& out) override
     {
         ++script_->geometry_calls;
+        if (script_->geometry_reads_input) {
+            uint8_t byte = 0;
+            uint64_t read = 0;
+            const auto status = source_->read_at(0, &byte, 1, &read);
+            if (status != ARC_OK)
+                return status;
+        }
         if (script_->on_geometry) {
             script_->on_geometry();
         }
@@ -121,6 +130,7 @@ class fake_document final : public document {
 
   private:
     std::shared_ptr<fake_script> script_;
+    std::shared_ptr<byte_source> source_;
 };
 
 class fake_backend final : public backend {
@@ -172,7 +182,7 @@ class fake_backend final : public backend {
         if (script_->null_document) {
             out.reset();
         } else {
-            out = std::make_unique<fake_document>(script_);
+            out = std::make_unique<fake_document>(script_, source);
         }
         pages = script_->reported_pages != 0 ? script_->reported_pages : static_cast<uint32_t>(script_->pages.size());
         return ARC_OK;

@@ -39,6 +39,7 @@ LICENCES = {**{name: "permissive" for name in
 # Additional exact expressions reviewed for this owner's existing native closure.
 LICENCES.update({name: "permissive" for name in ('0BSD', 'Zlib', 'MIT-0', 'libpng-2.0', 'bzip2-1.0.6', 'libtiff', 'NCSA', 'BSL-1.0', 'MIT AND BSD-3-Clause', 'BSD-3-Clause AND IJG AND Zlib', 'BSD-3-Clause AND BSD-2-Clause AND LicenseRef-ICC-Software-0.2 AND LicenseRef-SunSoft-1994', 'Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense', 'libtiff AND LicenseRef-Berkeley-LZW-Rescinded', 'LicenseRef-pkgconf-Permissive')})
 LICENCES["LGPL-2.1-or-later"] = "agpl-compatible"
+LICENCES["BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG"] = "permissive"
 
 
 def require(condition: bool, message: str) -> None:

@@ -48,12 +48,20 @@ struct input_bytes final {
     arc_status_t read_status = ARC_OK;
     bool overrun = false;
     bool zero_reads = false;
+    std::atomic<int>* in_flight = nullptr;
+    std::atomic<bool>* proceed = nullptr;
 };
 
 arc_status_t ARC_ABI_CALL read_input(void* context, uint64_t offset, void* destination, uint64_t requested,
                                      uint64_t* done)
 {
     auto* input = static_cast<input_bytes*>(context);
+    if (input->in_flight) {
+        ++*input->in_flight;
+        while (!input->proceed->load())
+            std::this_thread::yield();
+        --*input->in_flight;
+    }
     if (input->read_status != ARC_OK) {
         return input->read_status;
     }
@@ -286,6 +294,10 @@ void test_open_validation()
     CHECK_STATUS(ARC_INVALID_ARGUMENT,
                  arc_pdf_open(&io, arc_string_view_t{nullptr, 3}, &limits, &out.handle, &out.pages, nullptr));
     const std::string long_password(1025, 'p');
+    const char embedded_nul_password[] = {'p', '\0', 'w'};
+    CHECK_STATUS(ARC_INVALID_ARGUMENT,
+                 arc_pdf_open(&io, arc_string_view_t{embedded_nul_password, sizeof(embedded_nul_password)}, &limits,
+                              &out.handle, &out.pages, nullptr));
     CHECK_STATUS(ARC_INVALID_ARGUMENT, arc_pdf_open(&io, arc_string_view_t{long_password.data(), long_password.size()},
                                                     &limits, &out.handle, &out.pages, nullptr));
     CHECK(out.handle == 0 && out.pages == 0);
@@ -937,6 +949,43 @@ void test_concurrent_use_and_close()
     CHECK(g_script->alive_documents == 0);
 }
 
+void test_close_drains_caller_callbacks()
+{
+    reset({page_with(u"drain")});
+    input_bytes input{"FAKEPDF1\nbody"};
+    opened document;
+    CHECK_STATUS(ARC_OK, open_document(input, document));
+    std::atomic<int> in_flight{0};
+    std::atomic<bool> proceed{false};
+    std::atomic<bool> closed{false};
+    std::atomic<int> in_flight_at_close{-1};
+    input.in_flight = &in_flight;
+    input.proceed = &proceed;
+    g_script->geometry_reads_input = true;
+    arc_status_t read_status = ARC_INTERNAL;
+    arc_status_t close_status = ARC_INTERNAL;
+    std::thread reader([&] {
+        auto page = page_record();
+        read_status = arc_pdf_page_info(document.handle, 0, &page);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (in_flight == 0 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    CHECK(in_flight == 1);
+    std::thread closer([&] {
+        close_status = arc_pdf_close(document.handle);
+        in_flight_at_close = in_flight.load();
+        closed = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    CHECK(!closed && in_flight == 1);
+    proceed = true;
+    reader.join();
+    closer.join();
+    CHECK(read_status == ARC_OK && close_status == ARC_OK);
+    CHECK(in_flight_at_close == 0 && in_flight == 0);
+}
+
 } // namespace
 
 std::shared_ptr<arc::pdf::backend> arc::pdf::linked_backend()
@@ -960,6 +1009,7 @@ int main()
     test_cancellation_and_deadline();
     test_review_findings();
     test_concurrent_use_and_close();
+    test_close_drains_caller_callbacks();
     if (g_failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
         return 1;

@@ -128,6 +128,10 @@ jobs:
           restore-keys: |
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ env.SCCACHE_VERSION }}-${{ steps.vcpkg-toolchain.outputs.fingerprint }}-
       - run: dotnet restore DesktopPlatform.slnx --locked-mode
+      - name: Acquire the exact admitted PDFium producer build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python eng/native_provenance.py --acquire-pdfium artifacts/pdfium-admission
       - name: Build and stage the retained image CMake profile
         shell: cmd
         run: |
@@ -153,10 +157,18 @@ jobs:
             cmake --install artifacts/cmake/win-x64/%%p || exit /b 1
           )
 
-          ctest --test-dir artifacts/cmake/win-x64/shim-static --output-on-failure -R "^(arc_native_abi_c17_layout_tests|arc_native_abi_cpp20_tests|arcpdf_abi_engine_tests|arcpdf_abi_unsupported_tests)$" || exit /b 1
+          ctest --test-dir artifacts/cmake/win-x64/shim-static --output-on-failure -R "^(arc_native_abi_c17_layout_tests|arc_native_abi_cpp20_tests|arcpdf_abi_engine_tests|arcpdf_abi_pdfium_tests|arcpdf_abi_unsupported_tests)$" || exit /b 1
           dotnet test --project tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj --filter Category=NativeAbiLayout --no-restore || exit /b 1
 
           sccache --show-stats || exit /b 1
+      - name: Seal the production PDF composition input for NAT.25
+        run: python eng/native_provenance.py --stage-pdfium-input artifacts/pdfium-production-input
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pdfium-production-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/pdfium-production-input/
+          if-no-files-found: error
+          retention-days: 30
       - name: Prove sccache actually cached
         shell: pwsh
         run: |

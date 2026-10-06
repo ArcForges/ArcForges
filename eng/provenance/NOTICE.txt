@@ -16,16 +16,18 @@ Notice scope: source
 Apache License, Version 2.0. Copyright notices remain in the individual source records.
 Apache License, Version 2.0. Copyright notices remain in the individual source records.
 
-contracts-provenance-tools-r2
+contracts-provenance-tools-r3
 Source: https://github.com/ArcForges/Contracts @ 18a970c67c463f1971ca05773b80f31a1b1ba1a7
 Material licence: Apache-2.0
 Notice scope: source
 Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.
 DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.
 DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.
+DesktopPlatform NAT.15 modifications: one exact reviewed permissive PDFium bundle expression; unknown, changed, GPL and NOASSERTION variants remain refused by matching negative tests. No general licence bypass.
 Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.
 DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.
 DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.
+DesktopPlatform NAT.15 modifications: one exact reviewed permissive PDFium bundle expression; unknown, changed, GPL and NOASSERTION variants remain refused by matching negative tests. No general licence bypass.
 
 design-policy-export-r4
 Source: https://github.com/ArcForges/ArcForges-Design @ ec1a1e7400683a6f971693cf84c8480183b4b6c5
@@ -145,6 +147,14 @@ Notice scope: packages
 Original copyright and full applicable terms are retained in licenses/openjph-x64-windows-static-md.txt.
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/openjph-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-pdfium-r1
+Source: https://github.com/bblanchon/pdfium-binaries @ 5453f3afc4785cbad82c05f6ceb4dabea0cb81a0
+Material licence: BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG
+Notice scope: source
+PDFium Authors, Benoit Blanchon, FreeType, Unicode ICU, Anti-Grain Geometry, and all original copyright holders retained in the full 15 legal texts.
+The original upstream FreeType legal text uses its original single-byte copyright encoding and is retained byte-for-byte (raw), not decoded or transcoded.
+PDFium chromium/8044 is used only inside ContentSandbox with V8/XFA disabled; all 15 upstream legal texts are retained with only LF normalization. Full component terms, FreeType attribution and LLVM exceptions govern redistribution.
 
 native-pystring-r4
 Source: https://github.com/imageworks/pystring @ 1922c8f2b48e3beb6831c27b4811b58995e986cf

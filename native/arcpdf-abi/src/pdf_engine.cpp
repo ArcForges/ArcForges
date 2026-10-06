@@ -206,6 +206,9 @@ arc_status_t text_of(document_state& state, uint32_t index, const call_context& 
     const uint64_t length = fetched.text.size();
     uint32_t previous = 0;
     for (const text_box& box : fetched.boxes) {
+        if (const arc_status_t gate = context.check(); gate != ARC_OK) {
+            return gate;
+        }
         if (box.start < previous || box.length == 0 || static_cast<uint64_t>(box.start) + box.length > length ||
             !finite_in(box.x, -max_page_points, max_page_points) ||
             !finite_in(box.y, -max_page_points, max_page_points) || !finite_in(box.width, 0.0, max_page_points) ||
@@ -340,7 +343,8 @@ arc_status_t ARC_ABI_CALL arc_pdf_open(const arc_io_v1* io, arc_string_view_t pa
         if (io->length > bounded.max_input_bytes || (io->max_length != 0 && io->length > io->max_length)) {
             return failure(ARC_RESOURCE_LIMIT, "The input exceeds its bound");
         }
-        if ((password.data == nullptr && password.size != 0) || password.size > max_password_bytes) {
+        if ((password.data == nullptr && password.size != 0) || password.size > max_password_bytes ||
+            (password.size != 0 && std::memchr(password.data, 0, static_cast<size_t>(password.size)) != nullptr)) {
             return failure(ARC_INVALID_ARGUMENT, "The password is invalid");
         }
         if (const arc_status_t cancelled = arc::abi::check_cancelled(cancel); cancelled != ARC_OK) {
@@ -528,6 +532,9 @@ arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uin
         size_t end = keep_pairs_whole(text, start, std::min<size_t>(length, static_cast<size_t>(start) + count));
         std::vector<const text_box*> inside;
         while (true) {
+            if (const arc_status_t gate = context.check(); gate != ARC_OK) {
+                return gate;
+            }
             inside.clear();
             auto first = std::lower_bound(boxes.begin(), boxes.end(), start,
                                           [](const text_box& box, uint32_t value) { return box.start < value; });
@@ -536,6 +543,9 @@ arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uin
             // window).
             size_t moved_end = end;
             for (auto probe = first; probe != boxes.end() && probe->start < end; ++probe) {
+                if (const arc_status_t gate = context.check(); gate != ARC_OK) {
+                    return gate;
+                }
                 if (probe->start > start && static_cast<uint64_t>(probe->start) + probe->length > end) {
                     moved_end = std::min<size_t>(moved_end, keep_pairs_whole(text, start, probe->start));
                     break;
@@ -546,6 +556,9 @@ arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uin
                 continue;
             }
             for (; first != boxes.end() && first->start < end; ++first) {
+                if (const arc_status_t gate = context.check(); gate != ARC_OK) {
+                    return gate;
+                }
                 if (static_cast<uint64_t>(first->start) + first->length <= end) {
                     inside.push_back(&*first);
                 }
@@ -575,6 +588,9 @@ arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uin
         json.append(",\"boxes\":[");
         bool separator = false;
         for (const text_box* box : inside) {
+            if (const arc_status_t gate = context.check(); gate != ARC_OK) {
+                return gate;
+            }
             if (separator) {
                 json.push_back(',');
             }

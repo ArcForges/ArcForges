@@ -13,14 +13,38 @@ parses PDF bytes.
 - `src/pdf_backend.hpp`: the seam to whatever parses PDF bytes (`backend`, `document`, `byte_source`). Scripts and actions are
   disabled by contract. A backend is never trusted: it may throw, hang, return non-finite geometry or boxes outside the text
   and the engine fails the call closed.
-- `src/backend_none.cpp`: **the only backend this build links is none.** `arc_pdf_open` returns `ARC_UNSUPPORTED`, outputs stay
-  zero, and `arc_pdf_get_build_info` reports `backend=none`. There is no fallback parser. The PDFium (chromium/8044) binding,
-  its source/licence admission and the `Runtime.<rid>` packages are separate, later work; nothing here downloads, builds or
-  vendors PDFium, and the library is not an admitted package.
+- `src/backend_pdfium.cpp`: the real no-V8/no-XFA chromium/8044 backend. It owns its input buffer for the full PDFium document
+  lifetime, disables system-font access, serialises all PDFium calls across documents, extracts Unicode and character geometry,
+  and renders cancellable progressive RGBA8 tiles. It never creates a form environment or dispatches document actions.
+- `src/backend_none.cpp`: the explicitly selected parserless ABI fixture configuration. It refuses open with `ARC_UNSUPPORTED`.
+  Production builds select `ARCFORGES_PDFIUM=ON` and the verified producer prefix; no dependency is downloaded by a consumer.
 - `tests/`: `arcpdf_abi_engine_tests` compiles the engine with a scripted fake backend (`tests/fake_pdf_backend.hpp`, TEST ONLY,
   never part of the library target) and drives it with hostile behaviour; `arcpdf_abi_unsupported_tests` links the real library
-  target and checks the fail-closed configuration. Both are CTest targets run by `native-abi.yml`. They prove the engine, not
-  PDFium.
+  target in the parserless fixture configuration. `arcpdf_abi_pdfium_tests` instead links the real production library and tests
+  first-party PDF page/text/pixels, malformed input, cancellation and concurrent documents. The production workflow runs
+  both these actual-parser ordinary component tests and isolated engine tests. These first-party fixture tests certify
+  neither hosted OS isolation nor full product or additional RID acceptance; real helper containment remains separately observed.
+
+## Reproducible producer
+
+`python eng/native_provenance.py --acquire-pdfium artifacts/pdfium-admission` verifies the admitted archive and its Sigstore/SLSA
+attestation before exposing `artifacts/pdfium-admission/pdfium`. The immutable profile in `eng/native/vcpkg/pdfium-build.v1.json` pins
+every archive member and all legal texts. The attestation binds the upstream build recipe and invocation; it does not attest
+the separately observed PDFium source commit. Configure with `ARCFORGES_PDFIUM=ON` and `PDFium_DIR` set to that prefix.
+The Windows production preset selects that verified prefix. After compiling and installing the clean, committed source,
+`python eng/native_provenance.py --stage-pdfium-input artifacts/pdfium-production-input` seals the source-bound DLL,
+the actual retained root Release producer recipe and pinned compiler/build-tool identity (fixture wrapper builds are refused),
+complete transitive runtime import closure, SDK import library and headers, original legal documents, aggregate SPDX SBOM
+and admission evidence. The producer checks the exact eight functional exports, production marker and embedded source
+identity; compiler-runtime files must match the existing admitted Microsoft hashes, versions and Authenticode publisher.
+Transfers have byte caps, a 60-second monotonic attempt budget and 180-second overall budget, use progress reads with
+remaining socket timeouts, and retry only transient transport failures, at most three attempts; altered bytes or trust failures
+are refused. The native workflow retains this immutable composition input separately from the Image runtime input.
+Sealing rechecks the actual bounded archive and attestation bytes, requires the exact canonical closed build receipt and
+reverifies the strict Sigstore/SLSA producer identity; the receipt assertion alone is never sufficient.
+
+`Runtime.<rid>` publication, release signing and clean-cache published-consumer acceptance belong to NAT.25. This input is
+not a signed or published package, and no macOS/Linux PDFium producer is asserted by this Windows-only admission.
 
 ## Semantics fixed by this library
 
@@ -37,14 +61,15 @@ parses PDF bytes.
   OK read) as `ARC_IO`: a short read is allowed only if the callback reports the end of the input, which the clamped window
   already excludes.
 
-## Obligations this library leaves to the real backend (NAT.15)
+## Containment and acceptance limits
 
-- A real backend must read the input in a loop with a progress guard and must call `call_context::check()` regularly. Deadlines
-  and cancellation are cooperative here: a backend that never checks is bounded only by the helper's own deadline and the
-  operating-system containment, and `arc_pdf_close` blocks until a running call returns.
+- The backend checks every input chunk, text character and rendered row and every progressive rendering callback. PDFium
+  opening and individual third-party operations cannot be interrupted mid-call; the helper deadline and OS containment bound
+  those operations. `arc_pdf_close` drains running calls and borrowed caller callbacks before returning.
 - A box that spans more than a whole chunk window, or that begins before a caller-chosen start, is not carried by any chunk.
-- Scripts and actions must be disabled in the real library, fonts must not be read from the file system inside the sandbox, and
-  the real library must be proven under hostile PDFs (malformed, crashing, hanging) inside the real containment.
+- Local `RealPdfIsolationTests` exercises the production Native AOT helper with real PDFium in Windows AppContainer/Job
+  containment. Broad hostile-corpus crash/hang acceptance, Linux OS observations and whole-product acceptance remain distinct
+  from the component implementation and require their own recorded evidence.
 
 ## Sanitizer check
 
