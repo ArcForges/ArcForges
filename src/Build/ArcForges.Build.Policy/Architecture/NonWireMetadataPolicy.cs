@@ -422,7 +422,10 @@ internal static class NonWireMetadataPolicy
         {
             string type = method.ContainingType.ToDisplayString();
             if (method.DeclaringSyntaxReferences.Length == 0 && Core(method.ContainingAssembly) && (type == "System.Text.Json.JsonSerializer" && method.Name.StartsWith("Serialize", StringComparison.Ordinal)
-                || type == "System.Net.Http.Json.HttpClientJsonExtensions" && method.Name.Contains("AsJson", StringComparison.Ordinal))) return true;
+                || type == "System.Net.Http.Json.HttpClientJsonExtensions" && method.Name.Contains("AsJson", StringComparison.Ordinal)
+                || type == "System.Xml.Serialization.XmlSerializer" && method.Name == "Serialize"
+                || type is "System.Runtime.Serialization.XmlObjectSerializer" or "System.Runtime.Serialization.DataContractSerializer"
+                    or "System.Runtime.Serialization.Json.DataContractJsonSerializer" && method.Name is "WriteObject" or "WriteObjectContent")) return true;
             if (method.DeclaringSyntaxReferences.Length == 0 && (method.ContainingAssembly.Name == "Newtonsoft.Json" && type == "Newtonsoft.Json.JsonConvert" && method.Name == "SerializeObject"
                 || method.ContainingAssembly.Name == "protobuf-net" && type == "ProtoBuf.Serializer" && method.Name.StartsWith("Serialize", StringComparison.Ordinal))) return true;
             if (method.DeclaredAccessibility != Accessibility.Public) return false;

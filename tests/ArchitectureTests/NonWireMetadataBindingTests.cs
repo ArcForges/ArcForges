@@ -313,6 +313,22 @@ public sealed class NonWireMetadataBindingTests
         Xunit.Assert.Contains(fixture.Check(), finding => finding.Message.Contains("escapes through", StringComparison.Ordinal));
     }
 
+    [Xunit.Theory]
+    [Xunit.InlineData("using var stream = new System.IO.MemoryStream(); new System.Xml.Serialization.XmlSerializer(typeof(object)).Serialize(stream, VALUE); return string.Empty;")]
+    [Xunit.InlineData("using var stream = new System.IO.MemoryStream(); new System.Runtime.Serialization.DataContractSerializer(typeof(object)).WriteObject(stream, VALUE); return string.Empty;")]
+    [Xunit.InlineData("using var stream = new System.IO.MemoryStream(); new System.Runtime.Serialization.Json.DataContractJsonSerializer(typeof(object)).WriteObject(stream, VALUE); return string.Empty;")]
+    [Xunit.InlineData("using var stream = new System.IO.MemoryStream(); using var writer = System.Xml.XmlDictionaryWriter.CreateTextWriter(stream); new System.Runtime.Serialization.DataContractSerializer(typeof(object)).WriteObjectContent(writer, VALUE); return string.Empty;")]
+    public void ActualBclXmlAndDataContractSinksRejectMetadataButAllowScalarProjection(string body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        string Source(string value) => "using Metadata; internal static class Sender { private static string Send() { "
+            + body.Replace("VALUE", value, StringComparison.Ordinal) + " } }";
+        using (var negative = new Fixture(extra: Source("(object)Catalog.All[0]")))
+            Xunit.Assert.Contains(negative.Check(), finding => finding.Message.Contains("escapes through", StringComparison.Ordinal));
+        using var positive = new Fixture(extra: Source("(object)Catalog.All[0].OperationId"));
+        Xunit.Assert.Empty(positive.Check());
+    }
+
     [Xunit.Fact]
     public void FakeSameNameSerializerIsNotAFrameworkSink()
     {
