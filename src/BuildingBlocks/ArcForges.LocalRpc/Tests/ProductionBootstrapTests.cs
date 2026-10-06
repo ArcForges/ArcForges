@@ -71,6 +71,34 @@ public sealed class ProductionBootstrapTests
     }
 
     [Fact]
+    public async Task MalformedConfirmationCannotConsumeTheSecretAndMalformedRenewalCannotExtendTheLease()
+    {
+        using var world = new RegWorld();
+        await using var fixture = await Parent.StartAsync(world, Ct);
+        await using var channel = fixture.Channel();
+        var client = new LocalBootstrapService.LocalBootstrapServiceClient(channel.CallInvoker);
+        var challenged = await client.ChallengeAsync(fixture.Request(), cancellationToken: Ct);
+        var malformed = await Assert.ThrowsAsync<RpcException>(() => client.ConfirmAsync(new()
+        {
+            Meta = Parent.Meta(),
+            ChallengeId = challenged.Value.ChallengeId,
+            Proof = ByteString.CopyFrom(new byte[31]),
+        }, cancellationToken: Ct).ResponseAsync);
+        Assert.Equal(StatusCode.Unauthenticated, malformed.StatusCode);
+        Assert.False(fixture.Launch.Revoked.IsCancellationRequested);
+        var child = await fixture.RegisterAsync(channel.CallInvoker, Ct);
+        var expiry = fixture.Host.Registration.LeaseExpiresAtUtc;
+        world.Clock.Advance(TimeSpan.FromSeconds(10));
+        var noCommand = Parent.Meta();
+        noCommand.CommandId = null;
+        var refused = await Assert.ThrowsAsync<RpcException>(() => new LocalBootstrapService.LocalBootstrapServiceClient(child.Registered.Authenticated)
+            .RenewAsync(new() { Meta = noCommand }, cancellationToken: Ct).ResponseAsync);
+        Assert.Equal(StatusCode.Unauthenticated, refused.StatusCode);
+        Assert.Equal(expiry, fixture.Host.Registration.LeaseExpiresAtUtc);
+        Assert.Equal(StatusCode.OK, (await ChildClient.ListStatusAsync(child.Registered.Authenticated, Ct)).StatusCode);
+    }
+
+    [Fact]
     public async Task RejectedProofRevokesTheLaunchAndStopsTheActualParentServer()
     {
         using var world = new RegWorld();
