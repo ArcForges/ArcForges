@@ -38,7 +38,14 @@ public sealed class ProductionBootstrapTests
     }
 
     [Theory]
-    [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)] [InlineData(4)] [InlineData(5)] [InlineData(6)] [InlineData(7)]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
     public async Task MalformedOrForgedChallengesAreUniformlyRefusedBeforeGrant(int mutation)
     {
         using var world = new RegWorld();
@@ -73,7 +80,8 @@ public sealed class ProductionBootstrapTests
         var challenge = await client.ChallengeAsync(fixture.Request(), cancellationToken: Ct);
         await Assert.ThrowsAsync<RpcException>(() => client.ConfirmAsync(new()
         {
-            Meta = Parent.Meta(), ChallengeId = challenge.Value.ChallengeId,
+            Meta = Parent.Meta(),
+            ChallengeId = challenge.Value.ChallengeId,
             Proof = ByteString.CopyFrom(new byte[32]),
         }, cancellationToken: Ct).ResponseAsync);
         await fixture.Host.Completion.WaitAsync(TimeSpan.FromSeconds(10), Ct);
@@ -163,9 +171,8 @@ public sealed class ProductionBootstrapTests
     {
         using var process = Process.GetCurrentProcess();
         var identity = LocalRpcProcessIdentity.FromProcess(process);
-        var actual = BootstrapWire.ReadParentStartedAtUtc(identity);
-        Assert.NotNull(actual);
-        Assert.InRange(Math.Abs(actual.Value.UtcTicks - process.StartTime.ToUniversalTime().Ticks), 0, LocalRpcProcessIdentity.StartTimeTolerance.Ticks);
+        var actual = Assert.IsType<DateTimeOffset>(BootstrapWire.ReadParentStartedAtUtc(identity));
+        Assert.InRange(Math.Abs(actual.UtcTicks - process.StartTime.ToUniversalTime().Ticks), 0, LocalRpcProcessIdentity.StartTimeTolerance.Ticks);
         Assert.Null(BootstrapWire.ReadParentStartedAtUtc(identity with { StartTimeUtcTicks = identity.StartTimeUtcTicks + TimeSpan.FromMinutes(1).Ticks }));
     }
 
@@ -211,7 +218,9 @@ public sealed class ProductionBootstrapTests
         using var child = LocalRpcChildBootstrap.FromResource((foreign ? otherLaunch : ownLaunch).HandoffBootstrapResource());
         var request = new LocalBootstrapServiceChallengeRequest
         {
-            Meta = Parent.Meta(), InstanceId = Wire.ToId(child.InstanceId), Challenge = ByteString.CopyFrom(child.ClientChallenge.Span),
+            Meta = Parent.Meta(),
+            InstanceId = Wire.ToId(child.InstanceId),
+            Challenge = ByteString.CopyFrom(child.ClientChallenge.Span),
             Caller = Parent.Manifest(world.Identity, child.InstanceId, ownLaunch.Descriptor.Parent),
         };
         var error = await Assert.ThrowsAsync<RpcException>(() => new LocalBootstrapService.LocalBootstrapServiceClient(channel.CallInvoker)
@@ -257,7 +266,9 @@ public sealed class ProductionBootstrapTests
         });
         internal LocalBootstrapServiceChallengeRequest Request() => new()
         {
-            Meta = Meta(), InstanceId = Wire.ToId(_child.InstanceId), Challenge = ByteString.CopyFrom(_child.ClientChallenge.Span),
+            Meta = Meta(),
+            InstanceId = Wire.ToId(_child.InstanceId),
+            Challenge = ByteString.CopyFrom(_child.ClientChallenge.Span),
             Caller = Manifest(_world.Identity, _child.InstanceId, Launch.Descriptor.Parent),
         };
         internal async Task<(RegisteredChild Registered, LocalBootstrapServiceChallengeResponse Challenge)> RegisterAsync(CallInvoker invoker, CancellationToken cancellation)
@@ -269,7 +280,9 @@ public sealed class ProductionBootstrapTests
             var proof = _child.ComputeProof(Wire.FromId(value.ChallengeId), value.ServerChallenge.Span, Wire.FromId(value.Server.InstanceId));
             var confirmed = await client.ConfirmAsync(new()
             {
-                Meta = Meta(), ChallengeId = value.ChallengeId, Proof = ByteString.CopyFrom(proof),
+                Meta = Meta(),
+                ChallengeId = value.ChallengeId,
+                Proof = ByteString.CopyFrom(proof),
             }, cancellationToken: cancellation);
             Assert.True(ContractShapeValidation.IsValid(confirmed));
             var nonce = confirmed.Value.PeerNonce.ToByteArray();
@@ -281,11 +294,16 @@ public sealed class ProductionBootstrapTests
         {
             var value = new EndpointManifest
             {
-                SchemaVersion = "1", AppId = identity.BuildId, InstallationId = Wire.ToId(Guid.NewGuid()), InstanceId = Wire.ToId(instance),
-                ProcessId = (ulong)process.ProcessId, ProcessStartedAt = Wire.ToInstant(new DateTimeOffset(process.StartTimeUtcTicks, TimeSpan.Zero)),
+                SchemaVersion = "1",
+                AppId = identity.BuildId,
+                InstallationId = Wire.ToId(Guid.NewGuid()),
+                InstanceId = Wire.ToId(instance),
+                ProcessId = (ulong)process.ProcessId,
+                ProcessStartedAt = Wire.ToInstant(new DateTimeOffset(process.StartTimeUtcTicks, TimeSpan.Zero)),
                 // A valid wire-profile fixture. The actual test carrier remains the explicit in-memory supplier, not an OS pipe.
                 Endpoint = new LocalEndpoint { Transport = "pipe", Address = "memory-test", InstanceId = Wire.ToId(instance) },
-                BuildHash = Convert.ToHexStringLower(identity.BuildDigest.Span), ContractSetHash = Convert.ToHexStringLower(identity.ContractSetDigest.Span),
+                BuildHash = Convert.ToHexStringLower(identity.BuildDigest.Span),
+                ContractSetHash = Convert.ToHexStringLower(identity.ContractSetDigest.Span),
             };
             value.ContractMajors.Add(identity.ProtocolVersion);
             Assert.True(ContractShapeValidation.IsValid(value));
