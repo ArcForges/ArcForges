@@ -127,7 +127,7 @@ public sealed class CapabilityEnforcementGate
                 evidence.Scope,
                 new CommandId(UuidBoundary.FromWire(invocation.CommandId)),
                 evidence.Resource,
-                EffectDigest(capability.Key, invocation, target),
+                ComputeEffectSha256(capability.Key, invocation, target),
                 evidence.Origin,
                 evidence.Transport,
                 evidence.DeclaredFacts,
@@ -167,10 +167,27 @@ public sealed class CapabilityEnforcementGate
 
     private static Outcome<T> Failure<T>(string code) => Outcome.Failure<T>(TypedFailure.Create(code));
 
-    /// <summary>The canonical uppercase SHA-256 of what is being asked: capability, exact target instance, arguments and precondition.</summary>
-    private static string EffectDigest(string capabilityKey, Invocation invocation, CapabilityTarget target)
+    /// <summary>Computes the existing uppercase SHA-256 binding for an invocation's exact effect and target.</summary>
+    /// <remarks>
+    /// This readonly primitive grants no authority. Approval preparation must still use the current actor, resource, risk and
+    /// approval coordinator, and execution must pass the real gate. The binding includes the capability, product, device,
+    /// installation, instance, epoch, command, arguments, precondition and retained unknown protobuf fields. InvocationId,
+    /// Context, ApprovalId and LeaseId are excluded exactly as in the gate's original representation. The caller's message is
+    /// cloned without mutation; callers must not mutate it concurrently with cloning.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The capability does not match the invocation, or its command identity is malformed.</exception>
+    public static string ComputeEffectSha256(string capabilityKey, Invocation invocation, CapabilityTarget target)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(capabilityKey);
+        ArgumentNullException.ThrowIfNull(invocation);
+        ArgumentNullException.ThrowIfNull(target);
         var stable = invocation.Clone();
+        if (!stable.HasCapability || !string.Equals(capabilityKey, stable.Capability, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The exact invocation capability is required.", nameof(capabilityKey));
+        }
+
+        _ = UuidBoundary.FromWire(stable.CommandId);
         stable.InvocationId = null;
         stable.Context = null;
         stable.ApprovalId = null;
@@ -200,7 +217,22 @@ public sealed class CapabilityEnforcementGate
         FrozenContextSnapshot context,
         CancellationToken cancellationToken)
     {
-        if (!_admissions.TryGetValue(context, out var admission) || !admission.Matches(invocation, EffectDigest(invocation.Capability, invocation, target)) || !admission.TryTake())
+        if (!_admissions.TryGetValue(context, out var admission))
+        {
+            return Failure<TResult>("perm.capability_denied");
+        }
+
+        string effect;
+        try
+        {
+            effect = ComputeEffectSha256(invocation.Capability, invocation, target);
+        }
+        catch (ArgumentException)
+        {
+            return Failure<TResult>("perm.capability_denied");
+        }
+
+        if (!admission.Matches(invocation, effect) || !admission.TryTake())
         {
             return Failure<TResult>("perm.capability_denied");
         }

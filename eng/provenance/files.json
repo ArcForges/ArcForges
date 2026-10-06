@@ -1031,7 +1031,8 @@
     "eng/policy/dependency-reviews/nat-11-r1.json",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Host/NativeImageParser.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ProductionImageCompositionTests.cs",
-    "tests/tooling/test_native_abi_inventory.py"
+    "tests/tooling/test_native_abi_inventory.py",
+    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityApprovalBindingTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
