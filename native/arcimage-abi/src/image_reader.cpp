@@ -25,6 +25,18 @@ constexpr uint32_t domain = 0x494D4147U;
 constexpr uint32_t image_kind = 0x494D4147U;
 constexpr uint64_t max_tile = 64ULL * 1024 * 1024;
 constexpr uint64_t max_pixels = 268435456;
+thread_local bool in_image_call = false;
+struct call_scope {
+    bool previous = in_image_call;
+    call_scope()
+    {
+        in_image_call = true;
+    }
+    ~call_scope()
+    {
+        in_image_call = previous;
+    }
+};
 OIIO::ImageInput::unique_ptr create_codec(std::string_view format)
 {
     if (format == "png")
@@ -77,6 +89,7 @@ class source final : public OIIO::Filesystem::IOProxy {
     }
     size_t pread(void* bytes, size_t count, int64_t position) override
     {
+        call_scope callback;
         std::lock_guard lock(gate_);
         if (check() != ARC_OK || position < 0 || static_cast<uint64_t>(position) > io_.length)
             return 0;
@@ -101,6 +114,7 @@ class source final : public OIIO::Filesystem::IOProxy {
     }
     arc_status_t check()
     {
+        call_scope callback;
         if (status != ARC_OK)
             return status;
         status = arc::abi::check_cancelled(cancel_);
@@ -336,6 +350,9 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
     if (output)
         output->required = 0;
     const auto result_status = guarded([&]() -> arc_status_t {
+        if (in_image_call)
+            return fail(ARC_BUSY, "Image operations cannot reenter an image callback");
+        call_scope active_call;
         if (!image || !output)
             return fail(ARC_INVALID_ARGUMENT, "Image outputs required");
         auto status = arc::abi::validate_record(io, sizeof(arc_io_v1));
@@ -450,6 +467,9 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
     if (output)
         output->required = 0;
     const auto result_status = guarded([&]() -> arc_status_t {
+        if (in_image_call)
+            return fail(ARC_BUSY, "Image operations cannot reenter an image callback");
+        call_scope active_call;
         if (!output)
             return fail(ARC_INVALID_ARGUMENT, "Image pixel output required");
         auto status = arc::abi::validate_record(region, sizeof(arc_region_v1));
@@ -590,5 +610,10 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
 }
 arc_status_t ARC_ABI_CALL arc_image_close(arc_handle_t image)
 {
-    return guarded([&]() { return handles().close(image, image_kind); });
+    return guarded([&]() {
+        if (in_image_call)
+            return fail(ARC_BUSY, "Image operations cannot reenter an image callback");
+        call_scope active_call;
+        return handles().close(image, image_kind);
+    });
 }

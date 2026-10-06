@@ -11,6 +11,8 @@ signature; no caller path or plugin search is accepted. Callback input, item cou
 dimensions, metadata, channels, scratch and output are bounded before caller-visible
 output. Failures leak no handle or partial pixel buffer. Buffer sizing is repeatable.
 Generation checked handles are capped to 64, single caller; close drains active leases.
+Functional calls from input or cancellation callbacks return Busy rather than borrowing
+or closing their own active call. This also avoids cross-reader callback lock cycles.
 Cancellation/deadline checks do not claim to interrupt every upstream codec instruction.
 Hostile reads run in the supervised restricted helper.
 

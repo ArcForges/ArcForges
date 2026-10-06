@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <limits>
@@ -34,6 +35,7 @@ struct input {
     std::atomic<bool> entered{false};
     std::mutex gate;
     std::condition_variable changed;
+    std::function<void()> on_read;
 };
 arc_status_t ARC_ABI_CALL read(void* context, uint64_t offset, void* destination, uint64_t count, uint64_t* done)
 {
@@ -41,6 +43,8 @@ arc_status_t ARC_ABI_CALL read(void* context, uint64_t offset, void* destination
     *done = 0;
     if (data.fail)
         return data.failure;
+    if (data.on_read)
+        data.on_read();
     if (data.delay_ms)
         std::this_thread::sleep_for(std::chrono::milliseconds(data.delay_ms));
     if (data.block) {
@@ -262,6 +266,26 @@ void lifetime_tests(const std::filesystem::path& directory)
     for (const auto handle : held)
         require(arc_image_close(handle) == ARC_OK, "handle drain failed");
     auto handle = open(data, options());
+    uint32_t callbacks = 0;
+    data.on_read = [&] {
+        ++callbacks;
+        require(arc_image_close(handle) == ARC_BUSY, "callback close must refuse instead of self-draining");
+        arc_region_v1 recursive{
+            .struct_size = sizeof(recursive), .struct_version = 1, .width = 1, .height = 1, .row_stride = 4};
+        unsigned char bytes[4]{0xD7, 0xD7, 0xD7, 0xD7};
+        arc_mut_buffer_t recursive_output{bytes, sizeof(bytes), UINT64_MAX};
+        require(arc_image_read(handle, &recursive, &recursive_output, nullptr) == ARC_BUSY &&
+                    recursive_output.required == 0 && bytes[0] == 0xD7,
+                "callback read must refuse before borrowing its own mutex");
+    };
+    arc_region_v1 first{.struct_size = sizeof(first), .struct_version = 1, .width = 1, .height = 1, .row_stride = 4};
+    unsigned char first_bytes[4]{};
+    arc_mut_buffer_t first_output{first_bytes, sizeof(first_bytes), 0};
+    require(arc_image_read(handle, &first, &first_output, nullptr) == ARC_OK && callbacks > 0,
+            "outer callback read must retain ownership after reentrant refusals");
+    data.on_read = {};
+    require(arc_image_close(handle) == ARC_OK, "reader must close after reentrant refusal drains");
+    handle = open(data, options());
     data.block = true;
     auto pending = std::async(std::launch::async, [&] {
         arc_region_v1 region{
