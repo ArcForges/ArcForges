@@ -443,5 +443,66 @@ class AdmissionTests(unittest.TestCase):
             bound_candidate(env, '1.0.0-ci.24.2', 2, self.candidate('1.0.0-ci.24.2', 1), 'nuget-candidate-9001-1')
 
 
+
+class PythonSecurityUpgradeTests(unittest.TestCase):
+    RECEIPT = 'eng/policy/dependency-reviews/gov-23-r1.json'
+    DISTRIBUTIONS = {
+        'virtualenv/21.7.13': [
+            '0355558b6f33619aab31347e43643b0ebc97f61ea3acf617b2b69e1f8a843d11',
+            '1bea5af7463f59c4719db48fe739579a2a4f569c96f26c086edda85c96da9f59'],
+        'python-discovery/1.6.0': [
+            '6393b4eae1be8b2182670635e7baff89ac21cb9f8e86fd1ff40c7b1144febb4c',
+            'd4e244cf17b8b29819ed78003d55fbacf86eda23425b075454fff9271b79377a'],
+    }
+
+    def setUp(self):
+        self.receipt = json.loads((ROOT / self.RECEIPT).read_text())
+        self.previous = json.loads((ROOT / self.receipt['review']['previousReceipt']).read_text())
+
+    def test_exact_patched_distribution_and_license_evidence_is_complete(self):
+        # The immutable security admission remains verifiable after later source admissions.
+        for coordinate, hashes in self.DISTRIBUTIONS.items():
+            with self.subTest(coordinate=coordinate):
+                row = self.receipt['pythonClosure'][coordinate]
+                self.assertEqual(row['hashes'], hashes)
+                self.assertEqual(row['licence'], 'MIT')
+                self.assertEqual(len(row['evidence']), 2)
+                self.assertTrue(any(e['source'].endswith('/METADATA') for e in row['evidence']))
+                self.assertTrue(any(e['source'].endswith('/licenses/LICENSE') for e in row['evidence']))
+        self.assertEqual(check_python(self.receipt, {
+            key: value['hashes'] for key, value in self.receipt['pythonClosure'].items()}), None)
+
+    def test_old_missing_or_mutated_distribution_is_refused(self):
+        actual = {key: list(value['hashes']) for key, value in self.receipt['pythonClosure'].items()}
+        for kind in ['old-discovery', 'missing-wheel', 'mutated-wheel', 'unreviewed-extra']:
+            changed = copy.deepcopy(actual)
+            if kind == 'old-discovery':
+                changed.pop('python-discovery/1.6.0')
+                changed['python-discovery/1.4.3'] = self.previous['pythonClosure']['python-discovery/1.4.3']['hashes']
+            elif kind == 'missing-wheel':
+                changed['virtualenv/21.7.13'].pop()
+            elif kind == 'mutated-wheel':
+                changed['python-discovery/1.6.0'][0] = '0' * 64
+            else:
+                changed['unreviewed/1.0.0'] = ['0' * 64]
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                check_python(self.receipt, changed)
+
+    def test_minimum_successor_preserves_unaffected_closure_and_historical_hashes(self):
+        before, after = self.previous['pythonClosure'], self.receipt['pythonClosure']
+        removed = {'virtualenv/21.5.1', 'python-discovery/1.4.3'}
+        self.assertEqual(set(after), (set(before) - removed) | set(self.DISTRIBUTIONS))
+        for coordinate in set(before) - removed:
+            self.assertEqual(after[coordinate], before[coordinate])
+        self.assertEqual(self.receipt['nugetClosure'], self.previous['nugetClosure'])
+        check_history(self.receipt, [self.previous])
+        for coordinate in removed:
+            changed = copy.deepcopy(self.receipt)
+            changed['pythonClosure'][coordinate] = copy.deepcopy(before[coordinate])
+            changed['pythonClosure'][coordinate]['hashes'][0] = '0' * 64
+            with self.subTest(coordinate=coordinate), self.assertRaisesRegex(ValueError, 'Historical Python coordinate changed'):
+                check_history(changed, [self.previous])
+
+
 if __name__ == '__main__':
     unittest.main()

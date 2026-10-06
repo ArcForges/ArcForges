@@ -36,6 +36,8 @@
     "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
     "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
     "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
+    "eng/provenance/records/gov-23-python-discovery-r1.json": "ddfa41b2307523b75c5a792f9b0c1dd8b8e2d983df1be821b5e7836be5181281",
+    "eng/provenance/records/gov-23-virtualenv-r1.json": "0adae91fb3b85a8167816a01c631917b952212dbbe846072f8a86ce29e1ddde7",
     "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
     "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
     "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
@@ -169,7 +171,7 @@
     "eng/provenance/records/otio-legal-r1.json": "b1cafe73055423716f77ce6fa9d85079da10f41ff51b78eaf5ebe12a54dd2b3d",
     "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
     "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
-    "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+    "eng/requirements-ci.txt": "24047ceec185c4bec86e0e44bdbb6f5f144f71b23c68d1ea7c10db8c09c1607a",
     "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
     "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
     "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
@@ -787,19 +789,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-codex-20261006-security",
-    "reviewer": "Independent exact-head NAT.15 reviewer required before merge.",
+    "owner": "w-codex-20261006-audit",
+    "reviewer": "w-codex-20261006-governance",
     "reviewedOn": "2026-10-06",
-    "baselineCommit": "8e2d27389f07c579a3d5259a986591eb7b31e28a",
-    "maintenanceAssessment": "NAT.15 replaces only the PDF parserless release configuration with admitted PDFium 155.0.8044.0 (chromium/8044), no V8/XFA, no dispatched actions or system-font callbacks. The production bundle is acquired by the producer through fixed hashes and verified GitHub Sigstore/SLSA workflow/recipe/invocation; the attestation does not bind the separately observed PDFium source commit. All archive members and full legal documents are pinned, and the SPDX 2.3 aggregate binary-bundle SBOM explicitly avoids invented bundled component versions. Existing NuGet/Python versions and hashes, SDK, vcpkg baseline, Image closure and public package identities are preserved. Runtime package publication belongs to NAT.25 from the immutable composition input; no previously published bytes are patched.",
+    "baselineCommit": "24feb447955e131bcfbf3483d295af913d15d629",
+    "maintenanceAssessment": "GOV.23 adopts preserved Dependabot PR 116 exact virtualenv 21.7.13 pins plus its minimum required python-discovery 1.6.0, fixing the actual previously recorded resolver conflict. Actual PyPI distributions and full MIT legal/metadata were hash/size verified once; other eight Python coordinates and entire NuGet/SDK/native closure remain unchanged. Independent reviewer is assigned here; exact-head PR approval remains required.",
     "upgradeChecks": {
-      "compilation": "Pinned MSVC 14.51.36231 compiled the actual PDFium-linked ABI and native tests with /W4 /WX. Both CTests passed: the isolated scripted engine and actual PDFium page/text/pixels/error/cancellation/deadline/lifetime/concurrent document tests. Pinned .NET SDK 10.0.400 built the helper/test closure with warnings as errors: 173 tests, 161 offline passes and 12 local OS tests skipped in the ordinary run. Production OS tests were then explicitly enabled and passed all 4 actual-library tests with zero skips. Root full vcpkg preset compilation is delegated to the existing producer CI; no new toolchain was provisioned locally. The actual hosted root production compile completed and all four selected CTests passed, including the real PDFium component parser; first run seal correctly failed on a preset UNINITIALIZED vs PATH cache typing mismatch, now corrected with the explicit PATH preset. Applicable final CI and actual seal remain required. Subsequent actual hosted run37507818693 at0fd02eae passed the owned rootCMake4.3.3 build and all four CTests, and sealed/uploaded31PDFcomposition files bound to the actual PR merge source78fefa66ce332ba8f75b74269100cab15a67c850. Final staged-byte hardening successor requires its own latest-head CI. Rebased on actual merged PLT57 9e2bdd43313dfd69fe9257043fc79ff1d52fc64c and resealed the unchanged package closure against its active plt-57-r2 predecessor; new latest-head CI is required.",
-      "aot-trim": "The production ContentSandbox helper successfully published Native AOT for win-x64 with the inherited source-generated PDF binding. The actual AOT executable loaded the real native ABI and PDFium inside Windows AppContainer/Job containment and returned correct page/text/RGBA outputs. Linux/macOS execution was not performed; no evidence is claimed for unadmitted runtime profiles.",
-      "compatibility": "The owned arc_pdf_* ABI, public LocalRpc payloads, helper profile/launch/exit contracts and signed hard limits stay unchanged. Producer configuration now identifies actual PDFium. The parserless library remains explicitly selectable for isolated fixtures, never a fallback production parser. Runtime package identities/publication are a later immutable producer handoff.",
-      "licence-provenance": "The exact aggregate PDFium bundle admits BSD/MIT/Apache/LLVM-exception/FreeType/Unicode/AGG/libpng/zlib/IJG terms. All 15 complete upstream legal texts are preserved with LF normalization only. Archive and attestation hashes remain raw and exact. Aggregate SPDX SBOM and licence/provenance records retain the full attribution, FreeType acknowledgement and LLVM exception. Independent exact-head admission review is required before merge.",
-      "security-sbom": "The parser runs only in the existing restricted helper. All PDFium entry points are serialized across documents; input is privately copied and retained through document lifetime; scripts/actions are never dispatched and system font callbacks cannot open host font files. Cooperative cancellation/deadline checks cover input progress, text/box loops and progressive rendering/row conversion, with existing helper/OS hard limits for non-interruptible third-party operations. Actual local PDFium errors, IO short reads, budget/deadline/cancel failures, concurrency and caller callback draining are tested. The reviewed aggregate SPDX SBOM describes the exact compiled bundle without unsupported component-version claims. Strict bounded download/HTTPS/trust/cache/prefix/archive/root-producer-recipe component tests passed 55/55, mocking only external dependencies. Actual pinned 45-member PDFium archive also passed closed bounded extraction and prefix verification. Root recipe sealing rejects component fixture wrappers, wrong tools, debug or parserless configurations, and mismatched SDK/install prefixes. Independent review corrections reverify actual cached archive/attestation bytes and exact canonical closed receipt plus strict Sigstore trust at sealing; monotonic attempt/operation deadlines and read1 progress/socket budgets prevent endless trickle transfers. Actual cached admission handoff reverification passed with the real gh verifier. Before atomic promotion, copied runtime/admission receipt/attestation/profile/SBOM and full PDFium/compiler legal bytes are checked against their previously admitted facts; actual temporary-file corruption/missing/oversize negatives passed, closing validation-to-copy races.",
-      "runtime-performance-migration": "Actual first-party PDF fixtures returned correct page/text/RGBA in the real local Windows production AOT helper, malformed input failed without affecting the next invocation, abrupt actual helper loss failed closed and recovered, and the actual parser helper ended when the launching parent died. Abrupt-loss testing is parent-induced termination, not proof that a particular hostile PDF crashed PDFium. Broad hostile-corpus crash/hang testing, Linux isolation observation and whole-product end-to-end acceptance remain deferred; their absence is not represented as a mocked OS or deployment success. No persistence migration is added.",
-      "framework-runtime-posture": "The SDK/framework/toolchain versions and baseline are unchanged. Only win-x64 is admitted for this exact PDFium producer profile; other RID producers, signing and clean-cache published consumer acceptance are separate NAT.25 delivery obligations."
+      "compilation": "Affected pure Python CI tooling; actual wheel metadata supports pinned Python 3.14.7. All 25 actual admission/history tests passed, including the three focused security-successor methods. Current dependency and source-provenance gates passed. Retained latest-head CI must prove hash-required pip installation/resolution and normal build/security gates. No new local product build is required by this declarative patch. Rebased the same component/test bytes on the accepted NAT.15 producer; its complete actual native/legal inputs and all used receipts are preserved. Latest-head CI and fresh receipt binding remain separate from prior-head evidence.",
+      "aot-trim": "No .NET assembly or API change. Retained CI AOT/trim checks stay enabled; no new AOT execution proof is claimed.",
+      "compatibility": "Only virtualenv21.5.1 to21.7.13 and minimum python-discovery1.4.3 to1.6.0 change. Actual virtualenv requires discovery>=1.6, distlib>=0.3.7<1, filelock>=3.24.2<4, platformdirs>=3.9.1<5 for Python3.14; existing other pins satisfy all active bounds. Discovery requires only filelock>=3.15.4. Preserve existing pre-commit hooks and all remaining coordinates.",
+      "licence-provenance": "Actual bounded SHA256/size-pinned wheels have complete MIT licence and METADATA digests. Licences match immutable upstream source commits. Two immutable reference-only provenance records import no external implementation or legal text; every old coordinate and record remains unchanged.",
+      "security-sbom": "Primary GHSA-p58f-9548-mpm2 fixes activation-script path injection in21.7.13. Exact preserved PR116 hashes match primary PyPI wheel/sdist hashes. Complete10-coordinate Python closure is retained, with focused stale/missing/altered distribution and immutable-history negatives. No vulnerability suppression or security algorithm/gate change.",
+      "runtime-performance-migration": "This changes CI development tooling, not product runtime, persistence or package identities. Actual existing PR116 pip failure establishes why the minimum transitive pin is necessary. No installation, runtime or OS acceptance is claimed from metadata inspection.",
+      "framework-runtime-posture": "No SDK/framework/native/compiler/vcpkg or .python-version change; pinned .NET10.0.400/Python3.14.7 remain."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -836,6 +838,8 @@
       "eng/provenance/records/design-policy-export-r2.json": "f56cf25acb6448ca7b7ad53b258e7ed7c5a5d43fc7e7bf142c55c4c2fe4fbe29",
       "eng/provenance/records/design-policy-export-r3.json": "e1133747e9d6a43f4b6d35c04f91ad1522a8a1d47d9f64e47b44359567d59799",
       "eng/provenance/records/design-policy-export-r4.json": "9dbd02e1c0f8466928dc5dfd4bfecf4f25ee04c5d138d51e125ac71cc8f79300",
+      "eng/provenance/records/gov-23-python-discovery-r1.json": "ddfa41b2307523b75c5a792f9b0c1dd8b8e2d983df1be821b5e7836be5181281",
+      "eng/provenance/records/gov-23-virtualenv-r1.json": "0adae91fb3b85a8167816a01c631917b952212dbbe846072f8a86ce29e1ddde7",
       "eng/provenance/records/native-amd-amf-r1.json": "906e812cba398a382dd9c4788fcad5361bca9704fdd07fe6d0d1358f9d08f3de",
       "eng/provenance/records/native-amd-amf-r2.json": "07f5d3fa3f6003f1b4360315cd9becfcfa68bdf3df53c0191bdf65d85660caf9",
       "eng/provenance/records/native-amd-amf-r3.json": "b79e83311b0dcc6812fbe4c960c9e8e836e198c375208ffc8c900aecb0ced9d1",
@@ -969,7 +973,7 @@
       "eng/provenance/records/otio-legal-r1.json": "b1cafe73055423716f77ce6fa9d85079da10f41ff51b78eaf5ebe12a54dd2b3d",
       "eng/provenance/records/otio-python-optional-patch-r1.json": "d666eb12d972e45b1c72ad9fdaa3bb4aa5d3e7475b19728545964b0528354ff1",
       "eng/provenance/records/plan-delivery-graph-r1.json": "5715bd29050c9a78dda2db639ea0a7e5deb23037b02f2a10340f6f9ce3ab6287",
-      "eng/requirements-ci.txt": "fe6a76cb5334fd1b96af6203baec8723653e97453f0649f61b8703fd81787c25",
+      "eng/requirements-ci.txt": "24047ceec185c4bec86e0e44bdbb6f5f144f71b23c68d1ea7c10db8c09c1607a",
       "eng/verification/probe-evidence/Directory.Packages.props": "970a2681511caf88a41e1128c6240ccbc319ab09fcdfec02e4e53d1963d29ab7",
       "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj": "29600888434657600898b01782870d17a2f2c1dee6136cffbbbce802a7beae36",
       "eng/verification/probe-evidence/packages.lock.json": "ebaf3ff575a65e6b3a68a661fa19ea987f1abcf901846b80060d2c6ae3afbd02",
@@ -1093,7 +1097,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-57-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-15-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1104,7 +1108,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-15-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/gov-23-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
@@ -1267,23 +1271,23 @@
       ],
       "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
     },
-    "virtualenv/21.5.1": {
+    "virtualenv/21.7.13": {
       "hashes": [
-        "55aa670b67bbfb991b03fda39bd3276d92c419d702376e98c5df1c9989a26783",
-        "dca3bf98275a59c652b69d68e73433e597d977c2da9198882479d1a7188009c8"
+        "0355558b6f33619aab31347e43643b0ebc97f61ea3acf617b2b69e1f8a843d11",
+        "1bea5af7463f59c4719db48fe739579a2a4f569c96f26c086edda85c96da9f59"
       ],
       "licence": "MIT",
       "evidence": [
         {
-          "source": "virtualenv-21.5.1.dist-info/METADATA",
-          "sha256": "a2b4e6261451dbe7dfc3ff6b720292889b9b02edb9023c4f3f93337bfa2f3187"
+          "source": "virtualenv-21.7.13.dist-info/METADATA",
+          "sha256": "a1bda14f94d71ee5344482e145edf3dc9bc7cd6fd41bb51c782b1341cac50778"
         },
         {
-          "source": "virtualenv-21.5.1.dist-info/licenses/LICENSE",
+          "source": "virtualenv-21.7.13.dist-info/licenses/LICENSE",
           "sha256": "5c15919378c5b2aaab7b19cea70d8cdc75f76879e32454e4c0399f8b71d171e9"
         }
       ],
-      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+      "scope": "CI hook tooling only; hash-required requirements restore. Actual distribution metadata/licence verified once; not shipped in capability packages."
     },
     "distlib/0.4.3": {
       "hashes": [
@@ -1339,23 +1343,23 @@
       ],
       "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
     },
-    "python-discovery/1.4.3": {
+    "python-discovery/1.6.0": {
       "hashes": [
-        "ad57d7045a862460d4a235986c33f13ed707d3aeb9153fa47eb7dfd0d4673289",
-        "b6e1e4a7d9e3f6948c39746ffe8218225162d738ba39d05ab1d2f6c1cac4878c"
+        "6393b4eae1be8b2182670635e7baff89ac21cb9f8e86fd1ff40c7b1144febb4c",
+        "d4e244cf17b8b29819ed78003d55fbacf86eda23425b075454fff9271b79377a"
       ],
       "licence": "MIT",
       "evidence": [
         {
-          "source": "python_discovery-1.4.3.dist-info/METADATA",
-          "sha256": "ffd0a6dec984955e2582e78b7183037478c5ce8ebab633b5b6a1fe2ba2b0906d"
+          "source": "python_discovery-1.6.0.dist-info/METADATA",
+          "sha256": "6c11ebe87e7dde1facb306405e15565ebc48a755df3d93a871905ff341f68515"
         },
         {
-          "source": "python_discovery-1.4.3.dist-info/licenses/LICENSE",
+          "source": "python_discovery-1.6.0.dist-info/licenses/LICENSE",
           "sha256": "90e25e1faf2a4aaea8d95ee8e7f5738b052a1acc0c9c58068101f931a86bd588"
         }
       ],
-      "scope": "CI hook tooling only; hash-required requirements restore, not shipped in capability packages"
+      "scope": "CI hook tooling only; hash-required requirements restore. Actual distribution metadata/licence verified once; not shipped in capability packages."
     }
   }
 }
