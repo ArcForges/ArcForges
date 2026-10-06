@@ -5,12 +5,14 @@ Inspection describes bytes, not their trust or provenance. Consumers separately
 bind source, signatures, legal material and the complete dependency closure.
 """
 from dataclasses import dataclass
+from bisect import bisect_right
 from pathlib import Path
 import struct
 
 MAX_FILE = 256 * 1024 * 1024
 MAX_TABLE = 100000
 MAX_NAME = 4096
+MAX_SEGMENTS = 8192
 RIDS = {
     "win-x64": ("PE32+", "x86_64"), "win-arm64": ("PE32+", "aarch64"),
     "linux-x64": ("ELF64", "x86_64"), "linux-arm64": ("ELF64", "aarch64"),
@@ -81,6 +83,29 @@ class Reader:
 def _sorted(values):
     require(len(values) <= MAX_TABLE, "Unbounded native linkage inventory.")
     return tuple(sorted(set(values)))
+
+
+class AddressIndex:
+    """Nonoverlapping half-open mappings, with logarithmic lookup work."""
+    def __init__(self, ranges):
+        require(len(ranges) <= MAX_SEGMENTS, "Unbounded native mapped ranges.")
+        self.ranges = sorted(ranges)
+        self.starts = [row[0] for row in self.ranges]
+        previous_end = 0
+        for start, size, *_ in self.ranges:
+            require(start >= previous_end and size > 0 and start + size <= 1 << 64,
+                    "Overlapping or invalid native mapped ranges.")
+            previous_end = start + size
+
+    def find(self, address, size=1):
+        require(address >= 0 and size > 0 and address + size <= 1 << 64,
+                "Invalid native virtual range.")
+        index = bisect_right(self.starts, address) - 1
+        if index >= 0:
+            row = self.ranges[index]
+            if size <= row[1] - (address - row[0]):
+                return row
+        return None
 
 
 def inspect(path, rid):
@@ -241,19 +266,22 @@ def _elf(r):
         require(file_size <= memory_size, "Invalid ELF segment size.")
         r.span(offset, file_size)
         if tag == 1:
-            loads.append((address, offset, file_size, flags))
+            if file_size:
+                loads.append((address, file_size, offset, flags))
         elif tag == 2:
-            dynamic.append((offset, file_size))
+            dynamic.append((offset, address, file_size))
     require(loads and len(dynamic) == 1, "ELF shared library has no unique dynamic table.")
+    load_index = AddressIndex(loads)
 
     def mapped(address, size=1):
-        matches = {(offset + address - start, flags) for start, offset, file_size, flags in loads
-                   if start <= address and address - start < file_size and size <= file_size - (address - start)}
-        require(len(matches) == 1, "Unmapped or ambiguous ELF virtual address.")
-        return next(iter(matches))
+        row = load_index.find(address, size)
+        require(row is not None, "Unmapped ELF virtual address.")
+        start, _, offset, flags = row
+        return offset + address - start, flags
 
-    begin, length = dynamic[0]
+    begin, dynamic_address, length = dynamic[0]
     require(length >= 16 and length % 16 == 0 and length // 16 <= MAX_TABLE, "Unbounded ELF dynamic table.")
+    require(mapped(dynamic_address, length)[0] == begin, "ELF dynamic virtual/file mapping differs.")
     tags = {}
     terminated = False
     for index in range(length // 16):
@@ -302,6 +330,8 @@ def _elf(r):
             symbol_sections.append((offset, size))
     require(len(symbol_sections) == 1 and symbol_sections[0][0] == symbol_offset,
             "ELF dynamic symbols differ from the file table.")
+    require(mapped(symbol_address, symbol_sections[0][1])[0] == symbol_offset,
+            "ELF dynamic symbols escape their load mapping.")
     for index in range(symbol_sections[0][1] // 24):
         name_offset, info, other, section, address, _ = r.unpack("<IBBHQQ", symbol_offset + index * 24)
         if not name_offset or section == 0 or info >> 4 not in (1, 2) or other & 3 in (1, 2):
@@ -352,6 +382,7 @@ def _mach(r):
     identity = minimum_os = None
     symbol_table = trie = None
     bases = []
+    total_sections = 0
     for _ in range(count):
         command, length = r.unpack("<II", cursor)
         require(length >= 8 and length % 8 == 0 and cursor + length <= 32 + command_size,
@@ -373,23 +404,34 @@ def _mach(r):
             paths.append(r.string(cursor + offset, cursor + length))
         elif command == 0x19:
             require(length >= 72, "Truncated Mach-O segment command.")
-            address, _, offset, file_size, _, protections, section_count, _ = r.unpack("<QQQQIIII", cursor + 24)
+            address, memory_size, offset, file_size, _, protections, section_count, _ = r.unpack("<QQQQIIII", cursor + 24)
+            require(file_size <= memory_size and address + memory_size <= 1 << 64,
+                    "Invalid Mach-O segment size.")
             r.span(offset, file_size)
             if file_size and offset == 0:
                 bases.append(address)
             require(section_count <= 8192 and length == 72 + section_count * 80, "Invalid Mach-O sections.")
+            total_sections += section_count
+            require(total_sections <= MAX_SEGMENTS, "Unbounded aggregate Mach-O sections.")
             for index in range(section_count):
                 section = cursor + 72 + index * 80
                 section_address, section_size, raw = r.unpack("<QQI", section + 32)
                 flags = r.unpack("<I", section + 64)[0]
                 # Zero-fill sections have no file bytes; executable sections never are zero-fill.
-                if flags & 0xff not in (1, 12, 18):
+                zero_fill = flags & 0xff in (1, 12, 18)
+                require(address <= section_address and section_size <= memory_size and
+                        section_address - address <= memory_size - section_size,
+                        "Mach-O section escapes segment memory.")
+                if not zero_fill:
+                    require(section_size <= file_size and section_address - address <= file_size - section_size and
+                            raw == offset + section_address - address,
+                            "Mach-O section virtual/file mapping differs.")
                     r.span(raw, section_size)
                 if flags & 0x80000400:
-                    require(protections & 4 and address <= section_address and
-                            section_size <= file_size and section_address - address <= file_size - section_size,
+                    require(not zero_fill and protections & 4,
                             "Invalid Mach-O executable section.")
-                    executable.append((section_address, section_size))
+                    if section_size:
+                        executable.append((section_address, section_size))
         elif command == 2:
             require(length == 24 and symbol_table is None, "Invalid Mach-O symbol command.")
             symbol_table = r.unpack("<IIII", cursor + 8)
@@ -413,6 +455,7 @@ def _mach(r):
             minimum_os = f"{minimum >> 16}.{(minimum >> 8) & 255}.{minimum & 255}"
         cursor += length
     require(cursor == 32 + command_size and identity and len(bases) == 1, "Incomplete Mach-O shared library.")
+    executable_index = AddressIndex(executable)
     exports, forwarded, data, absolute = [], [], [], []
 
     def classify(name, address, flags=0):
@@ -422,7 +465,7 @@ def _mach(r):
             forwarded.append(name)
         elif flags & 3 == 2:
             absolute.append(name)
-        elif flags & 3 == 1 or not any(start <= address < start + size for start, size in executable):
+        elif flags & 3 == 1 or executable_index.find(address) is None:
             data.append(name)
         else:
             exports.append(name)

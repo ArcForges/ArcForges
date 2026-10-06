@@ -198,6 +198,23 @@ class NativeBinaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "linked"):
             binary.inspect_bytes(bytes(data), "linux-x64")
 
+    def test_elf_dynamic_virtual_file_mapping_and_complete_symbol_mapping_are_bound(self):
+        data = elf()
+        put(data, 120 + 16, "<Q", 0x700)
+        with self.assertRaisesRegex(ValueError, "dynamic virtual/file"):
+            binary.inspect_bytes(bytes(data), "linux-x64")
+        data = elf()
+        put(data, 64 + 32, "<Q", 0x520)
+        with self.assertRaisesRegex(ValueError, "Unmapped"):
+            binary.inspect_bytes(bytes(data), "linux-x64")
+
+    def test_elf_overlapping_load_ranges_are_refused_before_mapping_queries(self):
+        data = elf()
+        put(data, 56, "<H", 3)
+        put(data, 176, "<IIQQQQQQ", 1, 5, 0x600, 0x600, 0, 16, 16, 1)
+        with self.assertRaisesRegex(ValueError, "Overlapping"):
+            binary.inspect_bytes(bytes(data), "linux-x64")
+
     def test_elf_endianness_unbounded_sections_and_bad_dynamic_strings_fail(self):
         for offset, fmt, value in ((5, "<B", 2), (60, "<H", 9000), (0x200 + 16 + 8, "<Q", 0x1001),
                                    (0x800 + 128 + 56, "<Q", 23)):
@@ -234,6 +251,42 @@ class NativeBinaryTests(unittest.TestCase):
         data = mach()
         data[0x608:0x60b] = b"\x08\x01\0"
         self.assertEqual(("fn",), binary.inspect_bytes(bytes(data), "osx-x64").forwarded_exports)
+
+    def test_mach_sections_bind_virtual_and_file_offsets_and_refuse_executable_zero_fill(self):
+        for offset, fmt, value, message in (
+                (32 + 72 + 48, "<I", 0x900, "virtual/file"),
+                (32 + 72 + 64, "<I", 0x80000401, "executable"),
+                (32 + 32, "<Q", 0x800, "segment size"),
+                (32 + 72 + 40, "<Q", 0x900, "segment memory")):
+            data = mach()
+            put(data, offset, fmt, value)
+            with self.subTest(offset=offset), self.assertRaisesRegex(ValueError, message):
+                binary.inspect_bytes(bytes(data), "osx-x64")
+
+    def test_mach_aggregate_section_work_is_capped_across_commands(self):
+        commands = []
+        for count in (4096, 4097):
+            command = bytearray(72 + count * 80)
+            put(command, 0, "<II", 0x19, len(command))
+            put(command, 24, "<QQQQIIII", 0, 0, 0, 0, 0, 0, count, 0)
+            for index in range(count):
+                put(command, 72 + index * 80 + 64, "<I", 1)
+            commands.append(command)
+        data = bytearray(32) + b"".join(commands)
+        put(data, 0, "<IIIIIIII", 0xfeedfacf, 0x01000007, 0, 6, 2, len(data) - 32, 0, 0)
+        with self.assertRaisesRegex(ValueError, "aggregate"):
+            binary.inspect_bytes(bytes(data), "osx-x64")
+
+    def test_mach_overlapping_executable_sections_are_refused(self):
+        data = mach()
+        commands_size = struct.unpack_from("<I", data, 20)[0]
+        data[32 + 152 + 80:32 + commands_size + 80] = data[32 + 152:32 + commands_size]
+        data[32 + 152:32 + 232] = data[32 + 72:32 + 152]
+        put(data, 32 + 4, "<I", 232)
+        put(data, 32 + 64, "<I", 2)
+        put(data, 20, "<I", commands_size + 80)
+        with self.assertRaisesRegex(ValueError, "Overlapping"):
+            binary.inspect_bytes(bytes(data), "osx-x64")
 
     def test_mach_cycle_overflow_unknown_flags_and_out_of_range_terminal_fail(self):
         for offset, value in ((0x606, 0), (0x607, 127), (0x608, 64), (0x60a, 255)):
