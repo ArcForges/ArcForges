@@ -1012,7 +1012,11 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealPdfIsolationTests.cs",
     "eng/native/vcpkg/pdfium-sbom.v1.json",
     "eng/policy/dependency-reviews/nat-15-r1.json",
-    "eng/provenance/records/contracts-provenance-tools-r3.json"
+    "eng/provenance/records/contracts-provenance-tools-r3.json",
+    "docs/ci-python-security-2026-10-06.md",
+    "eng/policy/dependency-reviews/gov-23-r1.json",
+    "eng/provenance/records/gov-23-python-discovery-r1.json",
+    "eng/provenance/records/gov-23-virtualenv-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

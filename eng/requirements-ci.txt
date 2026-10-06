@@ -98,6 +98,6 @@ filelock==3.29.5 \
 platformdirs==4.10.0 \
     --hash=sha256:31e761a6a0ca04faf7353ea759bdba55652be214725111e5aac52dfa29d4bef7 \
     --hash=sha256:fb516cdb12eb0d857d0cd85a7c57cea4d060bee4578d6cf5a14dfdf8cbf8784a
-python-discovery==1.4.3 \
-    --hash=sha256:ad57d7045a862460d4a235986c33f13ed707d3aeb9153fa47eb7dfd0d4673289 \
-    --hash=sha256:b6e1e4a7d9e3f6948c39746ffe8218225162d738ba39d05ab1d2f6c1cac4878c
+python-discovery==1.6.0 \
+    --hash=sha256:6393b4eae1be8b2182670635e7baff89ac21cb9f8e86fd1ff40c7b1144febb4c \
+    --hash=sha256:d4e244cf17b8b29819ed78003d55fbacf86eda23425b075454fff9271b79377a

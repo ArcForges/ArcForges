@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "gov-23-virtualenv-r1",
+  "kind": "source",
+  "sourceRepository": "https://github.com/pypa/virtualenv",
+  "sourceCommit": "0c295ff1a5f298e8e11935e3588f59f7455c1f8f",
+  "sourcePaths": [
+    "LICENSE",
+    "pyproject.toml"
+  ],
+  "licence": {
+    "spdx": "MIT",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "LICENSE",
+        "sha256": "5c15919378c5b2aaab7b19cea70d8cdc75f76879e32454e4c0399f8b71d171e9",
+        "finding": "Exact immutable upstream full MIT licence matches actual hash-pinned wheel LICENSE bytes."
+      }
+    ],
+    "scope": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "MIT licensed virtualenv authors; full licence is retained by the original upstream/wheel distribution."
+  ],
+  "targets": [],
+  "artifactTargets": [],
+  "disposition": "Reference Only",
+  "verification": {
+    "kind": "byte-match",
+    "command": "python eng/dependency_policy.py; python eng/check_provenance.py --owner DesktopPlatform",
+    "expected": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "artifacts": [
+      {
+        "url": "https://files.pythonhosted.org/packages/9a/ce/e74453531b0c49a58d0e8a4f9bab4495705859fee4a4f7de27d58f4a791a/virtualenv-21.7.13-py3-none-any.whl",
+        "sha256": "1bea5af7463f59c4719db48fe739579a2a4f569c96f26c086edda85c96da9f59",
+        "members": [
+          "virtualenv-21.7.13.dist-info/METADATA",
+          "virtualenv-21.7.13.dist-info/licenses/LICENSE"
+        ]
+      }
+    ]
+  },
+  "notice": {
+    "required": false,
+    "text": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "files": [],
+    "distribution": "source",
+    "reason": "No external source or legal text is copied; CI tooling is not shipped in capability packages."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": null,
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "w-codex-20261006-audit licensing assessment; independent source/admission reviewer w-codex-20261006-governance assigned, not an approval claim",
+    "reviewedOn": "2026-10-06",
+    "decision": "approved",
+    "rationale": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "baselineCommit": "8e2d27389f07c579a3d5259a986591eb7b31e28a",
+    "reconciliation": false
+  },
+  "supersedes": null
+}

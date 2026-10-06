@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "gov-23-python-discovery-r1",
+  "kind": "source",
+  "sourceRepository": "https://github.com/tox-dev/python-discovery",
+  "sourceCommit": "ba1a07280dcb842a8bf49b26cd9edc5bd524d691",
+  "sourcePaths": [
+    "LICENSE",
+    "pyproject.toml"
+  ],
+  "licence": {
+    "spdx": "MIT",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "LICENSE",
+        "sha256": "90e25e1faf2a4aaea8d95ee8e7f5738b052a1acc0c9c58068101f931a86bd588",
+        "finding": "Exact immutable upstream full MIT licence matches actual hash-pinned wheel LICENSE bytes."
+      }
+    ],
+    "scope": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "MIT licensed python-discovery authors; full licence is retained by the original upstream/wheel distribution."
+  ],
+  "targets": [],
+  "artifactTargets": [],
+  "disposition": "Reference Only",
+  "verification": {
+    "kind": "byte-match",
+    "command": "python eng/dependency_policy.py; python eng/check_provenance.py --owner DesktopPlatform",
+    "expected": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "artifacts": [
+      {
+        "url": "https://files.pythonhosted.org/packages/43/5e/21abf578182fb15006a57faf3711a1e659e29d600d19b6e557eae908c81d/python_discovery-1.6.0-py3-none-any.whl",
+        "sha256": "d4e244cf17b8b29819ed78003d55fbacf86eda23425b075454fff9271b79377a",
+        "members": [
+          "python_discovery-1.6.0.dist-info/METADATA",
+          "python_discovery-1.6.0.dist-info/licenses/LICENSE"
+        ]
+      }
+    ]
+  },
+  "notice": {
+    "required": false,
+    "text": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "files": [],
+    "distribution": "source",
+    "reason": "No external source or legal text is copied; CI tooling is not shipped in capability packages."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": null,
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "w-codex-20261006-audit licensing assessment; independent source/admission reviewer w-codex-20261006-governance assigned, not an approval claim",
+    "reviewedOn": "2026-10-06",
+    "decision": "approved",
+    "rationale": "Reference only: actual hash/size-pinned PyPI wheel METADATA and complete MIT licence were inspected once; upstream immutable LICENSE bytes match the wheel licence. No upstream implementation, wheel or legal text is copied into this repository or capability packages. The observed release source commit is not asserted to be cryptographically attested to the wheel.",
+    "baselineCommit": "8e2d27389f07c579a3d5259a986591eb7b31e28a",
+    "reconciliation": false
+  },
+  "supersedes": null
+}
