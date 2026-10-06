@@ -57,6 +57,7 @@
     "Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense": "permissive",
     "libtiff AND LicenseRef-Berkeley-LZW-Rescinded": "permissive",
     "LicenseRef-pkgconf-Permissive": "permissive",
-    "LGPL-2.1-or-later": "agpl-compatible"
+    "LGPL-2.1-or-later": "agpl-compatible",
+    "BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG": "permissive"
   }
 }

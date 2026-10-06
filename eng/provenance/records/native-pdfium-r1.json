@@ -92,7 +92,8 @@
     "copyingPermission": "Required redistribution of the complete upstream licence/attribution texts under each bundled permissive component licence."
   },
   "attribution": [
-    "PDFium Authors, Benoit Blanchon, FreeType, Unicode ICU, Anti-Grain Geometry, and all original copyright holders retained in the full 15 legal texts."
+    "PDFium Authors, Benoit Blanchon, FreeType, Unicode ICU, Anti-Grain Geometry, and all original copyright holders retained in the full 15 legal texts.",
+    "The original upstream FreeType legal text uses its original single-byte copyright encoding and is retained byte-for-byte (raw), not decoded or transcoded."
   ],
   "targets": [
     {
@@ -118,7 +119,7 @@
     {
       "path": "third-party/pdfium/chromium-8044/freetype.txt",
       "sha256": "f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8",
-      "normalization": "lf"
+      "normalization": "raw"
     },
     {
       "path": "third-party/pdfium/chromium-8044/icu.txt",
@@ -176,7 +177,7 @@
   "verification": {
     "kind": "byte-match",
     "command": "python eng/check_provenance.py --owner DesktopPlatform",
-    "expected": "All legal target hashes match admitted source bytes after LF normalization; full terms and attribution are preserved. No source-build claim is made.",
+    "expected": "All legal target hashes match admitted source bytes after LF normalization; full terms and attribution are preserved. No source-build claim is made. FreeType original single-byte legal text is checked as raw bytes; it is not transcoded.",
     "artifacts": [
       {
         "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-win-x64.tgz",
