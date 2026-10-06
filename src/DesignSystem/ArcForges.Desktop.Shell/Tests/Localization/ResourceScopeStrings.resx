@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="module.name" xml:space="preserve"><value>Assistant history</value></data>
+  <data name="settings.name" xml:space="preserve"><value>Module settings</value></data>
+  <data name="module.blank" xml:space="preserve"><value>   </value></data>
+  <data name="module.argument" xml:space="preserve"><value>{value}</value></data>
+  <data name="module.invalid" xml:space="preserve"><value>{count, plural, one {one}}</value></data>
+  <data name="module.number" xml:space="preserve"><value>Measured {value}</value></data>
+  <data name="module.count" xml:space="preserve"><value>{count, plural, one {one message} few {few messages} many {many messages} other {# messages}}</value></data>
+</root>
