@@ -11,6 +11,8 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using ArcForges.ContentSandbox.Broker;
+using ArcForges.ContentSandbox.Broker.Native;
+using ArcForges.ContentSandbox.Broker.Windows;
 using ArcForges.ContentSandbox.Contracts;
 using Xunit;
 
@@ -48,6 +50,61 @@ public sealed class OsIsolationTests
         Assert.Equal((byte)20, tile.Bytes.Span[1]);
         await invocation.CloseAsync();
         Assert.Equal(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(Ct));
+    }
+
+    [Fact]
+    public async Task AHelperCannotReadPrivateStorageLeftByThePreviousOwnerOfItsPooledIdentity()
+    {
+        RequireOptIn();
+        using var os = OsHarness.Create();
+        await using var launcher = new ContentSandboxLauncher(os.Options() with
+        {
+            AppContainerName = "ArcForges.Storage." + Guid.NewGuid().ToString("N")[..24],
+        });
+        await using (var first = (await launcher.LaunchAsync(Fixtures.Script("image 8 8", "attack storage-write"), Ct)).Value!)
+        {
+            var image = (await first.OpenImageAsync(0, 0, 1, Ct)).Value;
+            Assert.Contains("storage-write:WRITTEN", (await first.GetImageInfoAsync(image, Ct)).Value!.Warnings);
+            await first.CloseAsync();
+            _ = await first.WaitForExitAsync(Ct);
+        }
+
+        await using var next = (await launcher.LaunchAsync(Fixtures.Script("image 8 8", "attack storage-read"), Ct)).Value!;
+        var opened = (await next.OpenImageAsync(0, 0, 1, Ct)).Value;
+        Assert.Contains("storage-read:ABSENT", (await next.GetImageInfoAsync(opened, Ct)).Value!.Warnings);
+        await next.CloseAsync();
+    }
+
+    [Fact]
+    public async Task RecoveryChecksTheActualContainerProcessInstanceAndRefusesReuseUntilItExits()
+    {
+        RequireOptIn();
+        using var os = OsHarness.Create();
+        var prefix = "ArcForges.Instance." + Guid.NewGuid().ToString("N")[..24];
+        await using var launcher = new ContentSandboxLauncher(os.Options() with { AppContainerName = prefix });
+        await using var invocation = (await launcher.LaunchAsync(Fixtures.Script("image 8 8"), Ct)).Value!;
+        using var process = Process.GetProcessById(invocation.HelperProcess.ProcessId);
+        var name = prefix + ".0";
+        Assert.Equal(0, WindowsNative.DeriveAppContainerSidFromAppContainerName(name, out var sid));
+        var path = Path.Combine(Path.GetTempPath(), "ArcForges-instance-" + Guid.NewGuid().ToString("N") + ".lock");
+        try
+        {
+            await using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+            {
+                AppContainerSlots.WriteLifetime(stream, new AppContainerSlots.LifetimeRecord(1, "active", process.Id,
+                    process.StartTime.ToUniversalTime().Ticks, new SecurityIdentifier(sid).Value));
+                Assert.False(AppContainerSlots.PriorLifetimeEnded(stream, name));
+                await invocation.CloseAsync();
+                _ = await invocation.WaitForExitAsync(Ct);
+                await process.WaitForExitAsync(Ct);
+                Assert.True(AppContainerSlots.PriorLifetimeEnded(stream, name));
+            }
+        }
+        finally
+        {
+            _ = WindowsNative.FreeSid(sid);
+            File.Delete(path);
+        }
     }
 
     [Fact]

@@ -30,7 +30,7 @@ internal readonly record struct BpfInstruction(ushort Code, byte JumpTrue, byte 
 /// loading kernel code, and the asynchronous and keyring interfaces that widen the kernel surface. Thread creation stays possible (a
 /// <c>clone</c> with <c>CLONE_THREAD</c>), and <c>clone3</c>, whose flags the filter cannot read, answers "not implemented" so the C library
 /// falls back to <c>clone</c>. A denied call fails with <c>EPERM</c> rather than killing the process, so the helper's own self-check can observe it.
-/// The filter checks the architecture first and kills the process on a foreign one, and on x86-64 denies every call number with the x32 bit set. Not covered: tgkill (the runtime needs it to suspend its own threads) can still signal another process of the same user, and there is no PID, user or mount namespace. The numbers are the kernel's own, per processor family.
+/// The filter checks the architecture first and kills the process on a foreign one, and on x86-64 denies every call number with the x32 bit set. tgkill is allowed only for this process's full PID argument, preserving runtime thread suspension. There is no PID, user or mount namespace. The numbers are the kernel's own, per processor family.
 /// </summary>
 internal static class SeccompProgram
 {
@@ -100,8 +100,9 @@ internal static class SeccompProgram
     internal static int SeccompCall(LinuxArchitecture architecture) => architecture == LinuxArchitecture.X64 ? 317 : 277;
 
     /// <summary>Builds the filter program for a processor family; every jump is computed from instruction positions.</summary>
-    internal static IReadOnlyList<BpfInstruction> Build(LinuxArchitecture architecture)
+    internal static IReadOnlyList<BpfInstruction> Build(LinuxArchitecture architecture, int processId)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
         var denied = Denied(architecture);
         var audit = architecture == LinuxArchitecture.X64 ? AuditArchX64 : AuditArchArm64;
         var list = new List<BpfInstruction>
@@ -122,9 +123,14 @@ internal static class SeccompProgram
         var firstTest = list.Count;
         var cloneTest = firstTest + denied.Count;
         var clone3Test = cloneTest + 1;
-        var threadLoad = clone3Test + 1;
+        var signalTest = clone3Test + 1;
+        var threadLoad = signalTest + 1;
         var threadTest = threadLoad + 1;
-        var allow = threadTest + 1;
+        var signalLowLoad = threadTest + 1;
+        var signalLowTest = signalLowLoad + 1;
+        var signalHighLoad = signalLowTest + 1;
+        var signalHighTest = signalHighLoad + 1;
+        var allow = signalHighTest + 1;
         var deny = allow + 1;
         var enosys = deny + 1;
         if (x32Test >= 0)
@@ -139,9 +145,15 @@ internal static class SeccompProgram
 
         // clone: inspect the flags. A call that creates a thread passes; anything else is a process and is denied. clone3 cannot be inspected.
         list.Add(new BpfInstruction(JumpEqual, Jump(cloneTest, threadLoad), 0, Clone(architecture)));
-        list.Add(new BpfInstruction(JumpEqual, Jump(clone3Test, enosys), Jump(clone3Test, allow), 435));
+        list.Add(new BpfInstruction(JumpEqual, Jump(clone3Test, enosys), 0, 435));
+        list.Add(new BpfInstruction(JumpEqual, Jump(signalTest, signalLowLoad), Jump(signalTest, allow), architecture == LinuxArchitecture.X64 ? 234u : 131u));
         list.Add(new BpfInstruction(LoadAbsolute, 0, 0, OffsetArgument0));
         list.Add(new BpfInstruction(JumpSet, Jump(threadTest, allow), Jump(threadTest, deny), CloneThread));
+        // Compare both words: a matching low PID must not admit a forged 64-bit argument.
+        list.Add(new BpfInstruction(LoadAbsolute, 0, 0, OffsetArgument0));
+        list.Add(new BpfInstruction(JumpEqual, 0, Jump(signalLowTest, deny), (uint)processId));
+        list.Add(new BpfInstruction(LoadAbsolute, 0, 0, OffsetArgument0 + 4));
+        list.Add(new BpfInstruction(JumpEqual, Jump(signalHighTest, allow), Jump(signalHighTest, deny), 0));
         list.Add(new BpfInstruction(Return, 0, 0, RetAllow));
         list.Add(new BpfInstruction(Return, 0, 0, RetErrnoEperm));
         list.Add(new BpfInstruction(Return, 0, 0, RetErrnoEnosys));
