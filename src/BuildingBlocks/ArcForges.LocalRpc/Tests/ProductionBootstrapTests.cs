@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.LocalRpc.Platform.Shapes;
 using ArcForges.Contracts.LocalRpc.Platform.V1;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
-using System.Diagnostics;
 using Xunit;
 
 namespace ArcForges.LocalRpc.Tests;
