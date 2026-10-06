@@ -253,7 +253,7 @@
     "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "be0bce97083efe992941fdffd3720afc7d595bb364f0c6ea3041422f68cede6d",
     "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "c0d4c9c68da4779c0d5e6c9e44998f27dc5c4edc0108e396790394c43d5675c3",
+    "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "3210febf34b47ea449b1e60d138363ddfcf083385062016671d1a106dc658c4e",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
     "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "adffcd4d418dc74bd21ab5a2b9b3c5c6d455f779aefbbd52831f0eb49ab2579f",
     "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "7a75e1f1886be051411e95faabeb31da2a21f6de1b166b489214695345b7e42e",
@@ -820,19 +820,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-codex-20261006-image",
-    "reviewer": "Independent exact-head reviewer: /root/observability; approval required before merge.",
+    "owner": "w-codex-20261006-platform",
+    "reviewer": "Independent exact-head PLT.62 source and supporting input review required before merge.",
     "reviewedOn": "2026-10-06",
-    "baselineCommit": "5f2c09010c61094e9285d6e6f71a9ca62c4c8689",
-    "maintenanceAssessment": "NAT.11 completes the existing Image family over pinned static OpenImageIO3.1.14/OpenEXR/Imath. Accepted NAT.15 PDFium and GOV.23 virtualenv21.7.13/python-discovery1.6.0 input/closure/immutable receipts are preserved. This image successor changes no dependency version, framework, SDK, package identity or external coordinate. Functional ABI1.1 adds open/read/close while preserving preamble signatures/layouts. Native generation ownership, bounded immutable callback input, finite scratch/staged output, deadlines, cancellation and callback/concurrent refusal are complete. Managed parsing types stay internal to the approved helper and its tests; historical public ImageAbi diagnostics remain compatible. ImageReader owns roots/token, immutable precision metadata, a single reserved/active borrow, bounded read/close scheduling, any-image callback fences and own-reader callback close draining. RGBA8 is unassociated in reported source transfer; float is linear premultiplied, including associated nonlinear TIFF. The actual helper image branch composes ImageReader and admits both native libraries before OS restriction. Native staging, package inspection, registry inventory and C/C# preamble consumers share exact Image6/PDF8 ABI1.1. Existing native-win-x64-r4 already admits TIFF jpeg/lzma/zip; local cache repair restored these approved features for real component diagnostics, without new feature/version admission or release-payload claims. Natural integration preserves accepted PLT.59 seven-package production implementation, its exact 62 NuGet/10 Python admitted closures, SDK400 locks and immutable source/legal/review history. The Image codec, lifecycle, internal helper boundary and functional native API are byte-identical to the independently reviewed bb0adc2 implementation. Only this unaccepted Image candidate receipt is resealed after archiving its prior exact bytes; no accepted historical receipt is rewritten. The accepted GOV.24 closed non-wire metadata implementation, exact Build.Policy required-file inventory and initial gov-24-r1 receipt are preserved in a natural rebase onto 5f2c090. All Image codec/reader/helper bytes remain unchanged from approved b26c1f2; existing copied-source and architecture decision rules are not loosened. The unaccepted NI candidate r1 is archived and resealed with predecessor gov-24-r1; all accepted historical bytes remain immutable.",
+    "baselineCommit": "57d0e995c1efda621f308b0ac9b94d6a057ff7b6",
+    "maintenanceAssessment": "PLT.62 adds one real embedded-resource localization/audit producer. The only dependency input change is Shell.csproj excluding Tests/** EmbeddedResource items, keeping the focused test resource out of the production assembly. Actual NuGet62/Python10 closure, exact selectors, legal/source/native evidence, packaging identities and historical immutable receipts are unchanged. No framework, runtime, migration or dependency admission expansion.",
     "upgradeChecks": {
-      "compilation": "Existing VS2026 compiled actual static OIIO library plus local codec fixture target with retained warnings-as-errors. Existing pinned SDK10.0.400 compiled managed ImageReader with locked restore and zero warnings/errors. Scoped architecture tests pass3/3: actual Image6 LibraryImport owner inventory, existing typed public diagnostic positive/negative compilation, and non-friend CS0122 refusal for all eight internal parsing types. Prior exact698f full-solution hosted CI passed all managed/native/policy/AOT jobs; the successor after NAT.15/GOV.23 integration still requires latest-head hosted CI before merge. Local restored compression dependencies used existing installed MSVC14.52 for component diagnostics; the owned shim compiled with existing14.51. This local build is not approved release payload; production CI remains pinned to the signed native tool/profile. The accepted PLT.59 parent passed all22 applicable hosted checks37530211699. This natural integration successor requires its own current hosted CI and independent narrow delta approval; prior component/native/AOT evidence is retained without duplicate core builds. The prior b26c1f2 candidate passed all native/policy and nine AOT jobs in37534642597 before the accepted GOV24 integration; package assembly was still running. The current natural successor requires its own hosted CI and independent narrow delta approval; prior component/native/AOT evidence is retained without duplicate core builds.",
-      "aot-trim": "Existing pinned SDK10.0.400 compiled and published the actual composed win-x64 Native AOT helper with no warnings/errors. Isolated ignored per-project RID locks retain exact SDK/tool versions and do not alter release input locks. LibraryImport/UnmanagedCallersOnly and bounded explicit JsonDocument parsing require no reflection registration/code generation.",
-      "compatibility": "Preserve ArcImageNative logical name and three preamble signatures. Add exact ABI1.1 functions open/read/close. Metadata DTOs and closed output keys preserve source channel precision and expose conversion loss. No published version overwritten.",
-      "licence-provenance": "All authored code AGPL-3.0-only. Existing exact OIIO/OpenEXR/Imath source, legal notices and provenance receipts retained. Added first-party files registered. No copied upstream implementation or new dependency coordinate.",
-      "security-sbom": "Current NuGet/Python/native versions unchanged; no new advisory coordinate. Actual image signature plugin binding, validated geometry/counts, generation tokens, staging and callback bounds tested. Host OS containment remains a separate acceptance, never inferred from these component tests.",
-      "runtime-performance-migration": "Real PNG16, TIFF16 uncompressed/ZIP/LZMA/multipage/associated-alpha and EXRhalf/five-mip fixtures pass precision, unaligned/repeated/backwards regions, padding, alpha/float transfer, malformed/nonfinite inputs, limits, failing/short I/O, deadlines, cancellation, callback/concurrent BUSY, cap64 and stale/double-close/borrow draining. Actual ImageReader DLL/hash manifest loader passes async/cancel/errors, metadata and callback reentry/deferred close. Actual loaded-DLL durable tests exercise reserved/active borrow refusal before scheduling, cancellation reservation release, caller-owned MemoryManager span failure release, close draining, duplicate close tasks, simultaneous cross-reader callbacks fencing all open/read/close queue paths, and later normal reads. Helper suite with real Image component opt-in passes189 tests; nine explicit opt-in OS tests skipped. Real helper adapter/host/broker/grant/seal/ack tests use a scripted native reader and prove that composition only. Offline closed registry2 and ABI inventory4 test groups pass. No OS isolation, another RID, published deployment or whole-series acceptance is inferred. No store migration.",
-      "framework-runtime-posture": "No change to global.json, dependency versions, vcpkg baseline or runtime posture. Existing pinned SDK10.0.400 found and used; no validation-only toolchain install."
+      "compilation": "Actual SDK10.0.400 locked Release Shell build and119/119 component tests passed0skip with warnings-as-errors; current full applicable hosted CI remains required before merge.",
+      "aot-trim": "Existing pure managed Shell AOT/trim posture retained. ResourceManager owns exact authored embedded resources; no dynamic type/assembly loading or object serializers. Existing applicable AOT compilation gates retained; no OS runtime proof.",
+      "compatibility": "Existing default Shell APIs preserved, including Evaluate(surfaces,null) source compatibility. New resource-scope-first audit overload uses exact owner resources; test .resx is excluded from production assembly. No package/version/installation identity change.",
+      "licence-provenance": "First-party AGPL resource/source/test rows added. Actual immutable62 NuGet and10 Python legal/source evidence retained byte-for-byte; no copied tools or upstream-source transformation.",
+      "security-sbom": "No dependency coordinate changes. Missing/blank/invalid resources and formatted lookup failures refuse; module key collisions cannot fall back to Shell text. Current security/provenance/audit gates retained.",
+      "runtime-performance-migration": "119 actual Shell tests include real independent embedded resources, culture/plural/pseudo/RTL, formatting failure privacy, default compatibility and concurrent pseudo-owner isolation. No data migration, GUI, native accessibility peer, manual assistive or production deployment acceptance claimed.",
+      "framework-runtime-posture": "Existing pinned SDK10.0.400 and native/RID/framework closure unchanged. Used already installed per-user SDK400; no toolchain install or suppression."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -1086,7 +1086,7 @@
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/packages.lock.json": "be0bce97083efe992941fdffd3720afc7d595bb364f0c6ea3041422f68cede6d",
       "src/DesignSystem/ArcForges.DesignSystem/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
-      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "c0d4c9c68da4779c0d5e6c9e44998f27dc5c4edc0108e396790394c43d5675c3",
+      "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj": "3210febf34b47ea449b1e60d138363ddfcf083385062016671d1a106dc658c4e",
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj": "1ee39b61f57a3740202cfcdd372e6444fbe5eb7494bbc25fadaf1d504b4a94fe",
       "src/DesignSystem/ArcForges.Desktop.Shell/Tests/packages.lock.json": "adffcd4d418dc74bd21ab5a2b9b3c5c6d455f779aefbbd52831f0eb49ab2579f",
       "src/DesignSystem/ArcForges.Desktop.Shell/packages.lock.json": "7a75e1f1886be051411e95faabeb31da2a21f6de1b166b489214695345b7e42e",
@@ -1128,7 +1128,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov-24-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-11-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1139,7 +1139,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-11-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-62-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

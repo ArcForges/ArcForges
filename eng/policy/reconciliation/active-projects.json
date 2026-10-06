@@ -224,7 +224,7 @@
     },
     {
       "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
-      "blob": "899e2fbedae1aed9313b64be132152318a27497f"
+      "blob": "784b4cef547a19fb2cad9454c01e3724c9bee616"
     },
     {
       "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",

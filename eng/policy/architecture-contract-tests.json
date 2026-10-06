@@ -3338,5 +3338,15 @@
     "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.ComputeEffectSha256(string, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.CapabilityApprovalBindingTests.InvalidInputsCannotProduceAnApprovalBinding()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Localization.ShellResourceScope.Resolve(ArcForges.Desktop.Shell.Localization.LocalizedText, System.Globalization.CultureInfo?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.ResourceScopeTests.ExactEmbeddedBindingRefusesUnavailableResourcesAndDoesNotFallBackToShellKeys()"
+  },
+  {
+    "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.ShellAccessibilityAudit.Evaluate(ArcForges.Desktop.Shell.Localization.ShellResourceScope, System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.Accessibility.ShellSurface>, System.Globalization.CultureInfo?)",
+    "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+    "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.ResourceScopeTests.ResourceBoundAuditUsesActualModuleNamesAndRefusesEveryLookupFailure()"
   }
 ]
