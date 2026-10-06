@@ -254,7 +254,8 @@ public sealed class ProductionBootstrapTests
             {
                 SchemaVersion = "1", AppId = identity.BuildId, InstallationId = Wire.ToId(Guid.NewGuid()), InstanceId = Wire.ToId(instance),
                 ProcessId = (ulong)process.ProcessId, ProcessStartedAt = Wire.ToInstant(new DateTimeOffset(process.StartTimeUtcTicks, TimeSpan.Zero)),
-                Endpoint = new LocalEndpoint { Transport = "supplied-stream", Address = "memory-test", InstanceId = Wire.ToId(instance) },
+                // A valid wire-profile fixture. The actual test carrier remains the explicit in-memory supplier, not an OS pipe.
+                Endpoint = new LocalEndpoint { Transport = "pipe", Address = "memory-test", InstanceId = Wire.ToId(instance) },
                 BuildHash = Convert.ToHexStringLower(identity.BuildDigest.Span), ContractSetHash = Convert.ToHexStringLower(identity.ContractSetDigest.Span),
             };
             value.ContractMajors.Add(identity.ProtocolVersion);
