@@ -582,6 +582,72 @@ def pdfium_profile(root: Path = ROOT) -> dict:
     return value
 
 
+PORTABLE_PDFIUM_ARCHIVES = {
+    "linux-arm64": ("linux-arm64", "e98400ef5f005f27cfba5c14f72d464e25187298f04950de46646033cf24cef0"),
+    "linux-x64": ("linux-x64", "eb142f416aed3a72fc5a02dbd5884868a16cb99dc0cf53e6bdd64afbf67b05f4"),
+    "osx-arm64": ("mac-arm64", "61424884d4a7f153b808deba6437848e4400834ce30aaf95d3050da44df8f420"),
+    "osx-x64": ("mac-x64", "a93d44238e05de20028446561b951d50988b849efbbe56fe40c0d376c05b45e8"),
+    "win-arm64": ("win-arm64", "6c9ac0ddc69edd8a18d47b95098a5b843eaed5c5bbdcb9587a18c196457449f8"),
+}
+
+
+def portable_pdfium_profile(rid: str, root: Path = ROOT) -> dict:
+    """Admit a complete pinned upstream SDK. Real shim/runtime production is a separate inspected handoff."""
+    if rid == "win-x64":
+        return pdfium_profile(root)
+    require(rid in PORTABLE_PDFIUM_ARCHIVES, "Unadmitted PDFium RID")
+    value = provenance.document(provenance.read(root, f"eng/native/vcpkg/pdfium-build.{rid}.v1.json"))
+    provenance.fields(value, "schemaVersion id version rid archive attestation source configuration files legalFiles admission sbom inspection")
+    original = pdfium_profile(root)
+    coordinate, archive_digest = PORTABLE_PDFIUM_ARCHIVES[rid]
+    platform, cpu = rid.split("-")
+    require(value["schemaVersion"] == 2 and value["id"] == f"pdfium-chromium-8044-{rid}-r1" and
+            value["rid"] == rid and value["version"] == original["version"], "Changed portable PDFium identity")
+    require(value["archive"] == {"url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-" + coordinate + ".tgz",
+                                 "sha256": archive_digest, "maximumBytes": 8 * 1024 * 1024}, "Changed portable PDFium coordinate")
+    require(value["attestation"] == original["attestation"] and value["source"] == original["source"] and value["admission"] == original["admission"],
+            "Changed portable PDFium signer/source statement")
+    configuration = {"pdf_enable_v8": False, "pdf_enable_xfa": False, "target_cpu": cpu,
+                     "target_os": {"win": "win", "linux": "linux", "osx": "mac"}[platform]}
+    require(value["configuration"] == configuration, "Changed portable PDFium executable features/RID")
+    library = {"win": "bin/pdfium.dll", "linux": "lib/libpdfium.so", "osx": "lib/libpdfium.dylib"}[platform]
+    expected_files = set(original["files"])
+    if platform != "win":
+        expected_files -= {"bin/pdfium.dll", "lib/pdfium.dll.lib"}
+        expected_files.add(library)
+    require(set(value["files"]) == expected_files, "Changed portable PDFium closed SDK inventory")
+    for name, digest in value["files"].items():
+        provenance.path(name)
+        provenance.digest(digest)
+    legal = {name: digest for name, digest in value["files"].items() if name == "LICENSE" or name.startswith("licenses/")}
+    require(len(legal) == 15 and value["legalFiles"] == legal, "Changed portable PDFium full legal inventory")
+    sbom_path = f"eng/native/vcpkg/pdfium-sbom.{rid}.v1.json"
+    require(value["sbom"]["path"] == sbom_path and
+            sha(provenance.read(root, sbom_path), "lf") == value["sbom"]["sha256"], "Changed portable PDFium SBOM")
+    sbom = provenance.document(provenance.read(root, sbom_path))
+    package = sbom["packages"][0]
+    require(len(sbom["packages"]) == 1 and package["downloadLocation"] == value["archive"]["url"] and
+            package["checksums"] == [{"algorithm": "SHA256", "checksumValue": archive_digest}] and
+            package["licenseConcluded"] == original_license(root), "Portable PDFium SBOM identity/licence mismatch")
+    require({row["fileName"]: row["checksums"] for row in sbom["files"]} ==
+            {name: [{"algorithm": "SHA256", "checksumValue": digest}] for name, digest in legal.items()} and
+            len(sbom["files"]) == len(legal), "Portable PDFium SBOM legal checksums mismatch")
+    inspection = value["inspection"]
+    provenance.fields(inspection, "owner systemPolicy format machine library linkerInput requiresActualCompilerRuntimeReceipt note")
+    require(inspection["owner"] == "NAT.22" and inspection["systemPolicy"] == "eng/native/vcpkg/system-dependencies.v2.json" and
+            inspection["format"] == {"win": "PE", "linux": "ELF", "osx": "Mach-O"}[platform] and
+            inspection["machine"] == cpu and inspection["library"] == library and
+            inspection["linkerInput"] == ("lib/pdfium.dll.lib" if platform == "win" else library) and
+            inspection["requiresActualCompilerRuntimeReceipt"] is (platform == "win"), "Changed portable binary inspection contract")
+    provenance.text(inspection["note"])
+    return value
+
+
+def original_license(root: Path) -> str:
+    original = pdfium_profile(root)
+    return provenance.document(provenance.read(root, original["sbom"]["path"]))["packages"][0]["licenseConcluded"]
+
+
 def pdfium_download(identity: dict, destination: Path) -> Path:
     """One bounded trust handoff, cache by digest; retry only transient transport errors, never bad bytes."""
     download_identity(identity["url"])
@@ -665,8 +731,9 @@ def verify_pdfium_prefix(prefix: Path, value: dict) -> None:
     actual = {name: sha(file.read_bytes()) for name, file in files.items()}
     require(actual == value["files"], "PDFium prefix differs from the complete admitted archive")
     args = (prefix / "args.gn").read_text(encoding="utf-8")
+    configuration = value["configuration"]
     require("pdf_enable_v8 = false" in args and "pdf_enable_xfa = false" in args and
-            'target_cpu = "x64"' in args and 'target_os = "win"' in args,
+            f'target_cpu = "{configuration["target_cpu"]}"' in args and f'target_os = "{configuration["target_os"]}"' in args,
             "PDFium executable features or RID changed")
 
 
@@ -736,7 +803,7 @@ def pdfium_admission_receipt(value: dict) -> dict:
 
 def verify_pdfium_admission_input(directory: Path, value: dict) -> dict:
     """Revalidate actual bounded evidence bytes and trust at the composition handoff, never a receipt assertion alone."""
-    for name, identity in (("pdfium-win-x64.tgz", value["archive"]), ("pdfium-attestation.json", value["attestation"])):
+    for name, identity in ((Path(urlsplit(value["archive"]["url"]).path).name, value["archive"]), ("pdfium-attestation.json", value["attestation"])):
         file = directory / name
         require(file.is_file() and not file.is_symlink() and file.stat().st_size <= identity["maximumBytes"],
                 "Missing or unbounded PDF admission evidence: " + name)
@@ -746,16 +813,16 @@ def verify_pdfium_admission_input(directory: Path, value: dict) -> dict:
             "Missing or unbounded PDF admission receipt")
     expected = pdfium_admission_receipt(value)
     require(receipt.read_bytes() == canonical(expected), "PDF admission receipt is not the exact canonical closed contract")
-    verify_pdfium_attestation(directory / "pdfium-win-x64.tgz", directory / "pdfium-attestation.json", value)
+    verify_pdfium_attestation(directory / Path(urlsplit(value["archive"]["url"]).path).name, directory / "pdfium-attestation.json", value)
     return expected
 
 
-def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
+def acquire_pdfium(directory: Path, root: Path = ROOT, rid: str = "win-x64") -> dict:
     """Fetch/verify the reviewed producer build, never a consumer-time dependency download."""
-    value = pdfium_profile(root)
+    value = portable_pdfium_profile(rid, root)
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    archive = pdfium_download(value["archive"], directory / "pdfium-win-x64.tgz")
+    archive = pdfium_download(value["archive"], directory / Path(urlsplit(value["archive"]["url"]).path).name)
     bundle = pdfium_download(value["attestation"], directory / "pdfium-attestation.json")
     verify_pdfium_attestation(archive, bundle, value)
     prefix = directory / "pdfium"
@@ -948,9 +1015,10 @@ if __name__ == "__main__":
     mode.add_argument("--stage-pdfium-input", type=Path)
     parser.add_argument("--pdfium-directory", type=Path, default=ROOT / "artifacts/pdfium-admission")
     parser.add_argument("--native-prefix", type=Path, default=ROOT / "artifacts/stage/native/win-x64")
+    parser.add_argument("--pdfium-rid", choices=["win-x64", *PORTABLE_PDFIUM_ARCHIVES], default="win-x64")
     args = parser.parse_args()
     if args.acquire_pdfium:
-        print(json.dumps(acquire_pdfium(args.acquire_pdfium)))
+        print(json.dumps(acquire_pdfium(args.acquire_pdfium, rid=args.pdfium_rid)))
         sys.exit(0)
     if args.stage_pdfium_input:
         receipt = stage_pdfium_input(args.stage_pdfium_input, args.pdfium_directory, args.native_prefix)

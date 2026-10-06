@@ -408,7 +408,7 @@ class PdfiumPrefixTests(unittest.TestCase):
             prefix=Path(t)
             args=prefix/'args.gn'
             args.write_bytes(self.ARGS)
-            profile={'files':{'args.gn':native.sha(self.ARGS)}}
+            profile={'files':{'args.gn':native.sha(self.ARGS)},'configuration':{'target_cpu':'x64','target_os':'win'}}
             native.verify_pdfium_prefix(prefix,profile)
             extra=prefix/'unexpected.dll'
             extra.write_bytes(b'not admitted')
@@ -422,7 +422,7 @@ class PdfiumPrefixTests(unittest.TestCase):
                     changed=self.ARGS.replace(previous,replacement)
                     args.write_bytes(changed)
                     with self.assertRaisesRegex(ValueError,'features or RID'):
-                        native.verify_pdfium_prefix(prefix,{'files':{'args.gn':native.sha(changed)}})
+                        native.verify_pdfium_prefix(prefix,{'files':{'args.gn':native.sha(changed)},'configuration':{'target_cpu':'x64','target_os':'win'}})
             args.unlink()
             with self.assertRaisesRegex(ValueError,'complete admitted archive'):
                 native.verify_pdfium_prefix(prefix,profile)
@@ -788,3 +788,60 @@ class PdfiumOwnedRecipeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PortablePdfiumProfileTests(unittest.TestCase):
+    def test_all_five_actual_profiles_have_full_sdk_legal_and_signed_producer_contracts(self):
+        for rid in native.PORTABLE_PDFIUM_ARCHIVES:
+            with self.subTest(rid=rid):
+                value = native.portable_pdfium_profile(rid)
+                self.assertEqual(value['rid'], rid)
+                self.assertEqual(len(value['legalFiles']), 15)
+                self.assertEqual(len(value['files']), 45 if rid.startswith('win-') else 44)
+                self.assertEqual(value['configuration']['pdf_enable_v8'], False)
+                self.assertEqual(value['configuration']['pdf_enable_xfa'], False)
+                self.assertIn(value['inspection']['library'], value['files'])
+                self.assertEqual(value['attestation']['recipeCommit'], '5453f3afc4785cbad82c05f6ceb4dabea0cb81a0')
+
+    def test_unknown_rid_is_refused_before_any_file_or_transport_access(self):
+        with patch.object(native.provenance, 'read') as read:
+            for rid in ('linux-musl-x64', 'win-x86', 'osx-universal', '', '../win-x64'):
+                with self.subTest(rid=rid), self.assertRaisesRegex(ValueError, 'Unadmitted PDFium RID'):
+                    native.portable_pdfium_profile(rid)
+            read.assert_not_called()
+
+    def test_mutated_feature_archive_signer_inventory_or_legal_receipt_refuses(self):
+        original = native.portable_pdfium_profile('linux-x64')
+        actual_read = native.provenance.read
+        path = 'eng/native/vcpkg/pdfium-build.linux-x64.v1.json'
+        mutations = [
+            lambda value: value['configuration'].update(pdf_enable_v8=True),
+            lambda value: value['archive'].update(sha256='0' * 64),
+            lambda value: value['attestation'].update(recipeCommit='0' * 40),
+            lambda value: value['files'].pop('include/fpdfview.h'),
+            lambda value: value['files'].update({'unexpected.so': '0' * 64}),
+            lambda value: value['legalFiles'].pop('LICENSE'),
+            lambda value: value['inspection'].update(systemPolicy='/etc/unsafe.json'),
+            lambda value: value.update(extra='unapproved'),
+        ]
+        for mutate in mutations:
+            changed = copy.deepcopy(original)
+            mutate(changed)
+            with self.subTest(mutation=mutate):
+                def read(root, name):
+                    return native.canonical(changed) if name == path else actual_read(root, name)
+                with patch.object(native.provenance, 'read', side_effect=read), self.assertRaises(ValueError):
+                    native.portable_pdfium_profile('linux-x64')
+
+    def test_portable_prefix_checks_actual_target_os_and_cpu(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            prefix = Path(temporary)
+            args = prefix / 'args.gn'
+            content = b'pdf_enable_v8 = false\npdf_enable_xfa = false\ntarget_cpu = "arm64"\ntarget_os = "linux"\n'
+            args.write_bytes(content)
+            profile = {'files': {'args.gn': native.sha(content)}, 'configuration': {'target_cpu': 'arm64', 'target_os': 'linux'}}
+            native.verify_pdfium_prefix(prefix, profile)
+            for cpu, os in (('x64', 'linux'), ('arm64', 'win'), ('arm64', 'mac')):
+                profile['configuration'] = {'target_cpu': cpu, 'target_os': os}
+                with self.subTest(cpu=cpu, os=os), self.assertRaisesRegex(ValueError, 'features or RID changed'):
+                    native.verify_pdfium_prefix(prefix, profile)

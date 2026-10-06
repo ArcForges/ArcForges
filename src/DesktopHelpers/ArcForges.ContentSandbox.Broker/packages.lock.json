@@ -87,6 +87,9 @@
           "Grpc.Net.Client": "[2.84.0, )"
         }
       },
+      "arcforges.native.abstractions": {
+        "type": "Project"
+      },
       "ArcForges.Contracts.Foundation": {
         "type": "CentralTransitive",
         "requested": "[1.0.0-ci.324.1, )",

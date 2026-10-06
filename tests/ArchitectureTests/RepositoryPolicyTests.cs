@@ -97,6 +97,7 @@ public sealed class RepositoryPolicyTests
             ["Kernel32.dll:TerminateJobObject"] = (broker, false, true),
             ["Kernel32.dll:TerminateProcess"] = (broker, false, true),
             ["Kernel32.dll:UpdateProcThreadAttribute"] = (broker, false, true),
+            ["WinTrust.dll:WinVerifyTrust"] = (broker, false, false),
             ["Userenv.dll:CreateAppContainerProfile"] = (broker, true, false),
             ["Userenv.dll:DeriveAppContainerSidFromAppContainerName"] = (broker, true, false),
             ["libc:close"] = (broker, false, true),

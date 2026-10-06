@@ -260,4 +260,35 @@ internal static unsafe partial class WindowsNative
     [LibraryImport("Userenv.dll", EntryPoint = "DeriveAppContainerSidFromAppContainerName", StringMarshalling = StringMarshalling.Utf16)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     internal static partial int DeriveAppContainerSidFromAppContainerName(string name, out nint sid);
+    [LibraryImport("WinTrust.dll", EntryPoint = "WinVerifyTrust")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static partial int WinVerifyTrust(nint window, Guid* action, WinTrustData* data);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WinTrustFileInfo
+    {
+        internal uint StructSize;
+        internal nint FilePath;
+        internal nint FileHandle;
+        internal nint KnownSubject;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WinTrustData
+    {
+        internal uint StructSize;
+        internal nint PolicyCallback;
+        internal nint SipClient;
+        internal uint UiChoice;
+        internal uint RevocationChecks;
+        internal uint UnionChoice;
+        internal nint FileInfo;
+        internal uint StateAction;
+        internal nint StateData;
+        internal nint UrlReference;
+        internal uint ProviderFlags;
+        internal uint UiContext;
+        internal nint SignatureSettings;
+    }
+
 }

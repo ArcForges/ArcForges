@@ -142,9 +142,11 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
                         limits,
                         entries,
                         options.ParserProfile,
-                        resource);
+                        resource,
+                        options.ReleaseTrust?.Encode() ?? (options.LocalUnsignedFixture ? "{\"fixture\":true}"u8.ToArray() : []));
                     return frame.Encode();
-                });
+                },
+                RequirePlatformSignature: !options.LocalUnsignedFixture);
             helper = await launcher.StartAsync(request, timeout.Token).ConfigureAwait(false);
 
             var supplier = new LocalRpcStreamSupplier();

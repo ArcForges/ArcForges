@@ -62,7 +62,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             throw new ContentSandboxLaunchException("security.isolation_unavailable", "This launch profile runs only on Windows.");
         }
 
-        using var pinned = OpenAndVerifyHelper(request);
+        using var pinned = OpenAndVerifyHelper(request, cancellationToken);
         var lease = AppContainerSlots.Acquire(_containerPrefix, _slotDirectory);
         var helper = new WindowsProvisionedHelper(lease);
         try
@@ -81,7 +81,7 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
     /// Opens the helper for reading with writers refused and checks its SHA-256 against the pinned digest of the installed inventory. The
     /// stream stays open across the process creation, so the bytes that were checked are the bytes that run.
     /// </summary>
-    private static FileStream OpenAndVerifyHelper(HelperStartRequest request)
+    private static FileStream OpenAndVerifyHelper(HelperStartRequest request, CancellationToken cancellationToken)
     {
         FileStream file;
         try
@@ -94,14 +94,38 @@ internal sealed class WindowsHelperLauncher : IContentSandboxProcessLauncher
             throw new ContentSandboxLaunchException("resource.unavailable", "The helper executable cannot be opened.", exception);
         }
 
-        var digest = SHA256.HashData(file);
-        if (!CryptographicOperations.FixedTimeEquals(digest, request.HelperSha256.Span))
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (file.Length is 0 or > 512L * 1024 * 1024)
+            {
+                throw new ContentSandboxLaunchException("resource.integrity_failed", "The helper executable exceeds the production bound.");
+            }
+
+            var digest = SHA256.HashData(file);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!CryptographicOperations.FixedTimeEquals(digest, request.HelperSha256.Span))
+            {
+                throw new ContentSandboxLaunchException("resource.integrity_failed", "The helper executable is not the pinned build.");
+            }
+
+            if (request.RequirePlatformSignature)
+            {
+                WindowsHelperTrust.Verify(file, request.HelperPath, cancellationToken);
+            }
+
+            return file;
+        }
+        catch (CryptographicException exception)
         {
             file.Dispose();
-            throw new ContentSandboxLaunchException("resource.integrity_failed", "The helper executable is not the pinned build.");
+            throw new ContentSandboxLaunchException("resource.integrity_failed", "The held helper executable is not a trusted release image.", exception);
         }
-
-        return file;
+        catch
+        {
+            file.Dispose();
+            throw;
+        }
     }
 
     [SupportedOSPlatform("windows")]

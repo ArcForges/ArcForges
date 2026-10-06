@@ -25,6 +25,15 @@ if(ARCFORGES_PDFIUM)
     target_link_libraries(arcpdf_abi PRIVATE pdfium)
     target_compile_definitions(arcpdf_abi PRIVATE ARCFORGES_PDFIUM_BACKEND=1)
     install(FILES "$<TARGET_FILE:pdfium>" DESTINATION native)
+    if(APPLE)
+        # The admitted upstream install-name is relative. Rewrite only our owned importer,
+        # preserving the upstream engine bytes and eliminating current-directory lookup.
+        find_program(ARCFORGES_INSTALL_NAME_TOOL install_name_tool REQUIRED)
+        add_custom_command(TARGET arcpdf_abi POST_BUILD
+            COMMAND "${ARCFORGES_INSTALL_NAME_TOOL}" -change "./libpdfium.dylib"
+                "@loader_path/libpdfium.dylib" "$<TARGET_FILE:arcpdf_abi>"
+            VERBATIM)
+    endif()
 endif()
 arcforges_declare_target_licence(arcpdf_abi)
 add_dependencies(arcpdf_abi arcforges_build_identity)
@@ -33,7 +42,9 @@ set_target_properties(arcpdf_abi PROPERTIES
     CXX_EXTENSIONS OFF
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
-    OUTPUT_NAME "ArcPdfNative")
+    OUTPUT_NAME "ArcPdfNative"
+    MACOSX_RPATH TRUE
+    INSTALL_NAME_DIR "@rpath")
 target_include_directories(arcpdf_abi
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"

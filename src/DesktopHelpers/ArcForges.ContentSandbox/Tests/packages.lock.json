@@ -266,7 +266,8 @@
         "dependencies": {
           "ArcForges.ContentSandbox.Contracts": "[1.0.0, )",
           "ArcForges.Foundation": "[1.0.0, )",
-          "ArcForges.LocalRpc": "[1.0.0, )"
+          "ArcForges.LocalRpc": "[1.0.0, )",
+          "ArcForges.Native.Abstractions": "[1.0.0, )"
         }
       },
       "arcforges.contentsandbox.contracts": {

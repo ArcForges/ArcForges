@@ -21,6 +21,7 @@
     <InternalsVisibleTo Include="ArcForges.ContentSandbox.Tests" />
     <InternalsVisibleTo Include="ArcForges.ContentSandbox.HostileFixture" />
     <ProjectReference Include="../ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj" />
+    <ProjectReference Include="../../Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
     <ProjectReference Include="../../BuildingBlocks/ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <ProjectReference Include="../../BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj" />
   </ItemGroup>
