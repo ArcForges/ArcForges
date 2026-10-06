@@ -1011,15 +1011,16 @@
     "native/arcpdf-abi/tests/arcpdf_abi_pdfium_tests.cpp",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealPdfIsolationTests.cs",
     "eng/native/vcpkg/pdfium-sbom.v1.json",
-    "eng/policy/dependency-reviews/nat-15-r1.json"
+    "eng/policy/dependency-reviews/nat-15-r1.json",
+    "eng/provenance/records/contracts-provenance-tools-r3.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
-    "eng/check_provenance.py": "contracts-provenance-tools-r2",
+    "eng/check_provenance.py": "contracts-provenance-tools-r3",
     "eng/policy/design-source.json": "design-policy-export-r4",
     "eng/policy/glossary-terms.json": "design-policy-export-r4",
     "eng/policy/invariants.json": "design-policy-export-r4",
-    "tests/tooling/test_provenance.py": "contracts-provenance-tools-r2",
+    "tests/tooling/test_provenance.py": "contracts-provenance-tools-r3",
     "third-party/contracts/LICENSE.txt": "contracts-apache-legal-r1",
     "third-party/opentimelineio/LICENSE.txt": "otio-legal-r1",
     "third-party/opentimelineio/NOTICE.txt": "otio-legal-r1",

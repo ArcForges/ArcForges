@@ -419,5 +419,22 @@ class NativeRetirementTests(unittest.TestCase):
             self.validate()
 
 
+class PdfiumExactAdmissionTests(unittest.TestCase):
+    def record(self):
+        return json.loads((provenance.ROOT / 'eng/provenance/records/native-pdfium-r1.json').read_text())
+
+    def test_complete_actual_pdfium_bundle_legal_admission_is_accepted(self):
+        provenance.record(self.record(), 'AGPL')
+
+    def test_different_bundle_terms_do_not_inherit_this_exact_admission(self):
+        value = self.record()
+        for original, replacement in [('FTL', 'GPL-2.0-only'), ('Unicode-3.0', 'NOASSERTION'), ('LicenseRef-AGG-2.3', 'LicenseRef-Unreviewed-AGG')]:
+            with self.subTest(replacement=replacement):
+                changed = copy.deepcopy(value)
+                changed['licence']['spdx'] = changed['licence']['spdx'].replace(original, replacement)
+                with self.assertRaisesRegex(ValueError, 'Unknown or mismatched licence category'):
+                    provenance.record(changed, 'AGPL')
+
+
 if __name__ == "__main__":
     unittest.main()

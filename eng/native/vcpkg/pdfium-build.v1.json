@@ -102,5 +102,19 @@
   "sbom": {
     "path": "eng/native/vcpkg/pdfium-sbom.v1.json",
     "sha256": "ea5628646c7f89caf495e68cd75d17be0004a2fac339e889c7ea57d57f435ee9"
+  },
+  "compilerRuntime": {
+    "profile": "eng/provenance/artifact-profiles/native-win-x64-r4.json",
+    "sha256": "1cf40d8075ae94ca095607fb60cb5ea2cb9ed42f9008c92a6e643660c1756589",
+    "target": "pdfium-production-composition-input",
+    "role": "Unmodified standard Microsoft C/C++ compiler System Libraries in the private PDF helper; no proprietary parser or application implementation.",
+    "review": {
+      "owner": "Licensing and Provenance Owner",
+      "reviewer": "Independent NAT.15 exact-head reviewer required before merge.",
+      "reviewedOn": "2026-10-06",
+      "baselineCommit": "f833de3410183d8c59b17ec54229e06ad1370d98",
+      "decision": "approved",
+      "rationale": "Extend the existing exact VC145 x64 runtime binary and original grant-text admission only to this PDF composition input. File hashes, versions, publisher, original Microsoft terms and redistribution obligations remain unchanged; NAT.25 must separately admit signed runtime publication. The PDF component supplies significant first-party PDF functionality and the compiler-runtime grant is not applied to ArcForges source."
+    }
   }
 }

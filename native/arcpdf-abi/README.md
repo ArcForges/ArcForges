@@ -26,11 +26,20 @@ parses PDF bytes.
 
 ## Reproducible producer
 
-`python eng/native_provenance.py --acquire-pdfium artifacts/pdfium` verifies the admitted archive and its Sigstore/SLSA
-attestation before exposing `artifacts/pdfium/pdfium`. The immutable profile in `eng/native/vcpkg/pdfium-build.v1.json` pins
+`python eng/native_provenance.py --acquire-pdfium artifacts/pdfium-admission` verifies the admitted archive and its Sigstore/SLSA
+attestation before exposing `artifacts/pdfium-admission/pdfium`. The immutable profile in `eng/native/vcpkg/pdfium-build.v1.json` pins
 every archive member and all legal texts. The attestation binds the upstream build recipe and invocation; it does not attest
 the separately observed PDFium source commit. Configure with `ARCFORGES_PDFIUM=ON` and `PDFium_DIR` set to that prefix.
-`Runtime.<rid>` publication is a separately admitted producer closure; this library alone is not a distributable package.
+The Windows production preset selects that verified prefix. After compiling and installing the clean, committed source,
+`python eng/native_provenance.py --stage-pdfium-input artifacts/pdfium-production-input` seals the source-bound DLL,
+complete transitive runtime import closure, SDK import library and headers, original legal documents, aggregate SPDX SBOM
+and admission evidence. The producer checks the exact eight functional exports, production marker and embedded source
+identity; compiler-runtime files must match the existing admitted Microsoft hashes, versions and Authenticode publisher.
+Transfers are bounded and retry only transient transport failures, at most three attempts; altered bytes or trust failures
+are refused. The native workflow retains this immutable composition input separately from the Image runtime input.
+
+`Runtime.<rid>` publication, release signing and clean-cache published-consumer acceptance belong to NAT.25. This input is
+not a signed or published package, and no macOS/Linux PDFium producer is asserted by this Windows-only admission.
 
 ## Semantics fixed by this library
 

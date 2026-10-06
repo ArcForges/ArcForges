@@ -566,24 +566,46 @@ def pdfium_profile(root: Path = ROOT) -> dict:
     require(value["sbom"]["path"] == "eng/native/vcpkg/pdfium-sbom.v1.json" and
             sha(provenance.read(root, value["sbom"]["path"]), "lf") == value["sbom"]["sha256"],
             "Changed PDFium aggregate bundle SBOM")
+    runtime = value["compilerRuntime"]
+    provenance.fields(runtime, "profile sha256 target role review")
+    require(runtime["profile"] == PROFILE and runtime["sha256"] == sha(provenance.read(root, PROFILE), "lf") and
+            runtime["target"] == "pdfium-production-composition-input", "Changed PDF compiler-runtime admission")
+    provenance.text(runtime["role"])
+    review = runtime["review"]
+    provenance.fields(review, "owner reviewer reviewedOn baselineCommit decision rationale")
+    require(review["owner"] == "Licensing and Provenance Owner" and review["decision"] == "approved",
+            "Unreviewed PDF compiler-runtime role")
+    for key in ("reviewer", "rationale"):
+        provenance.text(review[key])
+    provenance.digest(review["baselineCommit"], (40,))
+    date.fromisoformat(provenance.text(review["reviewedOn"]))
     return value
 
 
 def pdfium_download(identity: dict, destination: Path) -> Path:
     """One bounded trust handoff, cache by digest; retry only transient transport errors, never bad bytes."""
+    download_identity(identity["url"])
+    require(isinstance(identity["maximumBytes"], int) and 0 < identity["maximumBytes"] <= 16 * 1024 * 1024,
+            "Invalid PDFium transfer bound")
     if destination.exists():
-        require(destination.is_file() and destination.stat().st_size <= identity["maximumBytes"],
+        require(not destination.is_symlink() and destination.is_file() and destination.stat().st_size <= identity["maximumBytes"],
                 "PDFium cache exceeds admission bound")
         require(sha(destination.read_bytes()) == identity["sha256"], "PDFium cache digest mismatch")
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
+    context = ssl.create_default_context()
+    if os.environ.get("ARCFORGES_TLS12") == "1":
+        context.maximum_version = ssl.TLSVersion.TLSv1_2
     for attempt in range(3):
         temporary = None
         try:
-            request = urllib.request.Request(identity["url"], headers={"User-Agent": "ArcForges-PDFium-producer/1.0"})
-            with urllib.request.urlopen(request, timeout=60) as response, tempfile.NamedTemporaryFile(
+            user_agent = (VISUAL_STUDIO_LICENSE_USER_AGENT if identity["url"] in VISUAL_STUDIO_LICENSE_URLS
+                          else "ArcForges-PDFium-producer/1.0")
+            request = urllib.request.Request(identity["url"], headers={"User-Agent": user_agent})
+            with urllib.request.urlopen(request, timeout=60, context=context) as response, tempfile.NamedTemporaryFile(
                     dir=destination.parent, prefix=".pdfium-", delete=False) as output:
                 temporary = Path(output.name)
+                download_identity(response.geturl())
                 total = 0
                 while block := response.read(64 * 1024):
                     total += len(block)
@@ -608,6 +630,8 @@ def pdfium_download(identity: dict, destination: Path) -> Path:
 
 
 def verify_pdfium_prefix(prefix: Path, value: dict) -> None:
+    require(not prefix.is_symlink() and all(not file.is_symlink() for file in prefix.rglob("*")),
+            "PDFium prefix contains an unapproved symbolic link")
     actual = {file.relative_to(prefix).as_posix(): sha(file.read_bytes())
               for file in prefix.rglob("*") if file.is_file()}
     require(actual == value["files"], "PDFium prefix differs from the complete admitted archive")
@@ -775,7 +799,8 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
             shutil.copyfile(ROOT / name, target)
         cache = pdfium_directory / "legal-cache"
         for legal in runtime_profile["platformRuntime"]["legal"]:
-            original = fetch(legal["url"], legal["sourceSha256"], "sha256", legal["cacheName"], cache)
+            original = pdfium_download({"url": legal["url"], "sha256": legal["sourceSha256"],
+                                        "maximumBytes": 8 * 1024 * 1024}, cache / legal["cacheName"])
             target = staging / legal["output"]
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(original, target)
@@ -789,6 +814,7 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
         result = {"schemaVersion": 1, "sourceCommit": audit["sourceCommit"], "rid": "win-x64",
                   "kind": "pdfium-production-composition-input", "profile": value["id"],
                   "build": build_identity.build_identity(ROOT), "admission": receipt,
+                  "compilerRuntimeAdmission": value["compilerRuntime"],
                   "compilerRuntimeSignatures": signatures,
                   "files": [{"path": file.relative_to(staging).as_posix(), "sha256": producer.digest(file)}
                             for file in sorted(staging.rglob("*")) if file.is_file()]}
@@ -799,9 +825,10 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", type=Path)
-    parser.add_argument("--acquire-pdfium", type=Path)
-    parser.add_argument("--stage-pdfium-input", type=Path)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--stage", type=Path)
+    mode.add_argument("--acquire-pdfium", type=Path)
+    mode.add_argument("--stage-pdfium-input", type=Path)
     parser.add_argument("--pdfium-directory", type=Path, default=ROOT / "artifacts/pdfium-admission")
     parser.add_argument("--native-prefix", type=Path, default=ROOT / "artifacts/stage/native/win-x64")
     args = parser.parse_args()
@@ -813,6 +840,7 @@ if __name__ == "__main__":
         print(json.dumps({"result": "passed", "sourceCommit": receipt["sourceCommit"], "files": len(receipt["files"])}))
         sys.exit(0)
     value = profile()
+    pdfium_profile()
     results = []
     if args.stage:
         for package in value["packages"]:

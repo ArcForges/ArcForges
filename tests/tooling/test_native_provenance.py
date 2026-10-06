@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Independent negative cases for the native package trust boundary."""
 
+import base64
 import copy
 import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eng"))
 import native_provenance as native
@@ -394,6 +397,189 @@ class VendorLicenseFetchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Downloaded source digest mismatch"):
                     native.fetch(url, "0" * 64, "sha256", "license.docx", cache)
             self.assertEqual(list(cache.iterdir()), [])
+
+
+class PdfiumPrefixTests(unittest.TestCase):
+    ARGS = b'pdf_enable_v8 = false\npdf_enable_xfa = false\ntarget_cpu = "x64"\ntarget_os = "win"\n'
+
+    def test_complete_inventory_and_inactive_executable_features_are_required(self):
+        with tempfile.TemporaryDirectory() as t:
+            prefix=Path(t)
+            args=prefix/'args.gn'
+            args.write_bytes(self.ARGS)
+            profile={'files':{'args.gn':native.sha(self.ARGS)}}
+            native.verify_pdfium_prefix(prefix,profile)
+            extra=prefix/'unexpected.dll'
+            extra.write_bytes(b'not admitted')
+            with self.assertRaisesRegex(ValueError,'complete admitted archive'):
+                native.verify_pdfium_prefix(prefix,profile)
+            extra.unlink()
+            for previous, replacement in ((b'pdf_enable_v8 = false',b'pdf_enable_v8 = true'),
+                                          (b'pdf_enable_xfa = false',b'pdf_enable_xfa = true'),
+                                          (b'target_cpu = "x64"',b'target_cpu = "arm64"')):
+                with self.subTest(feature=previous):
+                    changed=self.ARGS.replace(previous,replacement)
+                    args.write_bytes(changed)
+                    with self.assertRaisesRegex(ValueError,'features or RID'):
+                        native.verify_pdfium_prefix(prefix,{'files':{'args.gn':native.sha(changed)}})
+            args.unlink()
+            with self.assertRaisesRegex(ValueError,'complete admitted archive'):
+                native.verify_pdfium_prefix(prefix,profile)
+
+    def test_pdf_compiler_runtime_role_is_explicit_and_exact_existing_identity(self):
+        profile=native.pdfium_profile()
+        admission=profile['compilerRuntime']
+        self.assertEqual(admission['target'],'pdfium-production-composition-input')
+        self.assertEqual(admission['sha256'],native.sha((native.ROOT/admission['profile']).read_bytes(),'lf'))
+        self.assertEqual(admission['review']['decision'],'approved')
+
+
+class PdfiumTransferTests(unittest.TestCase):
+    DATA = b'exact reviewed producer bytes'
+    class Response(io.BytesIO):
+        def __init__(self, data, url='https://example.org/pinned.tgz'):
+            super().__init__(data)
+            self.url = url
+        def geturl(self):
+            return self.url
+    def identity(self, maximum=128):
+        return {'url':'https://example.org/pinned.tgz','sha256':hashlib.sha256(self.DATA).hexdigest(),'maximumBytes':maximum}
+
+    def test_matching_cache_never_fetches(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle';path.write_bytes(self.DATA)
+            with patch.object(native.urllib.request,'urlopen') as fetch:
+                self.assertEqual(native.pdfium_download(self.identity(),path),path)
+                fetch.assert_not_called()
+
+    def test_oversized_cache_is_refused_before_read(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle';path.write_bytes(self.DATA)
+            with self.assertRaisesRegex(ValueError,'cache exceeds'):
+                native.pdfium_download(self.identity(2),path)
+
+    def test_transient_read_only_transfer_has_bounded_backoff(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle'
+            with patch.object(native.urllib.request,'urlopen',side_effect=[URLError('connection reset'),self.Response(self.DATA)]) as fetch, patch.object(native.time,'sleep') as sleep:
+                native.pdfium_download(self.identity(),path)
+                self.assertEqual(fetch.call_count,2);sleep.assert_called_once_with(0.5)
+                self.assertEqual(path.read_bytes(),self.DATA)
+                self.assertEqual(list(Path(t).iterdir()),[path])
+
+    def test_repeated_transient_failure_stops_after_three_attempts(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle'
+            error=HTTPError('https://example.org/pinned.tgz',503,'unavailable',{},None)
+            with patch.object(native.urllib.request,'urlopen',side_effect=error) as fetch, patch.object(native.time,'sleep') as sleep:
+                with self.assertRaises(HTTPError):native.pdfium_download(self.identity(),path)
+                self.assertEqual(fetch.call_count,3);self.assertEqual([x.args[0] for x in sleep.call_args_list],[0.5,2.0])
+                self.assertEqual(list(Path(t).iterdir()),[])
+
+    def test_permanent_denial_is_not_retried(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle'
+            error=HTTPError('https://example.org/pinned.tgz',403,'denied',{},None)
+            with patch.object(native.urllib.request,'urlopen',side_effect=error) as fetch, patch.object(native.time,'sleep') as sleep:
+                with self.assertRaises(HTTPError):native.pdfium_download(self.identity(),path)
+                self.assertEqual(fetch.call_count,1);sleep.assert_not_called()
+                self.assertFalse(path.exists())
+
+    def test_integrity_failure_removes_partial_file_without_retry(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle'
+            with patch.object(native.urllib.request,'urlopen',return_value=self.Response(b'changed')) as fetch, patch.object(native.time,'sleep') as sleep:
+                with self.assertRaisesRegex(ValueError,'digest mismatch'):native.pdfium_download(self.identity(),path)
+                self.assertEqual(fetch.call_count,1);sleep.assert_not_called()
+                self.assertEqual(list(Path(t).iterdir()),[])
+
+    def test_streamed_size_overflow_removes_partial_file(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'bundle'
+            with patch.object(native.urllib.request,'urlopen',return_value=self.Response(self.DATA)):
+                with self.assertRaisesRegex(ValueError,'transfer exceeds'):native.pdfium_download(self.identity(2),path)
+                self.assertEqual(list(Path(t).iterdir()),[])
+
+    def test_https_downgrade_and_credentials_redirects_are_refused(self):
+        for url in ('http://example.org/pinned.tgz', 'https://secret@example.org/pinned.tgz'):
+            with self.subTest(url=url), tempfile.TemporaryDirectory() as t:
+                with patch.object(native.urllib.request,'urlopen',return_value=self.Response(self.DATA,url)), patch.object(native.time,'sleep') as sleep:
+                    with self.assertRaisesRegex(ValueError,'download URL'):
+                        native.pdfium_download(self.identity(),Path(t)/'bundle')
+                    sleep.assert_not_called()
+                    self.assertEqual(list(Path(t).iterdir()),[])
+
+    def test_pdf_producer_license_transfer_retains_exact_vendor_agent_and_tls_validation(self):
+        with tempfile.TemporaryDirectory() as t:
+            identity=self.identity()
+            identity['url']=next(iter(native.VISUAL_STUDIO_LICENSE_URLS))
+            with patch.object(native.urllib.request,'urlopen',return_value=self.Response(self.DATA,identity['url'])) as fetch:
+                native.pdfium_download(identity,Path(t)/'license.docx')
+            request=fetch.call_args.args[0]
+            self.assertEqual(request.get_header('User-agent'),native.VISUAL_STUDIO_LICENSE_USER_AGENT)
+            self.assertEqual(fetch.call_args.kwargs['context'].verify_mode,native.ssl.CERT_REQUIRED)
+            self.assertTrue(fetch.call_args.kwargs['context'].check_hostname)
+
+class PdfiumAttestationTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.archive = Path(self.directory.name) / 'pdfium-win-x64.tgz'
+        self.bundle = Path(self.directory.name) / 'pdfium-attestation.json'
+        self.value = native.pdfium_profile()
+        self.statement = {'subject':[{'name':self.archive.name,'digest':{'sha256':self.value['archive']['sha256']}}],
+                          'predicate':{'runDetails':{'metadata':{'invocationId':self.value['attestation']['invocation']}}}}
+        self.refresh()
+        self.result = subprocess.CompletedProcess([],0,stdout='[{}]',stderr='')
+
+    def refresh(self):
+        self.bundle.write_text(json.dumps({'dsseEnvelope':{'payload':base64.b64encode(json.dumps(self.statement).encode()).decode()}}))
+
+    def verify(self):
+        native.verify_pdfium_attestation(self.archive,self.bundle,self.value)
+
+    def test_external_verifier_receives_every_strict_identity_constraint(self):
+        with patch.object(native.subprocess,'run',return_value=self.result) as verifier:
+            self.verify()
+        args = verifier.call_args.args[0]
+        self.assertIn('--deny-self-hosted-runners',args)
+        self.assertEqual(args[args.index('--source-digest')+1],self.value['attestation']['recipeCommit'])
+        self.assertEqual(args[args.index('--signer-workflow')+1],'bblanchon/pdfium-binaries/.github/workflows/build-all.yml')
+        self.assertEqual(args[args.index('--repo')+1],'bblanchon/pdfium-binaries')
+        self.assertTrue(verifier.call_args.kwargs['check'])
+
+    def test_signed_subject_digest_must_match_the_admitted_archive(self):
+        self.statement['subject'][0]['digest']['sha256']='0'*64;self.refresh()
+        with patch.object(native.subprocess,'run',return_value=self.result):
+            with self.assertRaisesRegex(ValueError,'admitted subject'):self.verify()
+
+    def test_signed_producer_invocation_must_match(self):
+        self.statement['predicate']['runDetails']['metadata']['invocationId']='changed';self.refresh()
+        with patch.object(native.subprocess,'run',return_value=self.result):
+            with self.assertRaisesRegex(ValueError,'invocation changed'):self.verify()
+
+    def test_empty_success_response_is_not_an_approval(self):
+        self.result.stdout='[]'
+        with patch.object(native.subprocess,'run',return_value=self.result):
+            with self.assertRaisesRegex(ValueError,'no receipt'):self.verify()
+
+    def test_signature_or_authorization_rejection_is_not_retried(self):
+        error=subprocess.CalledProcessError(1,['gh'],stderr='signature identity rejected')
+        with patch.object(native.subprocess,'run',side_effect=error) as verifier,patch.object(native.time,'sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):self.verify()
+            self.assertEqual(verifier.call_count,1);sleep.assert_not_called()
+
+    def test_transient_verification_outage_retries_only_read_only_verification(self):
+        error=subprocess.CalledProcessError(1,['gh'],stderr='HTTP 503: service unavailable')
+        with patch.object(native.subprocess,'run',side_effect=[error,self.result]) as verifier,patch.object(native.time,'sleep') as sleep:
+            self.verify();self.assertEqual(verifier.call_count,2);sleep.assert_called_once_with(0.5)
+            self.assertEqual(verifier.call_args_list[0].args,verifier.call_args_list[1].args)
+
+    def test_verification_timeouts_are_bounded_to_three_attempts(self):
+        error=subprocess.TimeoutExpired(['gh'],120)
+        with patch.object(native.subprocess,'run',side_effect=error) as verifier,patch.object(native.time,'sleep') as sleep:
+            with self.assertRaises(subprocess.TimeoutExpired):self.verify()
+            self.assertEqual(verifier.call_count,3);self.assertEqual([x.args[0] for x in sleep.call_args_list],[0.5,2.0])
 
 
 if __name__ == "__main__":
