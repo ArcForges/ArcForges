@@ -596,18 +596,38 @@ def pdfium_download(identity: dict, destination: Path) -> Path:
     context = ssl.create_default_context()
     if os.environ.get("ARCFORGES_TLS12") == "1":
         context.maximum_version = ssl.TLSVersion.TLSv1_2
+    operation_deadline = time.monotonic() + 180
     for attempt in range(3):
         temporary = None
         try:
+            attempt_deadline = min(operation_deadline, time.monotonic() + 60)
+            remaining = attempt_deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("PDFium transfer deadline exceeded")
             user_agent = (VISUAL_STUDIO_LICENSE_USER_AGENT if identity["url"] in VISUAL_STUDIO_LICENSE_URLS
                           else "ArcForges-PDFium-producer/1.0")
             request = urllib.request.Request(identity["url"], headers={"User-Agent": user_agent})
-            with urllib.request.urlopen(request, timeout=60, context=context) as response, tempfile.NamedTemporaryFile(
+            with urllib.request.urlopen(request, timeout=remaining, context=context) as response, tempfile.NamedTemporaryFile(
                     dir=destination.parent, prefix=".pdfium-", delete=False) as output:
                 temporary = Path(output.name)
                 download_identity(response.geturl())
                 total = 0
-                while block := response.read(64 * 1024):
+                require(callable(getattr(response, "read1", None)), "PDFium response has no bounded progress reader")
+                while True:
+                    remaining = attempt_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("PDFium transfer deadline exceeded")
+                    # urllib's HTTPS response exposes the active socket through its buffered reader.
+                    # Narrow its timeout before each read1, which performs at most one underlying read
+                    # rather than waiting indefinitely for an entire 64KiB block to trickle in.
+                    socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+                    if socket is not None and not socket._closed:
+                        socket.settimeout(remaining)
+                    block = response.read1(64 * 1024)
+                    if time.monotonic() >= attempt_deadline:
+                        raise TimeoutError("PDFium transfer deadline exceeded")
+                    if not block:
+                        break
                     total += len(block)
                     require(total <= identity["maximumBytes"], "PDFium transfer exceeds admission bound")
                     output.write(block)
@@ -620,9 +640,10 @@ def pdfium_download(identity: dict, destination: Path) -> Path:
                 error.close()
             if isinstance(error, urllib.error.URLError) and isinstance(error.reason, ssl.SSLCertVerificationError):
                 transient = False
-            if not transient or attempt == 2:
+            delay = (0.5, 2.0)[min(attempt, 1)]
+            if not transient or attempt == 2 or time.monotonic() + delay >= operation_deadline:
                 raise
-            time.sleep((0.5, 2.0)[attempt])
+            time.sleep(delay)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -706,6 +727,29 @@ def extract_pdfium_archive(archive: Path, staging: Path, value: dict) -> None:
         tar.extractall(staging, members=members, filter="data")
 
 
+def pdfium_admission_receipt(value: dict) -> dict:
+    return {"profile": value["id"], "archiveSha256": value["archive"]["sha256"],
+            "attestationSha256": value["attestation"]["sha256"], "producerInvocation": value["attestation"]["invocation"],
+            "recipeCommit": value["attestation"]["recipeCommit"], "rid": value["rid"], "version": value["version"],
+            "cryptographicVerification": "GitHub CLI Sigstore/SLSA verification passed", "sbomSha256": value["sbom"]["sha256"]}
+
+
+def verify_pdfium_admission_input(directory: Path, value: dict) -> dict:
+    """Revalidate actual bounded evidence bytes and trust at the composition handoff, never a receipt assertion alone."""
+    for name, identity in (("pdfium-win-x64.tgz", value["archive"]), ("pdfium-attestation.json", value["attestation"])):
+        file = directory / name
+        require(file.is_file() and not file.is_symlink() and file.stat().st_size <= identity["maximumBytes"],
+                "Missing or unbounded PDF admission evidence: " + name)
+        require(sha(file.read_bytes()) == identity["sha256"], "PDF admission evidence digest changed: " + name)
+    receipt = directory / "pdfium-build-receipt.json"
+    require(receipt.is_file() and not receipt.is_symlink() and receipt.stat().st_size <= 64 * 1024,
+            "Missing or unbounded PDF admission receipt")
+    expected = pdfium_admission_receipt(value)
+    require(receipt.read_bytes() == canonical(expected), "PDF admission receipt is not the exact canonical closed contract")
+    verify_pdfium_attestation(directory / "pdfium-win-x64.tgz", directory / "pdfium-attestation.json", value)
+    return expected
+
+
 def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
     """Fetch/verify the reviewed producer build, never a consumer-time dependency download."""
     value = pdfium_profile(root)
@@ -731,11 +775,7 @@ def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
                 if not prefix.exists():
                     raise
                 verify_pdfium_prefix(prefix, value)
-    receipt = {"profile": value["id"], "archiveSha256": value["archive"]["sha256"],
-               "attestationSha256": value["attestation"]["sha256"], "producerInvocation": value["attestation"]["invocation"],
-               "recipeCommit": value["attestation"]["recipeCommit"], "rid": value["rid"],
-               "version": value["version"], "cryptographicVerification": "GitHub CLI Sigstore/SLSA verification passed"}
-    receipt["sbomSha256"] = value["sbom"]["sha256"]
+    receipt = pdfium_admission_receipt(value)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=directory, prefix=".pdfium-receipt-", delete=False) as output:
@@ -785,12 +825,7 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
     require(not audit["dirty"], "Commit reviewed source before producing the PDF composition input")
     value = pdfium_profile()
     verify_pdfium_prefix(pdfium_directory / "pdfium", value)
-    receipt = provenance.document((pdfium_directory / "pdfium-build-receipt.json").read_bytes())
-    require(receipt["archiveSha256"] == value["archive"]["sha256"] and
-            receipt["attestationSha256"] == value["attestation"]["sha256"] and
-            receipt["recipeCommit"] == value["attestation"]["recipeCommit"] and
-            receipt["producerInvocation"] == value["attestation"]["invocation"] and
-            receipt["sbomSha256"] == value["sbom"]["sha256"], "PDF producer admission receipt changed")
+    receipt = verify_pdfium_admission_input(pdfium_directory, value)
     specification = importlib.util.spec_from_file_location("arc_pdf_native_producer", ROOT / "eng/packaging/native.py")
     require(specification is not None and specification.loader is not None, "Native PE inspector is unavailable")
     producer = importlib.util.module_from_spec(specification)

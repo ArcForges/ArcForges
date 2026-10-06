@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -529,6 +530,27 @@ class PdfiumTransferTests(unittest.TestCase):
             self.assertEqual(fetch.call_args.kwargs['context'].verify_mode,native.ssl.CERT_REQUIRED)
             self.assertTrue(fetch.call_args.kwargs['context'].check_hostname)
 
+    def test_slow_progress_exhausts_deadline_and_tightens_read_timeout_without_retaining_partial_bytes(self):
+        clock, timeouts = [0.0], []
+        class SlowResponse(self.Response):
+            def read1(self, size):
+                clock[0] += 20
+                return b'x'
+        def fetch(*args, **kwargs):
+            response = SlowResponse(b'')
+            response.fp = SimpleNamespace(raw=SimpleNamespace(_sock=SimpleNamespace(
+                _closed=False, settimeout=timeouts.append)))
+            return response
+        def sleep(delay): clock[0] += delay
+        with tempfile.TemporaryDirectory() as t, patch.object(native.time,'monotonic',side_effect=lambda:clock[0]), \
+                patch.object(native.time,'sleep',side_effect=sleep), patch.object(native.urllib.request,'urlopen',side_effect=fetch) as open_request:
+            with self.assertRaisesRegex(TimeoutError,'deadline exceeded'):
+                native.pdfium_download(self.identity(),Path(t)/'bundle')
+            self.assertEqual(open_request.call_count,3)
+            self.assertTrue(all(0 < timeout <= 60 for timeout in timeouts))
+            self.assertLessEqual(min(timeouts),20)
+            self.assertEqual(list(Path(t).iterdir()),[])
+
 class PdfiumAttestationTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -589,6 +611,53 @@ class PdfiumAttestationTests(unittest.TestCase):
         with patch.object(native.subprocess,'run',side_effect=error) as verifier,patch.object(native.time,'sleep') as sleep:
             with self.assertRaises(subprocess.TimeoutExpired):self.verify()
             self.assertEqual(verifier.call_count,3);self.assertEqual([x.args[0] for x in sleep.call_args_list],[0.5,2.0])
+
+
+class PdfiumAdmissionInputTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.value = copy.deepcopy(native.pdfium_profile())
+        self.archive = self.directory / 'pdfium-win-x64.tgz'
+        self.archive.write_bytes(b'first-party simulated external archive')
+        self.value['archive']['sha256'] = native.sha(self.archive.read_bytes())
+        statement = {'subject':[{'name':self.archive.name,'digest':{'sha256':self.value['archive']['sha256']}}],
+                     'predicate':{'runDetails':{'metadata':{'invocationId':self.value['attestation']['invocation']}}}}
+        self.bundle = self.directory / 'pdfium-attestation.json'
+        self.bundle.write_bytes(json.dumps({'dsseEnvelope':{'payload':base64.b64encode(json.dumps(statement).encode()).decode()}}).encode())
+        self.value['attestation']['sha256'] = native.sha(self.bundle.read_bytes())
+        self.receipt = self.directory / 'pdfium-build-receipt.json'
+        self.receipt.write_bytes(native.canonical(native.pdfium_admission_receipt(self.value)))
+        self.result = subprocess.CompletedProcess([],0,stdout='[{}]',stderr='')
+
+    def test_sealing_handoff_rechecks_actual_evidence_and_external_signature_verifier(self):
+        with patch.object(native.subprocess,'run',return_value=self.result) as verifier:
+            self.assertEqual(native.verify_pdfium_admission_input(self.directory,self.value),native.pdfium_admission_receipt(self.value))
+            verifier.assert_called_once()
+            self.assertIn('--deny-self-hosted-runners',verifier.call_args.args[0])
+
+    def test_altered_actual_archive_or_bundle_is_refused_before_trust_claim(self):
+        for path in (self.archive,self.bundle):
+            with self.subTest(path=path):
+                before = path.read_bytes()
+                path.write_bytes(before+b'altered')
+                with patch.object(native.subprocess,'run') as verifier:
+                    with self.assertRaisesRegex(ValueError,'evidence digest changed'):
+                        native.verify_pdfium_admission_input(self.directory,self.value)
+                    verifier.assert_not_called()
+                path.write_bytes(before)
+
+    def test_forged_extra_duplicate_or_unbounded_receipt_is_refused(self):
+        original = self.receipt.read_bytes()
+        changed = native.pdfium_admission_receipt(self.value)
+        changed['cryptographicVerification'] = 'self declared approval'
+        for data in (native.canonical(changed), original.replace(b'\n}',b',\n  "extra": true\n}'),
+                     original.replace(b'{',b'{"rid":"forged",',1), b'x'*(64*1024+1)):
+            with self.subTest(size=len(data)), patch.object(native.subprocess,'run') as verifier:
+                self.receipt.write_bytes(data)
+                with self.assertRaises(ValueError): native.verify_pdfium_admission_input(self.directory,self.value)
+                verifier.assert_not_called()
 
 
 class PdfiumArchiveTests(unittest.TestCase):

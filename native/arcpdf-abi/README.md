@@ -21,8 +21,9 @@ parses PDF bytes.
 - `tests/`: `arcpdf_abi_engine_tests` compiles the engine with a scripted fake backend (`tests/fake_pdf_backend.hpp`, TEST ONLY,
   never part of the library target) and drives it with hostile behaviour; `arcpdf_abi_unsupported_tests` links the real library
   target in the parserless fixture configuration. `arcpdf_abi_pdfium_tests` instead links the real production library and tests
-  first-party PDF page/text/pixels, malformed input, cancellation and concurrent documents. Real parser execution is local
-  opt-in only; the hosted workflow compiles the production library and runs the isolated engine tests.
+  first-party PDF page/text/pixels, malformed input, cancellation and concurrent documents. The production workflow runs
+  both these actual-parser ordinary component tests and isolated engine tests. These first-party fixture tests certify
+  neither hosted OS isolation nor full product or additional RID acceptance; real helper containment remains separately observed.
 
 ## Reproducible producer
 
@@ -36,8 +37,11 @@ the actual retained root Release producer recipe and pinned compiler/build-tool 
 complete transitive runtime import closure, SDK import library and headers, original legal documents, aggregate SPDX SBOM
 and admission evidence. The producer checks the exact eight functional exports, production marker and embedded source
 identity; compiler-runtime files must match the existing admitted Microsoft hashes, versions and Authenticode publisher.
-Transfers are bounded and retry only transient transport failures, at most three attempts; altered bytes or trust failures
+Transfers have byte caps, a 60-second monotonic attempt budget and 180-second overall budget, use progress reads with
+remaining socket timeouts, and retry only transient transport failures, at most three attempts; altered bytes or trust failures
 are refused. The native workflow retains this immutable composition input separately from the Image runtime input.
+Sealing rechecks the actual bounded archive and attestation bytes, requires the exact canonical closed build receipt and
+reverifies the strict Sigstore/SLSA producer identity; the receipt assertion alone is never sufficient.
 
 `Runtime.<rid>` publication, release signing and clean-cache published-consumer acceptance belong to NAT.25. This input is
 not a signed or published package, and no macOS/Linux PDFium producer is asserted by this Windows-only admission.

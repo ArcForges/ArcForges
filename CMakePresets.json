@@ -47,7 +47,10 @@
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
         "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>",
         "ARCFORGES_PDFIUM": "ON",
-        "PDFium_DIR": "${sourceDir}/artifacts/pdfium-admission/pdfium"
+        "PDFium_DIR": {
+          "type": "PATH",
+          "value": "${sourceDir}/artifacts/pdfium-admission/pdfium"
+        }
       },
       "condition": {
         "type": "equals",
