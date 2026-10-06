@@ -3,10 +3,10 @@
     "owner": "w-codex-20261006-image",
     "reviewer": "Independent exact-head reviewer: /root/observability; approval required before merge.",
     "reviewedOn": "2026-10-06",
-    "baselineCommit": "56243df6ef505bb84968409d08c814ed9d86abda",
-    "maintenanceAssessment": "NAT.11 completes the existing Image family over pinned static OpenImageIO3.1.14/OpenEXR/Imath. No dependency version, framework, SDK, package identity or external coordinate change. Functional ABI1.1 adds open/read/close while preserving preamble signatures/layouts. Native generation ownership, bounded immutable callback input, finite scratch/staged output, deadlines, cancellation and callback/concurrent refusal are complete. Managed ImageReader owns roots/token, immutable precision metadata, a single reserved/active borrow, bounded read/close scheduling, any-image callback fences and own-reader callback close draining. RGBA8 is unassociated in reported source transfer; float is linear premultiplied, including associated nonlinear TIFF. The actual helper image branch composes ImageReader and admits both native libraries before OS restriction. Native staging, package inspection, registry inventory and C/C# preamble consumers share exact Image6/PDF8 ABI1.1. Existing native-win-x64-r4 already admits TIFF jpeg/lzma/zip; local cache repair restored these approved features for real component diagnostics, without new feature/version admission or release-payload claims.",
+    "baselineCommit": "8e2d27389f07c579a3d5259a986591eb7b31e28a",
+    "maintenanceAssessment": "NAT.11 completes the existing Image family over pinned static OpenImageIO3.1.14/OpenEXR/Imath. No dependency version, framework, SDK, package identity or external coordinate change. Functional ABI1.1 adds open/read/close while preserving preamble signatures/layouts. Native generation ownership, bounded immutable callback input, finite scratch/staged output, deadlines, cancellation and callback/concurrent refusal are complete. Managed parsing types stay internal to the approved helper and its tests; historical public ImageAbi diagnostics remain compatible. ImageReader owns roots/token, immutable precision metadata, a single reserved/active borrow, bounded read/close scheduling, any-image callback fences and own-reader callback close draining. RGBA8 is unassociated in reported source transfer; float is linear premultiplied, including associated nonlinear TIFF. The actual helper image branch composes ImageReader and admits both native libraries before OS restriction. Native staging, package inspection, registry inventory and C/C# preamble consumers share exact Image6/PDF8 ABI1.1. Existing native-win-x64-r4 already admits TIFF jpeg/lzma/zip; local cache repair restored these approved features for real component diagnostics, without new feature/version admission or release-payload claims.",
     "upgradeChecks": {
-      "compilation": "Existing VS2026 compiled actual static OIIO library plus local codec fixture target with retained warnings-as-errors. Existing pinned ~/.dotnet SDK10.0.400 compiled managed ImageReader with locked restore and zero warnings/errors. Windows/Linux retained CI remains required before merge. Local restored compression dependencies used existing installed MSVC14.52 for component diagnostics; the owned shim compiled with existing14.51. This local build is not approved release payload; production CI remains pinned to the signed native tool/profile.",
+      "compilation": "Existing VS2026 compiled actual static OIIO library plus local codec fixture target with retained warnings-as-errors. Existing pinned SDK10.0.400 compiled managed ImageReader with locked restore and zero warnings/errors. Scoped architecture tests pass3/3: actual Image6 LibraryImport owner inventory, existing typed public diagnostic positive/negative compilation, and non-friend CS0122 refusal for all eight internal parsing types. The unrelated lifecycle fixture requires its not-yet-built local Application reference; full-solution hosted CI still supplies all actual project outputs and same-source policy evidence before merge. Local restored compression dependencies used existing installed MSVC14.52 for component diagnostics; the owned shim compiled with existing14.51. This local build is not approved release payload; production CI remains pinned to the signed native tool/profile.",
       "aot-trim": "Existing pinned SDK10.0.400 compiled and published the actual composed win-x64 Native AOT helper with no warnings/errors. Isolated ignored per-project RID locks retain exact SDK/tool versions and do not alter release input locks. LibraryImport/UnmanagedCallersOnly and bounded explicit JsonDocument parsing require no reflection registration/code generation.",
       "compatibility": "Preserve ArcImageNative logical name and three preamble signatures. Add exact ABI1.1 functions open/read/close. Metadata DTOs and closed output keys preserve source channel precision and expose conversion loss. No published version overwritten.",
       "licence-provenance": "All authored code AGPL-3.0-only. Existing exact OIIO/OpenEXR/Imath source, legal notices and provenance receipts retained. Added first-party files registered. No copied upstream implementation or new dependency coordinate.",
@@ -240,7 +240,7 @@
       "src/BuildingBlocks/ArcForges.Persistence.Resources/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj": "67f162a18dfcb1c752902e0fd4e8b28c934b8ccbb6636699df3acadb63101f7a",
       "src/BuildingBlocks/ArcForges.Persistence.Sqlite/packages.lock.json": "fbb5c962d7866fbf1d129edab2498f277a1fe71afdc0641d3db2e90a671b7408",
-      "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj": "16db2e79a289f9954d871f5d96ff6fef69f9f3a9e05218026b34408f5a4190c7",
+      "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj": "896ca974a7ac7d28d704d764c50e1bfbc209c31b71e9fc6cbb2d3671d164308b",
       "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj": "e170254575a6b0723efb271ab7c1216f006c7a816677bd5b447cfff258e79082",
       "src/BuildingBlocks/ArcForges.Security.Audit/Tests/packages.lock.json": "1c93de4dbc04b8f0a15fef30f352c476b7543ff26f381cbdd348c0803fc092fd",
       "src/BuildingBlocks/ArcForges.Security.Audit/packages.lock.json": "ba8caa1127c0dc5f1036d45aea694e80008a6395dbe6c5a1d96e3fc4a2bf4352",
@@ -253,8 +253,8 @@
       "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/packages.lock.json": "d853a740c8ddb1da79ae2aad7d54fcecf80ed0a73dac94df14443c29d4eae7f7",
       "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj": "16b8227d01b3a11c82c7111c7da3cbf5d9d8701a3c449c47ca40dd3f245638d9",
       "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/packages.lock.json": "c9cd093bc0d4fe58c08f1bd0fc591d4f3086c8f302b6a374b319efcc9ec1d3e9",
-      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "0a151cdf32bf378434d9e82659d24df6a8802b52d8163bd97cfefb208236433a",
-      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "790d82612130bcf77c69c55ea91686a1dd63531ad54c422bc6304c2815e40e39",
+      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "e4ba91225551f7d3076aff09f04d37e34a4632c9706bd11a784f6ece97f983a2",
+      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "2b8bff322806785494fd1755265499382ebc69825b90a50bfefb4cbb06174802",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
@@ -302,7 +302,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-57-r2.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",

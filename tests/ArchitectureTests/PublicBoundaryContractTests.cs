@@ -26,6 +26,23 @@ public sealed class PublicBoundaryContractTests
     }
 
     [Xunit.Fact]
+    public void ProductCodeCannotInstantiateTheInternalImageParser()
+    {
+        string[] parserTypes = ["IImageInput", "IImageReader", "ImageReader", "ImagePixelFormat", "ImageLimits", "ImageChannel", "ImageMetadata", "ImageNativeException"];
+        string source = "using ArcForges.Native.Image; class Consumer { System.Type[] ParserTypes() => [" +
+            string.Join(", ", parserTypes.Select(type => "typeof(" + type + ")")) + "]; }";
+        var compilation = FixtureCompiler.Create("UntrustedProductImageConsumer", new Dictionary<string, string> { ["consumer.cs"] = source },
+            References("ArcForges.Native.Abstractions", "ArcForges.Native.Image"));
+        var errors = compilation.GetDiagnostics(Xunit.TestContext.Current.CancellationToken).Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error).ToArray();
+        Xunit.Assert.Equal(parserTypes.Length, errors.Length);
+        Xunit.Assert.All(errors, diagnostic => Xunit.Assert.Equal("CS0122", diagnostic.Id));
+        foreach (string parserType in parserTypes)
+        {
+            Xunit.Assert.Contains(errors, diagnostic => diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture).Contains("'" + parserType + "'", StringComparison.Ordinal));
+        }
+    }
+
+    [Xunit.Fact]
     public void ApplicationStopContractPreservesCancellationAndTypedOutcome()
     {
         string source = """

@@ -8,7 +8,7 @@ using ArcForges.Native.Abstractions;
 namespace ArcForges.Native.Image;
 
 /// <summary>Closed output profiles. Byte pixels are unassociated in the reported source transfer; float pixels are linear premultiplied.</summary>
-public enum ImagePixelFormat
+internal enum ImagePixelFormat
 {
     None = 0,
     Rgba8 = 1,
@@ -16,7 +16,7 @@ public enum ImagePixelFormat
 }
 
 /// <summary>A bounded immutable, already brokered input. No parser resolves a path.</summary>
-public interface IImageInput
+internal interface IImageInput
 {
     long Length { get; }
 
@@ -24,24 +24,24 @@ public interface IImageInput
 }
 
 /// <summary>Positive caller limits, capped by the signed producer profile.</summary>
-public sealed record ImageLimits(ulong MaxInputBytes, ulong MaxMemoryBytes, ulong MaxOutputBytes, uint MaxWidth, uint MaxHeight, uint MaxItems, uint TimeoutMs);
+internal sealed record ImageLimits(ulong MaxInputBytes, ulong MaxMemoryBytes, ulong MaxOutputBytes, uint MaxWidth, uint MaxHeight, uint MaxItems, uint TimeoutMs);
 
 /// <summary>Source channel precision remains visible even when the output converts it.</summary>
-public sealed record ImageChannel(string Name, string Type, uint Bits);
+internal sealed record ImageChannel(string Name, string Type, uint Bits);
 
 /// <summary>The selected image and its explicit output conversion.</summary>
-public sealed record ImageMetadata(uint Width, uint Height, uint Subimages, uint Mips, uint Subimage, uint Mip, ImagePixelFormat Format,
+internal sealed record ImageMetadata(uint Width, uint Height, uint Subimages, uint Mips, uint Subimage, uint Mip, ImagePixelFormat Format,
     string Codec, string SourceColorSpace, bool ConversionLoss, IReadOnlyList<ImageChannel> Channels);
 
 /// <summary>A closed native status, with diagnostic text that is never sent over the sandbox protocol.</summary>
 [SuppressMessage("Design", "CA1032", Justification = "A native failure must carry the closed ABI status; untyped construction is not admitted.")]
-public sealed class ImageNativeException(NativeStatus status, string message) : IOException(message)
+internal sealed class ImageNativeException(NativeStatus status, string message) : IOException(message)
 {
     public NativeStatus Status { get; } = status;
 }
 
 /// <summary>Bounded image operations. Implementations execute only inside the restricted ContentSandbox process.</summary>
-public interface IImageReader : IDisposable, IAsyncDisposable
+internal interface IImageReader : IDisposable, IAsyncDisposable
 {
     ImageMetadata Metadata { get; }
 
@@ -54,7 +54,7 @@ public interface IImageReader : IDisposable, IAsyncDisposable
 /// The production OIIO reader of PNG, TIFF and EXR. Instantiate only in the approved restricted helper; this binding itself is not an OS
 /// security boundary. Its generation token and callback roots are owned by a dedicated SafeHandle, and all calls drain before close.
 /// </summary>
-public sealed unsafe class ImageReader : IImageReader
+internal sealed unsafe class ImageReader : IImageReader
 {
     private readonly object _gate = new();
     private readonly ImageSafeHandle _handle;

@@ -2,7 +2,11 @@
 
 Owned ABI 1.1 bindings for PNG, TIFF and EXR metadata and bounded region reads through
 OpenImageIO/OpenEXR/Imath. Existing version/build/error exports remain compatible.
-`ImageReader.Open` and `OpenAsync` take immutable brokered callback input, typed limits,
+The managed parsing types are internal and shared only with the approved helper and
+its component tests. Product callers use the ContentSandbox Broker facade; they cannot
+instantiate this parser as an in-process fallback. The historical public `ImageAbi`
+version/build/error diagnostics remain compatible. Internal `ImageReader.Open` and
+`OpenAsync` take immutable brokered callback input, typed limits,
 subimage/mip and a closed output format. `ReadRegion`/`ReadRegionAsync` return packed
 unassociated RGBA8 in the reported source transfer, or linear premultiplied RGBA32F,
 with an explicit row stride. Associated nonlinear input is unassociated before its
