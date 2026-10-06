@@ -110,7 +110,8 @@ arc_handle_t open(input& data, arc_image_options_v1 config, std::string* json = 
         *json = std::string(metadata.begin(), metadata.end());
     return handle;
 }
-std::vector<unsigned char> fixture(const std::filesystem::path& directory, const std::string& extension, bool tiled)
+std::vector<unsigned char> fixture(const std::filesystem::path& directory, const std::string& extension, bool tiled,
+                                   std::string_view compression = "none")
 {
     const auto file = directory / ("image." + extension);
     auto writer = OIIO::ImageOutput::create(file.string());
@@ -119,7 +120,7 @@ std::vector<unsigned char> fixture(const std::filesystem::path& directory, const
     spec.attribute("oiio:ColorSpace", "Linear");
     spec.attribute("oiio:UnassociatedAlpha", 1);
     if (extension == "tif")
-        spec.attribute("compression", "none");
+        spec.attribute("compression", std::string(compression));
     spec.alpha_channel = 3;
     if (tiled) {
         spec.tile_width = 16;
@@ -146,9 +147,10 @@ std::vector<unsigned char> fixture(const std::filesystem::path& directory, const
 }
 void codec_tests(const std::filesystem::path& directory)
 {
-    for (const auto& extension : {"png", "tif", "exr"}) {
+    for (const auto& [extension, compression] :
+         {std::pair{"png", "none"}, {"tif", "none"}, {"tif", "zip"}, {"tif", "lzma"}, {"exr", "none"}}) {
         input data;
-        data.bytes = fixture(directory, extension, std::string_view(extension) != "png");
+        data.bytes = fixture(directory, extension, std::string_view(extension) != "png", compression);
         std::string metadata;
         auto handle = open(data, options(), &metadata);
         require(metadata.find("\"bits\":16") != std::string::npos, "native source bit depth lost");
@@ -196,12 +198,11 @@ void codec_tests(const std::filesystem::path& directory)
         buffer = {floats.data(), floats.size() * sizeof(float), 0};
         require(arc_image_read(handle, &region, &buffer, nullptr) == ARC_OK, "float tile failed");
         require(std::isfinite(floats[0]) && floats[3] > .49F && floats[3] < .51F, "float tile alpha wrong");
-        if (std::string_view(extension) != "png")
-            if (std::abs(floats[0] -
-                         (metadata.find("\"sourceColorSpace\":\"linear\"") != std::string::npos ? .375F : .261261F)) >=
-                .002F)
-                throw std::runtime_error(std::string(extension) + " float red=" + std::to_string(floats[0]) + " " +
-                                         metadata);
+        if (std::abs(floats[0] -
+                     (metadata.find("\"sourceColorSpace\":\"linear\"") != std::string::npos ? .375F : .261261F)) >=
+            .002F)
+            throw std::runtime_error(std::string(extension) + " float red=" + std::to_string(floats[0]) + " " +
+                                     metadata);
         require(arc_image_close(handle) == ARC_OK, "float reader close failed");
         config = options();
         config.limits.max_width = 18;
@@ -286,6 +287,103 @@ void lifetime_tests(const std::filesystem::path& directory)
     require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_CORRUPT && refused == 0,
             "malformed codec accepted");
 }
+void subimage_tests(const std::filesystem::path& directory)
+{
+    const auto file = directory / "pages.tif";
+    auto writer = OIIO::ImageOutput::create(file.string());
+    require(writer != nullptr, "multipage TIFF writer missing");
+    OIIO::ImageSpec spec(8, 8, 4, OIIO::TypeDesc::UINT16);
+    spec.alpha_channel = 3;
+    spec.attribute("compression", "zip");
+    std::vector<float> pixels(8 * 8 * 4, 0.25F);
+    for (size_t i = 3; i < pixels.size(); i += 4)
+        pixels[i] = 1.0F;
+    require(writer->open(file.string(), spec), "first TIFF page failed");
+    require(writer->write_image(OIIO::TypeDesc::FLOAT, pixels.data()), "first TIFF page write failed");
+    require(writer->open(file.string(), spec, OIIO::ImageOutput::AppendSubimage), "second TIFF page failed");
+    for (size_t i = 0; i < pixels.size(); ++i)
+        if (i % 4 != 3)
+            pixels[i] = 0.75F;
+    require(writer->write_image(OIIO::TypeDesc::FLOAT, pixels.data()) && writer->close(),
+            "second TIFF page write failed");
+    std::ifstream stream(file, std::ios::binary);
+    input data;
+    data.bytes = std::vector<unsigned char>(std::istreambuf_iterator<char>(stream), {});
+    auto config = options();
+    config.subimage = 1;
+    std::string metadata;
+    const auto handle = open(data, config, &metadata);
+    require(metadata.find("\"subimages\":2") != std::string::npos &&
+                metadata.find("\"subimage\":1") != std::string::npos,
+            "selected TIFF page inventory lost");
+    arc_region_v1 region{.struct_size = sizeof(region), .struct_version = 1, .width = 1, .height = 1, .row_stride = 4};
+    unsigned char decoded[4]{};
+    arc_mut_buffer_t output{decoded, sizeof(decoded), 0};
+    require(arc_image_read(handle, &region, &output, nullptr) == ARC_OK && decoded[0] >= 190 && decoded[0] <= 192 &&
+                decoded[3] == 255,
+            "selected TIFF page pixels wrong");
+    require(arc_image_close(handle) == ARC_OK, "selected TIFF page close failed");
+    auto source = io(data);
+    arc_handle_t refused = UINT64_MAX;
+    output = {};
+    config.subimage = 2;
+    require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_NOT_FOUND && refused == 0,
+            "missing TIFF page accepted");
+    config.subimage = 0;
+    config.limits.max_items = 1;
+    require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_RESOURCE_LIMIT && refused == 0,
+            "multipage TIFF item cap failed");
+}
+void mip_tests(const std::filesystem::path& directory)
+{
+    const auto file = directory / "mips.exr";
+    auto writer = OIIO::ImageOutput::create(file.string());
+    require(writer != nullptr, "EXR mip writer missing");
+    OIIO::ImageSpec spec(16, 16, 4, OIIO::TypeDesc::HALF);
+    spec.alpha_channel = 3;
+    spec.tile_width = spec.tile_height = 16;
+    spec.tile_depth = 1;
+    spec.attribute("textureformat", "Plain Texture");
+    for (int mip = 0; mip < 5; ++mip) {
+        spec.width = spec.height = 16 >> mip;
+        require(
+            writer->open(file.string(), spec, mip == 0 ? OIIO::ImageOutput::Create : OIIO::ImageOutput::AppendMIPLevel),
+            "EXR mip open failed");
+        std::vector<float> pixels(static_cast<size_t>(spec.width * spec.height * 4), .25F + .1F * mip);
+        for (size_t i = 3; i < pixels.size(); i += 4)
+            pixels[i] = 1.0F;
+        require(writer->write_image(OIIO::TypeDesc::FLOAT, pixels.data()), "EXR mip write failed");
+    }
+    require(writer->close(), "EXR mip close failed");
+    writer.reset();
+    std::ifstream stream(file, std::ios::binary);
+    input data;
+    data.bytes = std::vector<unsigned char>(std::istreambuf_iterator<char>(stream), {});
+    auto config = options(ARC_FORMAT_RGBA32F_LINEAR_PREMULTIPLIED);
+    config.mip = 1;
+    std::string metadata;
+    const auto handle = open(data, config, &metadata);
+    require(metadata.find("\"mips\":5") != std::string::npos && metadata.find("\"width\":8") != std::string::npos,
+            "EXR mip inventory or selected dimensions lost");
+    arc_region_v1 region{
+        .struct_size = sizeof(region), .struct_version = 1, .x = 7, .y = 7, .width = 1, .height = 1, .row_stride = 16};
+    float decoded[4]{};
+    arc_mut_buffer_t output{decoded, sizeof(decoded), 0};
+    require(arc_image_read(handle, &region, &output, nullptr) == ARC_OK && std::abs(decoded[0] - .35F) < .001F &&
+                decoded[3] == 1.0F,
+            "selected EXR mip corner pixels wrong");
+    require(arc_image_close(handle) == ARC_OK, "selected EXR mip close failed");
+    auto source = io(data);
+    arc_handle_t refused = UINT64_MAX;
+    output = {};
+    config.mip = 5;
+    require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_NOT_FOUND && refused == 0,
+            "missing EXR mip accepted");
+    config.mip = 0;
+    config.limits.max_items = 4;
+    require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_RESOURCE_LIMIT && refused == 0,
+            "EXR mip inventory item cap failed");
+}
 } // namespace
 int main()
 {
@@ -295,6 +393,8 @@ int main()
     std::filesystem::create_directory(directory);
     try {
         codec_tests(directory);
+        subimage_tests(directory);
+        mip_tests(directory);
         lifetime_tests(directory);
         std::filesystem::remove_all(directory);
         std::cout

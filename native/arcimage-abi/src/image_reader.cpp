@@ -208,9 +208,20 @@ arc_status_t valid_spec(const OIIO::ImageSpec& spec, const arc_limits_v1& limit)
         return fail(ARC_RESOURCE_LIMIT, "Image dimensions exceed admitted limits");
     if (spec.image_bytes() > limit.max_memory_bytes)
         return fail(ARC_RESOURCE_LIMIT, "Image decode working set exceeds admitted memory");
-    for (const auto& name : spec.channelnames) {
+    for (int channel = 0; channel < spec.nchannels; ++channel) {
+        const auto& name = spec.channelnames[static_cast<size_t>(channel)];
         if (name.empty() || name.size() > 256 || !valid_utf8(name))
             return fail(ARC_RESOURCE_LIMIT, "Image channel names exceed bounds");
+        const auto type = spec.channelformat(channel);
+        const auto bits = spec.get_int_attribute("oiio:BitsPerSample", static_cast<int>(type.size() * 8));
+        if (type.aggregate != OIIO::TypeDesc::SCALAR || type.arraylen != 0 || bits < 1 || bits > 64 ||
+            (type.basetype != OIIO::TypeDesc::UINT8 && type.basetype != OIIO::TypeDesc::INT8 &&
+             type.basetype != OIIO::TypeDesc::UINT16 && type.basetype != OIIO::TypeDesc::INT16 &&
+             type.basetype != OIIO::TypeDesc::UINT && type.basetype != OIIO::TypeDesc::INT &&
+             type.basetype != OIIO::TypeDesc::UINT64 && type.basetype != OIIO::TypeDesc::INT64 &&
+             type.basetype != OIIO::TypeDesc::HALF && type.basetype != OIIO::TypeDesc::FLOAT &&
+             type.basetype != OIIO::TypeDesc::DOUBLE))
+            return fail(ARC_UNSUPPORTED, "Image channel precision unsupported");
     }
     const auto color_space = spec.get_string_attribute("oiio:ColorSpace");
     if (color_space.size() > 256 || !valid_utf8(std::string_view(color_space.data(), color_space.size())))
@@ -275,7 +286,8 @@ std::string metadata(const reader& value, uint32_t subimages, uint32_t mips)
     bool loss = value.options.format == ARC_FORMAT_RGBA8 || s.nchannels > 4;
     for (int channel = 0; channel < s.nchannels; ++channel) {
         const auto type = s.channelformat(channel);
-        loss = loss || type == OIIO::TypeDesc::DOUBLE || type == OIIO::TypeDesc::UINT || type == OIIO::TypeDesc::INT;
+        loss = loss || type == OIIO::TypeDesc::DOUBLE || type == OIIO::TypeDesc::UINT || type == OIIO::TypeDesc::INT ||
+               type == OIIO::TypeDesc::UINT64 || type == OIIO::TypeDesc::INT64;
     }
     std::string json =
         "{\"version\":1,\"width\":" + std::to_string(s.width) + ",\"height\":" + std::to_string(s.height) +
