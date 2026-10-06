@@ -58,6 +58,10 @@ unmarked span, and calling the start callback again cannot relabel an old span. 
 travels with scrubbed spans and structured events, and metric admission supplies its captured epoch. The exporter checks
 that original epoch at admission, covering revocation between a producer's consent check and its sink hand-off.
 This provenance is not a telemetry attribute and never enters the OTLP payload. Sink callbacks remain outside policy locks.
+The production exporter refuses unmarked direct spans or structured events; it never invents a current epoch at send time.
+Direct event-sink adapters implement `ITelemetryEpochSource` by delegating to the exporter's collection snapshot. Direct
+span delivery uses the start-stamped `TracePolicy` path. The historical `ConsentGatedTelemetry.Export(Activity)` primitive
+still supports custom send-time-gated transports, but its unmarked span is deliberately refused by this production exporter.
 
 `CollectorReadiness` reports the last actual delivery outcome, recovers after success and becomes Unknown after configured
 freshness expires. It never calls lack of observations healthy. The host's `Readiness` uses a real read/write/flush/delete-on-close

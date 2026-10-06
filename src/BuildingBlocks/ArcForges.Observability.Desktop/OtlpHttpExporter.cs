@@ -12,7 +12,7 @@ namespace ArcForges.Observability.Desktop;
 /// an ambiguous delivery can be duplicated, so delivery is not exactly once. Revocation cancels uploads and purges
 /// retained records, with an epoch fence preventing a quick re-grant from resurrecting earlier telemetry.
 /// </summary>
-public sealed class OtlpHttpExporter : IClientTelemetryTransport, IScrubbedSpanSink, IAsyncDisposable
+public sealed class OtlpHttpExporter : IClientTelemetryTransport, IScrubbedSpanSink, ITelemetryEpochSource, IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly Queue<PendingRecord> _queue = new();
@@ -85,6 +85,16 @@ public sealed class OtlpHttpExporter : IClientTelemetryTransport, IScrubbedSpanS
         }
     }
 
+    /// <summary>Capture at actual signal collection through an epoch-compatible sink; negative means no grant.</summary>
+    public long CollectionEpoch
+    {
+        get
+        {
+            long epoch = _consent.CollectionEpoch;
+            return _consent.IsGranted && epoch == _consent.CollectionEpoch ? epoch : -1L;
+        }
+    }
+
     /// <summary>Fresh, actual collector delivery health. Absence of observations is Unknown, not availability.</summary>
     public RequiredDependencyObservation CollectorReadiness
     {
@@ -154,7 +164,8 @@ public sealed class OtlpHttpExporter : IClientTelemetryTransport, IScrubbedSpanS
         {
             if (_stopping || !_consent.IsGranted) { _rejected++; return; }
             if (_retainedRecords >= _options.MaximumRetainedRecords) { _overflow++; return; }
-            long epoch = collectionEpoch ?? _consent.Revocations;
+            // An unstamped retained record has no trustworthy collection provenance. Never relabel it at send time.
+            if (collectionEpoch is not long epoch) { _rejected++; return; }
             if (epoch != _consent.Revocations) { _purged++; return; }
             byte[] bytes;
             try { bytes = encode(); }

@@ -170,6 +170,41 @@ public sealed class ProductionCompositionTests
     }
 
     [Fact]
+    public async Task ProductionExporterRefusesUnmarkedRetainedSpansAndEventsThroughEveryDirectPort()
+    {
+        using var directory = new TestDirectory();
+        using var diagnostics = Fixtures.Open(directory.Path);
+        using var handler = new OtlpExporterTests.Collector();
+        await using var exporter = OtlpHttpExporter.CreateForTest(new() { Collector = new("https://collector.invalid") },
+            Fixtures.Identity(), diagnostics.Consent, handler);
+        using var old = new Activity("operation.unmarkedold");
+        old.SetIdFormat(ActivityIdFormat.W3C).Start();
+        old.Stop();
+        ScrubbedSpan retained = RedactionProcessor.Scrub(old);
+        using var emitter = new SignalEmitter(diagnostics.LocalSink);
+        StructuredSignal unmarked;
+        using (ObservabilityScope.Push(Fixtures.Identity()))
+            unmarked = emitter.Emit(SignalEventName.ApplicationStarted, SignalLevel.Information);
+        Assert.Null(retained.CollectionEpoch);
+        Assert.Null(unmarked.CollectionEpoch);
+        diagnostics.Consent.Grant();
+        exporter.Send(retained);
+        exporter.Write(retained);
+        exporter.Send(unmarked);
+        ConsentGatedTelemetry gate = diagnostics.CreateTelemetry(exporter);
+        gate.Export(old);
+        diagnostics.Consent.Revoke();
+        diagnostics.Consent.Grant();
+        exporter.Send(retained);
+        exporter.Send(unmarked);
+        gate.Export(old);
+        OtlpExporterTests.Emit(exporter);
+        await exporter.DisposeAsync();
+        Assert.Contains("operation.completed", Assert.Single(handler.Requests).Body, StringComparison.Ordinal);
+        Assert.Equal(7, exporter.Statistics.Rejected);
+    }
+
+    [Fact]
     public async Task ActualHostKeepsLocalDiagnosticsWithoutConsentAndPurgesTraceBufferOnWithdrawal()
     {
         using var directory = new TestDirectory();

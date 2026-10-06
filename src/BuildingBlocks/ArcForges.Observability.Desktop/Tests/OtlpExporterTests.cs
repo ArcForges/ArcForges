@@ -20,9 +20,13 @@ public sealed class OtlpExporterTests
         diagnostics.Consent.Grant();
         using var handler = new Collector();
         await using var exporter = OtlpHttpExporter.CreateForTest(Options(), Fixtures.Identity(), diagnostics.Consent, handler);
+        using var policy = new TracePolicy(new(1, TimeSpan.FromDays(1)), Fixtures.Identity(), exporter,
+            diagnostics.LocalSink, diagnostics.Consent);
         using (var activity = new Activity("request.operation"))
         {
             activity.SetIdFormat(ActivityIdFormat.W3C).Start();
+            activity.ActivityTraceFlags = ActivityTraceFlags.Recorded;
+            policy.OnSpanStarted(activity);
             activity.SetTag("prompt", "secret-prompt-never-export");
             activity.SetTag("Authorization", "Bearer secret-token-never-export");
             activity.SetTag("http.response.status_code", 403);
@@ -31,7 +35,7 @@ public sealed class OtlpExporterTests
                 { { "file.path", "secret-path-never-export" } }));
             activity.SetStatus(ActivityStatusCode.Error, "secret-exception-never-export");
             activity.Stop();
-            exporter.Send(RedactionProcessor.Scrub(activity));
+            policy.OnSpanEnded(activity);
         }
         Emit(exporter);
         await exporter.DisposeAsync();
@@ -377,8 +381,9 @@ public sealed class OtlpExporterTests
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
     };
 
-    private sealed class TransportSink(OtlpHttpExporter exporter) : IStructuredEventSink
+    private sealed class TransportSink(OtlpHttpExporter exporter) : IStructuredEventSink, ITelemetryEpochSource
     {
+        public long CollectionEpoch => exporter.CollectionEpoch;
         public void Write(StructuredSignal signal) => exporter.Send(signal);
     }
 
