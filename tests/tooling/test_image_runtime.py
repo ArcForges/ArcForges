@@ -318,6 +318,41 @@ class ImageRuntimeTests(unittest.TestCase):
                                        Path("unavailable-candidate"), "1.0.0", "0" * 40, other, True)
 
 
+    def test_consumer_binds_actual_restored_owned_transitives_and_rejects_extra_version_or_changed_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidates, cache = root / "candidates", root / "cache"
+            candidates.mkdir()
+            cache.mkdir()
+            version = "1.2.3-dev.4"
+            rows = []
+            for identity in ("ArcForges.Native.Image", "ArcForges.Native.Abstractions"):
+                file = identity + ".nupkg"
+                content = (identity + " test archive bytes").encode()
+                (candidates / file).write_bytes(content)
+                package = cache / identity.lower() / version
+                package.mkdir(parents=True)
+                (package / (identity.lower() + "." + version + ".nupkg")).write_bytes(content)
+                rows.append({"id": identity, "file": file})
+            manifest = {"packages": rows}
+            native_consumer.image_restored_candidates(candidates, cache, version, manifest)
+            transitive = cache / "arcforges.native.abstractions"
+            extra = transitive / "9.9.9"
+            extra.mkdir()
+            self.assertRaisesRegex(ValueError, "version", native_consumer.image_restored_candidates,
+                                   candidates, cache, version, manifest)
+            extra.rmdir()
+            restored = transitive / version / (transitive.name + "." + version + ".nupkg")
+            content = restored.read_bytes()
+            restored.write_bytes(content + b"tamper")
+            self.assertRaisesRegex(ValueError, "bytes", native_consumer.image_restored_candidates,
+                                   candidates, cache, version, manifest)
+            restored.write_bytes(content)
+            (cache / "arcforges.unadmitted").mkdir()
+            self.assertRaisesRegex(ValueError, "unadmitted", native_consumer.image_restored_candidates,
+                                   candidates, cache, version, manifest)
+
+
 @unittest.skipUnless(os.name == "nt" and os.environ.get("ARCFORGES_IMAGE_ARM_CRT"),
                      "Actual ARM64 Microsoft runtime admission requires explicit local input.")
 class ActualArmRuntimeAdmissionTests(unittest.TestCase):

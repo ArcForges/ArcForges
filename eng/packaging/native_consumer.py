@@ -34,6 +34,35 @@ def image_diagnostic_admission(rid, compile_only=False):
     return host
 
 
+def image_restored_candidates(directory, cache, version, manifest):
+    """Bind every actually restored owned dependency, including transitives."""
+    rows = {row["id"].lower(): row for row in manifest["packages"]}
+    for package in cache.iterdir():
+        if not package.name.startswith("arcforges."):
+            continue
+        row = rows.get(package.name)
+        packages.require(row is not None and package.is_dir() and not package.is_symlink(),
+                         "Image consumer restored an unadmitted owned dependency.")
+        versions = list(package.iterdir())
+        packages.require(len(versions) == 1 and versions[0].name == version.lower(),
+                         "Image consumer restored a different owned dependency version.")
+        restored = versions[0] / (package.name + "." + version.lower() + ".nupkg")
+        packages.require(restored.is_file() and not restored.is_symlink() and
+                         restored.read_bytes() == (directory / row["file"]).read_bytes(),
+                         "Image consumer restored different candidate bytes: " + row["id"])
+
+
+def _image_execute(program, root, env, failure=False):
+    result = subprocess.run([str(program)], cwd=root, env=env, capture_output=True, text=True, timeout=30)
+    if failure:
+        packages.require(result.returncode != 0 and "package-image-abi-ok" not in result.stdout,
+                         "Invalid Image runtime was accepted: " + result.stdout + result.stderr)
+    else:
+        packages.require(result.returncode == 0 and "package-image-abi-ok" in result.stdout,
+                         "Actual Image package consumer failed: " + result.stdout + result.stderr)
+    return result
+
+
 def consume_image(directory, version, commit, rid, compile_only=False):
     """Actual candidate C#/AOT/C17 adapters; foreign execution never substitutes for a host."""
     image_diagnostic_admission(rid, compile_only)
@@ -71,14 +100,21 @@ def consume_image(directory, version, commit, rid, compile_only=False):
                        + ''.join('<PackageReference Include="' + name + '"'
                        + (' PrivateAssets="all"' if name == 'ArcForges.Build.Policy' else '') + '/>' for name in identities)
                        + '</ItemGroup></Project>', encoding="utf-8")
+    expected_suffix = packages.build_identity.native_suffix(manifest["build"])
     (root / "Program.cs").write_text('''using System;
+using System.Runtime.CompilerServices;
 using ArcForges.Native.Image;
 using ArcForges.Native.Abstractions;
 if (ImageAbi.GetAbiVersion() != new NativeAbiVersion(1, 1)) throw new Exception("Image ABI mismatch");
+if (RuntimeFeature.IsDynamicCodeSupported) throw new Exception("Consumer must actually be Native AOT");
+if (!ImageAbi.GetBuildInfo().EndsWith(''' + json.dumps(expected_suffix) + ''', StringComparison.Ordinal))
+  throw new Exception("Image source/build identity mismatch");
 Console.WriteLine(ImageAbi.GetBuildInfo());
 Console.WriteLine("package-image-abi-ok");
 ''', encoding="utf-8")
-    packages.run("dotnet", "restore", str(project), cwd=root, env=env)
+    packages.run("dotnet", "restore", str(project), "--use-lock-file", cwd=root, env=env)
+    packages.run("dotnet", "restore", str(project), "--locked-mode", cwd=root, env=env)
+    image_restored_candidates(directory, root / ".packages", version, manifest)
     output = root / "published"
     packages.run("dotnet", "publish", str(project), "-c", "Release", "--no-restore", "-o", str(output), cwd=root, env=env)
     native = root / ".packages" / entry["id"].lower() / version.lower()
@@ -115,21 +151,46 @@ int main(void) {
         packages.run(compiler, "-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-I" + str(native / "include"),
                      str(source), str(runtime / recipe["library"]), "-Wl,-rpath," + str(runtime), "-o", str(c_output), cwd=root, env=env)
         # Mach-O's @rpath install identity is resolved by the explicit package runtime directory above.
-    for row in manifest["packages"]:
-        if row["id"] not in identities:
-            continue
-        restored = root / ".packages" / row["id"].lower() / version.lower() / (row["id"].lower() + "." + version.lower() + ".nupkg")
-        packages.require(restored.is_file() and restored.read_bytes() == (directory / row["file"]).read_bytes(),
-                         "Image consumer restored different candidate bytes.")
+    runtime_manifest = json.loads((native / "native-manifest.json").read_text(encoding="utf-8"))
+    for row in runtime_manifest["files"]:
+        candidate = output / row["name"]
+        packages.require(candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == row["sha256"],
+                         "Published Image native bytes differ from their actual package.")
     evidence = {"sourceCommit": commit, "version": version, "rid": rid, "mode": "compile-only" if compile_only else "actual-host",
                 "c17Sha256": hashlib.sha256(c_output.read_bytes()).hexdigest(), "consumerRoot": str(root),
                 "limitation": "ABI identity consumers do not prove image decode, OS isolation, deployment or whole-product acceptance."}
     if not compile_only:
         executable = output / ("ImageConsumer.exe" if rid.startswith("win-") else "ImageConsumer")
         for program in (executable, c_output):
-            result = subprocess.run([str(program)], cwd=root, env=env, capture_output=True, text=True, timeout=30)
-            packages.require(result.returncode == 0 and "package-image-abi-ok" in result.stdout,
-                             "Actual Image package consumer failed: " + result.stdout + result.stderr)
+            _image_execute(program, root, env)
+        rejections = []
+        # Every negative starts a fresh process. An authentic working-directory
+        # copy must not replace a withheld app-local image or transitive library.
+        for row in runtime_manifest["files"]:
+            original = output / row["name"]
+            backup = output / (row["name"] + ".withheld")
+            packages.require(not backup.exists() and original.resolve().is_relative_to(output.resolve()),
+                             "Unsafe Image consumer mutation path.")
+            original.rename(backup)
+            fallback = root / row["name"]
+            try:
+                shutil.copyfile(backup, fallback)
+                _image_execute(executable, root, env, failure=True)
+            finally:
+                backup.rename(original)
+                if fallback.exists():
+                    fallback.unlink()
+            rejections.append("missing:" + row["name"])
+        original = output / recipe["library"]
+        content = original.read_bytes()
+        try:
+            original.write_bytes(content + b"tamper")
+            _image_execute(executable, root, env, failure=True)
+        finally:
+            original.write_bytes(content)
+        rejections.append("changed-owned-library")
+        _image_execute(executable, root, env)
+        evidence["rejections"] = rejections
         evidence["aotSha256"] = hashlib.sha256(executable.read_bytes()).hexdigest()
     (root / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
     print("Image candidate consumer evidence: " + str(root), flush=True)
