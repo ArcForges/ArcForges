@@ -763,7 +763,8 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
     require(os.name == "nt", "The admitted PDFium producer requires Windows x64")
     directory = directory.resolve()
     require(not directory.exists(), "PDF composition input already exists; choose a fresh destination")
-    audit = provenance.run(ROOT, "DesktopPlatform")
+    audit = provenance.run(ROOT, "DesktopPlatform",
+                           base=os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_REF", "").startswith("refs/tags/") else None)
     require(not audit["dirty"], "Commit reviewed source before producing the PDF composition input")
     value = pdfium_profile()
     verify_pdfium_prefix(pdfium_directory / "pdfium", value)
