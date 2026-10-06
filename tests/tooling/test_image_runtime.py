@@ -23,6 +23,34 @@ import native_consumer
 
 
 class ImageRuntimeTests(unittest.TestCase):
+    def test_inventory_bounds_actual_directory_entries_and_depth_before_collecting_them(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assertRaisesRegex(ValueError, "root", image._inventory, root / "missing")
+            wide = root / "wide"
+            wide.mkdir()
+            for count in range(image.MAX_FILES + 1):
+                (wide / str(count)).mkdir()
+            self.assertRaisesRegex(ValueError, "Unbounded", image._inventory, wide)
+            deep = root / "deep"
+            deep.mkdir()
+            current = deep
+            for _ in range(65):
+                current = current / "d"
+                current.mkdir()
+            self.assertRaisesRegex(ValueError, "Unbounded", image._inventory, deep)
+            if hasattr(os, "mkfifo"):
+                pipe = root / "pipe"
+                pipe.mkdir()
+                os.mkfifo(pipe / "input")
+                self.assertRaisesRegex(ValueError, "Non-regular", image._inventory, pipe)
+            if os.name != "nt":
+                aliases = root / "aliases"
+                aliases.mkdir()
+                (aliases / "Payload").mkdir()
+                (aliases / "payload").mkdir()
+                self.assertRaisesRegex(ValueError, "Colliding", image._inventory, aliases)
+
     @staticmethod
     def legal_asset(content):
         checksum = hashlib.sha256(content).hexdigest()

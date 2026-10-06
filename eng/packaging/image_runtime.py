@@ -527,17 +527,29 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
 
 
 def _inventory(directory, cancelled=None):
-    rows, aliases = [], set()
-    for path in sorted(directory.rglob("*")):
-        require(not _link(path), "Linked Image output material.")
-        if not path.is_file():
-            continue
-        name = path.relative_to(directory).as_posix()
-        _path(name)
-        require(name.casefold() not in aliases and len(rows) < MAX_FILES, "Colliding or unbounded Image file inventory.")
-        aliases.add(name.casefold())
-        rows.append({"path": name, "sha256": digest(path, cancelled)})
-    return rows
+    directory = Path(directory)
+    require(directory.is_dir() and not _link(directory), "Missing or linked Image inventory root.")
+    rows, aliases, pending, count = [], set(), [(directory, 0)], 0
+    while pending:
+        parent, depth = pending.pop()
+        require(not _link(parent), "Image inventory directory ownership changed.")
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                _cancel(cancelled)
+                count += 1
+                require(count <= MAX_FILES and depth < 64, "Unbounded Image artifact directory inventory.")
+                path = Path(entry.path)
+                require(not _link(path), "Linked Image output material.")
+                name = path.relative_to(directory).as_posix()
+                _path(name)
+                require(name.casefold() not in aliases, "Colliding Image file inventory.")
+                aliases.add(name.casefold())
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append((path, depth + 1))
+                    continue
+                require(entry.is_file(follow_symlinks=False), "Non-regular Image artifact material.")
+                rows.append({"path": name, "sha256": digest(path, cancelled)})
+    return sorted(rows, key=lambda row: row["path"])
 
 
 @contextmanager
