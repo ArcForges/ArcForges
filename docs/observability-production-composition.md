@@ -52,6 +52,13 @@ or spans crossing withdrawal. A cancelled secret lookup that ignores its token i
 its eventual credential is disposed and never reused. Uploads already received by the remote collector cannot be recalled.
 Existing local diagnostic retention and user-approved report behavior remain separate from automatic telemetry.
 
+`TracePolicy.Attach` captures a write-once consent epoch at actual activity start. Hosts using their own listener wire
+`ActivityStarted = policy.OnSpanStarted` and `ActivityStopped = policy.OnSpanEnded`; the revocable policy refuses an
+unmarked span, and calling the start callback again cannot relabel an old span. Immutable `CollectionEpoch` provenance
+travels with scrubbed spans and structured events, and metric admission supplies its captured epoch. The exporter checks
+that original epoch at admission, covering revocation between a producer's consent check and its sink hand-off.
+This provenance is not a telemetry attribute and never enters the OTLP payload. Sink callbacks remain outside policy locks.
+
 `CollectorReadiness` reports the last actual delivery outcome, recovers after success and becomes Unknown after configured
 freshness expires. It never calls lack of observations healthy. The host's `Readiness` uses a real read/write/flush/delete-on-close
 probe in the diagnostic directory; existing files are untouched. `DependencyHealthMonitor` also composes product-owned

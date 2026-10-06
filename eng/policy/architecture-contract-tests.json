@@ -3318,5 +3318,10 @@
     "apiSymbol": "ArcForges.Observability.Desktop.OtlpCollectorCredential.Dispose()",
     "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
     "testMethod": "ArcForges.Observability.Desktop.Tests.OtlpExporterTests.UncooperativeCredentialOwnerIsBoundedAndCannotDelayShutdownOrLeakLateSecret()"
+  },
+  {
+    "apiSymbol": "ArcForges.Observability.TracePolicy.OnSpanStarted(System.Diagnostics.Activity)",
+    "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+    "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.RevocableManualListenersRequireActualStartStampAndFenceOldEpochs()"
   }
 ]

@@ -11,6 +11,7 @@ namespace ArcForges.Observability.Tests;
 /// nothing here talks to a telemetry backend.
 /// </summary>
 [SuppressMessage("Reliability", "CA2000", Justification = "Manual test spans are never listened to, hold no unmanaged resource and are collected with the test.")]
+[Collection("Trace policy process listeners")]
 public sealed class TracePolicyTests
 {
     private static readonly TimeSpan Window = DiagnosticSpanBuffer.Retention;
@@ -652,3 +653,9 @@ public sealed class TracePolicyTests
         Assert.Throws<ObjectDisposedException>(() => rig.Policy.OnSpanEnded(TracePolicyRig.Span(TracePolicyRig.Trace(1))));
     }
 }
+
+// This collection installs a listener on SignalEmitter's process-wide static ActivitySource. Running unrelated
+// emitter tests concurrently would feed their real error activities into this policy and contaminate its facts.
+[CollectionDefinition("Trace policy process listeners", DisableParallelization = true)]
+[SuppressMessage("Maintainability", "CA1515", Justification = "xUnit requires collection definition classes to be public for discovery.")]
+public sealed class TracePolicyProcessListenerCollection;

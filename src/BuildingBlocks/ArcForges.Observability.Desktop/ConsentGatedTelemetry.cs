@@ -25,7 +25,7 @@ public interface IClientTelemetryTransport
 /// consent; it is handed to the transport only while consent is granted. With consent absent or revoked the transport is
 /// never called, and a revocation takes effect for the very next signal, whatever thread it comes from.
 /// </summary>
-public sealed class ConsentGatedTelemetry : IStructuredEventSink
+public sealed class ConsentGatedTelemetry : IStructuredEventSink, ITelemetryEpochSource
 {
     private readonly TelemetryConsent _consent;
     private readonly LocalDiagnosticStore _local;
@@ -36,6 +36,15 @@ public sealed class ConsentGatedTelemetry : IStructuredEventSink
         _consent = consent;
         _local = local;
         _transport = transport;
+    }
+
+    public long CollectionEpoch
+    {
+        get
+        {
+            long epoch = _consent.CollectionEpoch;
+            return _consent.IsGranted && epoch == _consent.CollectionEpoch ? epoch : -1L;
+        }
     }
 
     /// <summary>
@@ -51,7 +60,7 @@ public sealed class ConsentGatedTelemetry : IStructuredEventSink
             return;
         }
 
-        SendIfGranted(() => _transport.Send(signal));
+        SendIfGranted(() => _transport.Send(signal), signal.CollectionEpoch);
     }
 
     /// <summary>
@@ -71,11 +80,11 @@ public sealed class ConsentGatedTelemetry : IStructuredEventSink
     }
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A broken client transport must not fail the operation being observed; the signal is lost and is never retried after consent changed.")]
-    private void SendIfGranted(Action send)
+    private void SendIfGranted(Action send, long? epoch = null)
     {
         lock (_consent.SendGate)
         {
-            if (!_consent.IsGranted)
+            if (!_consent.IsGranted || epoch is not null && epoch != _consent.CollectionEpoch)
             {
                 return;
             }

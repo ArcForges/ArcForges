@@ -42,6 +42,133 @@ public sealed class ProductionCompositionTests
         Assert.Equal(HealthProbeStatus.Healthy, (await host.Readiness.CheckAsync(TestContext.Current.CancellationToken)).Status);
         Assert.NotEmpty(host.Diagnostics.ReadRecent(10));
     }
+
+    [Fact]
+    public async Task RevocableManualListenersRequireActualStartStampAndFenceOldEpochs()
+    {
+        using var directory = new TestDirectory();
+        DesktopDiagnosticsOptions options = Fixtures.Options(directory.Path);
+        using var handler = new OtlpExporterTests.Collector();
+        await using var host = DesktopObservabilityHost.OpenForTest(options, new(1, TimeSpan.FromDays(1)),
+            new() { Collector = new("https://collector.invalid") }, _ => false, handler);
+        string sourceName = "manual." + Guid.NewGuid().ToString("N");
+        using var source = new ActivitySource(sourceName);
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = candidate => candidate.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = host.Traces.OnSpanStarted,
+            ActivityStopped = host.Traces.OnSpanEnded,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using Activity? beforeGrant = source.StartActivity("operation.beforegrant");
+        host.Diagnostics.Consent.Grant();
+        beforeGrant!.Stop();
+        using Activity? crossing = source.StartActivity("operation.crossingmanual");
+        host.Diagnostics.Consent.Revoke();
+        host.Diagnostics.Consent.Grant();
+        host.Traces.OnSpanStarted(crossing!); // A second start callback cannot overwrite the old epoch.
+        crossing!.Stop();
+        using (var unmarked = new Activity("operation.unmarked"))
+        {
+            unmarked.SetIdFormat(ActivityIdFormat.W3C).Start();
+            unmarked.ActivityTraceFlags = ActivityTraceFlags.Recorded;
+            unmarked.Stop();
+            host.Traces.OnSpanEnded(unmarked);
+        }
+        using (source.StartActivity("operation.newmanual")) { }
+        await host.DisposeAsync();
+        OtlpExporterTests.Request exported = Assert.Single(handler.Requests);
+        Assert.Contains("operation.newmanual", exported.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("operation.beforegrant", exported.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("operation.crossingmanual", exported.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("operation.unmarked", exported.Body, StringComparison.Ordinal);
+    }
+    [Fact]
+    public async Task RevocationBetweenPolicyAndExporterHandoffCannotRestampOldSpanOrHoldPolicyLock()
+    {
+        using var directory = new TestDirectory();
+        using var diagnostics = Fixtures.Open(directory.Path);
+        diagnostics.Consent.Grant();
+        using var handler = new OtlpExporterTests.Collector();
+        await using var exporter = OtlpHttpExporter.CreateForTest(new() { Collector = new("https://collector.invalid") },
+            Fixtures.Identity(), diagnostics.Consent, handler);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var sink = new HandoffSink(span =>
+        {
+            if (span.Name == "operation.oldhandoff")
+            {
+                entered.TrySetResult();
+                release.Wait(TestContext.Current.CancellationToken);
+            }
+            exporter.Write(span);
+        });
+        using var policy = new TracePolicy(new(1, TimeSpan.FromDays(1)), Fixtures.Identity(), sink,
+            diagnostics.LocalSink, diagnostics.Consent);
+        using var old = new Activity("operation.oldhandoff");
+        old.SetIdFormat(ActivityIdFormat.W3C).Start();
+        old.ActivityTraceFlags = ActivityTraceFlags.Recorded;
+        policy.OnSpanStarted(old);
+        old.Stop();
+        Task handoff = Task.Run(() => policy.OnSpanEnded(old), TestContext.Current.CancellationToken);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+            // A foreign sink is blocked; a different thread must still be able to acquire the policy's purge gate.
+            await Task.Run(policy.PurgeBuffer, TestContext.Current.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+            diagnostics.Consent.Revoke();
+            diagnostics.Consent.Grant();
+        }
+        finally { release.Set(); }
+        await handoff.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        using var current = new Activity("operation.newhandoff");
+        current.SetIdFormat(ActivityIdFormat.W3C).Start();
+        current.ActivityTraceFlags = ActivityTraceFlags.Recorded;
+        policy.OnSpanStarted(current);
+        current.Stop();
+        policy.OnSpanEnded(current);
+        await exporter.DisposeAsync();
+        Assert.Contains("operation.newhandoff", Assert.Single(handler.Requests).Body, StringComparison.Ordinal);
+        Assert.Equal(1, exporter.Statistics.Purged);
+    }
+
+    [Fact]
+    public async Task SignalEmitterPreservesCollectedEpochAcrossConsentGateHandoffAndKeepsLocalFacts()
+    {
+        using var directory = new TestDirectory();
+        using var diagnostics = Fixtures.Open(directory.Path);
+        diagnostics.Consent.Grant();
+        using var handler = new OtlpExporterTests.Collector();
+        await using var exporter = OtlpHttpExporter.CreateForTest(new() { Collector = new("https://collector.invalid") },
+            Fixtures.Identity(), diagnostics.Consent, handler);
+        ConsentGatedTelemetry telemetry = diagnostics.CreateTelemetry(exporter);
+        bool first = true;
+        using var emitter = new SignalEmitter(new EventHandoffSink(telemetry, signal =>
+        {
+            if (first)
+            {
+                first = false;
+                diagnostics.Consent.Revoke();
+                diagnostics.Consent.Grant();
+            }
+            telemetry.Write(signal);
+        }));
+        using (ObservabilityScope.Push(Fixtures.Identity()))
+        {
+            StructuredSignal old = emitter.Emit(SignalEventName.ApplicationStarted, SignalLevel.Information);
+            StructuredSignal current = emitter.Emit(SignalEventName.OperationCompleted, SignalLevel.Information);
+            Assert.NotEqual(old.CollectionEpoch, current.CollectionEpoch);
+        }
+        await exporter.DisposeAsync();
+        string body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("operation.completed", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("application.started", body, StringComparison.Ordinal);
+        Assert.Contains(diagnostics.ReadRecent(10), entry => entry.Name == "application.started");
+        Assert.Contains(diagnostics.ReadRecent(10), entry => entry.Name == "operation.completed");
+    }
+
     [Fact]
     public async Task ActualHostKeepsLocalDiagnosticsWithoutConsentAndPurgesTraceBufferOnWithdrawal()
     {
@@ -208,5 +335,17 @@ public sealed class ProductionCompositionTests
     {
         public string DependencyId => id;
         public ValueTask<DependencyReadinessStatus> ProbeAsync(CancellationToken cancellationToken) => operation(cancellationToken);
+    }
+
+    private sealed class HandoffSink(Action<ScrubbedSpan> write) : IScrubbedSpanSink
+    {
+        public void Write(ScrubbedSpan span) => write(span);
+    }
+
+    private sealed class EventHandoffSink(ITelemetryEpochSource source, Action<StructuredSignal> write)
+        : IStructuredEventSink, ITelemetryEpochSource
+    {
+        public long CollectionEpoch => source.CollectionEpoch;
+        public void Write(StructuredSignal signal) => write(signal);
     }
 }

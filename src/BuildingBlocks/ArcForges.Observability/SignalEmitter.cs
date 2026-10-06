@@ -35,6 +35,7 @@ public sealed class SignalEmitter : IDisposable
         }
 
         string stableEventName = EventName(eventName);
+        long? collectionEpoch = (_sink as ITelemetryEpochSource)?.CollectionEpoch;
 
         var context = ObservabilityScope.Current
             ?? throw new InvalidOperationException("A complete observability context must be installed before emitting a signal.");
@@ -43,7 +44,7 @@ public sealed class SignalEmitter : IDisposable
         var properties = RedactionProcessor.Scrub(context.MaterializeDimensions());
         var metrics = GetMetrics(context);
         var timestamp = DateTimeOffset.UtcNow;
-        var signal = new StructuredSignal(stableEventName, level, timestamp, properties);
+        var signal = new StructuredSignal(stableEventName, level, timestamp, properties, collectionEpoch);
 
         using (var activity = Activities.StartActivity(stableEventName, ActivityKind.Internal))
         {

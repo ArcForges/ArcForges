@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers;
-using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.Json;
 using ArcForges.Foundation;
 

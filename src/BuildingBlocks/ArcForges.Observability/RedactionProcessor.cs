@@ -9,7 +9,7 @@ public sealed class ScrubbedSpan
 {
     internal ScrubbedSpan(string sourceName, string name, string traceId, string spanId, string? parentSpanId,
         ActivityKind kind, DateTime startTimeUtc, TimeSpan duration, ActivityStatusCode status,
-        IReadOnlyDictionary<string, object?> tags, IReadOnlyList<ScrubbedSpanEvent> events)
+        IReadOnlyDictionary<string, object?> tags, IReadOnlyList<ScrubbedSpanEvent> events, long? collectionEpoch = null)
     {
         SourceName = sourceName;
         Name = name;
@@ -22,6 +22,7 @@ public sealed class ScrubbedSpan
         Status = status;
         Tags = tags;
         Events = events;
+        CollectionEpoch = collectionEpoch;
     }
 
     public string SourceName { get; }
@@ -38,6 +39,11 @@ public sealed class ScrubbedSpan
 
     public IReadOnlyDictionary<string, object?> Tags { get; }
     public IReadOnlyList<ScrubbedSpanEvent> Events { get; }
+    /// <summary>Collection provenance for a revocable host; never serialized as a telemetry attribute or authority.</summary>
+    public long? CollectionEpoch { get; }
+
+    internal ScrubbedSpan WithCollectionEpoch(long? epoch) => new(SourceName, Name, TraceId, SpanId, ParentSpanId,
+        Kind, StartTimeUtc, Duration, Status, Tags, Events, epoch);
 }
 
 /// <summary>A span event reduced to its name, time and reviewed fields.</summary>

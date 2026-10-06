@@ -94,7 +94,7 @@ internal sealed class OtlpMetricCollector : IDisposable
             }
             DateTimeOffset start = previous.At < now ? previous.At : now.AddTicks(-1);
             points[key] = new(epoch, now, value, true);
-            _exporter.Metric(instrument.Name, shape, exportValue, labels, start, now);
+            _exporter.Metric(instrument.Name, shape, exportValue, labels, start, now, epoch);
         }
     }
 

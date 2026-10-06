@@ -104,6 +104,7 @@ public sealed class OtlpExporterTests
     }
 
     [Fact]
+    [SuppressMessage("Reliability", "CA2025", Justification = "The response is transferred in an already-completed Task.FromResult; the actual exporter awaits and disposes it before handler disposal.")]
     public async Task RevocationCancelsRetryAfterBackoffAndNeverRetainsOldEpochUntilDelayEnds()
     {
         using var directory = new TestDirectory();
@@ -139,8 +140,10 @@ public sealed class OtlpExporterTests
         using var handler = new Collector(async (_, token) => { entered.TrySetResult(); await release.Task.WaitAsync(token); return Ok(); });
         await using var exporter = OtlpHttpExporter.CreateForTest(new()
         {
-            Collector = new("https://collector.invalid"), MaximumRetainedRecords = 2,
-            MaximumRetainedBytes = 4096, MaximumRecordBytes = 1024,
+            Collector = new("https://collector.invalid"),
+            MaximumRetainedRecords = 2,
+            MaximumRetainedBytes = 4096,
+            MaximumRecordBytes = 1024,
         }, Fixtures.Identity(), diagnostics.Consent, handler);
         Emit(exporter);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
@@ -237,8 +240,10 @@ public sealed class OtlpExporterTests
         using var handler = new Collector(async (_, token) => { await Task.Delay(Timeout.InfiniteTimeSpan, token); return Ok(); });
         await using var exporter = OtlpHttpExporter.CreateForTest(new()
         {
-            Collector = new("https://collector.invalid"), RequestTimeout = TimeSpan.FromMilliseconds(20),
-            RetryDelay = TimeSpan.Zero, MaximumAttempts = 2,
+            Collector = new("https://collector.invalid"),
+            RequestTimeout = TimeSpan.FromMilliseconds(20),
+            RetryDelay = TimeSpan.Zero,
+            MaximumAttempts = 2,
         }, Fixtures.Identity(), diagnostics.Consent, handler);
         Emit(exporter);
         await exporter.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
@@ -256,7 +261,8 @@ public sealed class OtlpExporterTests
         using var handler = new Collector(async (_, token) => { await Task.Delay(Timeout.InfiniteTimeSpan, token); return Ok(); });
         await using var exporter = OtlpHttpExporter.CreateForTest(new()
         {
-            Collector = new("https://collector.invalid"), ShutdownTimeout = TimeSpan.FromMilliseconds(20),
+            Collector = new("https://collector.invalid"),
+            ShutdownTimeout = TimeSpan.FromMilliseconds(20),
         }, Fixtures.Identity(), diagnostics.Consent, handler);
         Emit(exporter);
         Emit(exporter);
@@ -287,7 +293,9 @@ public sealed class OtlpExporterTests
         using var handler = new Collector((attempt, _) => Task.FromResult(attempt == 1 ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) : Ok()));
         await using var exporter = OtlpHttpExporter.CreateForTest(new()
         {
-            Collector = new("https://collector.invalid"), Credentials = owner, RetryDelay = TimeSpan.Zero,
+            Collector = new("https://collector.invalid"),
+            Credentials = owner,
+            RetryDelay = TimeSpan.Zero,
         }, Fixtures.Identity(), diagnostics.Consent, handler);
         Emit(exporter);
         await exporter.DisposeAsync();
@@ -314,8 +322,11 @@ public sealed class OtlpExporterTests
         using var handler = new Collector();
         await using var exporter = OtlpHttpExporter.CreateForTest(new()
         {
-            Collector = new("https://collector.invalid"), Credentials = owner,
-            RequestTimeout = TimeSpan.FromMilliseconds(20), MaximumAttempts = 2, RetryDelay = TimeSpan.Zero,
+            Collector = new("https://collector.invalid"),
+            Credentials = owner,
+            RequestTimeout = TimeSpan.FromMilliseconds(20),
+            MaximumAttempts = 2,
+            RetryDelay = TimeSpan.Zero,
         }, Fixtures.Identity(), diagnostics.Consent, handler);
         Emit(exporter);
         Emit(exporter);

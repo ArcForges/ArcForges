@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Net;
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -105,20 +105,20 @@ public sealed class OtlpHttpExporter : IClientTelemetryTransport, IScrubbedSpanS
     {
         ArgumentNullException.ThrowIfNull(signal);
         if (signal.Level >= SignalLevel.Information)
-            EncodeAndQueue("logs", () => OtlpJson.Log(signal, _identity, _options.MaximumRecordBytes));
+            EncodeAndQueue("logs", () => OtlpJson.Log(signal, _identity, _options.MaximumRecordBytes), signal.CollectionEpoch);
     }
 
     public void Send(ScrubbedSpan span)
     {
         ArgumentNullException.ThrowIfNull(span);
-        EncodeAndQueue("traces", () => OtlpJson.Span(span, _identity, _options.MaximumRecordBytes));
+        EncodeAndQueue("traces", () => OtlpJson.Span(span, _identity, _options.MaximumRecordBytes), span.CollectionEpoch);
     }
 
     public void Write(ScrubbedSpan span) => Send(span);
 
     internal void Metric(string name, MetricShape shape, double value, IReadOnlyDictionary<string, object?> labels,
-        DateTimeOffset start, DateTimeOffset end) => EncodeAndQueue("metrics", () =>
-            OtlpJson.Metric(name, shape, value, labels, start, end, _identity, _options.MaximumRecordBytes));
+        DateTimeOffset start, DateTimeOffset end, long epoch) => EncodeAndQueue("metrics", () =>
+            OtlpJson.Metric(name, shape, value, labels, start, end, _identity, _options.MaximumRecordBytes), epoch);
 
     /// <summary>Drops queued records and cancels the in-flight request; no retained telemetry is written to disk.</summary>
     public void Purge()
@@ -147,14 +147,15 @@ public sealed class OtlpHttpExporter : IClientTelemetryTransport, IScrubbedSpanS
         }
     }
 
-    private void EncodeAndQueue(string path, Func<byte[]> encode)
+    private void EncodeAndQueue(string path, Func<byte[]> encode, long? collectionEpoch = null)
     {
         // Serialize under the gate: even many concurrent callers cannot retain unaccounted record buffers.
         lock (_gate)
         {
             if (_stopping || !_consent.IsGranted) { _rejected++; return; }
             if (_retainedRecords >= _options.MaximumRetainedRecords) { _overflow++; return; }
-            long epoch = _consent.Revocations;
+            long epoch = collectionEpoch ?? _consent.Revocations;
+            if (epoch != _consent.Revocations) { _purged++; return; }
             byte[] bytes;
             try { bytes = encode(); }
             catch (Exception error) when (error is InvalidDataException or ArgumentException or OverflowException)
