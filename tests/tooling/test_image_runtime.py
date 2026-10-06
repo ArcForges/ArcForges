@@ -103,7 +103,7 @@ class ImageRuntimeTests(unittest.TestCase):
     def test_real_promotion_replaces_complete_directory_and_removes_its_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            destination, staging = root / "release", root / "staging"
+            destination, staging = root / "release", root / ".release.image-stage-test"
             destination.mkdir()
             staging.mkdir()
             (destination / "old").write_text("old")
@@ -121,9 +121,51 @@ class ImageRuntimeTests(unittest.TestCase):
             destination.mkdir()
             (destination / "original").write_text("preserve")
             with self.assertRaises(FileNotFoundError):
-                image._promote(root / "missing-staging", destination)
+                image._promote(root / ".release.image-stage-missing", destination)
             self.assertEqual("preserve", (destination / "original").read_text())
             self.assertEqual(["release"], [path.name for path in root.iterdir()])
+
+    def test_process_death_during_promotion_recovers_previous_or_completed_candidate(self):
+        for phase in ("intent", "backup", "published"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                destination, staging = root / "release", root / ".release.image-stage-child"
+                destination.mkdir()
+                staging.mkdir()
+                (destination / "old").write_text("previous")
+                (staging / "new").write_text("successor")
+                script = ('import os,sys; from pathlib import Path; '
+                          'sys.path.insert(0,sys.argv[1]); import image_runtime as image; '
+                          'd=Path(sys.argv[2]); s=d.parent/".release.image-stage-child"; '
+                          'b=d.parent/(".release.previous-"+"a"*32); '
+                          'image._promotion_intent(s,d,b,True); '
+                          'os._exit(0) if sys.argv[3]=="intent" else None; '
+                          'os.replace(d,b); image._directory_sync(d.parent); '
+                          'os._exit(0) if sys.argv[3]=="backup" else None; '
+                          'os.replace(s,d); image._directory_sync(d.parent); os._exit(0)')
+                child = subprocess.run([sys.executable, "-c", script, str(ROOT / "eng/packaging"),
+                                        str(destination), phase], timeout=10, capture_output=True)
+                self.assertEqual(0, child.returncode, child.stderr.decode())
+                with image._stage_lock(destination):
+                    image._recover_promotion(destination)
+                    image._recover_promotion(destination)  # Bounded retry is idempotent.
+                expected = "new" if phase == "published" else "old"
+                self.assertEqual([expected], [path.name for path in destination.iterdir()])
+                self.assertEqual({"release", ".release.image-stage-lockfile"}, {path.name for path in root.iterdir()})
+
+    def test_recovery_rejects_escaping_journal_without_touching_other_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            destination = root / "release"
+            other = root / "other"
+            other.mkdir()
+            (other / "keep").write_text("preserve")
+            journal = root / ".release.image-promotion.json"
+            image._write(journal, {"schemaVersion": 1, "destination": "release", "staging": "../other",
+                                   "backup": ".release.previous-" + "a" * 32, "hadPrevious": False})
+            self.assertRaises(ValueError, image._recover_promotion, destination)
+            self.assertEqual("preserve", (other / "keep").read_text())
+            self.assertTrue(journal.exists())
 
     def test_concurrent_writers_have_one_owner_and_cancelled_waiter_does_not_release_it(self):
         with tempfile.TemporaryDirectory() as temporary:

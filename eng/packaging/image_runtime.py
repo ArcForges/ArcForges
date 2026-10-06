@@ -464,25 +464,81 @@ def _stage_lock(destination, cancelled=None):
             stream.close()
 
 
+def _promotion_intent(staging, destination, backup, had_previous):
+    journal = destination.parent / ("." + destination.name + ".image-promotion.json")
+    require(not journal.exists() and not _link(journal), "Unrecovered Image promotion journal.")
+    require(staging.parent == destination.parent and
+            staging.name.startswith("." + destination.name + ".image-stage-") and
+            re.fullmatch(re.escape("." + destination.name + ".previous-") + r"[a-f0-9]{32}", backup.name),
+            "Image promotion paths are not owned siblings.")
+    temporary = destination.parent / ("." + destination.name + ".image-journal-" + uuid.uuid4().hex)
+    try:
+        _write(temporary, {"schemaVersion": 1, "destination": destination.name, "staging": staging.name,
+                           "backup": backup.name, "hadPrevious": had_previous})
+        os.replace(temporary, journal)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    _directory_sync(destination.parent)
+    return journal
+
+
+def _recover_promotion(destination):
+    # Called with the destination's kernel lock held. The durable intent precedes
+    # any rename. Presence of the owned paths distinguishes rollback from a
+    # completed publication without trusting unvalidated staged contents.
+    journal = destination.parent / ("." + destination.name + ".image-promotion.json")
+    if not journal.exists():
+        require(not _link(journal), "Linked Image promotion journal.")
+        return
+    value = _document(journal)
+    require(set(value) == {"schemaVersion", "destination", "staging", "backup", "hadPrevious"} and
+            value["schemaVersion"] == 1 and value["destination"] == destination.name and
+            type(value["hadPrevious"]) is bool and isinstance(value["staging"], str) and
+            isinstance(value["backup"], str), "Invalid Image promotion journal.")
+    _path(value["staging"])
+    _path(value["backup"])
+    require("/" not in value["staging"] and "/" not in value["backup"] and
+            value["staging"].startswith("." + destination.name + ".image-stage-") and
+            re.fullmatch(re.escape("." + destination.name + ".previous-") + r"[a-f0-9]{32}", value["backup"]),
+            "Image recovery paths are not owned siblings.")
+    staging, backup = (destination.parent / value[key] for key in ("staging", "backup"))
+    for path in (destination, staging, backup):
+        require(not _link(path) and (not path.exists() or path.is_dir()), "Unsafe Image recovery material.")
+    require(not backup.exists() or value["hadPrevious"], "Unexpected Image recovery backup.")
+    require(not value["hadPrevious"] or destination.exists() or backup.exists(),
+            "Image recovery cannot locate the previous candidate.")
+    require(not (destination.exists() and backup.exists() and staging.exists()),
+            "Image recovery has conflicting publication paths.")
+    if backup.exists() and not destination.exists():
+        os.replace(backup, destination)
+        _directory_sync(destination.parent)
+    # If destination and backup both exist, publication completed. Otherwise
+    # retain the old destination; interrupted unpromoted material is rebuilt.
+    for path in (backup, staging):
+        if path.exists():
+            shutil.rmtree(path)
+            _directory_sync(destination.parent)
+    journal.unlink()
+    _directory_sync(destination.parent)
+
+
 def _promote(staging, destination):
     backup = destination.parent / ("." + destination.name + ".previous-" + uuid.uuid4().hex)
     require(not _link(destination) and not backup.exists(), "Unsafe Image promotion destination.")
     had_previous = destination.exists()
-    if had_previous:
-        require(destination.is_dir(), "Image promotion would replace a non-directory.")
-        os.replace(destination, backup)
-        _directory_sync(destination.parent)
+    _promotion_intent(staging, destination, backup, had_previous)
     try:
+        if had_previous:
+            require(destination.is_dir(), "Image promotion would replace a non-directory.")
+            os.replace(destination, backup)
+            _directory_sync(destination.parent)
         os.replace(staging, destination)
         _directory_sync(destination.parent)
     except BaseException:
-        if had_previous and not destination.exists():
-            os.replace(backup, destination)
-            _directory_sync(destination.parent)
+        _recover_promotion(destination)
         raise
-    if had_previous:
-        shutil.rmtree(backup)
-        _directory_sync(destination.parent)
+    _recover_promotion(destination)
 
 
 def stage(destination, rid, inputs, root=ROOT, cancelled=None):
@@ -500,6 +556,7 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
     audit = check_provenance.run(root, "DesktopPlatform")
     require(not audit["dirty"], "Image source/legal provenance is not clean.")
     with _stage_lock(destination, cancelled):
+        _recover_promotion(destination)
         _cancel(cancelled)
         if destination.exists():
             try:
