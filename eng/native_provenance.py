@@ -812,6 +812,35 @@ def pdfium_owned_recipe(producer, runtime_profile: dict, pdfium_directory: Path,
             "triplet": "x64-windows-static-md", "pdfium": "chromium/8044"}
 
 
+def verify_pdfium_staging(staging: Path, selected: dict, value: dict, receipt: dict,
+                          runtime_legal: list[dict] | None = None) -> None:
+    """Rebind copied bytes before promotion, refusing cache changes during the handoff."""
+    expected = {"runtimes/win-x64/native/" + item["name"]: (item["sha256"], "raw", 16 * 1024 * 1024)
+                for item in selected.values()}
+    expected["provenance/pdfium-attestation.json"] = (value["attestation"]["sha256"], "raw",
+                                                       value["attestation"]["maximumBytes"])
+    expected["provenance/pdfium-sbom.v1.json"] = (value["sbom"]["sha256"], "lf", 8 * 1024 * 1024)
+    expected["provenance/pdfium-build.v1.json"] = (sha(canonical(value), "lf"), "lf", 8 * 1024 * 1024)
+    for name, digest in value["legalFiles"].items():
+        expected["licenses/pdfium/" + Path(name).name] = (digest, "raw", 8 * 1024 * 1024)
+    for legal in runtime_legal or ():
+        expected[legal["output"]] = (legal["sourceSha256"], "raw", 8 * 1024 * 1024)
+    for name, (digest, normalization, maximum) in expected.items():
+        path = staging / name
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size <= maximum,
+                "Missing or unbounded copied PDF evidence: " + name)
+        with path.open("rb") as stream:
+            data = stream.read(maximum + 1)
+        require(len(data) <= maximum and sha(data, normalization) == digest,
+                "Copied PDF evidence changed during sealing: " + name)
+    path = staging / "provenance/pdfium-build-receipt.json"
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 64 * 1024,
+            "Missing or unbounded copied PDF admission receipt")
+    with path.open("rb") as stream:
+        data = stream.read(64 * 1024 + 1)
+    require(data == canonical(receipt), "Copied PDF admission receipt changed during sealing")
+
+
 def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: Path) -> dict:
     """Seal the actual PDF binary/SDK/dependency input for NAT.25; this is not a published package."""
     import importlib.util
@@ -897,6 +926,7 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
             "Microsoft CRT files are unmodified, hash-pinned and Authenticode-verified under the retained original grant texts.\n"
             "This source-bound composition input is not a signed/published runtime package. NAT.25 owns that delivery.\n"
         ).encode("utf-8"))
+        verify_pdfium_staging(staging, selected, value, receipt, runtime_profile["platformRuntime"]["legal"])
         result = {"schemaVersion": 1, "sourceCommit": audit["sourceCommit"], "rid": "win-x64",
                   "kind": "pdfium-production-composition-input", "profile": value["id"],
                   "build": build_identity.build_identity(ROOT), "admission": receipt,

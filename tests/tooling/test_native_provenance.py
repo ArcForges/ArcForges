@@ -660,6 +660,54 @@ class PdfiumAdmissionInputTests(unittest.TestCase):
                 verifier.assert_not_called()
 
 
+class PdfiumStagingTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.files = {'runtimes/win-x64/native/ArcPdfNative.dll': b'owned native bytes',
+                      'provenance/pdfium-attestation.json': b'external signed bundle',
+                      'provenance/pdfium-sbom.v1.json': b'{"sbom":true}\n',
+                      'licenses/pdfium/legal.txt': b'complete legal text'}
+        self.selected = {'arcpdfnative.dll': {'name':'ArcPdfNative.dll',
+                                             'sha256':native.sha(self.files['runtimes/win-x64/native/ArcPdfNative.dll'])}}
+        self.value = {'attestation':{'sha256':native.sha(self.files['provenance/pdfium-attestation.json']), 'maximumBytes':131072},
+                      'sbom':{'sha256':native.sha(self.files['provenance/pdfium-sbom.v1.json'], 'lf')},
+                      'legalFiles':{'third-party/pdfium/legal.txt':native.sha(self.files['licenses/pdfium/legal.txt'])}}
+        self.receipt = {'profile':'exact reviewed receipt'}
+        self.files['provenance/pdfium-build.v1.json'] = native.canonical(self.value)
+        self.files['licenses/provenance/runtime-grant.docx'] = b'complete unmodified external grant'
+        self.runtime_legal = [{'output':'licenses/provenance/runtime-grant.docx',
+                               'sourceSha256':native.sha(self.files['licenses/provenance/runtime-grant.docx'])}]
+        self.files['provenance/pdfium-build-receipt.json'] = native.canonical(self.receipt)
+        for name, data in self.files.items():
+            path = self.directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+    def verify(self):
+        native.verify_pdfium_staging(self.directory, self.selected, self.value, self.receipt, self.runtime_legal)
+
+    def test_actual_copied_bytes_match_all_admitted_facts(self):
+        self.verify()
+
+    def test_mutated_copies_refuse_even_after_source_validation(self):
+        for name, original in self.files.items():
+            with self.subTest(name=name):
+                path = self.directory / name
+                path.write_bytes(original+b'changed after validation')
+                with self.assertRaisesRegex(ValueError, 'changed during sealing'):
+                    self.verify()
+                path.write_bytes(original)
+
+    def test_missing_or_unbounded_copied_evidence_refuses(self):
+        path = self.directory / 'provenance/pdfium-attestation.json'
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, 'copied PDF evidence'): self.verify()
+        path.write_bytes(b'x' * 131073)
+        with self.assertRaisesRegex(ValueError, 'copied PDF evidence'): self.verify()
+
+
 class PdfiumArchiveTests(unittest.TestCase):
     def extract(self, rows, expected=None):
         with tempfile.TemporaryDirectory() as temporary:
