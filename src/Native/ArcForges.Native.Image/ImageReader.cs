@@ -208,9 +208,25 @@ public sealed unsafe class ImageReader : IImageReader
         return (status, handle);
     }
 
-    private static Exception Failure(int status, CancellationToken cancellation) => status == (int)NativeStatus.Cancelled
-        ? new OperationCanceledException(cancellation)
-        : new ImageNativeException(status is >= -13 and <= -1 ? (NativeStatus)status : NativeStatus.Internal, ImageAbi.GetLastError().Message);
+    private static Exception Failure(int status, CancellationToken cancellation)
+    {
+        if (status == (int)NativeStatus.Cancelled)
+        {
+            return new OperationCanceledException(cancellation);
+        }
+
+        var message = string.Empty;
+        try
+        {
+            message = ImageAbi.GetLastError().Message;
+        }
+        catch (InvalidOperationException)
+        {
+            // Preserve the typed status when a diagnostic snapshot cannot be read.
+        }
+
+        return new ImageNativeException(status is >= -13 and <= -1 ? (NativeStatus)status : NativeStatus.Internal, message);
+    }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     [SuppressMessage("Design", "CA1031", Justification = "Callbacks must never throw across the native frame.")]

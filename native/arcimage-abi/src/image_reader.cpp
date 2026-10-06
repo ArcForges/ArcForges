@@ -84,7 +84,7 @@ class source final : public OIIO::Filesystem::IOProxy {
         uint64_t done = 0;
         const auto code = io_.read_at(io_.context, static_cast<uint64_t>(position), bytes, count, &done);
         if ((code != ARC_OK && code != ARC_END_OF_STREAM) || done != count) {
-            status = code < 0 ? code : ARC_IO;
+            status = code >= ARC_INTERNAL && code <= ARC_INVALID_ARGUMENT ? code : ARC_IO;
             return 0;
         }
         return static_cast<size_t>(done);
@@ -272,13 +272,18 @@ std::string source_color_space(const reader& value)
 std::string metadata(const reader& value, uint32_t subimages, uint32_t mips)
 {
     const auto& s = value.spec;
+    bool loss = value.options.format == ARC_FORMAT_RGBA8 || s.nchannels > 4;
+    for (int channel = 0; channel < s.nchannels; ++channel) {
+        const auto type = s.channelformat(channel);
+        loss = loss || type == OIIO::TypeDesc::DOUBLE || type == OIIO::TypeDesc::UINT || type == OIIO::TypeDesc::INT;
+    }
     std::string json =
         "{\"version\":1,\"width\":" + std::to_string(s.width) + ",\"height\":" + std::to_string(s.height) +
         ",\"subimages\":" + std::to_string(subimages) + ",\"mips\":" + std::to_string(mips) +
         ",\"subimage\":" + std::to_string(value.options.subimage) + ",\"mip\":" + std::to_string(value.options.mip) +
         ",\"format\":" + std::to_string(value.options.format) + ",\"codec\":" + quote(value.codec->format_name()) +
         ",\"sourceColorSpace\":" + quote(source_color_space(value)) +
-        ",\"conversionLoss\":" + (value.options.format == ARC_FORMAT_RGBA8 ? "true" : "false") + ",\"channels\":[";
+        ",\"conversionLoss\":" + (loss ? "true" : "false") + ",\"channels\":[";
     for (int i = 0; i < s.nchannels; ++i) {
         if (i)
             json += ',';
@@ -329,10 +334,11 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         status = arc::abi::check_cancelled(cancel);
         if (status != ARC_OK)
             return status;
-        if (!io->read_at || !io->length || io->length > io->max_length ||
-            io->length > options->limits.max_input_bytes || io->length > INT64_MAX || options->reserved ||
+        if (!io->read_at || !io->length || io->length > io->max_length || io->length > INT64_MAX || options->reserved ||
             options->subimage >= options->limits.max_items || options->mip >= options->limits.max_items)
             return fail(ARC_INVALID_ARGUMENT, "Invalid image input or options");
+        if (io->length > options->limits.max_input_bytes)
+            return fail(ARC_RESOURCE_LIMIT, "Image input exceeds admission budget");
         if (options->format != ARC_FORMAT_RGBA8 && options->format != ARC_FORMAT_RGBA32F_LINEAR_PREMULTIPLIED)
             return fail(ARC_UNSUPPORTED, "Unknown image output format");
         auto value = std::make_shared<reader>();

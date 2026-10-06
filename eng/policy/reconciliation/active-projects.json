@@ -24,7 +24,7 @@
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
-      "blob": "c2324f974d45ee470045e8cfd8d13b8647114e5c"
+      "blob": "25daa22f1ac7e6d2a0952f0568fa6c50a1be30d8"
     },
     {
       "path": "native/arcpdf-abi/CMakeLists.txt",

@@ -26,6 +26,8 @@ void require(bool condition, const char* message)
 struct input {
     std::vector<unsigned char> bytes;
     bool fail = false;
+    arc_status_t failure = ARC_IO;
+    uint32_t delay_ms = 0;
     bool short_read = false;
     std::atomic<bool> block{false};
     std::atomic<bool> entered{false};
@@ -37,7 +39,9 @@ arc_status_t ARC_ABI_CALL read(void* context, uint64_t offset, void* destination
     auto& data = *static_cast<input*>(context);
     *done = 0;
     if (data.fail)
-        return ARC_IO;
+        return data.failure;
+    if (data.delay_ms)
+        std::this_thread::sleep_for(std::chrono::milliseconds(data.delay_ms));
     if (data.block) {
         data.entered = true;
         data.changed.notify_all();
@@ -214,7 +218,20 @@ void codec_tests(const std::filesystem::path& directory)
         data.fail = true;
         require(arc_image_open(&source, &config, &refused, &buffer, nullptr) == ARC_IO && refused == 0,
                 "failed IO accepted");
+        data.failure = -99;
+        require(arc_image_open(&source, &config, &refused, &buffer, nullptr) == ARC_IO,
+                "unknown callback status escaped closed ABI");
         data.fail = false;
+        config.limits.max_input_bytes = data.bytes.size() - 1;
+        require(arc_image_open(&source, &config, &refused, &buffer, nullptr) == ARC_RESOURCE_LIMIT,
+                "input admission budget reported invalid arguments");
+        config = options();
+        config.limits.timeout_ms = 1;
+        data.delay_ms = 3;
+        require(arc_image_open(&source, &config, &refused, &buffer, nullptr) == ARC_RESOURCE_LIMIT && refused == 0,
+                "callback deadline did not refuse late result");
+        data.delay_ms = 0;
+        config = options();
         data.short_read = true;
         require(arc_image_open(&source, &config, &refused, &buffer, nullptr) == ARC_IO, "short callback accepted");
     }
@@ -250,6 +267,12 @@ void lifetime_tests(const std::filesystem::path& directory)
         require(data.changed.wait_for(lock, std::chrono::seconds(5), [&] { return data.entered.load(); }),
                 "codec did not borrow callback");
     }
+    arc_region_v1 region{.struct_size = sizeof(region), .struct_version = 1, .width = 1, .height = 1, .row_stride = 4};
+    unsigned char busy_pixels[4]{0xD7, 0xD7, 0xD7, 0xD7};
+    arc_mut_buffer_t busy_output{busy_pixels, sizeof(busy_pixels), 0};
+    require(arc_image_read(handle, &region, &busy_output, nullptr) == ARC_BUSY && busy_output.required == 0 &&
+                busy_pixels[0] == 0xD7,
+            "concurrent read did not refuse without output");
     auto closing = std::async(std::launch::async, [&] { return arc_image_close(handle); });
     require(closing.wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout,
             "close did not drain borrowed call");
