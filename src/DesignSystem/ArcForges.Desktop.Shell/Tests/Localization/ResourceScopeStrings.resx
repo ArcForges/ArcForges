@@ -9,6 +9,7 @@
   <data name="settings.name" xml:space="preserve"><value>Module settings</value></data>
   <data name="module.blank" xml:space="preserve"><value>   </value></data>
   <data name="module.argument" xml:space="preserve"><value>{value}</value></data>
+  <data name="module.repeated" xml:space="preserve"><value>{value} / {value}</value></data>
   <data name="module.invalid" xml:space="preserve"><value>{count, plural, one {one}}</value></data>
   <data name="module.number" xml:space="preserve"><value>Measured {value}</value></data>
   <data name="module.count" xml:space="preserve"><value>{count, plural, one {one message} few {few messages} many {many messages} other {# messages}}</value></data>

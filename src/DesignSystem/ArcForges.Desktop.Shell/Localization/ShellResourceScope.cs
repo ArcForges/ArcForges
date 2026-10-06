@@ -40,16 +40,38 @@ public sealed class ShellResourceScope
             throw new InvalidOperationException("The embedded text resource is blank.");
         }
 
-        string output = ShellMessageFormatter.Format(pattern, text.Arguments, effective);
-        if (string.IsNullOrWhiteSpace(output))
+        // Integer counts keep their actual immutable types for plural selection. Other values are lazily
+        // formatted through the shared policy once, including repeated placeholders and pseudo validation.
+        var arguments = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var argument in text.Arguments)
         {
-            throw new InvalidOperationException("The embedded text resource resolves to blank text.");
+            arguments.Add(argument.Key, argument.Value is null or string or long or int or short or byte or
+                sbyte or uint or ushort or ulong ? argument.Value : new CachedArgument(argument.Value, effective));
         }
 
-        return ShellText.IsPseudoLocalising
-            ? ShellMessageFormatter.Format(PseudoLocaliser.Transform(pattern), text.Arguments, effective)
-            : output;
+        try
+        {
+            string output = ShellMessageFormatter.Format(pattern, arguments, effective);
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                throw new InvalidOperationException("The embedded text resource resolves to blank text.");
+            }
+
+            return ShellText.IsPseudoLocalising
+                ? ShellMessageFormatter.Format(PseudoLocaliser.Transform(pattern), arguments, effective)
+                : output;
+        }
+        catch (FormatException)
+        {
+            throw new FormatException("The embedded text resource cannot be formatted.");
+        }
     }
 
     internal bool Defines(string key) => _resources.GetString(key, CultureInfo.InvariantCulture) is not null;
+
+    private sealed class CachedArgument(object value, CultureInfo culture) : IFormattable
+    {
+        private readonly Lazy<string> _text = new(() => ShellMessageFormatter.FormatValue(value, culture));
+        public string ToString(string? format, IFormatProvider? formatProvider) => _text.Value;
+    }
 }

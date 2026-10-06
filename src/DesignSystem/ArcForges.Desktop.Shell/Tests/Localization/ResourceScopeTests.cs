@@ -109,4 +109,47 @@ public sealed class ResourceScopeTests
     {
         public string ToString(string? format, IFormatProvider? formatProvider) => throw new FormatException("The value cannot be formatted.");
     }
+
+    [Fact]
+    public void PseudoAndRepeatedPlaceholdersFormatEachStatefulValueExactlyOnceWithoutTransformingUserText()
+    {
+        ShellResourceScope scope = Scope();
+        var value = new StatefulValue();
+        var text = new LocalizedText("module.repeated", new Dictionary<string, object?> { ["value"] = value });
+        using IDisposable marker = ShellText.BeginPseudoLocalisation();
+        string rendered = scope.Resolve(text);
+        Assert.Equal(1, value.Calls);
+        Assert.True(PseudoLocaliser.IsWholePseudoMessage(rendered));
+        Assert.Contains("Ada / Ada", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Á", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FormatExceptionFromActualValueCannotDiscloseItsSecretThroughMessageInnerExceptionOrAudit()
+    {
+        ShellResourceScope scope = Scope();
+        var text = new LocalizedText("module.argument", new Dictionary<string, object?> { ["value"] = new SecretValue() });
+        foreach (bool pseudo in new[] { false, true })
+        {
+            using IDisposable? marker = pseudo ? ShellText.BeginPseudoLocalisation() : null;
+            FormatException error = Assert.Throws<FormatException>(() => scope.Resolve(text));
+            Assert.DoesNotContain("private-secret", error.ToString(), StringComparison.Ordinal);
+            Assert.Null(error.InnerException);
+            var surface = new ShellSurface("module.surface", new AccessibleNode("module.root", AccessibleRole.Region, text));
+            var findings = ShellAccessibilityAudit.Evaluate(scope, [surface]);
+            Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Text);
+            Assert.All(findings, finding => Assert.DoesNotContain("private-secret", finding.Message, StringComparison.Ordinal));
+        }
+    }
+
+    private sealed class StatefulValue : IFormattable
+    {
+        internal int Calls { get; private set; }
+        public string ToString(string? format, IFormatProvider? formatProvider) => ++Calls == 1 ? "Ada" : "   ";
+    }
+
+    private sealed class SecretValue : IFormattable
+    {
+        public string ToString(string? format, IFormatProvider? formatProvider) => throw new FormatException("private-secret");
+    }
 }

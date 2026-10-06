@@ -103,7 +103,7 @@ public static class ShellMessageFormatter
         _ => throw new FormatException("A plural argument must be an integer count."),
     };
 
-    private static string FormatValue(object value, CultureInfo culture) => value switch
+    internal static string FormatValue(object value, CultureInfo culture) => value switch
     {
         string text => text,
         IFormattable formattable => formattable.ToString(null, culture),
