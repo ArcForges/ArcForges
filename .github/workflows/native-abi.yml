@@ -102,7 +102,10 @@ jobs:
           if not defined ARCFORGES_IMAGE_VS exit /b 1
           call "%ARCFORGES_IMAGE_VS%\VC\Auxiliary\Build\vcvarsall.bat" %IMAGE_MSVC_TARGET% -vcvars_ver=14.51.36231 || exit /b 1
           set "VCPKG_ROOT=%ARCFORGES_IMAGE_VCPKG_ROOT%"
-          cmake --preset image-%IMAGE_RID%-v1 -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= || exit /b 1
+          set "VSLANG=1033"
+          set "ARCFORGES_IMAGE_COMPILER=%ARCFORGES_IMAGE_VS%\VC\Tools\MSVC\14.51.36231\bin\Hostx64\%IMAGE_CRT_ARCH%\cl.exe"
+          if not exist "%ARCFORGES_IMAGE_COMPILER%" exit /b 1
+          cmake --fresh --preset image-%IMAGE_RID%-v1 "-DCMAKE_C_COMPILER=%ARCFORGES_IMAGE_COMPILER%" "-DCMAKE_CXX_COMPILER=%ARCFORGES_IMAGE_COMPILER%" -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= || exit /b 1
           cmake --build --preset image-%IMAGE_RID%-v1 || exit /b 1
           cmake --install artifacts/cmake/image/%IMAGE_RID% --component ImageRuntime || exit /b 1
       - name: Compile and install the owned Linux Image ABI on its actual architecture
@@ -110,7 +113,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "image-$IMAGE_RID-v1" -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER=
+          image_cc="$(readlink -f "$(command -v clang)")"
+          image_cxx="$(readlink -f "$(command -v clang++)")"
+          test -f "$image_cc" && test -f "$image_cxx"
+          cmake --fresh --preset "image-$IMAGE_RID-v1" "-DCMAKE_C_COMPILER=$image_cc" "-DCMAKE_CXX_COMPILER=$image_cxx" -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER=
           cmake --build --preset "image-$IMAGE_RID-v1"
           cmake --install "artifacts/cmake/image/$IMAGE_RID" --component ImageRuntime
       - name: Seal actual Image inputs without activating an unreviewed package
