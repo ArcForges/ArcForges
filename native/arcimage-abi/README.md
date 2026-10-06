@@ -18,7 +18,7 @@ The local opt-in arcslate_image_codec_tests target exercises actual OIIO PNG/TIF
 inputs (including ZIP/LZMA and multipage TIFF, EXR mip levels), unaligned edge tiles, RGBA32F,
 metadata, malformed content, dimensions, failed
 or short I/O, invalid callback statuses, deadlines, cancellation, concurrent refusal,
-insufficient buffers, 64 handles, stale/double close and
+insufficient buffers, repeated/backwards regions over brokered input, 64 handles, stale/double close and
 borrowed-call draining. It is compiled by the existing native build, outside CTest/CI
 runtime execution. Run affected diagnostics through the workstation build slot after
 building in an admitted environment. These tests prove codec behavior, not OS isolation,

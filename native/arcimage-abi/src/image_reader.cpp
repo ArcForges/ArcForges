@@ -204,7 +204,8 @@ arc_status_t valid_spec(const OIIO::ImageSpec& spec, const arc_limits_v1& limit)
         spec.tile_height > 65535 || spec.x > INT32_MAX - spec.width || spec.y > INT32_MAX - spec.height)
         return fail(ARC_UNSUPPORTED, "Image geometry or channels unsupported");
     if (static_cast<uint32_t>(spec.width) > limit.max_width || static_cast<uint32_t>(spec.height) > limit.max_height ||
-        static_cast<uint64_t>(spec.width) * spec.height > max_pixels)
+        static_cast<uint64_t>(spec.width) * spec.height > max_pixels ||
+        static_cast<uint32_t>(spec.nchannels) > limit.max_items)
         return fail(ARC_RESOURCE_LIMIT, "Image dimensions exceed admitted limits");
     if (spec.image_bytes() > limit.max_memory_bytes)
         return fail(ARC_RESOURCE_LIMIT, "Image decode working set exceeds admitted memory");
@@ -284,6 +285,9 @@ std::string metadata(const reader& value, uint32_t subimages, uint32_t mips)
 {
     const auto& s = value.spec;
     bool loss = value.options.format == ARC_FORMAT_RGBA8 || s.nchannels > 4;
+    const int photometric = s.get_int_attribute("tiff:PhotometricInterpretation", 2);
+    loss = loss || (std::string_view(value.codec->format_name()) == "tiff" && photometric != 0 && photometric != 1 &&
+                    photometric != 2);
     for (int channel = 0; channel < s.nchannels; ++channel) {
         const auto type = s.channelformat(channel);
         loss = loss || type == OIIO::TypeDesc::DOUBLE || type == OIIO::TypeDesc::UINT || type == OIIO::TypeDesc::INT ||
@@ -369,6 +373,10 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         if (!value->codec || !value->codec->set_ioproxy(value->input.get()))
             return fail(ARC_UNSUPPORTED, "Admitted image codec unavailable");
         OIIO::ImageSpec config;
+        // PNG rewinds by closing and reopening with its saved configuration. Preserve the
+        // brokered proxy in that configuration so a backwards ROI never resolves a path.
+        OIIO::Filesystem::IOProxy* proxy = value->input.get();
+        config.attribute("oiio:ioproxy", OIIO::TypeDesc::PTR, &proxy);
         config.attribute("oiio:UnassociatedAlpha", 1);
         config.attribute("oiio:Limits", 1);
         if (!value->codec->open(std::string("brokered.") + (std::string_view(format) == "openexr" ? "exr" : format),
@@ -546,7 +554,10 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
                     for (int c = 0; c < 4; ++c)
                         target[c] = static_cast<unsigned char>(std::lround(std::clamp(rgba[c], 0.0F, 1.0F) * 255.0F));
                 } else {
-                    rgba[3] = std::clamp(rgba[3], 0.0F, 1.0F);
+                    if (rgba[3] < 0.0F || rgba[3] > 1.0F) {
+                        output->required = 0;
+                        return fail(ARC_CORRUPT, "Image alpha lies outside the float output profile");
+                    }
                     const bool associated = std::string_view(value.codec->format_name()) == "openexr" &&
                                             !s.get_int_attribute("oiio:UnassociatedAlpha", 0);
                     for (int c = 0; c < 3; ++c) {
@@ -556,6 +567,10 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
                             rgba[c] = std::copysign(std::pow(std::abs(rgba[c]), gamma), rgba[c]);
                         if (!associated)
                             rgba[c] *= rgba[3];
+                        if (!std::isfinite(rgba[c])) {
+                            output->required = 0;
+                            return fail(ARC_CORRUPT, "Image color conversion produced a nonfinite sample");
+                        }
                     }
                     std::memcpy(target, rgba, sizeof(rgba));
                 }

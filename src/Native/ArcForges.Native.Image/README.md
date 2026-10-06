@@ -13,6 +13,12 @@ SafeHandle; close drains borrowed operations before releasing input roots. Cance
 is polled at callback/decode boundaries. Codec hangs or native crashes require the
 helper supervisor's OS termination and invocation cleanup.
 
+Input callbacks must return without waiting on another operation on that reader.
+Reentrant reads report Busy; queued reads or closes from a callback are refused.
+A synchronous callback close is deferred until the current borrowed read drains.
+Repeated and backwards regions retain the same immutable brokered input, including
+when an upstream PNG reader internally reopens to rewind.
+
 Pin this package and its explicitly admitted Runtime.<rid> sibling at the same exact
 published version. The retained loader requires win-x64 with an app-local hash manifest;
 it never searches PATH or the current directory. Other RID production and package-only

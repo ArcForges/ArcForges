@@ -12,6 +12,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -178,6 +179,12 @@ void codec_tests(const std::filesystem::path& directory)
         require(std::abs(static_cast<int>(pixels[0]) - expected_red) <= 1 && pixels[3] >= 127 && pixels[3] <= 128 &&
                     pixels[16] == 0,
                 "tile pixels/stride/alpha wrong");
+        require(arc_image_read(handle, &region, &buffer, nullptr) == ARC_OK,
+                "repeated ROI must retain brokered input after codec rewind");
+        region.y = 0;
+        require(arc_image_read(handle, &region, &buffer, nullptr) == ARC_OK,
+                "backwards ROI must retain brokered input after codec rewind");
+        region.y = 15;
         std::atomic<bool> signal{true};
         arc_cancel_token_t token{
             .struct_size = sizeof(token), .struct_version = 1, .is_cancelled = cancelled, .user_data = &signal};
@@ -384,6 +391,43 @@ void mip_tests(const std::filesystem::path& directory)
     require(arc_image_open(&source, &config, &refused, &output, nullptr) == ARC_RESOURCE_LIMIT && refused == 0,
             "EXR mip inventory item cap failed");
 }
+void invalid_float_tests(const std::filesystem::path& directory)
+{
+    for (int example = 0; example < 3; ++example) {
+        const auto file = directory / (example == 2 ? "overflow.tif" : "invalid.exr");
+        auto writer = OIIO::ImageOutput::create(file.string());
+        require(writer != nullptr, "float error fixture writer missing");
+        OIIO::ImageSpec spec(2, 2, 4, OIIO::TypeDesc::FLOAT);
+        spec.alpha_channel = 3;
+        spec.attribute("oiio:ColorSpace", example == 2 ? "srgb_rec709_scene" : "Linear");
+        std::vector<float> pixels(16, 0.25F);
+        for (size_t i = 3; i < pixels.size(); i += 4)
+            pixels[i] = 1.0F;
+        if (example == 0)
+            pixels[0] = std::numeric_limits<float>::infinity();
+        else if (example == 1)
+            pixels[3] = 2.0F;
+        else
+            pixels[0] = 1.0e30F;
+        require(writer->open(file.string(), spec) && writer->write_image(OIIO::TypeDesc::FLOAT, pixels.data()) &&
+                    writer->close(),
+                "float error fixture write failed");
+        writer.reset();
+        std::ifstream stream(file, std::ios::binary);
+        input data;
+        data.bytes = std::vector<unsigned char>(std::istreambuf_iterator<char>(stream), {});
+        const auto handle = open(data, options(ARC_FORMAT_RGBA32F_LINEAR_PREMULTIPLIED));
+        arc_region_v1 region{
+            .struct_size = sizeof(region), .struct_version = 1, .width = 1, .height = 1, .row_stride = 16};
+        unsigned char decoded[16];
+        std::fill(std::begin(decoded), std::end(decoded), 0xD7);
+        arc_mut_buffer_t output{decoded, sizeof(decoded), 0};
+        require(arc_image_read(handle, &region, &output, nullptr) == ARC_CORRUPT && output.required == 0 &&
+                    std::all_of(std::begin(decoded), std::end(decoded), [](auto value) { return value == 0xD7; }),
+                "invalid float profile returned visible pixels");
+        require(arc_image_close(handle) == ARC_OK, "float error fixture close failed");
+    }
+}
 } // namespace
 int main()
 {
@@ -395,6 +439,7 @@ int main()
         codec_tests(directory);
         subimage_tests(directory);
         mip_tests(directory);
+        invalid_float_tests(directory);
         lifetime_tests(directory);
         std::filesystem::remove_all(directory);
         std::cout

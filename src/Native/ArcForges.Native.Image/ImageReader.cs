@@ -58,11 +58,17 @@ public sealed unsafe class ImageReader : IImageReader
 {
     private readonly object _gate = new();
     private readonly ImageSafeHandle _handle;
+    private readonly InputState _input;
+    [ThreadStatic]
+    private static InputState? _callbackInput;
+    private bool _reading;
+    private bool _closeRequested;
 
-    private ImageReader(ImageSafeHandle handle, ImageMetadata metadata)
+    private ImageReader(ImageSafeHandle handle, ImageMetadata metadata, InputState input)
     {
         _handle = handle;
         Metadata = metadata;
+        _input = input;
     }
 
     public ImageMetadata Metadata { get; }
@@ -74,13 +80,15 @@ public sealed unsafe class ImageReader : IImageReader
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(limits);
-        if (input.Length <= 0)
+        var length = input.Length;
+        if (length <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(input));
         }
 
         cancellation.ThrowIfCancellationRequested();
-        var inputRoot = GCHandle.Alloc(input);
+        var inputState = new InputState(input);
+        var inputRoot = GCHandle.Alloc(inputState);
         var cancelRoot = GCHandle.Alloc(cancellation);
         ImageSafeHandle? owned = null;
         try
@@ -88,7 +96,7 @@ public sealed unsafe class ImageReader : IImageReader
             NativeIoV1 io = new()
             {
                 StructSize = (uint)sizeof(NativeIoV1), StructVersion = 1,
-                Context = GCHandle.ToIntPtr(inputRoot), Length = (ulong)input.Length, MaxLength = limits.MaxInputBytes, ReadAt = &ReadAt,
+                Context = GCHandle.ToIntPtr(inputRoot), Length = (ulong)length, MaxLength = (ulong)length, ReadAt = &ReadAt,
             };
             NativeImageOptionsV1 options = new()
             {
@@ -118,16 +126,21 @@ public sealed unsafe class ImageReader : IImageReader
                     throw Failure(status, cancellation);
                 }
 
+                if (handle == 0)
+                {
+                    throw new ImageNativeException(NativeStatus.Internal, "Native image open returned no handle.");
+                }
+
                 owned = new ImageSafeHandle(handle, inputRoot);
                 inputRoot = default;
-                if (output.Required != (ulong)bytes.Length || handle == 0)
+                if (output.Required != (ulong)bytes.Length)
                 {
                     throw new ImageNativeException(NativeStatus.Internal, "Native image open returned incomplete output.");
                 }
             }
 
             var metadata = ImageMetadataJson.Parse(bytes, limits, subimage, mip, format);
-            var reader = new ImageReader(owned, metadata);
+            var reader = new ImageReader(owned, metadata, inputState);
             owned = null;
             return reader;
         }
@@ -145,11 +158,22 @@ public sealed unsafe class ImageReader : IImageReader
 
     public int ReadRegion(uint x, uint y, uint width, uint height, ulong rowStride, Span<byte> destination, CancellationToken cancellation)
     {
+        if (ReferenceEquals(_callbackInput, _input))
+        {
+            throw new ImageNativeException(NativeStatus.Busy, "The reader cannot be borrowed from its input callback.");
+        }
+
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_handle.IsClosed, this);
+            if (_reading)
+            {
+                throw new ImageNativeException(NativeStatus.Busy, "The reader cannot be borrowed from its input callback.");
+            }
+
             cancellation.ThrowIfCancellationRequested();
             var root = GCHandle.Alloc(cancellation);
+            _reading = true;
             try
             {
                 var token = Token(root);
@@ -161,7 +185,7 @@ public sealed unsafe class ImageReader : IImageReader
                 fixed (byte* pointer = destination)
                 {
                     NativeBuffer output = new() { Data = (nint)pointer, Capacity = (ulong)destination.Length };
-                    var status = ImageAbi.Read((ulong)_handle.DangerousGetHandle(), &region, &output, &token);
+                    var status = ImageAbi.Read(unchecked((ulong)_handle.DangerousGetHandle()), &region, &output, &token);
                     if (status != 0)
                     {
                         throw Failure(status, cancellation);
@@ -178,23 +202,58 @@ public sealed unsafe class ImageReader : IImageReader
             finally
             {
                 root.Free();
+                _reading = false;
+                if (Volatile.Read(ref _closeRequested))
+                {
+                    _handle.Dispose();
+                    _closeRequested = false;
+                }
+
                 GC.KeepAlive(_handle);
             }
         }
     }
 
+    /// <summary>Closes after borrowed work drains. A synchronous input callback defers its close until that borrow returns.</summary>
     public void Dispose()
     {
+        if (ReferenceEquals(_callbackInput, _input))
+        {
+            Volatile.Write(ref _closeRequested, true);
+            return;
+        }
+
         lock (_gate)
         {
+            if (_reading)
+            {
+                _closeRequested = true;
+                return;
+            }
+
             _handle.Dispose();
         }
     }
 
-    public ValueTask<int> ReadRegionAsync(uint x, uint y, uint width, uint height, ulong rowStride, Memory<byte> destination, CancellationToken cancellation) =>
-        new(Task.Run(() => ReadRegion(x, y, width, height, rowStride, destination.Span, cancellation), cancellation));
+    public ValueTask<int> ReadRegionAsync(uint x, uint y, uint width, uint height, ulong rowStride, Memory<byte> destination, CancellationToken cancellation)
+    {
+        RefuseQueuedCallbackWork();
+        return new(Task.Run(() => ReadRegion(x, y, width, height, rowStride, destination.Span, cancellation), cancellation));
+    }
 
-    public ValueTask DisposeAsync() => new(Task.Run(Dispose));
+    public ValueTask DisposeAsync()
+    {
+        RefuseQueuedCallbackWork();
+        return new(Task.Run(Dispose));
+    }
+
+    private void RefuseQueuedCallbackWork()
+    {
+        if (ReferenceEquals(_callbackInput, _input))
+        {
+            throw new InvalidOperationException("The reader cannot queue another operation from its input callback.");
+        }
+    }
 
     private static NativeCancelToken Token(GCHandle root) => new()
     {
@@ -225,7 +284,7 @@ public sealed unsafe class ImageReader : IImageReader
             // Preserve the typed status when a diagnostic snapshot cannot be read.
         }
 
-        return new ImageNativeException(status is >= -13 and <= -1 ? (NativeStatus)status : NativeStatus.Internal, message);
+        return new ImageNativeException(status is >= -13 and <= 3 and not 0 ? (NativeStatus)status : NativeStatus.Internal, message);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -238,14 +297,16 @@ public sealed unsafe class ImageReader : IImageReader
         }
 
         *done = 0;
+        var previous = _callbackInput;
         try
         {
-            if (GCHandle.FromIntPtr(context).Target is not IImageInput input || offset > long.MaxValue || requested > int.MaxValue || (destination == 0 && requested != 0))
+            if (GCHandle.FromIntPtr(context).Target is not InputState input || offset > long.MaxValue || requested > int.MaxValue || (destination == 0 && requested != 0))
             {
                 return (int)NativeStatus.InvalidArgument;
             }
 
-            var count = input.ReadAt((long)offset, new Span<byte>((void*)destination, (int)requested));
+            _callbackInput = input;
+            var count = input.Input.ReadAt((long)offset, new Span<byte>((void*)destination, (int)requested));
             if (count < 0 || (ulong)count > requested)
             {
                 return (int)NativeStatus.Io;
@@ -257,6 +318,10 @@ public sealed unsafe class ImageReader : IImageReader
         catch (Exception)
         {
             return (int)NativeStatus.Io;
+        }
+        finally
+        {
+            _callbackInput = previous;
         }
     }
 
@@ -273,6 +338,8 @@ public sealed unsafe class ImageReader : IImageReader
             return 1;
         }
     }
+
+    private sealed record InputState(IImageInput Input);
 
     private sealed class ImageSafeHandle : NativeSafeHandle
     {
@@ -330,7 +397,7 @@ internal static class ImageMetadataJson
                 var name = channel.GetProperty("name").GetString()!;
                 var type = channel.GetProperty("type").GetString()!;
                 var bits = channel.GetProperty("bits").GetUInt32();
-                if (name is null || name.Length is 0 or > 256 || type is null || type.Length is 0 or > 32 || bits is 0 or > 64 || channels.Count >= 64)
+                if (name is null || name.Length is 0 or > 256 || type is null || type.Length is 0 or > 32 || bits is 0 or > 64 || channels.Count >= 64 || channels.Count >= limits.MaxItems)
                 {
                     throw new InvalidDataException("Native image channel metadata is invalid.");
                 }
