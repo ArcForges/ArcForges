@@ -323,53 +323,53 @@ internal static class NonWireMetadataPolicy
         {
             _projects = projects; _metadata = metadata;
             foreach (var compilation in compilations.Values)
-            foreach (var tree in compilation.SyntaxTrees)
-            {
-                var model = compilation.GetSemanticModel(tree);
-                foreach (var node in tree.GetRoot().DescendantNodes())
+                foreach (var tree in compilation.SyntaxTrees)
                 {
-                    if (node is VariableDeclaratorSyntax { Initializer: { } initializer } variable) Add(model.GetDeclaredSymbol(variable), initializer.Value, model);
-                    else if (node is PropertyDeclarationSyntax { Initializer: { } propertyInitializer } property) Add(model.GetDeclaredSymbol(property), propertyInitializer.Value, model);
-                    else if (node is AssignmentExpressionSyntax assignment) Add(model.GetSymbolInfo(assignment.Left).Symbol, assignment.Right, model);
-                    else if (node is ForEachStatementSyntax loop) Add(model.GetDeclaredSymbol(loop), loop.Expression, model);
-                    else if (node is ReturnStatementSyntax { Expression: { } value } returned)
-                        Add(ReturnOwner(returned, model), value, model);
-                    else if (node is YieldStatementSyntax { Expression: { } yielded } iterator)
-                        Add(ReturnOwner(iterator, model), yielded, model);
-                    else if (node is ArrowExpressionClauseSyntax arrow) Add(model.GetDeclaredSymbol(arrow.Parent!), arrow.Expression, model);
-                    else if (node is BaseObjectCreationExpressionSyntax creation && model.GetSymbolInfo(creation).Symbol is IMethodSymbol constructor
-                        && constructor.DeclaringSyntaxReferences.Length != 0 && creation.ArgumentList is { } constructorArguments)
-                        foreach (var argument in constructorArguments.Arguments)
-                        {
-                            int position = argument.NameColon is null ? constructorArguments.Arguments.IndexOf(argument)
-                                : Array.FindIndex(constructor.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.ValueText);
-                            if (position >= 0 && position < constructor.Parameters.Length) Add(constructor.Parameters[position].OriginalDefinition, argument.Expression, model);
-                        }
-                    else if (node is InvocationExpressionSyntax invocation && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol method
-                        && method.DeclaringSyntaxReferences.Length != 0)
-                        foreach (var argument in invocation.ArgumentList.Arguments)
-                        {
-                            int position = argument.NameColon is null ? invocation.ArgumentList.Arguments.IndexOf(argument)
-                                : Array.FindIndex(method.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.ValueText);
-                            if (position >= 0 && position < method.Parameters.Length) Add(method.Parameters[position].OriginalDefinition, argument.Expression, model);
-                        }
-                    if (node is InvocationExpressionSyntax projection && Canonical(model, projection, "System.Linq.Enumerable", "Select")
-                        && model.GetSymbolInfo(projection).Symbol is IMethodSymbol select)
+                    var model = compilation.GetSemanticModel(tree);
+                    foreach (var node in tree.GetRoot().DescendantNodes())
                     {
-                        var selector = projection.ArgumentList.Arguments.LastOrDefault()?.Expression;
-                        var source = select.ReducedFrom is not null && projection.Expression is MemberAccessExpressionSyntax receiver
-                            ? receiver.Expression : projection.ArgumentList.Arguments.FirstOrDefault()?.Expression;
-                        var parameter = selector switch
+                        if (node is VariableDeclaratorSyntax { Initializer: { } initializer } variable) Add(model.GetDeclaredSymbol(variable), initializer.Value, model);
+                        else if (node is PropertyDeclarationSyntax { Initializer: { } propertyInitializer } property) Add(model.GetDeclaredSymbol(property), propertyInitializer.Value, model);
+                        else if (node is AssignmentExpressionSyntax assignment) Add(model.GetSymbolInfo(assignment.Left).Symbol, assignment.Right, model);
+                        else if (node is ForEachStatementSyntax loop) Add(model.GetDeclaredSymbol(loop), loop.Expression, model);
+                        else if (node is ReturnStatementSyntax { Expression: { } value } returned)
+                            Add(ReturnOwner(returned, model), value, model);
+                        else if (node is YieldStatementSyntax { Expression: { } yielded } iterator)
+                            Add(ReturnOwner(iterator, model), yielded, model);
+                        else if (node is ArrowExpressionClauseSyntax arrow) Add(model.GetDeclaredSymbol(arrow.Parent!), arrow.Expression, model);
+                        else if (node is BaseObjectCreationExpressionSyntax creation && model.GetSymbolInfo(creation).Symbol is IMethodSymbol constructor
+                            && constructor.DeclaringSyntaxReferences.Length != 0 && creation.ArgumentList is { } constructorArguments)
+                            foreach (var argument in constructorArguments.Arguments)
+                            {
+                                int position = argument.NameColon is null ? constructorArguments.Arguments.IndexOf(argument)
+                                    : Array.FindIndex(constructor.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.ValueText);
+                                if (position >= 0 && position < constructor.Parameters.Length) Add(constructor.Parameters[position].OriginalDefinition, argument.Expression, model);
+                            }
+                        else if (node is InvocationExpressionSyntax invocation && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol method
+                            && method.DeclaringSyntaxReferences.Length != 0)
+                            foreach (var argument in invocation.ArgumentList.Arguments)
+                            {
+                                int position = argument.NameColon is null ? invocation.ArgumentList.Arguments.IndexOf(argument)
+                                    : Array.FindIndex(method.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.ValueText);
+                                if (position >= 0 && position < method.Parameters.Length) Add(method.Parameters[position].OriginalDefinition, argument.Expression, model);
+                            }
+                        if (node is InvocationExpressionSyntax projection && Canonical(model, projection, "System.Linq.Enumerable", "Select")
+                            && model.GetSymbolInfo(projection).Symbol is IMethodSymbol select)
                         {
-                            SimpleLambdaExpressionSyntax simple => model.GetDeclaredSymbol(simple.Parameter),
-                            ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
-                            AnonymousMethodExpressionSyntax anonymous => anonymous.ParameterList?.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
-                            _ => model.GetSymbolInfo(selector!).Symbol is IMethodSymbol selected ? selected.Parameters.FirstOrDefault() : null,
-                        };
-                        if (source is not null) Add(parameter, source, model);
+                            var selector = projection.ArgumentList.Arguments.LastOrDefault()?.Expression;
+                            var source = select.ReducedFrom is not null && projection.Expression is MemberAccessExpressionSyntax receiver
+                                ? receiver.Expression : projection.ArgumentList.Arguments.FirstOrDefault()?.Expression;
+                            var parameter = selector switch
+                            {
+                                SimpleLambdaExpressionSyntax simple => model.GetDeclaredSymbol(simple.Parameter),
+                                ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
+                                AnonymousMethodExpressionSyntax anonymous => anonymous.ParameterList?.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
+                                _ => model.GetSymbolInfo(selector!).Symbol is IMethodSymbol selected ? selected.Parameters.FirstOrDefault() : null,
+                            };
+                            if (source is not null) Add(parameter, source, model);
+                        }
                     }
                 }
-            }
         }
 
         public void Reset() { _steps = 0; Exhausted = false; }
