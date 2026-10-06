@@ -840,10 +840,6 @@ class PdfiumOwnedRecipeTests(unittest.TestCase):
                 self.values[key] = original
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PortablePdfiumProfileTests(unittest.TestCase):
     def test_all_five_actual_profiles_have_full_sdk_legal_and_signed_producer_contracts(self):
         for rid in native.PORTABLE_PDFIUM_ARCHIVES:
@@ -899,3 +895,92 @@ class PortablePdfiumProfileTests(unittest.TestCase):
                 profile['configuration'] = {'target_cpu': cpu, 'target_os': os}
                 with self.subTest(cpu=cpu, os=os), self.assertRaisesRegex(ValueError, 'features or RID changed'):
                     native.verify_pdfium_prefix(prefix, profile)
+
+
+class PortableOwnedAdmissionTests(unittest.TestCase):
+    """Receipt-contract negatives; synthetic records do not prove a compiled producer."""
+    def fixture(self, rid):
+        raw = native.provenance.read(native.ROOT, 'eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json')
+        profile = native.provenance.document(raw)
+        expected = profile['rids'][rid]
+        recipe = {name: expected[name] for name in ('configuration', 'nativeProfile', 'nativeFamilies', 'triplet', 'pdfium')}
+        recipe.update(producerProfileSha256=native.sha(raw, 'lf'), cacheSha256='a'*64,
+                      generatedIdentitySha256='b'*64,
+                      tools={name: {'name': name, 'version': expected['buildTools'][name], 'sha256': 'c'*64}
+                             for name in ('cmake', 'ninja')})
+        recipe['tools']['compilers'] = {language: {'name': 'compiler', 'family': expected['compiler']['family'],
+            'version': '19.51.36257.0', 'sha256': 'd'*64, 'declarationSha256': 'e'*64} for language in ('C', 'CXX')}
+        runtime = profile['compilerRuntime'].get(rid)
+        binaries = [{'name': name, 'sha256': metadata['sha256']} for name, metadata in (runtime or {}).get('files', {}).items()]
+        value = {'rid': rid, 'ownedProducerRecipe': recipe, 'compilerRuntimeAdmission': runtime,
+                 'compilerRuntimeSignatures': {row['name']: {**runtime['files'][row['name']], 'signature': 'valid'} for row in binaries}}
+        files = {row['output']: row['sourceSha256'] for row in profile['runtimeLegal']} if runtime else {}
+        return value, binaries, files
+
+    def test_closed_nonwindows_and_native_arm_runtime_contracts(self):
+        for rid in native.PORTABLE_PDFIUM_ARCHIVES:
+            with self.subTest(rid=rid):
+                value, binaries, files = self.fixture(rid)
+                native._pdf_owned_portable_admission(value, binaries, files, native.ROOT)
+
+    def test_forged_compiler_tool_source_and_recipe_refuse(self):
+        mutations = [lambda value: value['ownedProducerRecipe'].update(producerProfileSha256='f'*64),
+            lambda value: value['ownedProducerRecipe'].update(nativeFamilies='Image'),
+            lambda value: value['ownedProducerRecipe'].update(cacheSha256='not-a-digest'),
+            lambda value: value['ownedProducerRecipe']['tools']['cmake'].update(version='4.4.3'),
+            lambda value: value['ownedProducerRecipe']['tools']['compilers'].pop('CXX'),
+            lambda value: value['ownedProducerRecipe']['tools']['compilers']['C'].update(family='Untrusted'),
+            lambda value: value['ownedProducerRecipe']['tools']['compilers']['C'].update(name='../compiler'),
+            lambda value: value['ownedProducerRecipe']['tools']['compilers']['C'].update(declarationSha256='short'),
+            lambda value: value['ownedProducerRecipe'].update(unapproved=True)]
+        for mutation in mutations:
+            value, binaries, files = self.fixture('linux-x64')
+            mutation(value)
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                native._pdf_owned_portable_admission(value, binaries, files, native.ROOT)
+
+    def test_exact_arm_bytes_signature_publisher_and_original_grants_are_required(self):
+        for mode in ('bytes', 'signature', 'publisher', 'grant', 'admission', 'extra-signature'):
+            value, binaries, files = self.fixture('win-arm64')
+            name = binaries[0]['name']
+            if mode == 'bytes': binaries[0]['sha256'] = 'f'*64
+            elif mode == 'signature': value['compilerRuntimeSignatures'][name]['signature'] = 'invalid'
+            elif mode == 'publisher': value['compilerRuntimeSignatures'][name]['publisher'] = 'Other publisher'
+            elif mode == 'grant': files.pop(next(iter(files)))
+            elif mode == 'admission': value['compilerRuntimeAdmission'] = None
+            else: value['compilerRuntimeSignatures']['vcruntime140_1.dll'] = value['compilerRuntimeSignatures'][name]
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                native._pdf_owned_portable_admission(value, binaries, files, native.ROOT)
+
+    def test_foreign_windows_runtime_is_not_an_os_system_prerequisite(self):
+        for mode in ('admission', 'signature'):
+            value, binaries, files = self.fixture('osx-arm64')
+            if mode == 'admission': value['compilerRuntimeAdmission'] = {'invented': True}
+            else: value['compilerRuntimeSignatures'] = {'invented': True}
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                native._pdf_owned_portable_admission(value, binaries, files, native.ROOT)
+
+    def test_real_cache_missing_foreign_sdk_duplicate_keys_and_cancellation_refuse_before_tools(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            build, prefix, sdk = directory/'build', directory/'prefix', directory/'sdk'
+            for path in (build, prefix, sdk/'include', sdk/'lib'): path.mkdir(parents=True)
+            engine = sdk/'lib/libpdfium.so'; engine.write_bytes(b'not-executed')
+            fields = {'CMAKE_HOME_DIRECTORY': str(native.ROOT), 'CMAKE_INSTALL_PREFIX': str(prefix),
+                'PDFium_DIR': str(sdk), 'PDFium_LIBRARY': str(engine), 'PDFium_INCLUDE_DIR': str(sdk/'include'),
+                'VCPKG_TARGET_TRIPLET': 'x64-linux', 'CMAKE_BUILD_TYPE': 'Release',
+                'ARCFORGES_NATIVE_PROFILE': 'shim-static', 'ARCFORGES_NATIVE_FAMILIES': 'Pdf', 'ARCFORGES_PDFIUM': 'ON'}
+            content = '\n'.join(name+':STRING='+value for name, value in fields.items())
+            cache = build/'CMakeCache.txt'
+            for data, cancel in ((content+'\nCMAKE_BUILD_TYPE:STRING=Release', None),
+                (content.replace('PDFium_LIBRARY:STRING='+str(engine), 'PDFium_LIBRARY:STRING='+str(sdk/'include')), None),
+                (content, lambda: True)):
+                cache.write_text(data, encoding='utf-8')
+                with self.subTest(cancelled=bool(cancel)), patch.object(native.subprocess, 'Popen') as process:
+                    with self.assertRaises((ValueError, InterruptedError)):
+                        native._pdf_portable_recipe(build, prefix, sdk, 'linux-x64', {}, native.ROOT, cancel)
+                    process.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

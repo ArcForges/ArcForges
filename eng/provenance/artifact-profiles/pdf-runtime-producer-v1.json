@@ -205,7 +205,7 @@
           "productVersion": "14.51.36247.0",
           "fileVersion": "14.51.36247.0",
           "publisher": "Microsoft Corporation",
-          "reason": "Actual physical PE machine8664 with an ARM64EC hybrid view; not admitted as native ARM64 Image payload. A directory name or valid Microsoft signature does not prove target compatibility."
+          "reason": "Actual physical PE machine8664 with an ARM64EC hybrid view; not admitted as native ARM64 PDF payload. A directory name or valid Microsoft signature does not prove target compatibility."
         }
       ]
     }

@@ -447,7 +447,8 @@
       "dependencies": [
         "ArcForges.ContentSandbox.Contracts",
         "ArcForges.Foundation",
-        "ArcForges.LocalRpc"
+        "ArcForges.LocalRpc",
+        "ArcForges.Native.Abstractions"
       ],
       "externalDependencies": {
         "ArcForges.Contracts.Foundation": "1.0.0-ci.324.1",
@@ -462,6 +463,291 @@
         "LICENSE",
         "NOTICE.md",
         "build-identity.json"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf",
+      "project": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
+      "kind": "managed",
+      "dependencies": [
+        "ArcForges.Native.Abstractions"
+      ],
+      "requiredFiles": [
+        "lib/net10.0/ArcForges.Native.Pdf.dll",
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "build-identity.json"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf.Runtime.win-x64",
+      "project": "src/Native/ArcForges.Native.Pdf.Runtime.win-x64/ArcForges.Native.Pdf.Runtime.win-x64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Pdf"
+      ],
+      "rid": "win-x64",
+      "library": "ArcPdfNative",
+      "prefix": "arc_pdf",
+      "header": "native/arcpdf-abi/include/arc/arc_pdf_abi.h",
+      "triplet": "x64-windows-static-md",
+      "vcpkgRoots": [],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "pdfium-production-input.json",
+        "pdf-runtime-production.json",
+        "runtimes/win-x64/native/ArcPdfNative.dll",
+        "runtimes/win-x64/native/ArcPdfNative.manifest.json",
+        "runtimes/win-x64/native/ArcPdfNative.profile.json",
+        "runtimes/win-x64/native/ArcPdfNative.signature.json",
+        "include/arc/arc_pdf_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Pdf.Runtime.win-x64.targets",
+        "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_pdf_close",
+        "arc_pdf_get_abi_version",
+        "arc_pdf_get_build_info",
+        "arc_pdf_get_last_error",
+        "arc_pdf_open",
+        "arc_pdf_page_info",
+        "arc_pdf_render",
+        "arc_pdf_text"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf.Runtime.win-arm64",
+      "project": "src/Native/ArcForges.Native.Pdf.Runtime.win-arm64/ArcForges.Native.Pdf.Runtime.win-arm64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Pdf"
+      ],
+      "rid": "win-arm64",
+      "library": "ArcPdfNative",
+      "prefix": "arc_pdf",
+      "header": "native/arcpdf-abi/include/arc/arc_pdf_abi.h",
+      "triplet": "arm64-windows-static-md",
+      "vcpkgRoots": [],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "pdfium-production-input.json",
+        "pdf-runtime-production.json",
+        "runtimes/win-arm64/native/ArcPdfNative.dll",
+        "runtimes/win-arm64/native/ArcPdfNative.manifest.json",
+        "runtimes/win-arm64/native/ArcPdfNative.profile.json",
+        "runtimes/win-arm64/native/ArcPdfNative.signature.json",
+        "include/arc/arc_pdf_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Pdf.Runtime.win-arm64.targets",
+        "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_pdf_close",
+        "arc_pdf_get_abi_version",
+        "arc_pdf_get_build_info",
+        "arc_pdf_get_last_error",
+        "arc_pdf_open",
+        "arc_pdf_page_info",
+        "arc_pdf_render",
+        "arc_pdf_text"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf.Runtime.linux-x64",
+      "project": "src/Native/ArcForges.Native.Pdf.Runtime.linux-x64/ArcForges.Native.Pdf.Runtime.linux-x64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Pdf"
+      ],
+      "rid": "linux-x64",
+      "library": "ArcPdfNative",
+      "prefix": "arc_pdf",
+      "header": "native/arcpdf-abi/include/arc/arc_pdf_abi.h",
+      "triplet": "x64-linux",
+      "vcpkgRoots": [],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "pdfium-production-input.json",
+        "pdf-runtime-production.json",
+        "runtimes/linux-x64/native/libArcPdfNative.so",
+        "runtimes/linux-x64/native/ArcPdfNative.manifest.json",
+        "runtimes/linux-x64/native/ArcPdfNative.profile.json",
+        "runtimes/linux-x64/native/ArcPdfNative.signature.json",
+        "include/arc/arc_pdf_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Pdf.Runtime.linux-x64.targets",
+        "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_pdf_close",
+        "arc_pdf_get_abi_version",
+        "arc_pdf_get_build_info",
+        "arc_pdf_get_last_error",
+        "arc_pdf_open",
+        "arc_pdf_page_info",
+        "arc_pdf_render",
+        "arc_pdf_text"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf.Runtime.linux-arm64",
+      "project": "src/Native/ArcForges.Native.Pdf.Runtime.linux-arm64/ArcForges.Native.Pdf.Runtime.linux-arm64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Pdf"
+      ],
+      "rid": "linux-arm64",
+      "library": "ArcPdfNative",
+      "prefix": "arc_pdf",
+      "header": "native/arcpdf-abi/include/arc/arc_pdf_abi.h",
+      "triplet": "arm64-linux",
+      "vcpkgRoots": [],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "pdfium-production-input.json",
+        "pdf-runtime-production.json",
+        "runtimes/linux-arm64/native/libArcPdfNative.so",
+        "runtimes/linux-arm64/native/ArcPdfNative.manifest.json",
+        "runtimes/linux-arm64/native/ArcPdfNative.profile.json",
+        "runtimes/linux-arm64/native/ArcPdfNative.signature.json",
+        "include/arc/arc_pdf_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Pdf.Runtime.linux-arm64.targets",
+        "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_pdf_close",
+        "arc_pdf_get_abi_version",
+        "arc_pdf_get_build_info",
+        "arc_pdf_get_last_error",
+        "arc_pdf_open",
+        "arc_pdf_page_info",
+        "arc_pdf_render",
+        "arc_pdf_text"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf.Runtime.osx-x64",
+      "project": "src/Native/ArcForges.Native.Pdf.Runtime.osx-x64/ArcForges.Native.Pdf.Runtime.osx-x64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Pdf"
+      ],
+      "rid": "osx-x64",
+      "library": "ArcPdfNative",
+      "prefix": "arc_pdf",
+      "header": "native/arcpdf-abi/include/arc/arc_pdf_abi.h",
+      "triplet": "x64-osx",
+      "vcpkgRoots": [],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "pdfium-production-input.json",
+        "pdf-runtime-production.json",
+        "runtimes/osx-x64/native/libArcPdfNative.dylib",
+        "runtimes/osx-x64/native/ArcPdfNative.manifest.json",
+        "runtimes/osx-x64/native/ArcPdfNative.profile.json",
+        "runtimes/osx-x64/native/ArcPdfNative.signature.json",
+        "include/arc/arc_pdf_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Pdf.Runtime.osx-x64.targets",
+        "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_pdf_close",
+        "arc_pdf_get_abi_version",
+        "arc_pdf_get_build_info",
+        "arc_pdf_get_last_error",
+        "arc_pdf_open",
+        "arc_pdf_page_info",
+        "arc_pdf_render",
+        "arc_pdf_text"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Pdf.Runtime.osx-arm64",
+      "project": "src/Native/ArcForges.Native.Pdf.Runtime.osx-arm64/ArcForges.Native.Pdf.Runtime.osx-arm64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Pdf"
+      ],
+      "rid": "osx-arm64",
+      "library": "ArcPdfNative",
+      "prefix": "arc_pdf",
+      "header": "native/arcpdf-abi/include/arc/arc_pdf_abi.h",
+      "triplet": "arm64-osx",
+      "vcpkgRoots": [],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "pdfium-production-input.json",
+        "pdf-runtime-production.json",
+        "runtimes/osx-arm64/native/libArcPdfNative.dylib",
+        "runtimes/osx-arm64/native/ArcPdfNative.manifest.json",
+        "runtimes/osx-arm64/native/ArcPdfNative.profile.json",
+        "runtimes/osx-arm64/native/ArcPdfNative.signature.json",
+        "include/arc/arc_pdf_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Pdf.Runtime.osx-arm64.targets",
+        "build-identity.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_pdf_close",
+        "arc_pdf_get_abi_version",
+        "arc_pdf_get_build_info",
+        "arc_pdf_get_last_error",
+        "arc_pdf_open",
+        "arc_pdf_page_info",
+        "arc_pdf_render",
+        "arc_pdf_text"
       ]
     }
   ]

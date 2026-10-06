@@ -382,6 +382,43 @@ class PackageGuards(unittest.TestCase):
 
 
 
+class NativeActiveSubsetGuards(unittest.TestCase):
+    def fixture(self):
+        build = packages.build_identity.build_identity(packages.ROOT)
+        return {'schemaVersion': 2, 'sourceCommit': build['sourceCommit'], 'rid': 'multi', 'build': build,
+                'familyIndexSha256': 'a'*64,
+                'packages': [{'id': 'ArcForges.Native.Image.Runtime.win-x64'}]}
+
+    def test_all_managed_and_only_actual_native_coordinates_are_selected(self):
+        artifact = self.fixture()
+        selected = packages.publication_entries(artifact, artifact['sourceCommit'])
+        catalogue = packages.catalogue()
+        self.assertEqual({entry['id'] for entry in catalogue if entry['kind'] != 'native'},
+                         {entry['id'] for entry in selected if entry['kind'] != 'native'})
+        self.assertEqual({'ArcForges.Native.Image.Runtime.win-x64'},
+                         {entry['id'] for entry in selected if entry['kind'] == 'native'})
+        self.assertNotIn('ArcForges.Native.Pdf.Runtime.osx-arm64', {entry['id'] for entry in selected})
+
+    def test_empty_duplicate_unregistered_foreign_source_and_index_refuse(self):
+        for mode in ('empty', 'duplicate', 'unregistered', 'foreign-source', 'index'):
+            artifact = self.fixture(); commit = artifact['sourceCommit']
+            if mode == 'empty': artifact['packages'] = []
+            elif mode == 'duplicate': artifact['packages'] *= 2
+            elif mode == 'unregistered': artifact['packages'] = [{'id': 'Caller.Native.Runtime.win-x64'}]
+            elif mode == 'foreign-source': artifact['sourceCommit'] = 'b'*40
+            else: artifact['familyIndexSha256'] = 'invalid'
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                packages.publication_entries(artifact, commit)
+
+    def test_catalogue_cannot_activate_a_managed_producer_with_an_absent_native_dependency(self):
+        artifact = self.fixture()
+        entries = json.loads(json.dumps(packages.catalogue()))
+        next(entry for entry in entries if entry['id'] == 'ArcForges.Native.Pdf')['dependencies'].append(
+            'ArcForges.Native.Pdf.Runtime.osx-arm64')
+        with patch.object(packages, 'catalogue', return_value=entries), self.assertRaisesRegex(ValueError, 'mandatory owned dependency'):
+            packages.publication_entries(artifact, artifact['sourceCommit'])
+
+
 class NativePublicationHandoffGuards(unittest.TestCase):
     """Real filesystem receipt binding; synthetic records never claim native deployment."""
     def prepare(self, root):
