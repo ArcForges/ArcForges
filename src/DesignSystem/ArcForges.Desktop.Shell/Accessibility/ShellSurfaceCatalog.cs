@@ -41,6 +41,7 @@ public static class ShellSurfaceCatalog
         AttentionCentre(),
         ErrorDialog(),
         ShutdownPrompt(),
+        Menus(),
     ];
 
     /// <summary>Every declared shell surface in a stable order.</summary>
@@ -63,6 +64,22 @@ public static class ShellSurfaceCatalog
 
     /// <summary>The modal shutdown prompt that states the consequences of quitting with running or unsaved work.</summary>
     public static ShellSurface ShutdownSurface => AllSurfaces[5];
+
+    /// <summary>The shell-owned menu commands; products append their own localised command nodes in their adapter.</summary>
+    public static ShellSurface MenuSurface => AllSurfaces[6];
+
+    private static ShellSurface Menus() => new("shell.menus", new AccessibleNode(
+        "shell.menus", AccessibleRole.MenuBar, Text("menus.name"), keyboard: KeyboardAccess.TabStop,
+        focusOrder: 1, orientation: NavigationOrientation.Horizontal,
+        children:
+        [
+            new AccessibleNode("shell.menus.palette", AccessibleRole.MenuItem, Text("workspace.palette-button.name"),
+                keyboard: KeyboardAccess.Roving, commandId: ShellCommandIds.PaletteOpen),
+            new AccessibleNode("shell.menus.attention", AccessibleRole.MenuItem, Text("attention.name"),
+                keyboard: KeyboardAccess.Roving, commandId: ShellCommandIds.AttentionOpen),
+            new AccessibleNode("shell.menus.settings", AccessibleRole.MenuItem, Text("workspace.settings-button.name"),
+                keyboard: KeyboardAccess.Roving, commandId: ShellCommandIds.SettingsOpen),
+        ]));
 
     private static LocalizedText Text(string key, params (string Name, object? Value)[] arguments) =>
         new(key, arguments.Length == 0 ? null : arguments.ToDictionary(static pair => pair.Name, static pair => pair.Value, StringComparer.Ordinal));
@@ -155,6 +172,7 @@ public static class ShellSurfaceCatalog
         ]));
 
     private static AccessibleNode PanelToggle(string id, string nameKey, int focusOrder) => new(
+        new AccessibleState(toggled: AccessibleToggleState.Off),
         id,
         AccessibleRole.ToggleButton,
         Text(nameKey),

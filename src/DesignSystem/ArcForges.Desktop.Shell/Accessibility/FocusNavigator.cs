@@ -63,7 +63,7 @@ public sealed class FocusNavigator
     }
 
     /// <summary>Enter or Space: returns the command the focused element performs, or null.</summary>
-    public string? Activate() => _frames[^1].Current?.CommandId;
+    public string? Activate() => _frames[^1].Current is { State.Disabled: false } node ? node.CommandId : null;
 
     /// <summary>Opens a modal surface, trapping focus inside it and remembering the focused element to restore. Returns false for a surface that is not modal or has nothing focusable.</summary>
     public bool OpenModal(ShellSurface modal)
@@ -210,6 +210,11 @@ public sealed class FocusNavigator
 
         private static void Collect(AccessibleNode node, List<AccessibleNode> stops)
         {
+            if (node.State.Disabled)
+            {
+                return;
+            }
+
             if (node.Keyboard == KeyboardAccess.TabStop)
             {
                 stops.Add(node);

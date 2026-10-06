@@ -15,9 +15,9 @@ public sealed class ShellAccessibilityAuditTests
     [Fact]
     public void EveryShellSurfaceConformsToTheAccessibilityContractInNeutralAndPseudoLocales()
     {
-        Assert.Equal(6, ShellSurfaceCatalog.All.Count);
+        Assert.Equal(7, ShellSurfaceCatalog.All.Count);
         Assert.Equal(
-            ["shell.workspace", "shell.command-palette", "shell.settings", "shell.attention", "shell.error-dialog", "shell.shutdown-prompt"],
+            ["shell.workspace", "shell.command-palette", "shell.settings", "shell.attention", "shell.error-dialog", "shell.shutdown-prompt", "shell.menus"],
             ShellSurfaceCatalog.All.Select(static surface => surface.Id));
 
         foreach (string culture in new[] { "", "en-US", "de-DE", "ar" })
@@ -184,4 +184,59 @@ public sealed class ShellAccessibilityAuditTests
 
     private static AccessibleNode Stop(string id, int order) =>
         new(id, AccessibleRole.Button, Named, keyboard: KeyboardAccess.TabStop, focusOrder: order);
+
+    [Fact]
+    public void AssistivePatternsDistinguishInactiveUnsupportedMixedAndBusyStatesAndRejectWrongRoles()
+    {
+        var state = new AccessibleState(AccessibleToggleState.Mixed, selected: false, expanded: false, disabled: true, busy: true);
+        var item = new AccessibleNode(state, "test.menu.item", AccessibleRole.MenuItem, Named,
+            keyboard: KeyboardAccess.Roving, commandId: "test.run");
+        var menu = new AccessibleNode("test.menu", AccessibleRole.Menu, Named, keyboard: KeyboardAccess.TabStop,
+            focusOrder: 1, children: [item]);
+        Assert.Empty(ShellAccessibilityAudit.Evaluate([new ShellSurface("test.surface", menu)]));
+        Assert.Equal(AccessibleToggleState.Mixed, item.State.Toggled);
+        Assert.False(item.State.Selected);
+        Assert.False(item.State.Expanded);
+        Assert.True(item.State.Disabled);
+        Assert.True(item.State.Busy);
+        Assert.Null(new AccessibleNode("test.plain", AccessibleRole.Label, Named).State.Selected);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AccessibleState((AccessibleToggleState)99));
+        Assert.Throws<ArgumentNullException>(() => new AccessibleNode(null!, "test.null", AccessibleRole.Button));
+
+        foreach (AccessibleState invalid in new[]
+        {
+            new AccessibleState(toggled: AccessibleToggleState.On),
+            new AccessibleState(selected: false),
+            new AccessibleState(expanded: true),
+        })
+        {
+            var label = new AccessibleNode(invalid, "test.invalid", AccessibleRole.Label, Named);
+            Assert.Contains(ShellAccessibilityAudit.Evaluate([new ShellSurface("test.surface", Root(label))]),
+                finding => finding.Rule == AccessibilityRules.State);
+        }
+
+        var toggle = new AccessibleNode("test.toggle", AccessibleRole.ToggleButton, Named,
+            keyboard: KeyboardAccess.TabStop, focusOrder: 1);
+        Assert.Contains(ShellAccessibilityAudit.Evaluate([new ShellSurface("test.surface", Root(toggle))]),
+            finding => finding.Rule == AccessibilityRules.State);
+    }
+
+    [Fact]
+    public void MenuAuditRefusesOrphanPointerOnlyUnboundAndNonMenuChildrenAndUnresolvedNames()
+    {
+        var orphan = new AccessibleNode("test.orphan", AccessibleRole.MenuItem, Named, keyboard: KeyboardAccess.Command);
+        var findings = ShellAccessibilityAudit.Evaluate([new ShellSurface("test.surface", Root(orphan))]);
+        Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Menu);
+        Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Command);
+        var malformed = new AccessibleNode("test.menu", AccessibleRole.MenuBar, Named, children:
+        [
+            new AccessibleNode("test.wrong", AccessibleRole.Button, Named),
+            new AccessibleNode("test.item", AccessibleRole.MenuItem, new LocalizedText("undefined.menu.name"),
+                commandId: "test.run"),
+        ]);
+        findings = ShellAccessibilityAudit.Evaluate([new ShellSurface("test.surface", malformed)]);
+        Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Menu);
+        Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Keyboard);
+        Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Text);
+    }
 }
