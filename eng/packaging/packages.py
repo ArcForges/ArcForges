@@ -116,6 +116,9 @@ def catalogue():
 def inspect(path, entry, expected_version, commit):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
+        require(len(names) <= 200000 and all(info.file_size <= 512 * 1024 * 1024 for info in archive.infolist())
+                and sum(info.file_size for info in archive.infolist()) <= 4 * 1024 * 1024 * 1024,
+                "Unbounded package material.")
         require(len(names) == len(set(names)), "Duplicate archive entries.")
         require(all(not name.startswith("/") and ".." not in Path(name).parts and "\\" not in name
                     for name in names), "Unsafe archive paths.")
@@ -143,6 +146,10 @@ def inspect(path, entry, expected_version, commit):
             require(not any(name.startswith("runtimes/") for name in names), "Managed bindings must not bundle native assets.")
         else:
             require(not any(name.startswith(("lib/", "ref/")) for name in names), "RID package must not contain managed assemblies.")
+            if entry["library"] == "ArcPdfNative":
+                require("pdfium-production-input.json" in names, "PDF runtime requires its real sealed producer receipt.")
+                native.native_provenance.verify_pdf_package(entry, archive.read, set(names), commit, ROOT)
+                return native.digest(path)
             document = json.loads(archive.read("native-manifest.json"))
             require(document["sourceCommit"] == commit and document["rid"] == entry["rid"]
                     and document["library"] == entry["library"], "Native package source/RID/library mismatch.")
@@ -170,7 +177,7 @@ def inspect(path, entry, expected_version, commit):
                 if dependency["name"] in {"ffmpeg", "libusb"}:
                     require(dependency["sourceArchive"] in names, "Missing corresponding native source archive.")
             native.native_provenance.verify(entry["id"], archive.read, set(names))
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return native.digest(path)
 
 
 def pack(directory, package_version, native_directory=ROOT / "artifacts/native-packages"):
