@@ -233,11 +233,17 @@ internal static class PolicyEngine
             }
         }
 
+        var nonWireMetadata = NonWireMetadataPolicy.Check(repository, configuration, typeProjects, compilations, findings);
         foreach (var project in graph.Projects.Where(project => project.Classification.Role == ProjectRole.Contracts))
         {
             foreach (var type in types.Values.Where(type => typeProjects[type] == project
                 && type.DeclaredAccessibility == Accessibility.Public && type.TypeKind is TypeKind.Class or TypeKind.Struct or TypeKind.Enum))
             {
+                if (nonWireMetadata.Contains(type))
+                {
+                    continue;
+                }
+
                 var binding = configuration.WireTypes.SingleOrDefault(binding => binding.TypeSymbol == type.ToDisplayString());
                 if (binding is null || !Generated(type) || !HashMatches(repository.Root, binding.SchemaPath, binding.SchemaSha256))
                 {

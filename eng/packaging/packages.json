@@ -20,7 +20,8 @@
         "tools/architecture/PolicyModels.cs",
         "tools/architecture/ProjectGraph.cs",
         "tools/architecture/NativeProjectGraph.cs",
-        "tools/architecture/banned-api-categories.json"
+        "tools/architecture/banned-api-categories.json",
+        "tools/architecture/NonWireMetadataPolicy.cs"
       ]
     },
     {

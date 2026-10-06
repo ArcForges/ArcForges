@@ -1021,7 +1021,10 @@
     "eng/policy/create_plt59_dependency_receipt.py",
     "eng/policy/dependency-reviews/plt-59-r1.json",
     "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/README.md",
-    "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/README.md"
+    "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/README.md",
+    "src/Build/ArcForges.Build.Policy/Architecture/NonWireMetadataPolicy.cs",
+    "tests/ArchitectureTests/NonWireMetadataBindingTests.cs",
+    "eng/policy/dependency-reviews/gov-24-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

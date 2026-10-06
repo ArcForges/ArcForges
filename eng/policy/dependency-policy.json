@@ -21,7 +21,7 @@
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-    "eng/packaging/packages.json": "ed318d686a0384934f105125d41ff38975dc602d150028f76072eeb2b6276469",
+    "eng/packaging/packages.json": "a209a04cd07390aa4d8ce3d28cbc076153366bb0f13ed23d6c340db1576cfdd8",
     "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -820,19 +820,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-codex-20261006-coord",
-    "reviewer": "Independent exact-head source and dependency-admission approval required before merge.",
+    "owner": "w-codex-20261006-governance",
+    "reviewer": "w-codex-20261006-pat",
     "reviewedOn": "2026-10-06",
-    "baselineCommit": "71b6df2db828bc859cca6934ed66aac9b525b5c7",
-    "maintenanceAssessment": "PLT.59 activates seven implemented managed packages and upgrades only the affected production Contracts peer selectors to verified publication324.1/source330e46bd. Existing Foundation/Persistence216.1 dependencies cannot compose with ArcScope's actual Scope324 DTO producer. Preserve exact owned lockstep versions, old113 fixtures and270 realtime probe, all immutable previous receipts and unrelated versions. Native/helper executables and OS acceptance remain separate producers.",
+    "baselineCommit": "aa3ef3b48c3a8eb5ee240f4ffcbdfcf4febbeac3",
+    "maintenanceAssessment": "GOV.24 preserves all accepted PLT59 managed producer admission, immutable legal/source/native history and the actual 62-NuGet/10-Python cohort. Re-seal only this not-yet-accepted GOV24 candidate receipt on the actual accepted predecessor; archived reviewed2e31 Git history remains available. Append the exact required NonWireMetadataPolicy.cs producer payload and missing-helper guard. Only packages.json normalized input SHA changes from accepted main; no coordinate or integrity changes.",
     "upgradeChecks": {
-      "compilation": "Actual full DesktopPlatform.slnx locked restore and Release build on SDK10.0.400 passed with zero warnings/errors; applicable exact-head CI must pass before merge.",
-      "aot-trim": "Existing AOT/trim library posture is preserved without suppressions. Applicable retained LocalRpc/helper/generated transport win-x64 and linux-x64 AOT compile gates are required on the exact reviewed head; no new hosted runtime execution.",
-      "compatibility": "Actual generated managed nuspecs must match the exact reviewed catalogue closure. Only current production peers change; historical fixtures remain unchanged. Product source uses exact published packages, never sibling references.",
-      "licence-provenance": "Actual pinned SDK NuGet signed-content hash and integrity verification binds all five locked SHA512 identities to observed archive SHA256; a signed archive's raw ZIP SHA512 is not its NuGet content hash. Nuspec Apache-2.0/source330e46bd verified. Retained actual NuGet repository-signature verification covers the cached producer; generated legal assets and independent source/provenance gates remain required.",
-      "security-sbom": "Complete actual locked closure is admitted, with historical immutable hashes preserved. NuGet audit and current licence/source/native gates remain required; no advisory absence or OS isolation inferred from component results.",
-      "runtime-performance-migration": "Existing security, durable audit, capability and helper components are tested against the actual upgraded contracts. No business migration or performance claim; full product/OS acceptance stays with APP02/03, PLT46 and NAT22/25.",
-      "framework-runtime-posture": "No SDK major/native ABI/Android change. SDK10.0.400 and existing compilation/publishing profiles remain unchanged."
+      "compilation": "Retained actual SDK400 Release156 functional component cases PASS zero skipped; reviewed functional bytes unchanged. Accepted parent full canonical package CI supplies cohort compatibility evidence. Applicable fresh full stamped GOV24 candidate CI remains mandatory.",
+      "aot-trim": "Source-only offline build tool, no runtime or new package dependency. Existing same-head managed/AOT gates remain enabled; no new OS/isolation or live consumer acceptance is claimed.",
+      "compatibility": "Optional default-null source-bound metadata configuration preserves existing generated-wire defaults. Required-file catalogue appends exactly one helper path; existing entries/dependencies/project/SDK/native metadata remain unchanged. Actual presence-guard component has present/missing branches.",
+      "licence-provenance": "Owned existing helper/test plus exact receipt classification only; all actual accepted producer source/legal/native records and incoming NOTICE remain byte-identical. The re-sealed candidate retains the exact actual 62-NuGet/10-Python closure and predecessor chain.",
+      "security-sbom": "Closed symbol/project/path/compiled-and-disk hash bindings and immutable shapes deny arbitrary DTOs/serializer/RPC/object/cast/tuple/struct/getter/alias escapes with bounded fail-closed traversal. Private/operator/local catalogues remain excluded by the separate CON26 generator authority. No scanner bypass, dependency suppression or namespace waiver.",
+      "runtime-performance-migration": "No product runtime/database/routes/data/OS migration. Required-file guard prevents successful publication without the actual metadata policy helper. Normal production publication and exact consumer pin remain mandatory; synthetic archive tests are component presence checks only.",
+      "framework-runtime-posture": "Existing SDK10.0.400/net10.0 and actual accepted PLT59 62-NuGet/10-Python cohort retained unchanged. No toolchain, native identity, dependency coordinate or integrity change is introduced by GOV24."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -854,7 +854,7 @@
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
-      "eng/packaging/packages.json": "ed318d686a0384934f105125d41ff38975dc602d150028f76072eeb2b6276469",
+      "eng/packaging/packages.json": "a209a04cd07390aa4d8ce3d28cbc076153366bb0f13ed23d6c340db1576cfdd8",
       "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -1128,7 +1128,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/gov-23-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-59-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1139,7 +1139,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-59-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/gov-24-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

@@ -37,6 +37,23 @@ checks AT-01–AT-14, RP-01–RP-10 and seven semantic banned-symbol categories.
 cycles, unclassified dependencies, missing compilations and unresolved invocations fail closed.
 Generated service/wire bindings belong to the consumer's canonical schema authority.
 
+AT-12 also supports optional `NonWireMetadataBindings` for two closed, immutable authorization
+metadata kinds: `OperationAuthorizationPolicy` and `OperationAuthorizationCatalog`. Each binding
+names one exact public symbol, owning Contracts project and owned source file, with its reviewed
+SHA256. Both the compiler snapshot and strict UTF8 disk bytes must match after CRLF-to-LF
+normalization and removal of one optional leading BOM; every other byte is significant. Foreign,
+linked, partial, ambiguous and duplicate sources, unknown kinds and simultaneous wire bindings fail.
+The scalar policy has the fixed authorization facts and cloned read-only string collections.
+Catalogs have immutable snapshots, an ordinal frozen index and its actual `TryGetValue` lookup;
+explicit static constructors cannot replace the reviewed index or snapshot after initialization.
+Arbitrary/mutable DTOs, extra APIs, serializer attributes/registrations and wire/RPC payload use fail.
+Semantic transport checks follow object casts, aliases, collections and owned factory/constructor
+wrappers, property initializers and erased LINQ identity projections. Mutable snapshot escapes
+through nested casts, containers, aliases or return paths fail; analysis exhaustion fails closed.
+Scalar projections and actual read-only or cloned snapshots remain valid. These bindings confer
+no runtime authorization and never replace a wire schema or descriptor. Without bindings the
+existing generated-wire rule is unchanged; hosts must consume this policy's actual published package.
+
 RP-01/RP-08 consume the canonical naming package result; RP-09 consumes the existing required secret gate.
 DesktopPlatform joins their same-source, same-run, same-attempt receipts before its actual graph test.
 Local runs without that hosted secret evidence remain unverified and fail the complete graph assertion;
