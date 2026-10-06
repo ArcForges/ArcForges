@@ -15,6 +15,112 @@ env:
   VCPKG_WINDOWS_X64_GRAPH_REVISION: platform-image-only-v3
   SCCACHE_VERSION: 0.17.0
 jobs:
+  image-portable-inputs:
+    # Compile real available Windows/Linux producers. These unactivated inputs
+    # are never package admission or OS execution evidence; macOS CI is excluded.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-arm64
+            runner: windows-latest
+            triplet: arm64-windows-static-md
+          - rid: linux-x64
+            runner: ubuntu-24.04
+            triplet: x64-linux
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+            triplet: arm64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      IMAGE_RID: ${{ matrix.rid }}
+      IMAGE_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_MAX_CONCURRENCY: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: '4.4.0'
+          ninjaVersion: '1.13.1'
+      - name: Pin the Image producer dependency source
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "vcpkg-image-$env:IMAGE_RID"
+          git clone --no-checkout https://github.com/microsoft/vcpkg.git $root
+          if ($LASTEXITCODE) { throw 'Pinned Image vcpkg source acquisition failed.' }
+          git -C $root checkout --detach $env:VCPKG_COMMIT
+          if ($LASTEXITCODE) { throw 'Pinned Image vcpkg checkout failed.' }
+          $actual = (git -C $root rev-parse HEAD).Trim()
+          if ($actual -ne $env:VCPKG_COMMIT) { throw 'Unexpected Image dependency source.' }
+          if ($IsWindows) { & "$root/bootstrap-vcpkg.bat" -disableMetrics }
+          else { & "$root/bootstrap-vcpkg.sh" -disableMetrics }
+          if ($LASTEXITCODE) { throw 'Image producer vcpkg bootstrap failed.' }
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "VCPKG_DOWNLOADS=$root/downloads" >> $env:GITHUB_ENV
+          $archives = Join-Path $env:RUNNER_TEMP "image-vcpkg-archives-$env:IMAGE_RID"
+          New-Item -ItemType Directory -Force $archives | Out-Null
+          "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/image-vcpkg-archives-${{ matrix.rid }}
+          key: image-classic-${{ matrix.rid }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('eng/native/vcpkg/ports/**', 'eng/native/vcpkg/triplets/**', 'eng/provenance/artifact-profiles/image-runtime-producer-v1.json') }}
+      - name: Install the actual Image dependency closure
+        shell: pwsh
+        run: |
+          $installed = Join-Path $env:GITHUB_WORKSPACE "artifacts/vcpkg-installed/$env:IMAGE_RID"
+          $arguments = @('install', "opencolorio[core]:$env:IMAGE_TRIPLET", "openimageio[core]:$env:IMAGE_TRIPLET", "openexr[core]:$env:IMAGE_TRIPLET", "imath[core]:$env:IMAGE_TRIPLET", "--x-install-root=$installed", "--overlay-triplets=$env:GITHUB_WORKSPACE/eng/native/vcpkg/triplets")
+          $vcpkg = if ($IsWindows) { "$env:VCPKG_ROOT/vcpkg.exe" } else { "$env:VCPKG_ROOT/vcpkg" }
+          & $vcpkg @arguments
+          if ($LASTEXITCODE) { throw 'Actual Image dependency compile failed.' }
+      - uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        with:
+          cmakeVersion: '4.3.3'
+          ninjaVersion: '1.13.1'
+      - name: Compile and install the owned ARM64 Windows Image ABI
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          set "ARCFORGES_IMAGE_VCPKG_ROOT=%VCPKG_ROOT%"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "ARCFORGES_IMAGE_VS=%%i"
+          if not defined ARCFORGES_IMAGE_VS exit /b 1
+          call "%ARCFORGES_IMAGE_VS%\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64 -vcvars_ver=14.51.36231 || exit /b 1
+          set "VCPKG_ROOT=%ARCFORGES_IMAGE_VCPKG_ROOT%"
+          cmake --preset image-win-arm64-v1 -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= || exit /b 1
+          cmake --build --preset image-win-arm64-v1 || exit /b 1
+          cmake --install artifacts/cmake/image/win-arm64 --component ImageRuntime || exit /b 1
+      - name: Compile and install the owned Linux Image ABI on its actual architecture
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "image-$IMAGE_RID-v1" -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER=
+          cmake --build --preset "image-$IMAGE_RID-v1"
+          cmake --install "artifacts/cmake/image/$IMAGE_RID" --component ImageRuntime
+      - name: Seal actual Image inputs without activating an unreviewed package
+        shell: pwsh
+        run: |
+          $arguments = @('eng/packaging/image_runtime.py', 'stage', '--rid', $env:IMAGE_RID, '--directory', "artifacts/image-production-input/$env:IMAGE_RID", '--vcpkg-root', $env:VCPKG_ROOT, '--downloads', $env:VCPKG_DOWNLOADS)
+          if ($IsWindows) {
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+            $installation = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+            $runtime = Join-Path $installation 'VC/Redist/MSVC/14.51.36231/arm64/Microsoft.VC145.CRT'
+            $arguments += @('--compiler-runtime', $runtime)
+          }
+          python @arguments
+          if ($LASTEXITCODE) { throw 'Image actual ABI/tool/dependency/source/legal/copy closure failed.' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-production-input-${{ matrix.rid }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-production-input/${{ matrix.rid }}/
+          if-no-files-found: error
+          retention-days: 30
   native-win-x64:
     runs-on: windows-latest
     outputs:
