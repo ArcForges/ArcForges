@@ -294,6 +294,10 @@ void test_open_validation()
     CHECK_STATUS(ARC_INVALID_ARGUMENT,
                  arc_pdf_open(&io, arc_string_view_t{nullptr, 3}, &limits, &out.handle, &out.pages, nullptr));
     const std::string long_password(1025, 'p');
+    const char embedded_nul_password[] = {'p', '\0', 'w'};
+    CHECK_STATUS(ARC_INVALID_ARGUMENT,
+                 arc_pdf_open(&io, arc_string_view_t{embedded_nul_password, sizeof(embedded_nul_password)}, &limits,
+                              &out.handle, &out.pages, nullptr));
     CHECK_STATUS(ARC_INVALID_ARGUMENT, arc_pdf_open(&io, arc_string_view_t{long_password.data(), long_password.size()},
                                                     &limits, &out.handle, &out.pages, nullptr));
     CHECK(out.handle == 0 && out.pages == 0);

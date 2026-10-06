@@ -1009,7 +1009,9 @@
     "eng/provenance/records/native-pdfium-r1.json",
     "native/arcpdf-abi/src/backend_pdfium.cpp",
     "native/arcpdf-abi/tests/arcpdf_abi_pdfium_tests.cpp",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealPdfIsolationTests.cs"
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealPdfIsolationTests.cs",
+    "eng/native/vcpkg/pdfium-sbom.v1.json",
+    "eng/policy/dependency-reviews/nat-15-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
@@ -1028,7 +1030,6 @@
     "third-party/pdfium/chromium-8044/freetype.txt": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/icu.txt": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/lcms.txt": "native-pdfium-r1",
-    "third-party/pdfium/chromium-8044/libjpeg_turbo.ijg": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/libjpeg_turbo.txt": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/libopenjpeg.txt": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/libpng.txt": "native-pdfium-r1",
@@ -1036,7 +1037,8 @@
     "third-party/pdfium/chromium-8044/llvm-libc.txt": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/pdfium.txt": "native-pdfium-r1",
     "third-party/pdfium/chromium-8044/simdutf.txt": "native-pdfium-r1",
-    "third-party/pdfium/chromium-8044/zlib.txt": "native-pdfium-r1"
+    "third-party/pdfium/chromium-8044/zlib.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/libjpeg_turbo-ijg.txt": "native-pdfium-r1"
   },
   "artifacts": [
     "native-bzip2-r4",

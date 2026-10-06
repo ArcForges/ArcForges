@@ -343,7 +343,8 @@ arc_status_t ARC_ABI_CALL arc_pdf_open(const arc_io_v1* io, arc_string_view_t pa
         if (io->length > bounded.max_input_bytes || (io->max_length != 0 && io->length > io->max_length)) {
             return failure(ARC_RESOURCE_LIMIT, "The input exceeds its bound");
         }
-        if ((password.data == nullptr && password.size != 0) || password.size > max_password_bytes) {
+        if ((password.data == nullptr && password.size != 0) || password.size > max_password_bytes ||
+            (password.size != 0 && std::memchr(password.data, 0, static_cast<size_t>(password.size)) != nullptr)) {
             return failure(ARC_INVALID_ARGUMENT, "The password is invalid");
         }
         if (const arc_status_t cancelled = arc::abi::check_cancelled(cancel); cancelled != ARC_OK) {

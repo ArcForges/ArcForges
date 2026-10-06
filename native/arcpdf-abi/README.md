@@ -29,7 +29,7 @@ parses PDF bytes.
 `python eng/native_provenance.py --acquire-pdfium artifacts/pdfium` verifies the admitted archive and its Sigstore/SLSA
 attestation before exposing `artifacts/pdfium/pdfium`. The immutable profile in `eng/native/vcpkg/pdfium-build.v1.json` pins
 every archive member and all legal texts. The attestation binds the upstream build recipe and invocation; it does not attest
-the separately observed PDFium source commit. Configure with `ARCFORGES_PDFIUM=ON` and that prefix's `share/pdfium` package.
+the separately observed PDFium source commit. Configure with `ARCFORGES_PDFIUM=ON` and `PDFium_DIR` set to that prefix.
 `Runtime.<rid>` publication is a separately admitted producer closure; this library alone is not a distributable package.
 
 ## Semantics fixed by this library

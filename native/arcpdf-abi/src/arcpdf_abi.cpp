@@ -18,9 +18,14 @@ arc_status_t ARC_ABI_CALL arc_pdf_get_build_info(arc_mut_buffer_t* out_utf8)
 {
     try {
         // The backend is named so a consumer can tell a parserless build from one with a parser linked.
+#if defined(ARCFORGES_PDFIUM_BACKEND)
+        return arc::abi::write_build_info(
+            "ArcPdfNative;abi=1.1;backend=linked;pdfium=chromium/8044;v8=off;xfa=off;system-fonts=off", out_utf8);
+#else
         return arc::abi::write_build_info(arc::pdf::linked_backend() ? "ArcPdfNative;abi=1.1;backend=linked"
                                                                      : "ArcPdfNative;abi=1.1;backend=none",
                                           out_utf8);
+#endif
     } catch (...) {
         return arc::abi::fail(ARC_INTERNAL, "PDF build information failed", arc::pdf::pdf_domain);
     }

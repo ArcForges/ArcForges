@@ -9,6 +9,7 @@ import ctypes
 from ctypes import wintypes
 from datetime import date
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -562,6 +563,9 @@ def pdfium_profile(root: Path = ROOT) -> dict:
     for name, expected in value["legalFiles"].items():
         require(name.startswith("third-party/pdfium/chromium-8044/"), "PDFium legal target escapes ownership")
         require(sha(provenance.read(root, name)) == expected, "Changed PDFium legal text: " + name)
+    require(value["sbom"]["path"] == "eng/native/vcpkg/pdfium-sbom.v1.json" and
+            sha(provenance.read(root, value["sbom"]["path"]), "lf") == value["sbom"]["sha256"],
+            "Changed PDFium aggregate bundle SBOM")
     return value
 
 
@@ -588,8 +592,12 @@ def pdfium_download(identity: dict, destination: Path) -> Path:
             require(sha(temporary.read_bytes()) == identity["sha256"], "PDFium download digest mismatch")
             temporary.replace(destination)
             return destination
-        except (urllib.error.URLError, TimeoutError) as error:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLEOFError, http.client.IncompleteRead) as error:
             transient = not isinstance(error, urllib.error.HTTPError) or error.code in {408, 429, 500, 502, 503, 504}
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+            if isinstance(error, urllib.error.URLError) and isinstance(error.reason, ssl.SSLCertVerificationError):
+                transient = False
             if not transient or attempt == 2:
                 raise
             time.sleep((0.5, 2.0)[attempt])
@@ -609,6 +617,40 @@ def verify_pdfium_prefix(prefix: Path, value: dict) -> None:
             "PDFium executable features or RID changed")
 
 
+def verify_pdfium_attestation(archive: Path, bundle: Path, value: dict) -> None:
+    """Verify the external signer and bind the signed subject/invocation to the admitted producer."""
+    # gh verifies the Sigstore certificate, signature and transparency inclusion, not just JSON fields.
+    command = [
+        "gh", "attestation", "verify", str(archive), "--repo", value["attestation"]["repository"],
+        "--bundle", str(bundle), "--deny-self-hosted-runners", "--source-digest", value["attestation"]["recipeCommit"],
+        "--signer-workflow", value["attestation"]["repository"] + "/" + value["attestation"]["workflow"], "--format", "json",
+    ]
+    for attempt in range(3):
+        try:
+            verified = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+            break
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            # Do not retry trust, signature, identity or digest failures. Only transport diagnostics
+            # can justify another read-only verification attempt against the unchanged cached bytes.
+            diagnostic = error.stderr or ""
+            if isinstance(diagnostic, bytes):
+                diagnostic = diagnostic.decode("utf-8", errors="replace")
+            diagnostic = diagnostic.lower()
+            transient = isinstance(error, subprocess.TimeoutExpired) or any(marker in diagnostic for marker in
+                            ("http 429", "http 500", "http 502", "http 503", "http 504",
+                             "connection reset", "connection timed out", "tls handshake timeout"))
+            if not transient or attempt == 2:
+                raise
+            time.sleep((0.5, 2.0)[attempt])
+    verification = json.loads(verified.stdout)
+    require(isinstance(verification, list) and bool(verification), "PDFium attestation verification produced no receipt")
+    statement = json.loads(base64.b64decode(json.loads(bundle.read_text())["dsseEnvelope"]["payload"], validate=True))
+    require(any(subject["name"] == archive.name and subject["digest"] == {"sha256": value["archive"]["sha256"]}
+                for subject in statement["subject"]), "PDFium attestation lacks the admitted subject")
+    require(statement["predicate"]["runDetails"]["metadata"]["invocationId"] == value["attestation"]["invocation"],
+            "PDFium producer invocation changed")
+
+
 def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
     """Fetch/verify the reviewed producer build, never a consumer-time dependency download."""
     value = pdfium_profile(root)
@@ -616,18 +658,7 @@ def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     archive = pdfium_download(value["archive"], directory / "pdfium-win-x64.tgz")
     bundle = pdfium_download(value["attestation"], directory / "pdfium-attestation.json")
-    # gh verifies the Sigstore certificate, signature and transparency inclusion, not just JSON fields.
-    verified = subprocess.run([
-        "gh", "attestation", "verify", str(archive), "--repo", value["attestation"]["repository"],
-        "--bundle", str(bundle), "--deny-self-hosted-runners", "--source-digest", value["attestation"]["recipeCommit"],
-        "--signer-workflow", value["attestation"]["repository"] + "/" + value["attestation"]["workflow"], "--format", "json",
-    ], check=True, capture_output=True, text=True, timeout=120)
-    require(bool(json.loads(verified.stdout)), "PDFium attestation verification produced no receipt")
-    statement = json.loads(base64.b64decode(json.loads(bundle.read_text())["dsseEnvelope"]["payload"], validate=True))
-    require(any(subject["name"] == archive.name and subject["digest"] == {"sha256": value["archive"]["sha256"]}
-                for subject in statement["subject"]), "PDFium attestation lacks the admitted subject")
-    require(statement["predicate"]["runDetails"]["metadata"]["invocationId"] == value["attestation"]["invocation"],
-            "PDFium producer invocation changed")
+    verify_pdfium_attestation(archive, bundle, value)
     prefix = directory / "pdfium"
     if prefix.exists():
         verify_pdfium_prefix(prefix, value)
@@ -643,22 +674,143 @@ def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
                     require(member.size <= value["archive"]["maximumBytes"], "PDFium member exceeds its bound")
                 tar.extractall(staging, filter="data")
             verify_pdfium_prefix(staging, value)
-            staging.replace(prefix)
+            try:
+                staging.replace(prefix)
+            except OSError:
+                # Another verified producer may have atomically promoted the identical prefix first.
+                # Check the winner rather than repeating a possibly successful write or deleting it.
+                if not prefix.exists():
+                    raise
+                verify_pdfium_prefix(prefix, value)
     receipt = {"profile": value["id"], "archiveSha256": value["archive"]["sha256"],
                "attestationSha256": value["attestation"]["sha256"], "producerInvocation": value["attestation"]["invocation"],
                "recipeCommit": value["attestation"]["recipeCommit"], "rid": value["rid"],
                "version": value["version"], "cryptographicVerification": "GitHub CLI Sigstore/SLSA verification passed"}
-    (directory / "pdfium-build-receipt.json").write_bytes(canonical(receipt))
+    receipt["sbomSha256"] = value["sbom"]["sha256"]
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=directory, prefix=".pdfium-receipt-", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(canonical(receipt))
+        temporary.replace(directory / "pdfium-build-receipt.json")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return receipt
+
+
+def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: Path) -> dict:
+    """Seal the actual PDF binary/SDK/dependency input for NAT.25; this is not a published package."""
+    import importlib.util
+    import build_identity
+
+    require(os.name == "nt", "The admitted PDFium producer requires Windows x64")
+    directory = directory.resolve()
+    require(not directory.exists(), "PDF composition input already exists; choose a fresh destination")
+    audit = provenance.run(ROOT, "DesktopPlatform")
+    require(not audit["dirty"], "Commit reviewed source before producing the PDF composition input")
+    value = pdfium_profile()
+    verify_pdfium_prefix(pdfium_directory / "pdfium", value)
+    receipt = provenance.document((pdfium_directory / "pdfium-build-receipt.json").read_bytes())
+    require(receipt["archiveSha256"] == value["archive"]["sha256"] and
+            receipt["attestationSha256"] == value["attestation"]["sha256"] and
+            receipt["recipeCommit"] == value["attestation"]["recipeCommit"] and
+            receipt["producerInvocation"] == value["attestation"]["invocation"] and
+            receipt["sbomSha256"] == value["sbom"]["sha256"], "PDF producer admission receipt changed")
+    specification = importlib.util.spec_from_file_location("arc_pdf_native_producer", ROOT / "eng/packaging/native.py")
+    require(specification is not None and specification.loader is not None, "Native PE inspector is unavailable")
+    producer = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(producer)
+    owned = native_prefix / "native/ArcPdfNative.dll"
+    require(owned.is_file() and owned.stat().st_size <= 16 * 1024 * 1024, "Missing or unbounded PDF ABI output")
+    data = owned.read_bytes()
+    marker = b"ArcPdfNative;abi=1.1;backend=linked;pdfium=chromium/8044;v8=off;xfa=off;system-fonts=off"
+    require(marker in data and audit["sourceCommit"].encode("ascii") in data,
+            "PDF ABI output is not the source-bound admitted production build")
+    exports = {"arc_pdf_" + name for name in
+               ("get_abi_version", "get_build_info", "get_last_error", "open", "page_info", "text", "render", "close")}
+    require(set(producer.pe(data)["exports"]) == exports, "PDF ABI export set differs from the functional contract")
+    runtime_profile = profile()
+    crt = producer.vc_runtime(runtime_profile["platformRuntime"]["distributionIdentity"]["directoryVersion"])
+    available = {file.name.lower(): file for file in crt.glob("*.dll")}
+    available.update({"arcpdfnative.dll": owned, "pdfium.dll": pdfium_directory / "pdfium/bin/pdfium.dll"})
+    pending, selected, signatures = ["arcpdfnative.dll"], {}, {}
+    while pending:
+        name = pending.pop()
+        if name in selected:
+            continue
+        require(name in available, "Missing PDF runtime dependency: " + name)
+        original = available[name]
+        if original.parent == crt:
+            signatures[name] = approve_runtime(original, runtime_profile)
+        details = producer.pe(original.read_bytes())
+        selected[name] = {"name": original.name, "sha256": producer.digest(original), **details}
+        pending.extend(dependency for dependency in details["imports"] if not producer.system_dependency(dependency))
+    require(selected["pdfium.dll"]["sha256"] == value["files"]["bin/pdfium.dll"], "Unadmitted PDFium runtime DLL")
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=directory.parent, prefix=".pdf-composition-") as temporary:
+        staging = Path(temporary) / "input"
+        runtime = staging / "runtimes/win-x64/native"
+        runtime.mkdir(parents=True)
+        for name in selected:
+            shutil.copyfile(available[name], runtime / available[name].name)
+        manifest = {"schemaVersion": 1, "sourceCommit": audit["sourceCommit"], "rid": "win-x64",
+                    "library": "ArcPdfNative", "abi": {"major": 1, "minor": 1},
+                    "files": sorted(selected.values(), key=lambda file: file["name"])}
+        (runtime / "ArcPdfNative.manifest.json").write_bytes(canonical(manifest))
+        for original, name in (
+                (native_prefix / "lib/ArcPdfNative.lib", "sdk/win-x64/lib/ArcPdfNative.lib"),
+                (ROOT / "native/arcpdf-abi/include/arc/arc_pdf_abi.h", "include/arc/arc_pdf_abi.h"),
+                (ROOT / "native/shared/include/arc/arc_native_abi.h", "include/arc/arc_native_abi.h"),
+                (ROOT / "eng/native/vcpkg/pdfium-build.v1.json", "provenance/pdfium-build.v1.json"),
+                (ROOT / value["sbom"]["path"], "provenance/pdfium-sbom.v1.json"),
+                (pdfium_directory / "pdfium-build-receipt.json", "provenance/pdfium-build-receipt.json"),
+                (pdfium_directory / "pdfium-attestation.json", "provenance/pdfium-attestation.json")):
+            target = staging / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, target)
+        for name in value["legalFiles"]:
+            target = staging / "licenses/pdfium" / Path(name).name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, target)
+        cache = pdfium_directory / "legal-cache"
+        for legal in runtime_profile["platformRuntime"]["legal"]:
+            original = fetch(legal["url"], legal["sourceSha256"], "sha256", legal["cacheName"], cache)
+            target = staging / legal["output"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, target)
+        (staging / "NOTICE.txt").write_bytes((
+            "ArcForges PDF ABI: AGPL-3.0-only. PDFium chromium/8044 no-V8/no-XFA producer admission.\n"
+            "All 15 complete PDFium/component legal texts are retained under licenses/pdfium.\n"
+            "This software uses FreeType. Full attribution, FTL terms and LLVM exceptions are preserved.\n"
+            "Microsoft CRT files are unmodified, hash-pinned and Authenticode-verified under the retained original grant texts.\n"
+            "This source-bound composition input is not a signed/published runtime package. NAT.25 owns that delivery.\n"
+        ).encode("utf-8"))
+        result = {"schemaVersion": 1, "sourceCommit": audit["sourceCommit"], "rid": "win-x64",
+                  "kind": "pdfium-production-composition-input", "profile": value["id"],
+                  "build": build_identity.build_identity(ROOT), "admission": receipt,
+                  "compilerRuntimeSignatures": signatures,
+                  "files": [{"path": file.relative_to(staging).as_posix(), "sha256": producer.digest(file)}
+                            for file in sorted(staging.rglob("*")) if file.is_file()]}
+        (staging / "pdfium-production-input.json").write_bytes(canonical(result))
+        staging.replace(directory)
+    return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", type=Path)
     parser.add_argument("--acquire-pdfium", type=Path)
+    parser.add_argument("--stage-pdfium-input", type=Path)
+    parser.add_argument("--pdfium-directory", type=Path, default=ROOT / "artifacts/pdfium-admission")
+    parser.add_argument("--native-prefix", type=Path, default=ROOT / "artifacts/stage/native/win-x64")
     args = parser.parse_args()
     if args.acquire_pdfium:
         print(json.dumps(acquire_pdfium(args.acquire_pdfium)))
+        sys.exit(0)
+    if args.stage_pdfium_input:
+        receipt = stage_pdfium_input(args.stage_pdfium_input, args.pdfium_directory, args.native_prefix)
+        print(json.dumps({"result": "passed", "sourceCommit": receipt["sourceCommit"], "files": len(receipt["files"])}))
         sys.exit(0)
     value = profile()
     results = []

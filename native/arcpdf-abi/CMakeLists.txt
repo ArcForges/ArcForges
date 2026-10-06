@@ -23,6 +23,7 @@ set(ARCPDF_ENGINE_SOURCES
 add_library(arcpdf_abi SHARED ${ARCPDF_ENGINE_SOURCES} ${ARCPDF_BACKEND_SOURCE})
 if(ARCFORGES_PDFIUM)
     target_link_libraries(arcpdf_abi PRIVATE pdfium)
+    target_compile_definitions(arcpdf_abi PRIVATE ARCFORGES_PDFIUM_BACKEND=1)
     install(FILES "$<TARGET_FILE:pdfium>" DESTINATION native)
 endif()
 arcforges_declare_target_licence(arcpdf_abi)

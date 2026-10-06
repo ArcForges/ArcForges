@@ -38,7 +38,7 @@ internal sealed class ProductionParserProfile(PdfDocumentOpener? opener = null, 
     private static PdfDocument OpenNative(IPdfInput input, PdfLimits limits, CancellationToken cancellation) =>
         PdfDocument.Open(input, limits, default, cancellation);
 
-    /// <summary>Checks what the loaded library reports: the functional ABI (minor 1 or later) and a linked PDF backend.</summary>
+    /// <summary>Checks the functional ABI and the exact admitted PDFium producer configuration.</summary>
     internal static void VerifyLibrary(NativeAbiVersion version, string buildInfo)
     {
         ArgumentNullException.ThrowIfNull(buildInfo);
@@ -47,9 +47,19 @@ internal sealed class ProductionParserProfile(PdfDocumentOpener? opener = null, 
             throw new ContentParserException("The PDF library does not export the functional ABI.");
         }
 
-        if (!buildInfo.Contains("backend=linked", StringComparison.Ordinal))
+        var fields = buildInfo.Split(';');
+        if (fields[0] != "ArcPdfNative" || fields.Count(value => value.StartsWith("backend=", StringComparison.Ordinal)) != 1
+            || fields.Count(value => value.StartsWith("pdfium=", StringComparison.Ordinal)) != 1
+            || fields.Count(value => value.StartsWith("v8=", StringComparison.Ordinal)) != 1
+            || fields.Count(value => value.StartsWith("xfa=", StringComparison.Ordinal)) != 1
+            || fields.Count(value => value.StartsWith("system-fonts=", StringComparison.Ordinal)) != 1
+            || !fields.Contains("backend=linked", StringComparer.Ordinal)
+            || !fields.Contains("pdfium=chromium/8044", StringComparer.Ordinal)
+            || !fields.Contains("v8=off", StringComparer.Ordinal)
+            || !fields.Contains("xfa=off", StringComparer.Ordinal)
+            || !fields.Contains("system-fonts=off", StringComparer.Ordinal))
         {
-            throw new ContentParserException("The PDF library has no parser linked.");
+            throw new ContentParserException("The PDF library is not the admitted no-V8/no-XFA producer configuration.");
         }
     }
 

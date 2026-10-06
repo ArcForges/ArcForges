@@ -107,6 +107,34 @@ public sealed class RealPdfIsolationTests
     }
 
     [Fact]
+    public async Task AbruptlyEndingARealParserHelperFailsClosedAndANewInvocationWorks()
+    {
+        RequireOptIn();
+        using var os = OsHarness.Create(production: true);
+        await using var launcher = new ContentSandboxLauncher(Options(os));
+        var launched = await launcher.LaunchAsync(FirstPartyPdfFixture.Bytes(), Ct);
+        Assert.True(launched.IsSuccess, launched.Failure?.Code + " " + launched.Detail);
+        await using (var invocation = launched.Value!)
+        {
+            var opened = await invocation.OpenPdfAsync(Ct);
+            Assert.True(opened.IsSuccess, opened.Failure?.Code + " " + opened.Detail);
+            // End the actual parser process after PDFium has loaded. This observes OS/broker handling
+            // of abrupt process loss, not evidence that a particular hostile PDF caused a native crash.
+            using var process = Process.GetProcessById(invocation.HelperProcess.ProcessId);
+            process.Kill(entireProcessTree: false);
+            await process.WaitForExitAsync(Ct);
+            Assert.False((await invocation.GetPdfPageAsync(opened.Value, 0, Ct)).IsSuccess);
+            Assert.NotEqual(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(Ct));
+        }
+
+        var fresh = await launcher.LaunchAsync(FirstPartyPdfFixture.Bytes(), Ct);
+        Assert.True(fresh.IsSuccess, fresh.Failure?.Code + " " + fresh.Detail);
+        await using var recovered = fresh.Value!;
+        Assert.True((await recovered.OpenPdfAsync(Ct)).IsSuccess);
+        OsHarness.Evidence("production parser abrupt process loss", ["failed closed", "fresh invocation recovered", "parent-induced termination; no hostile-PDF crash claim"]);
+    }
+
+    [Fact]
     public async Task TheRealParserProcessEndsWhenItsLaunchingParentDies()
     {
         RequireOptIn();

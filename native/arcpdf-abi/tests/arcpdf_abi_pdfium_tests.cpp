@@ -55,6 +55,8 @@ struct input final {
     std::string bytes;
     std::atomic<int> reads{0};
     bool fail = false;
+    bool short_read = false;
+    bool slow_read = false;
 };
 
 arc_status_t ARC_ABI_CALL read_at(void* value, uint64_t offset, void* destination, uint64_t requested, uint64_t* read)
@@ -64,10 +66,12 @@ arc_status_t ARC_ABI_CALL read_at(void* value, uint64_t offset, void* destinatio
     *read = 0;
     if (data.fail)
         return ARC_IO;
+    if (data.slow_read)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if (offset > data.bytes.size() || requested > data.bytes.size() - offset)
         return ARC_IO;
     std::memcpy(destination, data.bytes.data() + offset, static_cast<size_t>(requested));
-    *read = requested;
+    *read = data.short_read ? requested - 1 : requested;
     return ARC_OK;
 }
 
@@ -76,7 +80,8 @@ arc_limits_v1 limits()
     return {sizeof(arc_limits_v1), 1, 64 * 1024 * 1024, 128 * 1024 * 1024, 64 * 1024 * 1024, 4096, 4096, 1024, 5000};
 }
 
-arc_status_t open(input& data, arc_handle_t& handle, uint32_t& pages, const arc_cancel_token_t* cancel = nullptr)
+arc_status_t open(input& data, arc_handle_t& handle, uint32_t& pages, const arc_cancel_token_t* cancel = nullptr,
+                  const arc_limits_v1* custom = nullptr)
 {
     arc_io_v1 io{};
     io.struct_size = sizeof(io);
@@ -86,12 +91,17 @@ arc_status_t open(input& data, arc_handle_t& handle, uint32_t& pages, const arc_
     io.max_length = data.bytes.size();
     io.read_at = read_at;
     const auto bound = limits();
-    return arc_pdf_open(&io, {}, &bound, &handle, &pages, cancel);
+    return arc_pdf_open(&io, {}, custom ? custom : &bound, &handle, &pages, cancel);
 }
 
 arc_bool_t ARC_ABI_CALL cancelled(void*)
 {
     return 1;
+}
+
+arc_bool_t ARC_ABI_CALL cancelled_after_read(void* value)
+{
+    return static_cast<input*>(value)->reads.load() > 0 ? 1 : 0;
 }
 
 void actual_pdf()
@@ -147,6 +157,20 @@ void errors()
     uint32_t pages = 0;
     CHECK(open(data, handle, pages) == ARC_IO && handle == 0 && pages == 0);
     data.fail = false;
+    data.short_read = true;
+    CHECK(open(data, handle, pages) == ARC_IO && handle == 0 && pages == 0);
+    data.short_read = false;
+    auto bound = limits();
+    bound.max_input_bytes = data.bytes.size() - 1;
+    CHECK(open(data, handle, pages, nullptr, &bound) == ARC_RESOURCE_LIMIT && handle == 0 && pages == 0);
+    bound = limits();
+    bound.timeout_ms = 1;
+    data.slow_read = true;
+    CHECK(open(data, handle, pages, nullptr, &bound) == ARC_RESOURCE_LIMIT && handle == 0 && pages == 0);
+    data.slow_read = false;
+    data.reads = 0;
+    arc_cancel_token_t after_read{sizeof(arc_cancel_token_t), 1, cancelled_after_read, &data};
+    CHECK(open(data, handle, pages, &after_read) == ARC_CANCELLED && data.reads > 0 && handle == 0 && pages == 0);
     arc_cancel_token_t cancel{sizeof(arc_cancel_token_t), 1, cancelled, nullptr};
     CHECK(open(data, handle, pages, &cancel) == ARC_CANCELLED && handle == 0 && pages == 0);
     CHECK(open(data, handle, pages) == ARC_OK);

@@ -457,7 +457,14 @@ public sealed class ProductionCompositionTests
     public void ALibraryWithoutAPdfBackendOrWithoutTheFunctionalAbiIsRefused()
     {
         var functional = new NativeAbiVersion(1, 1);
-        ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1;backend=linked");
+        const string admitted = "ArcPdfNative;abi=1.1;backend=linked;pdfium=chromium/8044;v8=off;xfa=off;system-fonts=off";
+        ProductionParserProfile.VerifyLibrary(functional, admitted);
+        _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1;backend=linked"));
+        foreach (var token in new[] { "pdfium=chromium/8044", "v8=off", "xfa=off", "system-fonts=off" })
+        {
+            _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, admitted.Replace(token, "unapproved", StringComparison.Ordinal)));
+            _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, admitted + ";" + token));
+        }
         _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1;backend=none"));
         _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(functional, "ArcPdfNative;abi=1.1"));
         _ = Assert.Throws<ContentParserException>(() => ProductionParserProfile.VerifyLibrary(new NativeAbiVersion(1, 0), "ArcPdfNative;abi=1.0;backend=linked"));

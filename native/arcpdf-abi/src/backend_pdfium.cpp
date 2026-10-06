@@ -25,8 +25,10 @@ namespace {
 
 std::timed_mutex& library_gate()
 {
-    static std::timed_mutex gate;
-    return gate;
+    // The handle registry can still own documents during static teardown. Keep the gate alive for
+    // the same process lifetime as PDFium rather than locking a destroyed static mutex on shutdown.
+    static auto* gate = new std::timed_mutex;
+    return *gate;
 }
 
 arc_status_t enter(std::unique_lock<std::timed_mutex>& lock, const call_context& context)
