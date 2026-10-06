@@ -66,6 +66,18 @@ internal sealed record LocalServiceBinding(string ServiceSymbol, string Contract
 /// <summary>Generated wire-type source and its immutable owned schema evidence.</summary>
 internal sealed record WireTypeBinding(string TypeSymbol, string SchemaPath, string SchemaSha256);
 
+/// <summary>Closed immutable metadata shapes; zero and every unknown value are invalid.</summary>
+internal enum NonWireMetadataKind
+{
+    Unknown,
+    OperationAuthorizationPolicy,
+    OperationAuthorizationCatalog,
+}
+
+/// <summary>Exact reviewed owned source identity for a non-transport metadata symbol.</summary>
+internal sealed record NonWireMetadataBinding(string TypeSymbol, string ProjectPath, string SourcePath,
+    string SourceSha256, NonWireMetadataKind Kind);
+
 /// <summary>Evidence from an existing required gate, bound to the exact source commit.</summary>
 internal sealed record ExternalPolicyEvidence(string Rule, string SourceCommit, bool Passed, IReadOnlyList<PolicyFinding> Findings);
 
@@ -80,7 +92,8 @@ internal sealed record RepositoryPolicyConfiguration(
     IReadOnlyList<ExternalPolicyEvidence> ExternalEvidence,
     string? WebRoot = null,
     bool MobileDistributable = false,
-    IReadOnlyDictionary<string, ProjectRole>? DependencyRoles = null);
+    IReadOnlyDictionary<string, ProjectRole>? DependencyRoles = null,
+    IReadOnlyList<NonWireMetadataBinding>? NonWireMetadataBindings = null);
 
 /// <summary>Structured inputs for non-managed consumers and canonical producer results.</summary>
 internal sealed record RepositoryFacts(
