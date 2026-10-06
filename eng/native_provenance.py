@@ -731,6 +731,30 @@ def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
     return receipt
 
 
+def pdfium_owned_recipe(producer, runtime_profile: dict, pdfium_directory: Path,
+                        native_prefix: Path, root: Path = ROOT) -> dict:
+    """Inspect the retained root producer recipe; component fixture builds cannot be sealed."""
+    build_tools = producer.owned_build_tools(runtime_profile, root / "artifacts/vcpkg-installed", root)
+    cache = root / "artifacts/cmake/win-x64/shim-static/CMakeCache.txt"
+    values = dict(line.split("=", 1) for line in cache.read_text(encoding="utf-8").splitlines()
+                  if line and not line.startswith(("#", "//")) and "=" in line)
+    require(values.get("CMAKE_HOME_DIRECTORY:INTERNAL") and
+            Path(values["CMAKE_HOME_DIRECTORY:INTERNAL"]).resolve() == root.resolve(),
+            "PDF producer must use the owned root build, not a fixture wrapper")
+    require(values.get("ARCFORGES_PDFIUM:BOOL") == "ON" and
+            values.get("ARCFORGES_NATIVE_PROFILE:STRING") == "shim-static" and
+            values.get("CMAKE_BUILD_TYPE:STRING") == "Release" and
+            values.get("VCPKG_TARGET_TRIPLET:STRING") == "x64-windows-static-md",
+            "PDF producer recipe is not the admitted production configuration")
+    for key, expected in (("PDFium_DIR:PATH", pdfium_directory / "pdfium"),
+                          ("CMAKE_INSTALL_PREFIX:PATH", native_prefix)):
+        require(key in values and Path(values[key]).resolve() == expected.resolve(),
+                "PDF producer used a different admitted prefix: " + key)
+    return {"buildTools": build_tools, "cacheSha256": sha(cache.read_bytes()),
+            "configuration": "Release", "nativeProfile": "shim-static",
+            "triplet": "x64-windows-static-md", "pdfium": "chromium/8044"}
+
+
 def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: Path) -> dict:
     """Seal the actual PDF binary/SDK/dependency input for NAT.25; this is not a published package."""
     import importlib.util
@@ -763,6 +787,7 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
                ("get_abi_version", "get_build_info", "get_last_error", "open", "page_info", "text", "render", "close")}
     require(set(producer.pe(data)["exports"]) == exports, "PDF ABI export set differs from the functional contract")
     runtime_profile = profile()
+    owned_recipe = pdfium_owned_recipe(producer, runtime_profile, pdfium_directory, native_prefix)
     crt = producer.vc_runtime(runtime_profile["platformRuntime"]["distributionIdentity"]["directoryVersion"])
     available = {file.name.lower(): file for file in crt.glob("*.dll")}
     available.update({"arcpdfnative.dll": owned, "pdfium.dll": pdfium_directory / "pdfium/bin/pdfium.dll"})
@@ -822,6 +847,7 @@ def stage_pdfium_input(directory: Path, pdfium_directory: Path, native_prefix: P
         result = {"schemaVersion": 1, "sourceCommit": audit["sourceCommit"], "rid": "win-x64",
                   "kind": "pdfium-production-composition-input", "profile": value["id"],
                   "build": build_identity.build_identity(ROOT), "admission": receipt,
+                  "ownedProducerRecipe": owned_recipe,
                   "compilerRuntimeAdmission": value["compilerRuntime"],
                   "compilerRuntimeSignatures": signatures,
                   "files": [{"path": file.relative_to(staging).as_posix(), "sha256": producer.digest(file)}

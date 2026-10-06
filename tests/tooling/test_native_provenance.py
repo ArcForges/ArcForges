@@ -591,5 +591,53 @@ class PdfiumAttestationTests(unittest.TestCase):
             self.assertEqual(verifier.call_count,3);self.assertEqual([x.args[0] for x in sleep.call_args_list],[0.5,2.0])
 
 
+class PdfiumOwnedRecipeTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.pdf = self.root / 'artifacts/pdfium-admission'
+        self.prefix = self.root / 'artifacts/stage/native/win-x64'
+        self.cache = self.root / 'artifacts/cmake/win-x64/shim-static/CMakeCache.txt'
+        self.cache.parent.mkdir(parents=True)
+        self.profile = {'buildTools': {'ownedCMake':'4.3.3', 'ownedNinja':'1.13.1', 'msvcToolset':'14.51.36231'}}
+        self.values = {
+            'CMAKE_CACHE_MAJOR_VERSION:INTERNAL':'4', 'CMAKE_CACHE_MINOR_VERSION:INTERNAL':'3',
+            'CMAKE_CACHE_PATCH_VERSION:INTERNAL':'3',
+            'CMAKE_C_COMPILER:FILEPATH':'C:/VS/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe',
+            'CMAKE_CXX_COMPILER:FILEPATH':'C:/VS/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe',
+            'VCPKG_INSTALLED_DIR:PATH':str(self.root / 'artifacts/vcpkg-installed'),
+            'CMAKE_MAKE_PROGRAM:FILEPATH':'ninja', 'CMAKE_HOME_DIRECTORY:INTERNAL':str(self.root),
+            'ARCFORGES_PDFIUM:BOOL':'ON', 'ARCFORGES_NATIVE_PROFILE:STRING':'shim-static',
+            'CMAKE_BUILD_TYPE:STRING':'Release', 'VCPKG_TARGET_TRIPLET:STRING':'x64-windows-static-md',
+            'PDFium_DIR:PATH':str(self.pdf / 'pdfium'), 'CMAKE_INSTALL_PREFIX:PATH':str(self.prefix)}
+
+    def check(self):
+        self.cache.write_text('\n'.join(k+'='+v for k,v in self.values.items()), encoding='utf-8')
+        with patch.object(producer.subprocess, 'check_output', return_value='1.13.1\n'):
+            return native.pdfium_owned_recipe(producer, self.profile, self.pdf, self.prefix, self.root)
+
+    def test_actual_cache_is_bound_to_exact_tools_source_configuration_and_prefix(self):
+        result = self.check()
+        self.assertEqual(result['cacheSha256'], hashlib.sha256(self.cache.read_bytes()).hexdigest())
+        self.assertEqual(result['buildTools'], self.profile['buildTools'])
+
+    def test_unreviewed_tools_or_fixture_recipe_cannot_produce_sealed_input(self):
+        for key, value in {
+            'CMAKE_CACHE_PATCH_VERSION:INTERNAL':'4',
+            'CMAKE_CXX_COMPILER:FILEPATH':'C:/VS/VC/Tools/MSVC/14.52/bin/Hostx64/x64/cl.exe',
+            'VCPKG_INSTALLED_DIR:PATH':str(self.root / 'other-dependencies'),
+            'CMAKE_HOME_DIRECTORY:INTERNAL':str(self.root / 'fixture-wrapper'),
+            'ARCFORGES_PDFIUM:BOOL':'OFF', 'CMAKE_BUILD_TYPE:STRING':'Debug',
+            'ARCFORGES_NATIVE_PROFILE:STRING':'other', 'VCPKG_TARGET_TRIPLET:STRING':'x64-windows',
+            'PDFium_DIR:PATH':str(self.root / 'other-pdfium'),
+            'CMAKE_INSTALL_PREFIX:PATH':str(self.root / 'other-prefix')}.items():
+            with self.subTest(key=key):
+                original = self.values[key]
+                self.values[key] = value
+                with self.assertRaises(ValueError): self.check()
+                self.values[key] = original
+
+
 if __name__ == "__main__":
     unittest.main()

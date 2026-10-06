@@ -32,6 +32,7 @@ every archive member and all legal texts. The attestation binds the upstream bui
 the separately observed PDFium source commit. Configure with `ARCFORGES_PDFIUM=ON` and `PDFium_DIR` set to that prefix.
 The Windows production preset selects that verified prefix. After compiling and installing the clean, committed source,
 `python eng/native_provenance.py --stage-pdfium-input artifacts/pdfium-production-input` seals the source-bound DLL,
+the actual retained root Release producer recipe and pinned compiler/build-tool identity (fixture wrapper builds are refused),
 complete transitive runtime import closure, SDK import library and headers, original legal documents, aggregate SPDX SBOM
 and admission evidence. The producer checks the exact eight functional exports, production marker and embedded source
 identity; compiler-runtime files must match the existing admitted Microsoft hashes, versions and Authenticode publisher.
