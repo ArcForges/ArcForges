@@ -165,7 +165,7 @@ public static class ShellAccessibilityAudit
                 Add(AccessibilityRules.Dialog, "A modal element needs a dismiss command bound to Escape.");
             }
 
-            if (!Descendants(node).Any(static child => child.Keyboard == KeyboardAccess.TabStop))
+            if (!EligibleDescendants(node).Any(static child => child.Keyboard == KeyboardAccess.TabStop))
             {
                 Add(AccessibilityRules.Dialog, "A modal element needs at least one focusable control.");
             }
@@ -264,12 +264,22 @@ public static class ShellAccessibilityAudit
         role is AccessibleRole.MenuItem or AccessibleRole.Button or AccessibleRole.ToggleButton or AccessibleRole.TextBox or
             AccessibleRole.SearchBox or AccessibleRole.Splitter or AccessibleRole.Link or AccessibleRole.ListItem;
 
-    private static IEnumerable<AccessibleNode> Descendants(AccessibleNode node)
+    private static IEnumerable<AccessibleNode> EligibleDescendants(AccessibleNode node)
     {
+        if (node.State.Disabled)
+        {
+            yield break;
+        }
+
         foreach (AccessibleNode child in node.Children)
         {
+            if (child.State.Disabled)
+            {
+                continue;
+            }
+
             yield return child;
-            foreach (AccessibleNode nested in Descendants(child))
+            foreach (AccessibleNode nested in EligibleDescendants(child))
             {
                 yield return nested;
             }

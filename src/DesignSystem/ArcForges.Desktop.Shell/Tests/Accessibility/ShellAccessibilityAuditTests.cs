@@ -239,4 +239,26 @@ public sealed class ShellAccessibilityAuditTests
         Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Keyboard);
         Assert.Contains(findings, finding => finding.Rule == AccessibilityRules.Text);
     }
+
+    [Fact]
+    public void ModalAuditRequiresAnEnabledTabStopOutsideDisabledAncestors()
+    {
+        AccessibleNode denied = new(new AccessibleState(disabled: true), "test.denied", AccessibleRole.Button,
+            Named, keyboard: KeyboardAccess.TabStop, focusOrder: 1);
+        AccessibleNode child = new("test.child", AccessibleRole.Button, Named, keyboard: KeyboardAccess.TabStop, focusOrder: 1);
+        AccessibleNode group = new(new AccessibleState(disabled: true), "test.group", AccessibleRole.Group, children: [child]);
+        foreach (AccessibleNode unavailable in new[] { denied, group })
+        {
+            var modal = new ShellSurface("test.modal", new AccessibleNode("test.modal", AccessibleRole.Dialog, Named,
+                isModal: true, dismissCommandId: "test.close", children: [unavailable]));
+            Assert.Contains(ShellAccessibilityAudit.Evaluate([modal]), finding => finding.Rule == AccessibilityRules.Dialog);
+            Assert.Null(new FocusNavigator(modal).CurrentId);
+            Assert.False(new FocusNavigator(ShellSurfaceCatalog.WorkspaceSurface).OpenModal(modal));
+        }
+
+        var available = new ShellSurface("test.modal", new AccessibleNode("test.modal", AccessibleRole.Dialog, Named,
+            isModal: true, dismissCommandId: "test.close", children: [child]));
+        Assert.Empty(ShellAccessibilityAudit.Evaluate([available]));
+        Assert.True(new FocusNavigator(ShellSurfaceCatalog.WorkspaceSurface).OpenModal(available));
+    }
 }
