@@ -295,6 +295,14 @@
           "ArcForges.Foundation": "[1.0.0, )"
         }
       },
+      "arcforges.security.audit": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Foundation": "[1.0.0, )",
+          "ArcForges.Security": "[1.0.0, )",
+          "Microsoft.Data.Sqlite": "[10.0.12, )"
+        }
+      },
       "arcforges.security.capabilityenforcement": {
         "type": "Project",
         "dependencies": {

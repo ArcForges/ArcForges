@@ -3223,5 +3223,25 @@
     "apiSymbol": "ArcForges.Assistant.Abstractions.AssistantLifecycle.DisposeAsync()",
     "testProject": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
     "testMethod": "AssistantAbstractionsTests.LifecycleShutdownTests.DisposalClosesEveryViewIndependentlyThenReleasesTheSessionOnce()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.SecurityDecisionAuditSink.WriteAsync(ArcForges.Security.Decisions.SecurityAuditRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditDecisionTests.SecurityDecisionSinkPreservesEveryProducerFactAcrossReopenAndRejectsContradictions()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.DecisionResultRecorder.RecordAsync(ArcForges.Security.Decisions.DecisionRecord, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditDecisionTests.DurableDecisionRecorderPersistsSuccessFailureCancellationAndRefusesForeignOwner()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Audit.AuditStore.Append(ArcForges.Security.Audit.AuditEvent, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+    "testMethod": "ArcForges.Security.Audit.Tests.AuditDecisionTests.CancelledOrDisposedIntakeNeverReportsSuccess()"
+  },
+  {
+    "apiSymbol": "ArcForges.Capabilities.CapabilityInvocationBinding.RestoreResult(ArcForges.Contracts.PublicApi.V1.CapabilityResult, ArcForges.Capabilities.InvocationResultVersion)",
+    "testProject": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+    "testMethod": "ArcForges.Capabilities.Tests.InvocationRestoreTests.RestoreResultValidatesExactSchemaBudgetAndVersionWithoutCallingOwner()"
   }
 ]

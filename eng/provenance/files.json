@@ -988,7 +988,13 @@
     "src/Native/ArcForges.Native.Pdf/README.md",
     "src/Native/ArcForges.Native.Pdf/packages.lock.json",
     "eng/policy/dependency-reviews/nat-14-r1.json",
-    "native/arcpdf-abi/README.md"
+    "native/arcpdf-abi/README.md",
+    "eng/policy/dependency-reviews/plt-57-r2.json",
+    "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityAuditCompositionTests.cs",
+    "src/BuildingBlocks/ArcForges.Security.Audit/DecisionAuditDetails.cs",
+    "src/BuildingBlocks/ArcForges.Security.Audit/DecisionAuditSinks.cs",
+    "src/BuildingBlocks/ArcForges.Security.Audit/Tests/AuditDecisionTests.cs",
+    "src/BuildingBlocks/ArcForges.Capabilities/Tests/InvocationRestoreTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

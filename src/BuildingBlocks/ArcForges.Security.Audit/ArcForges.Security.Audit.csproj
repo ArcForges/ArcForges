@@ -13,6 +13,7 @@
   <ItemGroup>
     <Compile Remove="Tests/**/*.cs" />
     <InternalsVisibleTo Include="ArcForges.Security.Audit.Tests" />
+    <InternalsVisibleTo Include="ArcForges.Security.Tests" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <ProjectReference Include="../ArcForges.Foundation/ArcForges.Foundation.csproj" />
     <ProjectReference Include="../ArcForges.Security/ArcForges.Security.csproj" />

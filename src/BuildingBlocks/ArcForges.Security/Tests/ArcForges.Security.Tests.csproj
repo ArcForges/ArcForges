@@ -18,5 +18,6 @@
     <ProjectReference Include="../../ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj" />
     <ProjectReference Include="../LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj" />
     <ProjectReference Include="../CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj" />
+    <ProjectReference Include="../../ArcForges.Security.Audit/ArcForges.Security.Audit.csproj" />
   </ItemGroup>
 </Project>

@@ -54,6 +54,8 @@ public enum AuditEventType
     CapabilityLeaseRevoked = 42,
     CapabilityLeaseExpired = 43,
     CapabilityLeaseTaskEnded = 44,
+    SecurityDecision = 45,
+    InvocationResult = 46,
 }
 
 /// <summary>The closed R0-R4 effective-risk scale of <see cref="RiskLevel"/>, preserved without loss.</summary>
@@ -67,8 +69,7 @@ public enum AuditRisk
     R4 = 5,
 
     /// <summary>
-    /// Effective risk was not assessed when the decision was made. Only an egress event may carry it: the egress decision is pipeline
-    /// step 8 and risk is assessed at step 9, so the egress authority has none to give. It is never an inferred value.
+    /// The producer did not assess effective risk. Only egress and a security refusal with exactly null producer risk may carry it.
     /// </summary>
     NotAssessed = 6,
 }
@@ -128,6 +129,7 @@ public enum AuditResourceKind
     Policy = 14,
     Task = 15,
     CapabilityLease = 16,
+    Command = 17,
 }
 
 /// <summary>
@@ -243,7 +245,7 @@ public sealed record AuditCapabilityId
     public AuditCapabilityId(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        if (value.Length > 128 || value[0] is < 'a' or > 'z')
+        if (value.Length > 256 || !(value[0] is >= 'a' and <= 'z' or >= 'A' and <= 'Z'))
         {
             throw new ArgumentException("Capability identifier is not a bounded canonical key.", nameof(value));
         }
@@ -252,7 +254,7 @@ public sealed record AuditCapabilityId
         foreach (var character in value)
         {
             var separator = character is '.' or '-';
-            if (!(character is >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '-') || (separator && previousSeparator))
+            if (!(character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '.' or '-') || (separator && previousSeparator))
             {
                 throw new ArgumentException("Capability identifier is not a bounded canonical key.", nameof(value));
             }
@@ -503,6 +505,16 @@ public sealed class AuditEvent
         AuditRisk risk, AuditDecision decision, AuditDecisionReason reason, AuditOrigin origin,
         WorkspaceId? workspace = null, TaskId? task = null, CorrelationId? correlation = null,
         AuditEgressDetail? egress = null)
+        : this(eventType, actorChain, softwareIdentity, capability, resource, risk, decision, reason, origin,
+            workspace, task, correlation, egress, null)
+    {
+    }
+
+    internal AuditEvent(AuditEventType eventType, ActorChain actorChain,
+        AuditSoftwareIdentity softwareIdentity, AuditCapabilityId capability, AuditResourceReference resource,
+        AuditRisk risk, AuditDecision decision, AuditDecisionReason reason, AuditOrigin origin,
+        WorkspaceId? workspace, TaskId? task, CorrelationId? correlation, AuditEgressDetail? egress,
+        AuditDecisionDetail? decisionDetail)
     {
         if (!AuditEnumValidation.IsWireValue(eventType)) throw new ArgumentOutOfRangeException(nameof(eventType));
         if (!AuditEnumValidation.IsWireValue(risk)) throw new ArgumentOutOfRangeException(nameof(risk));
@@ -531,7 +543,7 @@ public sealed class AuditEvent
         if (workspace is { } workspaceValue) _ = workspaceValue.ToWire();
         if (task is { } taskValue) _ = taskValue.ToWire();
         if (correlation is { } correlationValue) _ = correlationValue.ToWire();
-        AuditEventShape.Validate(eventType, resource, risk, decision, reason, correlation, egress);
+        AuditEventShape.Validate(eventType, resource, risk, decision, reason, correlation, egress, decisionDetail);
 
         EventType = eventType;
         ActorChain = actorChain;
@@ -546,6 +558,8 @@ public sealed class AuditEvent
         Task = task;
         Correlation = correlation;
         Egress = egress;
+        DecisionDetail = decisionDetail;
+        DecisionAuditValidation.Envelope(this);
     }
 
     public AuditEventType EventType { get; }
@@ -564,6 +578,8 @@ public sealed class AuditEvent
     public CorrelationId? Correlation { get; }
     /// <summary>Present exactly for the two closed data-egress decision event types.</summary>
     public AuditEgressDetail? Egress { get; }
+    /// <summary>Present exactly for security decision and invocation result facts.</summary>
+    public AuditDecisionDetail? DecisionDetail { get; }
 }
 
 /// <summary>
@@ -589,8 +605,15 @@ internal static class AuditEventShape
         or AuditEventType.CapabilityLeaseTaskEnded;
 
     internal static void Validate(AuditEventType type, AuditResourceReference resource, AuditRisk risk, AuditDecision decision,
-        AuditDecisionReason reason, CorrelationId? correlation, AuditEgressDetail? egress)
+        AuditDecisionReason reason, CorrelationId? correlation, AuditEgressDetail? egress, AuditDecisionDetail? decisionDetail)
     {
+        var decisionEvent = type is AuditEventType.SecurityDecision or AuditEventType.InvocationResult;
+        if (decisionEvent != (decisionDetail is not null) || decisionEvent != (resource.Kind == AuditResourceKind.Command)
+            || decisionEvent && (correlation is null || resource.Id != correlation.Value.Value)
+            || type == AuditEventType.SecurityDecision && decisionDetail is not AuditSecurityDecisionDetail
+            || type == AuditEventType.InvocationResult && decisionDetail is not AuditDecisionResultDetail)
+            throw new ArgumentException("Decision facts require their exact typed detail and command identity.", nameof(decisionDetail));
+
         var egressType = type is AuditEventType.DataEgressAuthorized or AuditEventType.DataEgressDenied;
         if (egressType != (egress is not null))
         {
@@ -610,9 +633,10 @@ internal static class AuditEventShape
             }
         }
 
-        if (risk == AuditRisk.NotAssessed && !egressType)
+        if (risk == AuditRisk.NotAssessed && !egressType
+            && decisionDetail is not AuditSecurityDecisionDetail { Record.Kind: Decisions.SecurityAuditKind.Refused, Record.EffectiveRisk: null })
         {
-            throw new ArgumentException("Only an egress event may leave the effective risk unassessed.", nameof(risk));
+            throw new ArgumentException("Only egress or a producer-null security refusal may leave risk unassessed.", nameof(risk));
         }
 
         var lease = IsLease(type);
