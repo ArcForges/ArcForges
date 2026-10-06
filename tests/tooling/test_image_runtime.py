@@ -477,6 +477,57 @@ class ImageRuntimeTests(unittest.TestCase):
                 path.write_text(content)
                 self.assertRaisesRegex(ValueError, "CMake", image._abi_tools, path, base)
 
+    def test_build_tool_identity_binds_actual_executable_and_refuses_version_or_empty_output(self):
+        # Actual installed Python proves the executable/version adapter, not a native CMake build.
+        program = Path(sys.executable)
+        observed = image._build_tool(program, sys.version.split()[0], "Python ", None)
+        self.assertEqual({"name": program.resolve().name, "version": sys.version.split()[0],
+                          "sha256": hashlib.sha256(program.read_bytes()).hexdigest()}, observed)
+        self.assertRaisesRegex(ValueError, "version", image._build_tool, program, "0.0.0", "Python ", None)
+        # Unavailable producer-tool response is scripted; actual file/hash admission remains real.
+        for output in ("", "1.13.1\nforeign output", "wrong", "x" * 4097):
+            with patch.object(image.subprocess, "check_output", return_value=output):
+                self.assertRaisesRegex(ValueError, "version", image._build_tool, program, "1.13.1", "", None)
+
+    def test_build_tool_admission_refuses_mid_probe_mutation_and_post_probe_cancel(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            program = Path(temporary) / "unavailable-producer-tool"
+            program.write_bytes(b"original fixture executable")
+
+            def changed(*args, **kwargs):
+                self.assertEqual(15, kwargs["timeout"])
+                program.write_bytes(b"changed fixture executable")
+                return "cmake version 4.3.3"
+
+            with patch.object(image.subprocess, "check_output", side_effect=changed):
+                self.assertRaisesRegex(ValueError, "changed", image._build_tool, program, "4.3.3", "cmake version ", None)
+            cancelled = threading.Event()
+
+            def cancelled_probe(*args, **kwargs):
+                cancelled.set()
+                return "cmake version 4.3.3"
+
+            with patch.object(image.subprocess, "check_output", side_effect=cancelled_probe):
+                self.assertRaises(image.StageCancelled, image._build_tool, program, "4.3.3", "cmake version ", cancelled.is_set)
+
+    @unittest.skipIf(os.name == "nt", "Unix tool-alias filesystem regression; Windows existing tool junction is covered by actual Python probe.")
+    def test_build_tool_alias_retarget_during_probe_refuses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original, replacement, alias = root / "old-tool", root / "new-tool", root / "selected-tool"
+            original.write_bytes(b"original producer fixture")
+            replacement.write_bytes(b"replacement producer fixture")
+            alias.symlink_to(original)
+
+            def retarget(*args, **kwargs):
+                self.assertEqual(str(original.resolve()), args[0][0])
+                alias.unlink()
+                alias.symlink_to(replacement)
+                return "cmake version 4.3.3"
+
+            with patch.object(image.subprocess, "check_output", side_effect=retarget):
+                self.assertRaisesRegex(ValueError, "changed", image._build_tool, alias, "4.3.3", "cmake version ", None)
+
     def test_inventory_refuses_case_collision_and_tracks_actual_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -405,6 +405,21 @@ def _copy(original, target, cancelled=None, expected=None, algorithm="sha256"):
     return original_hash
 
 
+def _build_tool(program, expected, prefix, cancelled):
+    selection = Path(program)
+    program = _regular(selection.resolve(strict=True))
+    require(program.stat().st_size <= MAX_MATERIAL, "Unbounded Image build-tool executable.")
+    _cancel(cancelled)
+    before = digest(program, cancelled)
+    observed = subprocess.check_output([str(program), "--version"], text=True, timeout=15).strip()
+    _cancel(cancelled)
+    require(bool(observed) and len(observed) <= 4096 and observed.splitlines()[0] == prefix + expected and
+            (bool(prefix) or observed == expected), "Unreviewed Image build-tool executable version.")
+    require(selection.resolve(strict=True) == program and digest(program, cancelled) == before,
+            "Image build-tool executable changed during admission.")
+    return {"name": program.name, "version": expected, "sha256": before}
+
+
 def _tools(inputs, recipe, identity, root, cancelled):
     cache_file = _regular(inputs.build_directory / "CMakeCache.txt")
     cache = dict(line.split("=", 1) for line in cache_file.read_text(encoding="utf-8").splitlines()
@@ -424,13 +439,12 @@ def _tools(inputs, recipe, identity, root, cancelled):
             "Image binary was not produced by the admitted owning root/recipe/input tree.")
     version = ".".join(value("CMAKE_CACHE_" + part + "_VERSION") for part in ("MAJOR", "MINOR", "PATCH"))
     require(version == recipe["buildTools"]["cmake"], "Unreviewed Image CMake version.")
-    ninja = _regular(Path(value("CMAKE_MAKE_PROGRAM")))
-    _cancel(cancelled)
-    observed = subprocess.check_output([str(ninja), "--version"], text=True, timeout=15).strip()
-    require(observed == recipe["buildTools"]["ninja"], "Unreviewed Image Ninja version.")
+    cmake = _build_tool(value("CMAKE_COMMAND"), recipe["buildTools"]["cmake"], "cmake version ", cancelled)
+    ninja = _build_tool(value("CMAKE_MAKE_PROGRAM"), recipe["buildTools"]["ninja"], "", cancelled)
     compilers = {}
     for language in ("C", "CXX"):
-        compiler = _regular(Path(value("CMAKE_" + language + "_COMPILER")))
+        selection = Path(value("CMAKE_" + language + "_COMPILER"))
+        compiler = _regular(selection.resolve(strict=True))
         if recipe["host"] == "Windows":
             target = "x64" if recipe["architecture"] == "x86_64" else "arm64"
             require(compiler.as_posix().casefold().endswith(
@@ -444,11 +458,12 @@ def _tools(inputs, recipe, identity, root, cancelled):
         require(family == [recipe["compiler"]["family"]] and len(version) == 1, "Image compiler family is not admitted.")
         compilers[language] = {"name": compiler.name, "family": family[0], "version": version[0],
                                "sha256": digest(compiler, cancelled), "declarationSha256": digest(declarations[0], cancelled)}
+        require(selection.resolve(strict=True) == compiler, "Image compiler selection changed during admission.")
     generated = _regular(inputs.build_directory / "native/identity/arc_build_identity.hpp")
     require(build_identity.native_suffix(identity) in generated.read_text(encoding="utf-8"),
             "Image build cache contains a different generated source identity.")
     return {"cmakeCacheSha256": digest(cache_file, cancelled), "cmake": recipe["buildTools"]["cmake"],
-            "ninja": observed, "ninjaSha256": digest(ninja, cancelled), "compilers": compilers,
+            "cmakeExecutable": cmake, "ninja": ninja["version"], "ninjaSha256": ninja["sha256"], "compilers": compilers,
             "generatedIdentitySha256": digest(generated, cancelled)}
 
 
