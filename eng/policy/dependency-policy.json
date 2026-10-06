@@ -240,8 +240,8 @@
     "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/packages.lock.json": "d853a740c8ddb1da79ae2aad7d54fcecf80ed0a73dac94df14443c29d4eae7f7",
     "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj": "16b8227d01b3a11c82c7111c7da3cbf5d9d8701a3c449c47ca40dd3f245638d9",
     "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/packages.lock.json": "c9cd093bc0d4fe58c08f1bd0fc591d4f3086c8f302b6a374b319efcc9ec1d3e9",
-    "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "0a151cdf32bf378434d9e82659d24df6a8802b52d8163bd97cfefb208236433a",
-    "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "790d82612130bcf77c69c55ea91686a1dd63531ad54c422bc6304c2815e40e39",
+    "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "e4ba91225551f7d3076aff09f04d37e34a4632c9706bd11a784f6ece97f983a2",
+    "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "2b8bff322806785494fd1755265499382ebc69825b90a50bfefb4cbb06174802",
     "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
     "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
     "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
@@ -783,19 +783,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-c20261005-nat14",
-    "reviewer": "Pending independent exact-head dependency-admission review before merge.",
-    "reviewedOn": "2026-10-05",
-    "baselineCommit": "0e5244a1a9303ea12b6fefddb9c760f6ab424e3a",
-    "maintenanceAssessment": "NAT.14 adds no third-party dependency. It adds the first-party non-packable project ArcForges.Native.Pdf (a source-generated LibraryImport binding of the owned arc_pdf_* ABI), makes the existing ArcForges.ContentSandbox helper reference it, and adds the first-party native library source native/arcpdf-abi, which links no PDF parser (backend_none: arc_pdf_open fails closed with ARC_UNSUPPORTED). No PDFium source, binary, port, vcpkg change, NuGet coordinate or Python requirement is added; the locked NuGet closure keeps every coordinate, version and content hash, and only the project-reference sections of the ContentSandbox, Fixture and Tests locks and the new Native.Pdf lock change. The one edit outside the task scope is an InternalsVisibleTo(ArcForges.Native.Pdf) line in Native.Abstractions (ADP-07 supporting binding, no behaviour change). The real PDFium dependency and its admission are the separate task NAT.15.",
+    "owner": "w-codex-20261006-audit",
+    "reviewer": "Pending independent exact-head review before merge.",
+    "reviewedOn": "2026-10-06",
+    "baselineCommit": "f833de3410183d8c59b17ec54229e06ad1370d98",
+    "maintenanceAssessment": "PLT.57 connects the existing Audit producer to Security.Tests by one first-party ProjectReference. The regenerated test lock adds only that project node. Every exact NuGet/Python coordinate, version and content hash remains unchanged. Component composition uses the real AuditStore, EgressAuditSink, CapabilityLeaseEventAuditSink, EgressAuthority, CapabilityLeaseManager and AuditRetentionRunner; host facts and lease storage remain explicit fixtures. No runtime producer, package identity or dependency is added.",
     "upgradeChecks": {
-      "compilation": "With the pinned .NET SDK 10.0.400 (separate installed copy at ~/.dotnet) through the workstation build slot: restore regenerated the ContentSandbox, Fixture and Tests locks and created the Native.Pdf lock; the ContentSandbox test project (which builds Native.Pdf, the helper, the fixture and the broker) compiled with warnings as errors and 170 tests ran (161 passed, 9 opt-in OS checks skipped). The native arcpdf-abi library and its two CTest executables compiled with MSVC /W4 /WX through a scratch CMake wrapper (the repository CMake preset needs the unavailable pinned vcpkg tree) and both CTest targets passed, and the engine test also passed unmodified under MSVC AddressSanitizer. Linux and macOS compilation of the native sources was not run locally.",
-      "aot-trim": "Native.Pdf uses source-generated LibraryImport with DisableRuntimeMarshalling, UnmanagedCallersOnly callbacks and Utf8JsonReader; no reflection, no runtime code generation. The local build compiled it with the repository analyzers (IsAotCompatible is not set on this non-packable project; the analyzers of the helper project that references it ran). The helper Native AOT publish is the existing compile-only CI job; it was not run locally.",
-      "compatibility": "No package identity, public API of a published package or schema changes. Native.Pdf is non-packable and not in eng/packaging/packages.json. Native.Abstractions gains only an InternalsVisibleTo entry. The helper keeps its launch frame, contract and exit codes; the production parser composition now contains one profile and a launch that names the hostile test profile is still refused.",
-      "licence-provenance": "All new files are first-party AGPL-3.0-only with SPDX headers, registered in the architecture, licence-boundary, runtime-ownership, active-project and first-party provenance inventories. No upstream source, notice or binary is added.",
-      "security-sbom": "The NuGet and Python closures are unchanged (same coordinates and content hashes), so no SBOM or advisory input changes. The new native library adds no dependency edge. The hostile-input surface added is the helper's PDF adapter and the engine's validation of backend output, covered by offline tests; no real PDF parser exists in this change.",
-      "runtime-performance-migration": "No runtime behaviour of any published package changes and no migration exists. No real PDF was parsed, no OS-isolation check was re-run against a real parser and no packaged consumer was executed: the only parser behind the engine in tests is a scripted fake. All PDF behaviour is proven only against scripted fakes; the production helper fails closed (no backend, win-x64 loader only).",
-      "framework-runtime-posture": "No framework, SDK, runtime or toolchain version changes; global.json and the vcpkg baseline are untouched."
+      "compilation": "Existing pinned user SDK 10.0.400 through build-slot: restore and focused Security.Tests compile with warnings-as-errors; five focused component tests pass. Applicable hosted checks remain required.",
+      "aot-trim": "No production AOT posture or runtime changes in this supporting binding. Existing applicable Native AOT compile checks remain required; focused tests are offline and untrimmed.",
+      "compatibility": "No published API, package identity, version or wire shape change. The new test-only ProjectReference connects existing implementations.",
+      "licence-provenance": "New test is first-party AGPL-3.0-only with SPDX and provenance registration; historical notices retained.",
+      "security-sbom": "Exact NuGet/Python closure and content hashes equal active receipt. Tests verify durable audit failure denies egress and lease issue, including a real guarded transfer with no send callback.",
+      "runtime-performance-migration": "No production migration in this supporting binding. Five focused tests cover SQLite audit persistence/reopen, egress and lease lifecycle, twelve concurrent writes, cancelled intake and unsettled terminal audit retry. No product host, deployment or OS isolation acceptance asserted.",
+      "framework-runtime-posture": "No SDK/framework/runtime/native/toolchain change. global.json remains 10.0.400; existing installed user SDK used."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -1036,8 +1036,8 @@
       "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/packages.lock.json": "d853a740c8ddb1da79ae2aad7d54fcecf80ed0a73dac94df14443c29d4eae7f7",
       "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/ArcForges.Security.LocalRpcBoundary.csproj": "16b8227d01b3a11c82c7111c7da3cbf5d9d8701a3c449c47ca40dd3f245638d9",
       "src/BuildingBlocks/ArcForges.Security/LocalRpcBoundary/packages.lock.json": "c9cd093bc0d4fe58c08f1bd0fc591d4f3086c8f302b6a374b319efcc9ec1d3e9",
-      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "0a151cdf32bf378434d9e82659d24df6a8802b52d8163bd97cfefb208236433a",
-      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "790d82612130bcf77c69c55ea91686a1dd63531ad54c422bc6304c2815e40e39",
+      "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj": "e4ba91225551f7d3076aff09f04d37e34a4632c9706bd11a784f6ece97f983a2",
+      "src/BuildingBlocks/ArcForges.Security/Tests/packages.lock.json": "2b8bff322806785494fd1755265499382ebc69825b90a50bfefb4cbb06174802",
       "src/BuildingBlocks/ArcForges.Security/packages.lock.json": "35787730aacd19510564fce9726ad522b0cea67a7f2380dadaf9bbb0d9bda2fc",
       "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj": "c3e379b6f09ee3ddcea9360c742fdd37b45e936e0cb17586714a0a82d9cbb1eb",
       "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj": "5d5dd7d6656b8e5b78de998771eeaa3158f7a5363cc22538dbb9e19f7b7b656e",
@@ -1085,7 +1085,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-25-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1096,7 +1096,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/plt-57-r2.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
