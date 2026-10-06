@@ -658,4 +658,4 @@ public sealed class TracePolicyTests
 // emitter tests concurrently would feed their real error activities into this policy and contaminate its facts.
 [CollectionDefinition("Trace policy process listeners", DisableParallelization = true)]
 [SuppressMessage("Maintainability", "CA1515", Justification = "xUnit requires collection definition classes to be public for discovery.")]
-public sealed class TracePolicyProcessListenerCollection;
+public sealed class TracePolicyProcessListeners;
