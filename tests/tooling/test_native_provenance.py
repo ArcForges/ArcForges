@@ -591,6 +591,36 @@ class PdfiumAttestationTests(unittest.TestCase):
             self.assertEqual(verifier.call_count,3);self.assertEqual([x.args[0] for x in sleep.call_args_list],[0.5,2.0])
 
 
+class PdfiumArchiveTests(unittest.TestCase):
+    def extract(self, rows, expected=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / 'input.tgz'
+            staging = Path(temporary) / 'prefix'
+            staging.mkdir()
+            with tarfile.open(archive, 'w:gz') as tar:
+                for name, kind, data in rows:
+                    member = tarfile.TarInfo(name)
+                    member.type = kind
+                    member.size = len(data) if kind == tarfile.REGTYPE else 0
+                    member.linkname = 'bin/parser.dll' if kind == tarfile.SYMTYPE else ''
+                    tar.addfile(member, io.BytesIO(data) if member.isfile() else None)
+            value = {'files': expected or {'bin/parser.dll':'unused'}, 'archive':{'maximumBytes':8 * 1024 * 1024}}
+            native.extract_pdfium_archive(archive, staging, value)
+            return (staging / 'bin/parser.dll').read_bytes()
+
+    def test_closed_complete_archive_extracts_exact_binary_bytes(self):
+        self.assertEqual(b'actual bytes', self.extract([
+            ('bin/',tarfile.DIRTYPE,b''), ('bin/parser.dll',tarfile.REGTYPE,b'actual bytes')]))
+
+    def test_duplicate_extra_missing_directory_escape_and_link_members_are_refused(self):
+        valid = ('bin/parser.dll',tarfile.REGTYPE,b'actual bytes')
+        for rows in ([valid,valid], [valid,('extra',tarfile.REGTYPE,b'')],
+                     [('bin/',tarfile.DIRTYPE,b'')], [valid,('unknown/',tarfile.DIRTYPE,b'')],
+                     [valid,('../escape',tarfile.REGTYPE,b'')], [('bin/parser.dll',tarfile.SYMTYPE,b'')]):
+            with self.subTest(rows=rows):
+                with self.assertRaises(ValueError): self.extract(rows)
+
+
 class PdfiumOwnedRecipeTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

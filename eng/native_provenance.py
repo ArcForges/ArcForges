@@ -683,6 +683,29 @@ def verify_pdfium_attestation(archive: Path, bundle: Path, value: dict) -> None:
             "PDFium producer invocation changed")
 
 
+def extract_pdfium_archive(archive: Path, staging: Path, value: dict) -> None:
+    expected = set(value["files"])
+    directories = {parent.as_posix() for name in expected for parent in Path(name).parents
+                   if parent.as_posix() != "."}
+    names, files, members, total = set(), set(), [], 0
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar:
+            name = member.name.rstrip("/")
+            provenance.path(name)
+            require(name not in names and len(members) < len(expected) * 3 + 32,
+                    "Duplicate or excessive PDFium archive members")
+            require(member.isfile() and name in expected or member.isdir() and name in directories,
+                    "Unapproved PDFium archive member")
+            require(0 <= member.size <= value["archive"]["maximumBytes"], "PDFium member exceeds its bound")
+            total += member.size
+            require(total <= 64 * 1024 * 1024, "PDFium expanded archive exceeds its bound")
+            names.add(name)
+            if member.isfile(): files.add(name)
+            members.append(member)
+        require(files == expected, "PDFium archive file inventory changed")
+        tar.extractall(staging, members=members, filter="data")
+
+
 def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
     """Fetch/verify the reviewed producer build, never a consumer-time dependency download."""
     value = pdfium_profile(root)
@@ -698,13 +721,7 @@ def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
         with tempfile.TemporaryDirectory(dir=directory, prefix=".pdfium-extract-") as temporary:
             staging = Path(temporary) / "pdfium"
             staging.mkdir()
-            with tarfile.open(archive, "r:gz") as tar:
-                for member in tar.getmembers():
-                    provenance.path(member.name.rstrip("/"))
-                    require(member.isdir() or member.isfile() and member.name in value["files"],
-                            "Unapproved PDFium archive member")
-                    require(member.size <= value["archive"]["maximumBytes"], "PDFium member exceeds its bound")
-                tar.extractall(staging, filter="data")
+            extract_pdfium_archive(archive, staging, value)
             verify_pdfium_prefix(staging, value)
             try:
                 staging.replace(prefix)
