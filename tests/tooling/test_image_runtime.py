@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Real filesystem and offline contract tests; no substitute production decoder."""
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,10 @@ import sys
 import tempfile
 import threading
 import subprocess
+import ssl
+import tarfile
+import time
+import urllib.error
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +23,100 @@ import native_consumer
 
 
 class ImageRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def legal_asset(content):
+        checksum = hashlib.sha256(content).hexdigest()
+        return {"output": "licenses/provenance/test.txt", "url": "https://example.invalid/legal.txt",
+                "sourceSha256": checksum, "sourceSha512": None, "cacheName": "legal.txt", "member": None,
+                "memberSha256": None, "start": 0, "end": len(content), "encoding": "raw", "sha256": checksum,
+                "description": "Component fixture for the unavailable external legal HTTP transport."}
+
+    def test_legal_acquisition_retries_only_bounded_transport_failure_and_reuses_actual_cached_bytes(self):
+        content = b"Full fixture legal text.\n"
+        row = self.legal_asset(content)
+        calls = []
+
+        def opener(request, **kwargs):
+            calls.append(request.full_url)
+            self.assertLessEqual(kwargs["timeout"], 10)
+            self.assertTrue(kwargs["context"].check_hostname)
+            if len(calls) == 1:
+                raise urllib.error.URLError("unavailable external transport")
+            response = io.BytesIO(content)
+            response.url = request.full_url
+            return response
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            image._acquire_legal_asset(row, cache, time.monotonic() + 10, None, opener, ssl.create_default_context())
+            self.assertEqual(content, (cache / "legal.txt").read_bytes())
+            self.assertEqual(2, len(calls))
+            image._acquire_legal_asset(row, cache, time.monotonic() + 10, None,
+                                      lambda *a, **k: self.fail("A valid cache must not retry an external read."), None)
+            (cache / "legal.txt").write_bytes(b"other existing bytes")
+            self.assertRaisesRegex(ValueError, "preserved", image._acquire_legal_asset, row, cache,
+                                   time.monotonic() + 10, None, opener, None)
+            self.assertEqual(b"other existing bytes", (cache / "legal.txt").read_bytes())
+
+    def test_legal_acquisition_cancel_hash_failure_deadline_and_redirect_never_promote_partial_material(self):
+        content = b"Fixture legal text.\n"
+        row = self.legal_asset(content)
+        for mode in ("cancel", "digest", "deadline", "during-deadline", "oversize", "redirect", "retry-exhaustion"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                cache, cancelled, calls = Path(temporary), [False], []
+
+                class Response(io.BytesIO):
+                    def read1(self, size):
+                        if mode == "during-deadline":
+                            time.sleep(0.03)
+                        result = super().read1(size)
+                        if mode == "cancel":
+                            cancelled[0] = True
+                        return result
+
+                def opener(request, **kwargs):
+                    calls.append(request.full_url)
+                    if mode == "retry-exhaustion":
+                        raise urllib.error.URLError("external failure")
+                    response = Response(b"x" * 8_000_001 if mode == "oversize" else content if mode != "digest" else b"modified")
+                    response.url = request.full_url if mode != "redirect" else "http://example.invalid/plaintext"
+                    return response
+
+                deadline = time.monotonic() - 1 if mode == "deadline" else time.monotonic() + (0.02 if mode == "during-deadline" else 10)
+                self.assertRaises(ValueError, image._acquire_legal_asset, row, cache, deadline,
+                                   lambda: cancelled[0], opener, None)
+                self.assertFalse((cache / "legal.txt").exists())
+                self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
+                self.assertEqual(0 if mode == "deadline" else 3 if mode == "retry-exhaustion" else 1, len(calls))
+
+    def test_offline_legal_archive_requires_one_regular_pinned_member(self):
+        content = b"Complete fixture legal document.\n"
+        for mode in ("valid", "duplicate", "symlink"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                cache = Path(temporary)
+                archive = cache / "legal.tar"
+                with tarfile.open(archive, "w") as output:
+                    member = tarfile.TarInfo("upstream/LICENSE")
+                    member.size = len(content)
+                    if mode == "symlink":
+                        member.type, member.linkname, member.size = tarfile.SYMTYPE, "outside", 0
+                    output.addfile(member, io.BytesIO(content) if mode != "symlink" else None)
+                    if mode == "duplicate":
+                        output.addfile(member, io.BytesIO(content))
+                row = self.legal_asset(content)
+                row.update(cacheName="legal.tar", sourceSha256=image.digest(archive), member="LICENSE",
+                           memberSha256=hashlib.sha256(content).hexdigest())
+                if mode == "valid":
+                    self.assertEqual(content, image._legal_bytes(row, cache))
+                else:
+                    self.assertRaises(ValueError, image._legal_bytes, row, cache)
+
+    def test_actual_vcpkg_spdx_root_prefix_is_bound_without_admitting_traversal(self):
+        for name in ("./lib/actual.lib", "lib/actual.lib"):
+            self.assertEqual("lib/actual.lib", str(image._sbom_path(name)))
+        for name in ("./../outside", "././lib/actual.lib", "/lib/actual.lib", "./C:/outside", "./lib\\actual.lib"):
+            self.assertRaises(ValueError, image._sbom_path, name)
+
     def test_closed_profile_binds_all_six_actual_project_and_recipe_inputs(self):
         profile, material = image.profile(ROOT)
         self.assertEqual(set(native_binary.RIDS), set(material["recipes"]["rids"]))

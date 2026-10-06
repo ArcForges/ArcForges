@@ -15,10 +15,14 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import time
+import tarfile
+import urllib.error
+import urllib.request
 import uuid
 
 import native_binary
@@ -66,6 +70,14 @@ def _path(value):
 
 def _link(path):
     return path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
+
+
+def _sbom_path(value):
+    # vcpkg's actual SPDX inventory uses one './' package-root prefix. Strip
+    # only that conventional prefix; nested traversal/absolute aliases remain
+    # invalid material paths rather than being normalized into acceptance.
+    require(isinstance(value, str), "Invalid Image SBOM material path.")
+    return _path(value[2:] if value.startswith("./") else value)
 
 
 def _regular(path, root=None):
@@ -149,6 +161,126 @@ def _abi_tools(path, base):
     cmake = [line.split()[1:] for line in rows if line.startswith("cmake ")]
     require(cmake == [[base["buildTools"]["vcpkgCMake"]]],
             "Image installed dependency used an unreviewed vcpkg CMake version.")
+
+
+def _legal_bytes(row, cache, cancelled=None):
+    source = _regular(Path(cache) / row["cacheName"], cache)
+    expected, algorithm = row["sourceSha256"] or row["sourceSha512"], "sha256" if row["sourceSha256"] else "sha512"
+    require(digest(source, cancelled, algorithm) == expected, "Image legal source differs from admission.")
+    if row["member"] is not None:
+        matches = []
+        with tarfile.open(source) as archive:
+            for count, member in enumerate(archive):
+                _cancel(cancelled)
+                require(count < MAX_FILES and member.offset_data + member.size <= MAX_MATERIAL,
+                        "Unbounded Image legal archive inventory.")
+                if member.name.partition("/")[2] == row["member"]:
+                    require(member.isfile() and member.size <= 8_000_000 and not matches,
+                            "Invalid or duplicate Image legal archive member.")
+                    stream = archive.extractfile(member)
+                    require(stream is not None, "Missing Image legal archive member bytes.")
+                    with stream:
+                        matches.append(stream.read(8_000_001))
+        require(len(matches) == 1 and hashlib.sha256(matches[0]).hexdigest() == row["memberSha256"],
+                "Image legal archive member differs from admission.")
+        content = matches[0]
+    else:
+        require(source.stat().st_size <= 8_000_000, "Unbounded Image legal document.")
+        content = source.read_bytes()
+    require(0 <= row["start"] < row["end"] <= len(content), "Invalid Image legal source range.")
+    content = content[row["start"]:row["end"]]
+    if row["encoding"] != "raw":
+        content = content.decode(row["encoding"]).replace("\r\n", "\n").encode("utf-8")
+    require(hashlib.sha256(content).hexdigest() == row["sha256"], "Image legal transformation differs.")
+    return content
+
+
+def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
+    caller_cancelled = cancelled
+
+    def operation_cancelled():
+        require(time.monotonic() < deadline, "Image legal acquisition deadline expired.")
+        return caller_cancelled is not None and caller_cancelled()
+
+    cancelled = operation_cancelled
+    native_provenance.asset(row)
+    _path(row["cacheName"])
+    target = downloads / row["cacheName"]
+    expected = row["sourceSha256"] or row["sourceSha512"]
+    algorithm = "sha256" if row["sourceSha256"] else "sha512"
+    with _stage_lock(target, cancelled):
+        for attempt in range(3):
+            _cancel(cancelled)
+            require(time.monotonic() < deadline, "Image legal acquisition deadline expired.")
+            if target.exists():
+                require(digest(_regular(target, downloads), cancelled, algorithm) == expected,
+                        "Cached Image legal source differs; existing bytes are preserved.")
+                break
+            descriptor, temporary_name = tempfile.mkstemp(prefix=".image-legal-", dir=downloads)
+            temporary = Path(temporary_name)
+            try:
+                request = urllib.request.Request(row["url"], headers={"User-Agent": native_provenance.VISUAL_STUDIO_LICENSE_USER_AGENT})
+                timeout = min(10, max(0.001, deadline - time.monotonic()))
+                with os.fdopen(descriptor, "wb") as output, opener(request, timeout=timeout, context=context) as response:
+                    native_provenance.download_identity(response.url)
+                    total, checksum = 0, hashlib.new(algorithm)
+                    while True:
+                        _cancel(cancelled)
+                        require(time.monotonic() < deadline, "Image legal acquisition deadline expired.")
+                        content = (response.read1 if hasattr(response, "read1") else response.read)(1024 * 1024)
+                        if not content:
+                            break
+                        total += len(content)
+                        require(total <= (MAX_MATERIAL if row["member"] is not None else 8_000_000),
+                                "Unbounded Image legal acquisition.")
+                        output.write(content)
+                        checksum.update(content)
+                    output.flush()
+                    os.fsync(output.fileno())
+                require(checksum.hexdigest() == expected, "Downloaded Image legal source digest mismatch.")
+                try:
+                    os.link(temporary, target)  # Atomic no-overwrite cache publication.
+                except FileExistsError:
+                    require(digest(_regular(target, downloads), cancelled, algorithm) == expected,
+                            "Concurrent Image legal cache bytes differ.")
+                _directory_sync(downloads)
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if attempt == 2 or time.monotonic() >= deadline:
+                    raise ValueError("Image legal acquisition failed after bounded attempts: " + target.name) from error
+                delay = min(0.25 * (2 ** attempt), max(0, deadline - time.monotonic()))
+                time.sleep(delay)
+            finally:
+                temporary.unlink(missing_ok=True)
+    _legal_bytes(row, downloads, cancelled)
+
+
+def acquire_legal_inputs(downloads, rid, root=ROOT, cancelled=None, opener=None):
+    """Explicit bounded network acquisition; staging itself never downloads."""
+    require(rid in native_binary.RIDS, "Image legal-input RID is not admitted.")
+    value, material = profile(root)
+    base, _ = _selection(rid, value, material)
+    rows = [row for component in base["components"].values() for row in component["extras"]]
+    if rid.startswith("win-"):
+        rows += base["platformRuntime"]["legal"]
+    downloads = Path(downloads).absolute()
+    for parent in (downloads, *downloads.parents):
+        require(not _link(parent), "Linked Image acquisition cache is forbidden.")
+    downloads.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 120
+    context = ssl.create_default_context()
+    opener = opener or urllib.request.urlopen
+    completed = set()
+    for row in rows:
+        native_provenance.asset(row)
+        _path(row["cacheName"])
+        target = downloads / row["cacheName"]
+        if target.name in completed:
+            _legal_bytes(row, downloads, cancelled)
+            continue
+        _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context)
+        completed.add(target.name)
+    return {"rid": rid, "verifiedLegalInputs": sorted(completed)}
 
 
 def profile(root=ROOT):
@@ -364,7 +496,7 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
         for item in sbom.get("files", []):
             if not item.get("SPDXID", "").startswith("SPDXRef-binary-file-"):
                 continue
-            relative = str(_path(item["fileName"]))
+            relative = str(_sbom_path(item["fileName"]))
             if PurePosixPath(relative).parts[0] not in ("bin", "lib", "include", "share"):
                 continue
             checksums = [value["checksumValue"] for value in item["checksums"] if value["algorithm"] == "SHA256"]
@@ -381,7 +513,7 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
             expected = extra["sourceSha256"] or extra["sourceSha512"]
             require(digest(source, cancelled, "sha256" if extra["sourceSha256"] else "sha512") == expected,
                     "Image legal companion source integrity mismatch.")
-            legal = native_provenance.legal_bytes(extra, inputs.downloads)
+            legal = _legal_bytes(extra, inputs.downloads, cancelled)
             target = staging / extra["output"]
             target.parent.mkdir(parents=True, exist_ok=True)
             require(not target.exists(), "Colliding Image legal companions.")
@@ -630,7 +762,7 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
                     original = _regular(inputs.downloads / legal["cacheName"], inputs.downloads)
                     require(digest(original, cancelled, "sha256" if legal["sourceSha256"] else "sha512") ==
                             (legal["sourceSha256"] or legal["sourceSha512"]), "Image Microsoft grant source differs.")
-                    content = native_provenance.legal_bytes(legal, inputs.downloads)
+                    content = _legal_bytes(legal, inputs.downloads, cancelled)
                     path = package / legal["output"]
                     path.parent.mkdir(parents=True, exist_ok=True)
                     _write_bytes(path, content)
@@ -812,14 +944,18 @@ def verify_stage(destination, source_commit, root=ROOT):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("stage", "verify"))
+    parser.add_argument("command", choices=("stage", "verify", "acquire-legal"))
     parser.add_argument("--rid", choices=tuple(native_binary.RIDS), required=True)
-    parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--directory", type=Path)
     parser.add_argument("--vcpkg-root", type=Path)
     parser.add_argument("--downloads", type=Path)
     parser.add_argument("--compiler-runtime", type=Path)
     parser.add_argument("--commit")
     args = parser.parse_args()
+    if args.command == "acquire-legal":
+        require(args.downloads is not None, "Image legal acquisition requires an explicit cache.")
+        return acquire_legal_inputs(args.downloads, args.rid)
+    require(args.directory is not None, "Image stage/verify requires an explicit directory.")
     if args.command == "verify":
         artifact = verify_stage(args.directory, args.commit or build_identity.git(ROOT, "rev-parse", "HEAD"))
         require(artifact["rid"] == args.rid, "Image CLI verification RID differs from the actual artifact.")

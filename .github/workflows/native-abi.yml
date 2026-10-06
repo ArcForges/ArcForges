@@ -106,6 +106,8 @@ jobs:
       - name: Seal actual Image inputs without activating an unreviewed package
         shell: pwsh
         run: |
+          python eng/packaging/image_runtime.py acquire-legal --rid $env:IMAGE_RID --downloads $env:VCPKG_DOWNLOADS
+          if ($LASTEXITCODE) { throw 'Image legal-input acquisition failed.' }
           $arguments = @('eng/packaging/image_runtime.py', 'stage', '--rid', $env:IMAGE_RID, '--directory', "artifacts/image-production-input/$env:IMAGE_RID", '--vcpkg-root', $env:VCPKG_ROOT, '--downloads', $env:VCPKG_DOWNLOADS)
           if ($IsWindows) {
             $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
