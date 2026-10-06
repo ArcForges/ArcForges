@@ -23,7 +23,7 @@
         "finding": "Actual selected ARM SIMD translation header retains the full MIT copyright, permission and warranty notice; no standalone/test source is selected."
       }
     ],
-    "scope": "Select BSD-3-Clause instead of the GPL-2.0 alternative. The actual xxHash header shares the explicit dual selection; preserve its Yann Collet/Meta copyright. The GPL text in the upstream source tree does not change this selected grant.",
+    "scope": "The actual required ARM-only sse2neon.h is distributed under MIT with the complete original SSE2NEON Contributors copyright, permission and warranty notice. Preserve the full original licence and corresponding source archive. No standalone upstream tests or executables are selected.",
     "copyingPermission": null
   },
   "attribution": [
