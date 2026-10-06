@@ -1,0 +1,351 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "ArcForges admitted PDFium chromium-8044 linux-x64 upstream producer bundle",
+  "documentNamespace": "https://arcforges.com/spdx/pdfium-eb142f416aed3a72fc5a02dbd5884868a16cb99dc0cf53e6bdd64afbf67b05f4",
+  "creationInfo": {
+    "creators": [
+      "Organization: ArcForges",
+      "Tool: ArcForges NAT.25 portable admission"
+    ],
+    "created": "2026-10-06T19:48:00Z"
+  },
+  "documentComment": "The archive is one upstream compiled bundle. Its signed attestation binds the producer recipe and invocation, not the PDFium source commit. Bundled component versions are not separately attested; all distributed component legal documents are inventoried without invented versions. This is upstream input, not an ArcForges shim build, runtime publication, release-signing or OS acceptance receipt. Legal members describe exact unmodified bytes in this RID archive.",
+  "packages": [
+    {
+      "name": "pdfium-no-v8-no-xfa-linux-x64",
+      "SPDXID": "SPDXRef-PDFium",
+      "versionInfo": "155.0.8044.0",
+      "downloadLocation": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-linux-x64.tgz",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "eb142f416aed3a72fc5a02dbd5884868a16cb99dc0cf53e6bdd64afbf67b05f4"
+        }
+      ],
+      "licenseConcluded": "BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "See the full aggregate LICENSE and all 14 bundled component legal texts.",
+      "supplier": "Organization: bblanchon/pdfium-binaries",
+      "sourceInfo": "https://github.com/bblanchon/pdfium-binaries/actions/runs/34103423570/attempts/1; recipe commit 5453f3afc4785cbad82c05f6ceb4dabea0cb81a0"
+    }
+  ],
+  "files": [
+    {
+      "fileName": "LICENSE",
+      "SPDXID": "SPDXRef-Legal-0",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ba26c1263131696b86c10496b5066b918a20b7161822a80c274d0080105f6c93"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/abseil.txt",
+      "SPDXID": "SPDXRef-Legal-1",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/agg23.txt",
+      "SPDXID": "SPDXRef-Legal-2",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c110d3ea2ad77467ce0dcff7d3337e6c8be8049a5103f4b9bd5fd911a77972e5"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/fast_float.txt",
+      "SPDXID": "SPDXRef-Legal-3",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/freetype.txt",
+      "SPDXID": "SPDXRef-Legal-4",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/icu.txt",
+      "SPDXID": "SPDXRef-Legal-5",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/lcms.txt",
+      "SPDXID": "SPDXRef-Legal-6",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "7312b68c5b25e9bf2b828706fb4e29588f22705112f411fd42e1f7d84c3d139a"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/libjpeg_turbo.ijg",
+      "SPDXID": "SPDXRef-Legal-7",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/libjpeg_turbo.md",
+      "SPDXID": "SPDXRef-Legal-8",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/libopenjpeg.txt",
+      "SPDXID": "SPDXRef-Legal-9",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c5ab0890a737c2dfa7ba675036554f6d17741d98629b0c2a145354d00617e6b2"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/libpng.txt",
+      "SPDXID": "SPDXRef-Legal-10",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/llvm-libc.txt",
+      "SPDXID": "SPDXRef-Legal-11",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/pdfium.txt",
+      "SPDXID": "SPDXRef-Legal-12",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "961eacd9633fff6d051db7208b755e9210e30efac7adec3e6a6d52798f0ccf0e"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/simdutf.txt",
+      "SPDXID": "SPDXRef-Legal-13",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    },
+    {
+      "fileName": "licenses/zlib.txt",
+      "SPDXID": "SPDXRef-Legal-14",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "33fd641c9f3b0e0be64bc78fea9e94807674cdd70c48477599226cb8956565fe"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "licenseInfoInFiles": [
+        "NOASSERTION"
+      ],
+      "copyrightText": "See the complete original archived legal text."
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relatedSpdxElement": "SPDXRef-PDFium",
+      "relationshipType": "DESCRIBES"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-0",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-1",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-2",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-3",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-4",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-5",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-6",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-7",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-8",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-9",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-10",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-11",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-12",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-13",
+      "relationshipType": "CONTAINS"
+    },
+    {
+      "spdxElementId": "SPDXRef-PDFium",
+      "relatedSpdxElement": "SPDXRef-Legal-14",
+      "relationshipType": "CONTAINS"
+    }
+  ],
+  "hasExtractedLicensingInfos": [
+    {
+      "licenseId": "LicenseRef-AGG-2.3",
+      "name": "Anti-Grain Geometry 2.3 permissive terms",
+      "extractedText": "//----------------------------------------------------------------------------\n// Anti-Grain Geometry - Version 2.3\n// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)\n//\n// Permission to copy, use, modify, sell and distribute this software\n// is granted provided this copyright notice appears in all copies.\n// This software is provided \"as is\" without express or implied\n// warranty, and with no claim as to its suitability for any purpose.\n//\n//----------------------------------------------------------------------------\n// Contact: mcseem@antigrain.com\n//          mcseemagg@yahoo.com\n//          http://www.antigrain.com\n//----------------------------------------------------------------------------\n"
+    }
+  ]
+}
