@@ -60,6 +60,189 @@ Original copyright and full applicable terms are retained in licenses/fmt-x64-wi
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/fmt-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
+native-image-portable-bzip2-r1
+Source: https://sourceware.org/git/bzip2.git @ 6a8690fc8d26c815e798c588f796eabe9d684cf0
+Material licence: bzip2-1.0.6
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/bzip2-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/bzip2-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-expat-r1
+Source: https://github.com/libexpat/libexpat @ c61098da494eea1cbd091118118dcee417faacea
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/expat-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/expat-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-fmt-r1
+Source: https://github.com/fmtlib/fmt @ 1be298e1bd68957e4cd352e1f676f00e07dcfb57
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/fmt-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/fmt-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-imath-r1
+Source: https://github.com/AcademySoftwareFoundation/Imath @ 1e480d11cb98b032a2dece9b9a8730512effc7f6
+Material licence: BSD-3-Clause
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/imath-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/imath-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-libdeflate-r1
+Source: https://github.com/ebiggers/libdeflate @ c8c56a20f8f621e6a966b716b31f1dedab6a41e3
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/libdeflate-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/libdeflate-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-libjpeg-turbo-r1
+Source: https://github.com/libjpeg-turbo/libjpeg-turbo @ c85e6b905bf237038faa936dab160ebfc5da0344
+Material licence: BSD-3-Clause AND IJG AND Zlib
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/libjpeg-turbo-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/libjpeg-turbo-ijg.txt.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/libjpeg-turbo-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/libjpeg-turbo-ijg.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-liblzma-r1
+Source: https://github.com/tukaani-project/xz @ 4b73f2ec19a99ef465282fbce633e8deb33691b3
+Material licence: 0BSD
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/liblzma-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/liblzma-0bsd.txt.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/liblzma-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/liblzma-0bsd.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-libpng-r1
+Source: https://github.com/pnggroup/libpng @ 3061454d980de7d53608f594194cfac722721d2a
+Material licence: libpng-2.0
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/libpng-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/libpng-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-minizip-ng-r1
+Source: https://github.com/zlib-ng/minizip-ng @ cf4b58e17ebdcff8c6fbce1a9c3af5bf0485423c
+Material licence: Zlib
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/minizip-ng-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/minizip-ng-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-opencolorio-r1
+Source: https://github.com/AcademySoftwareFoundation/OpenColorIO @ c52966a6677723d5bd2dbef0ccec3fed9cbc3790
+Material licence: BSD-3-Clause AND BSD-2-Clause AND LicenseRef-ICC-Software-0.2 AND LicenseRef-SunSoft-1994
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/opencolorio-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/opencolorio-icc-reader.txt, licenses/provenance/opencolorio-icc-profile-header.txt, licenses/provenance/opencolorio-xxhash.txt.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/opencolorio-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/opencolorio-icc-reader.txt, licenses/provenance/opencolorio-icc-profile-header.txt, licenses/provenance/opencolorio-xxhash.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-openexr-r1
+Source: https://github.com/AcademySoftwareFoundation/openexr @ 777d231a179de1711d2a942810d9559216ab3f4c
+Material licence: BSD-3-Clause
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/openexr-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/openexr-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-openimageio-r1
+Source: https://github.com/AcademySoftwareFoundation/OpenImageIO @ cfff4af80854f9fa4035929d64308cd253700bc1
+Material licence: Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/openimageio-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/openimageio-third-party.txt, licenses/provenance/openimageio-function-view-ncsa.txt.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/openimageio-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/openimageio-third-party.txt, licenses/provenance/openimageio-function-view-ncsa.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-openjph-r1
+Source: https://github.com/aous72/OpenJPH @ c68064d0e4cad8e96bab9a068f6cc4e7799744fc
+Material licence: BSD-2-Clause
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/openjph-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/openjph-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-pystring-r1
+Source: https://github.com/imageworks/pystring @ 1922c8f2b48e3beb6831c27b4811b58995e986cf
+Material licence: BSD-3-Clause
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/pystring-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/pystring-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-robin-map-r1
+Source: https://github.com/Tessil/robin-map @ bd14e6830a1474fed9d2d03f5c3b0683d818d540
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/robin-map-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/robin-map-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-tiff-r1
+Source: https://gitlab.com/libtiff/libtiff @ d01a94be176f5f6a87f7ee1c0b32e65416aa2b4d
+Material licence: libtiff AND LicenseRef-Berkeley-LZW-Rescinded
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/tiff-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/berkeley-bsd-amendment.pdf.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/tiff-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/berkeley-bsd-amendment.pdf. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-vcpkg-cmake-config-r1
+Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/vcpkg-cmake-config-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/vcpkg-cmake-config-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-vcpkg-cmake-r1
+Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/vcpkg-cmake-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/vcpkg-cmake-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-yaml-cpp-r1
+Source: https://github.com/jbeder/yaml-cpp @ 56e3bb550c91fd7005566f19c079cb7a503223cf
+Material licence: MIT
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/yaml-cpp-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/yaml-cpp-dragonbox.txt.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/yaml-cpp-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/yaml-cpp-dragonbox.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-zlib-r1
+Source: https://github.com/madler/zlib @ da607da739fa6047df13e66a2af6b8bec7c2a498
+Material licence: Zlib
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/zlib-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/zlib-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-portable-zstd-r1
+Source: https://github.com/facebook/zstd @ f8745da6ff1ad1e7bab384bd1f9d742439278e99
+Material licence: BSD-3-Clause
+Notice scope: packages
+Original copyright and full applicable terms are retained in each actual licenses/zstd-<actual-triplet>.txt, together with original corresponding source and exact recipes.
+Additional full notices: licenses/provenance/zstd-xxhash.txt.
+Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+Original copyright and full applicable terms are retained in each actual licenses/zstd-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/zstd-xxhash.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
+
+native-image-sse2neon-r1
+Source: https://github.com/DLTcollab/sse2neon @ 92f6de174717aef09033ad21568d5bb9e5470404
+Material licence: MIT
+Notice scope: packages
+Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt.
+Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence.
+Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt. Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence.
+
 native-imath-r4
 Source: https://github.com/AcademySoftwareFoundation/Imath @ 1e480d11cb98b032a2dece9b9a8730512effc7f6
 Material licence: BSD-3-Clause
