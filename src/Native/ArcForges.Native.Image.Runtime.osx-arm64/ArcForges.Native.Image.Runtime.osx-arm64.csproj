@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsPackable Condition="'$(ArcForgesVerifiedImageRuntime)' == 'true'">true</IsPackable>
+    <PackageId>ArcForges.Native.Image.Runtime.osx-arm64</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NativePayloadRoot>$(MSBuildThisFileDirectory)../../../artifacts/native-packages/ArcForges.Native.Image.Runtime.osx-arm64</NativePayloadRoot>
+    <Description>osx-arm64 Image ABI1.1 runtime producer; packaging requires a verified actual source-bound payload.</Description>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="$(NativePayloadRoot)/**/*" Pack="true" PackagePath="/" />
+  </ItemGroup>
+  <Target Name="RequireVerifiedImagePayload" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(ArcForgesVerifiedImageRuntime)' != 'true' or !Exists('$(NativePayloadRoot)/image-production-input.json')" Text="Verify the actual osx-arm64 Image producer closure before packing ArcForges.Native.Image.Runtime.osx-arm64." />
+  </Target>
+</Project>

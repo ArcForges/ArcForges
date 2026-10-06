@@ -245,6 +245,28 @@ class FunctionalNativeRegistryGuards(unittest.TestCase):
                         packages.catalogue()
 
 
+class ImageProductionAdapterGuards(unittest.TestCase):
+    def test_portable_or_receipted_image_payload_cannot_fall_back_to_legacy_probe_validation(self):
+        for rid, receipt in (("linux-x64", False), ("win-x64", True)):
+            entry = {"id": "ArcForges.Native.Image.Runtime." + rid, "kind": "native", "rid": rid,
+                     "library": "ArcImageNative", "requiredFiles": []}
+            metadata = ET.Element("metadata")
+            for name, value in (("id", entry["id"]), ("version", "1.0.0"), ("readme", "README.md")):
+                ET.SubElement(metadata, name).text = value
+            ET.SubElement(metadata, "repository", url=packages.REPOSITORY, commit="a" * 40)
+            ET.SubElement(metadata, "license", type="expression").text = "AGPL-3.0-only"
+            specification = ET.Element("package")
+            specification.append(metadata)
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "untrusted.nupkg"
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("candidate.nuspec", ET.tostring(specification))
+                    if receipt:
+                        archive.writestr(packages.image_runtime.RECEIPT, "{}")
+                with self.subTest(rid=rid), self.assertRaisesRegex(ValueError, "Image production"):
+                    packages.inspect(path, entry, "1.0.0", "a" * 40)
+
+
 class PackageGuards(unittest.TestCase):
     def fixture(self):
         source = Path(os.environ.get("ARCFORGES_PACKAGE_DIRECTORY", packages.ROOT / "artifacts/packages"))

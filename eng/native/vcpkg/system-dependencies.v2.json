@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 2,
+  "id": "native-system-dependencies-v2",
+  "owner": "DesktopPlatform",
+  "status": "closed-six-native-RID-prerequisite-contract",
+  "versionFloorAuthority": "Actual inspected metadata bound to the immutable reviewed producer profile; no floor is inferred from another family or RID.",
+  "rids": {
+    "win-x64": {
+      "format": "PE32+",
+      "machine": "x86_64",
+      "systemImports": [
+        "advapi32.dll",
+        "avicap32.dll",
+        "bcrypt.dll",
+        "cfgmgr32.dll",
+        "comdlg32.dll",
+        "crypt32.dll",
+        "d3d11.dll",
+        "d3d12.dll",
+        "dnsapi.dll",
+        "dwmapi.dll",
+        "dxgi.dll",
+        "gdi32.dll",
+        "imm32.dll",
+        "iphlpapi.dll",
+        "kernel32.dll",
+        "mf.dll",
+        "mfplat.dll",
+        "mfreadwrite.dll",
+        "mfuuid.dll",
+        "msvcrt.dll",
+        "ncrypt.dll",
+        "ntdll.dll",
+        "ole32.dll",
+        "oleaut32.dll",
+        "powrprof.dll",
+        "propsys.dll",
+        "psapi.dll",
+        "rpcrt4.dll",
+        "secur32.dll",
+        "setupapi.dll",
+        "shell32.dll",
+        "shlwapi.dll",
+        "ucrtbase.dll",
+        "user32.dll",
+        "userenv.dll",
+        "uuid.dll",
+        "version.dll",
+        "vfw32.dll",
+        "winhttp.dll",
+        "winmm.dll",
+        "winspool.drv",
+        "wintrust.dll",
+        "ws2_32.dll",
+        "wtsapi32.dll"
+      ],
+      "apiSetPrefixes": [
+        "api-ms-win-",
+        "ext-ms-win-"
+      ],
+      "allowedRunpaths": [],
+      "versionNamespaces": []
+    },
+    "win-arm64": {
+      "format": "PE32+",
+      "machine": "aarch64",
+      "systemImports": [
+        "advapi32.dll",
+        "avicap32.dll",
+        "bcrypt.dll",
+        "cfgmgr32.dll",
+        "comdlg32.dll",
+        "crypt32.dll",
+        "d3d11.dll",
+        "d3d12.dll",
+        "dnsapi.dll",
+        "dwmapi.dll",
+        "dxgi.dll",
+        "gdi32.dll",
+        "imm32.dll",
+        "iphlpapi.dll",
+        "kernel32.dll",
+        "mf.dll",
+        "mfplat.dll",
+        "mfreadwrite.dll",
+        "mfuuid.dll",
+        "msvcrt.dll",
+        "ncrypt.dll",
+        "ntdll.dll",
+        "ole32.dll",
+        "oleaut32.dll",
+        "powrprof.dll",
+        "propsys.dll",
+        "psapi.dll",
+        "rpcrt4.dll",
+        "secur32.dll",
+        "setupapi.dll",
+        "shell32.dll",
+        "shlwapi.dll",
+        "ucrtbase.dll",
+        "user32.dll",
+        "userenv.dll",
+        "uuid.dll",
+        "version.dll",
+        "vfw32.dll",
+        "winhttp.dll",
+        "winmm.dll",
+        "winspool.drv",
+        "wintrust.dll",
+        "ws2_32.dll",
+        "wtsapi32.dll"
+      ],
+      "apiSetPrefixes": [
+        "api-ms-win-",
+        "ext-ms-win-"
+      ],
+      "allowedRunpaths": [],
+      "versionNamespaces": []
+    },
+    "linux-x64": {
+      "format": "ELF64",
+      "machine": "x86_64",
+      "systemImports": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1",
+        "libstdc++.so.6"
+      ],
+      "apiSetPrefixes": [],
+      "allowedRunpaths": [
+        "$ORIGIN"
+      ],
+      "versionNamespaces": [
+        "GLIBC",
+        "GCC",
+        "GLIBCXX",
+        "CXXABI"
+      ]
+    },
+    "linux-arm64": {
+      "format": "ELF64",
+      "machine": "aarch64",
+      "systemImports": [
+        "ld-linux-aarch64.so.1",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1",
+        "libstdc++.so.6"
+      ],
+      "apiSetPrefixes": [],
+      "allowedRunpaths": [
+        "$ORIGIN"
+      ],
+      "versionNamespaces": [
+        "GLIBC",
+        "GCC",
+        "GLIBCXX",
+        "CXXABI"
+      ]
+    },
+    "osx-x64": {
+      "format": "Mach-O64",
+      "machine": "x86_64",
+      "systemImports": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "apiSetPrefixes": [],
+      "allowedRunpaths": [
+        "@loader_path"
+      ],
+      "versionNamespaces": []
+    },
+    "osx-arm64": {
+      "format": "Mach-O64",
+      "machine": "aarch64",
+      "systemImports": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "apiSetPrefixes": [],
+      "allowedRunpaths": [
+        "@loader_path"
+      ],
+      "versionNamespaces": []
+    }
+  }
+}

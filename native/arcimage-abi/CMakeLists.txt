@@ -27,9 +27,19 @@ if(MSVC)
     target_compile_options(arcslate_image_abi PRIVATE /W4 /WX /permissive- /EHsc /GR-)
     target_link_options(arcslate_image_abi PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/exports/windows.def")
 elseif(APPLE)
+    set_target_properties(arcslate_image_abi PROPERTIES
+        MACOSX_RPATH YES
+        INSTALL_NAME_DIR "@rpath"
+        BUILD_WITH_INSTALL_NAME_DIR YES
+        BUILD_RPATH "@loader_path"
+        INSTALL_RPATH "@loader_path")
     target_compile_options(arcslate_image_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
     target_link_options(arcslate_image_abi PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports/macos.exports")
 else()
+    set_target_properties(arcslate_image_abi PROPERTIES
+        BUILD_RPATH_USE_ORIGIN YES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN")
     target_compile_options(arcslate_image_abi PRIVATE -Wall -Wextra -Wpedantic -Werror -fno-rtti)
     target_link_options(arcslate_image_abi PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports/linux.map")
 endif()
@@ -37,9 +47,9 @@ endif()
 arcforges_add_abi_fuzzer(arcslate_image_abi_fuzzer arcslate_image_abi arc_image)
 
 install(TARGETS arcslate_image_abi
-    RUNTIME DESTINATION native
-    LIBRARY DESTINATION native
-    ARCHIVE DESTINATION lib)
+    RUNTIME DESTINATION native COMPONENT ImageRuntime
+    LIBRARY DESTINATION native COMPONENT ImageRuntime
+    ARCHIVE DESTINATION lib COMPONENT ImageRuntime)
 
 if(ARCFORGES_BUILD_TESTS)
     add_executable(arcslate_image_codec_tests "tests/image_codec_tests.cpp")

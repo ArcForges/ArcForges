@@ -19,20 +19,24 @@
       "blob": "9dd4b59ef3cdc95ccf995bf7c255334775099015"
     },
     {
+      "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
+      "blob": "e3c2337390ec6ea9b22ebcbdeb8df6131fbfc23f"
+    },
+    {
       "path": "native/CMakeLists.txt",
       "blob": "6ea9af71172e37a0aa391b0bf03364007b0fe750"
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
-      "blob": "25daa22f1ac7e6d2a0952f0568fa6c50a1be30d8"
-    },
-    {
-      "path": "native/arcpdf-abi/CMakeLists.txt",
-      "blob": "ff726aeb3f1cc46ba800c587bb689816db22d3e6"
+      "blob": "fbf7305bd1664438ed987ecceb29e4549bbac6a5"
     },
     {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
       "blob": "e6272687a6d2edf67065774b8ca5a77b0f0aa26d"
+    },
+    {
+      "path": "native/arcpdf-abi/CMakeLists.txt",
+      "blob": "ff726aeb3f1cc46ba800c587bb689816db22d3e6"
     },
     {
       "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
@@ -45,10 +49,6 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
       "blob": "21f62d7bb1bb26b50e6ce84ec32933b9dcf00382"
-    },
-    {
-      "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
-      "blob": "e24a06c6d1af579832c40bae4a6a61e60f66959d"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
@@ -107,12 +107,28 @@
       "blob": "4296a8d469d84de3d133c0dd56385baf800dbf77"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
+      "blob": "58eeab8ad47ce070b49f3d5da923a7891a63b470"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+      "blob": "b0ed7c0159904973534815eeaaa19505ff5028a1"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
       "blob": "3bdc80df121ba6c75003cc1f75f018e2c66670b1"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
       "blob": "7a6ffddb8104c96ebb51bac699006cae341ff126"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj",
+      "blob": "1781d2ba58a5b02d2f82e942ab1ad1b8b316a059"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+      "blob": "6bf8cd569e85f0f0a41467ca04776c4c5078f423"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Resources/ArcForges.Persistence.Resources.csproj",
@@ -125,6 +141,14 @@
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
       "blob": "439261198ed7e999ef2871fe1c68f7c0e61a680b"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
+      "blob": "200fa88c9f98eb543960612a6b7718cf94922516"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
+      "blob": "db96c5b33bf861a9d1c16ce8777fe4acef0129ea"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj",
@@ -151,28 +175,64 @@
       "blob": "7fe48bdc1a4455b9f2957b4fddb8ab7a677068c8"
     },
     {
-      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
-      "blob": "6c3d3fa13e117efed2be59bb15c97eefae22c1b9"
+      "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
+      "blob": "07ac7b5e863508036dbdb6d29b4d216e650136dd"
     },
     {
-      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
-      "blob": "26e8865add4e13293d68ac8dcf0aa70961111104"
+      "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+      "blob": "d203942b009adf899953dab2b85b5cb503ce883b"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+      "blob": "899e2fbedae1aed9313b64be132152318a27497f"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
+      "blob": "34a9e16b17a864d67f1a8bf1e9c6244164d99af1"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
       "blob": "b23ff89a056f690780f87daf15f2df997f016556"
     },
     {
-      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
-      "blob": "15d0553b57178acdb4751dff042759d758977682"
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+      "blob": "26e8865add4e13293d68ac8dcf0aa70961111104"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
+      "blob": "6c3d3fa13e117efed2be59bb15c97eefae22c1b9"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
       "blob": "df3e0db1ecdc88147bdf640cfa674e9f30704cad"
     },
     {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+      "blob": "15d0553b57178acdb4751dff042759d758977682"
+    },
+    {
       "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
       "blob": "32742a65b4e25d04b40e0dfb519ef3201359c6ba"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
+      "blob": "00cf15173d4d237b3897e04e9a3fe84abff95433"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
+      "blob": "c4de3a4cd51731e1d3324c2591a725fa0f658daa"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
+      "blob": "f8be91c5498e231906e3ddd266cb5b23a4d0449a"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
+      "blob": "02ac9f25d7297e1183ab69eaaad85fc77864bf12"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
+      "blob": "c1a22418d93947c37d4e3ea43f6ae147c8358d5a"
     },
     {
       "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
@@ -189,6 +249,10 @@
     {
       "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
       "blob": "25bfccb216e0a236ff33f076d1e5370b5f4964a2"
+    },
+    {
+      "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+      "blob": "e24a06c6d1af579832c40bae4a6a61e60f66959d"
     },
     {
       "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",

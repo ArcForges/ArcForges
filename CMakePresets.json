@@ -141,6 +141,94 @@
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
+    },
+    {
+      "name": "image-win-x64-v1",
+      "displayName": "Production Image win-x64",
+      "inherits": "win-x64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/image/win-x64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "ARCFORGES_PDFIUM": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/image/win-x64",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/artifacts/vcpkg-installed",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
+        "ARCFORGES_NATIVE_FAMILIES": "Image"
+      }
+    },
+    {
+      "name": "image-win-arm64-v1",
+      "displayName": "Production Image win-arm64",
+      "inherits": "win-x64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/image/win-arm64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-windows-static-md",
+        "ARCFORGES_PDFIUM": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/image/win-arm64",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/artifacts/vcpkg-installed/win-arm64",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
+        "CMAKE_SYSTEM_PROCESSOR": "ARM64",
+        "ARCFORGES_NATIVE_FAMILIES": "Image"
+      }
+    },
+    {
+      "name": "image-linux-x64-v1",
+      "displayName": "Production Image linux-x64",
+      "inherits": "linux-x64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/image/linux-x64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux",
+        "ARCFORGES_PDFIUM": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/image/linux-x64",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/artifacts/vcpkg-installed/linux-x64",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
+        "ARCFORGES_NATIVE_FAMILIES": "Image"
+      }
+    },
+    {
+      "name": "image-linux-arm64-v1",
+      "displayName": "Production Image linux-arm64",
+      "inherits": "linux-x64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/image/linux-arm64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-linux",
+        "ARCFORGES_PDFIUM": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/image/linux-arm64",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/artifacts/vcpkg-installed/linux-arm64",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
+        "CMAKE_SYSTEM_PROCESSOR": "aarch64",
+        "ARCFORGES_NATIVE_FAMILIES": "Image"
+      }
+    },
+    {
+      "name": "image-osx-x64-v1",
+      "displayName": "Production Image osx-x64",
+      "inherits": "osx-x64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/image/osx-x64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-osx",
+        "ARCFORGES_PDFIUM": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/image/osx-x64",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/artifacts/vcpkg-installed/osx-x64",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+        "ARCFORGES_NATIVE_FAMILIES": "Image"
+      }
+    },
+    {
+      "name": "image-osx-arm64-v1",
+      "displayName": "Production Image osx-arm64",
+      "inherits": "osx-arm64-shim-static",
+      "binaryDir": "${sourceDir}/artifacts/cmake/image/osx-arm64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-osx",
+        "ARCFORGES_PDFIUM": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/image/osx-arm64",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/artifacts/vcpkg-installed/osx-arm64",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/eng/native/vcpkg/triplets",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+        "ARCFORGES_NATIVE_FAMILIES": "Image"
+      }
     }
   ],
   "buildPresets": [
@@ -163,6 +251,48 @@
     {
       "name": "linux-x64-shim-static-asan",
       "configurePreset": "linux-x64-shim-static-asan"
+    },
+    {
+      "name": "image-win-x64-v1",
+      "configurePreset": "image-win-x64-v1",
+      "targets": [
+        "arcslate_image_abi"
+      ]
+    },
+    {
+      "name": "image-win-arm64-v1",
+      "configurePreset": "image-win-arm64-v1",
+      "targets": [
+        "arcslate_image_abi"
+      ]
+    },
+    {
+      "name": "image-linux-x64-v1",
+      "configurePreset": "image-linux-x64-v1",
+      "targets": [
+        "arcslate_image_abi"
+      ]
+    },
+    {
+      "name": "image-linux-arm64-v1",
+      "configurePreset": "image-linux-arm64-v1",
+      "targets": [
+        "arcslate_image_abi"
+      ]
+    },
+    {
+      "name": "image-osx-x64-v1",
+      "configurePreset": "image-osx-x64-v1",
+      "targets": [
+        "arcslate_image_abi"
+      ]
+    },
+    {
+      "name": "image-osx-arm64-v1",
+      "configurePreset": "image-osx-arm64-v1",
+      "targets": [
+        "arcslate_image_abi"
+      ]
     }
   ],
   "testPresets": [

@@ -13,6 +13,7 @@ import zipfile
 
 import native
 import build_identity
+import image_runtime
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "https://github.com/ArcForges/DesktopPlatform"
@@ -170,6 +171,10 @@ def inspect(path, entry, expected_version, commit):
                         "PDF owned package legal/readme material differs")
                 native.native_provenance.verify_pdf_package(entry, archive.read, set(names) - standard, commit, ROOT)
                 return native.digest(path)
+            if entry["library"] == "ArcImageNative" and (
+                    entry["rid"] != "win-x64" or image_runtime.RECEIPT in names):
+                image_runtime.verify_package(entry, archive.read, set(names), commit, ROOT)
+                return native.digest(path)
             document = json.loads(archive.read("native-manifest.json"))
             require(document["sourceCommit"] == commit and document["rid"] == entry["rid"]
                     and document["library"] == entry["library"], "Native package source/RID/library mismatch.")
@@ -219,6 +224,11 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
                 f"-p:PackageVersion={package_version}", f"-p:Version={package_version}", f"-p:RepositoryCommit={commit}"]
         if entry["kind"] == "native":
             args.append(f"-p:NativePayloadRoot={native_directory / entry['id']}")
+            if entry["library"] == "ArcImageNative" and (
+                    entry["rid"] != "win-x64" or (native_directory / entry["id"] / image_runtime.RECEIPT).is_file()):
+                # The preceding native stage handoff authenticated this real payload.
+                # This property activates only the individually admitted producer project.
+                args.append("-p:ArcForgesVerifiedImageRuntime=true")
         run(*args)
         name = f"{entry['id']}.{package_version}.nupkg"
         # dotnet pack emits minimum dependency versions. The release set uses exact immutable pairs;

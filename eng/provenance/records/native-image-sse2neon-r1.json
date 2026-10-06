@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "id": "native-image-sse2neon-r1",
+  "kind": "generated",
+  "sourceRepository": "https://github.com/DLTcollab/sse2neon",
+  "sourceCommit": "92f6de174717aef09033ad21568d5bb9e5470404",
+  "sourcePaths": [
+    "LICENSE",
+    "sse2neon.h"
+  ],
+  "licence": {
+    "spdx": "MIT",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "LICENSE",
+        "sha256": "e962fe0dfa637c465df35d496fb198982eb52b8afd3046f370083c6e9856b34f",
+        "finding": "Actual complete original MIT licence in the pinned v1.9.1 archive and installed copyright; LF-normalized bytes match."
+      },
+      {
+        "path": "sse2neon.h",
+        "sha256": "78632498a57bf7e080e84cb8d74c47ce93b204cece77eab79de2908eb8bc92ed",
+        "finding": "Actual selected ARM SIMD translation header retains the full MIT copyright, permission and warranty notice; no standalone/test source is selected."
+      }
+    ],
+    "scope": "Select BSD-3-Clause instead of the GPL-2.0 alternative. The actual xxHash header shares the explicit dual selection; preserve its Yann Collet/Meta copyright. The GPL text in the upstream source tree does not change this selected grant.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt.",
+    "Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence."
+  ],
+  "targets": [],
+  "artifactTargets": [
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.win-arm64",
+      "kind": "native-component-sse2neon",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    },
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.linux-arm64",
+      "kind": "native-component-sse2neon",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    },
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.osx-arm64",
+      "kind": "native-component-sse2neon",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    }
+  ],
+  "disposition": "Copy",
+  "verification": {
+    "kind": "regeneration",
+    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-arm-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
+    "expected": "Actual pinned source SHA512 and original full MIT legal/header hashes, exact two-file vcpkg recipe, actual installed ARM dependency/feature/SBOM/CMake receipts and copied-byte production closure; no x64 activation or fabricated ARM execution proof.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt. Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence.",
+    "files": [
+      "eng/provenance/NOTICE.txt"
+    ],
+    "distribution": "packages",
+    "reason": "Native package-specific attribution and full originals are independently checked. Build-only records describe retained recipes/legal material, not bundled host implementation."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": {
+    "generators": [
+      {
+        "repository": "https://github.com/Kitware/CMake",
+        "commit": "06cc1d04d8d5a4e13abdadfe20f6937787b1968e",
+        "paths": [
+          "CMakeLists.txt",
+          "LICENSE.rst"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.rst",
+            "sha256": "4382e7c1879ac90e3f101a395d23846fa4dbcaa1eed7265b43681e348754825d",
+            "finding": "CMake 4.3.3 is a BSD-3-Clause build generator. Its implementation/dependencies are not copied into compiled native outputs."
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/Kitware/CMake",
+        "commit": "44125a9e977c834f06ac1e5fe8db55355261ef87",
+        "paths": [
+          "CMakeLists.txt",
+          "LICENSE.rst"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.rst",
+            "sha256": "4382e7c1879ac90e3f101a395d23846fa4dbcaa1eed7265b43681e348754825d",
+            "finding": "CMake 4.4.0 is the BSD-3-Clause script/build generator selected by scripts/vcpkg-tools.json at vcpkg 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb. Actual installed ABI evidence must report this version. Its implementation is not copied into runtime outputs."
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "paths": [
+          "ports/sse2neon/portfile.cmake",
+          "ports/sse2neon/vcpkg.json",
+          "scripts/vcpkg-tools.json",
+          "triplets/arm64-linux.cmake",
+          "triplets/arm64-osx.cmake",
+          "triplets/community/x64-osx.cmake",
+          "triplets/x64-linux.cmake",
+          "triplets/x64-windows-static-md.cmake"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+            "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "repository": "https://github.com/DLTcollab/sse2neon",
+        "commit": "92f6de174717aef09033ad21568d5bb9e5470404",
+        "paths": [
+          "LICENSE",
+          "sse2neon.h"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE",
+            "sha256": "e962fe0dfa637c465df35d496fb198982eb52b8afd3046f370083c6e9856b34f",
+            "finding": "Actual complete original MIT licence in the pinned v1.9.1 archive and installed copyright; LF-normalized bytes match."
+          },
+          {
+            "path": "sse2neon.h",
+            "sha256": "78632498a57bf7e080e84cb8d74c47ce93b204cece77eab79de2908eb8bc92ed",
+            "finding": "Actual selected ARM SIMD translation header retains the full MIT copyright, permission and warranty notice; no standalone/test source is selected."
+          }
+        ]
+      }
+    ],
+    "command": "The selected sse2neon.h is compiled into required ARM Image dependency inputs using actual admitted per-RID compiler/recipe/tool identities. Header-only upstream source archive, complete MIT copyright/permission/warranty notice and authored vcpkg recipe are retained; no upstream executable or excluded test suite is shipped.",
+    "outputSpdx": "MIT"
+  },
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "NAT22 actual full source/archive/LICENSE/header assessment; independent exact-head source/admission review is required before merge.",
+    "reviewedOn": "2026-10-06",
+    "decision": "approved",
+    "rationale": "Actual necessary ARM-only prerequisite from pinned vcpkg source. Verified the exact archive SHA512, complete original 1083-byte MIT licence and 484176-byte selected header with full MIT notice; installed copyright equals the original licence. Upstream tag currently identifies immutable92f6de, not asserted cryptographic attestation. Full source/legal/recipe copies are bound by real producer receipts. No standalone test/tool source is selected.",
+    "baselineCommit": "71b6df2db828bc859cca6934ed66aac9b525b5c7",
+    "reconciliation": false
+  },
+  "supersedes": null
+}

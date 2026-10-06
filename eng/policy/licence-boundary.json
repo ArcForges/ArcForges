@@ -21,6 +21,10 @@
       "kind": "npm"
     },
     {
+      "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "native/CMakeLists.txt",
       "kind": "cmake"
     },
@@ -29,12 +33,12 @@
       "kind": "cmake"
     },
     {
-      "path": "native/arcpdf-abi/CMakeLists.txt",
-      "kind": "cmake"
-    },
-    {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "native/arcpdf-abi/CMakeLists.txt",
+      "kind": "cmake"
     },
     {
       "path": "src/Build/ArcForges.Build.Policy/ArcForges.Build.Policy.csproj",
@@ -49,7 +53,19 @@
       "kind": "msbuild"
     },
     {
-      "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+      "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
       "kind": "msbuild"
     },
     {
@@ -93,7 +109,19 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/BuildingBlocks/ArcForges.Observability/ArcForges.Observability.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
       "kind": "msbuild"
     },
     {
@@ -102,10 +130,6 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
       "kind": "msbuild"
     },
     {
@@ -118,6 +142,14 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Persistence.Sqlite/ArcForges.Persistence.Sqlite.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
       "kind": "msbuild"
     },
     {
@@ -145,11 +177,19 @@
       "kind": "msbuild"
     },
     {
-      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
+      "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
       "kind": "msbuild"
     },
     {
-      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+      "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
       "kind": "msbuild"
     },
     {
@@ -157,7 +197,11 @@
       "kind": "msbuild"
     },
     {
-      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
       "kind": "msbuild"
     },
     {
@@ -165,7 +209,31 @@
       "kind": "msbuild"
     },
     {
+      "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
       "kind": "msbuild"
     },
     {
@@ -185,6 +253,10 @@
       "kind": "msbuild"
     },
     {
+      "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+      "kind": "msbuild"
+    },
+    {
       "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",
       "kind": "msbuild"
     },
@@ -193,59 +265,7 @@
       "kind": "msbuild"
     },
     {
-      "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
-      "kind": "msbuild"
-    },
-    {
       "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/DesignSystem/ArcForges.DesignSystem/ArcForges.DesignSystem.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/DesignSystem/ArcForges.DesignSystem/Tests/ArcForges.DesignSystem.Tests.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "eng/verification/probe-evidence/Prf09.TableViewProbe.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/DesignSystem/ArcForges.Desktop.Shell/ArcForges.Desktop.Shell.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/ArcForges.Observability.Desktop.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
       "kind": "msbuild"
     },
     {

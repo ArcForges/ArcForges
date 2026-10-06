@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 1,
+  "id": "image-runtime-producers-v1",
+  "family": "arc_image",
+  "abi": {
+    "major": 1,
+    "minor": 1
+  },
+  "exports": [
+    "arc_image_close",
+    "arc_image_get_abi_version",
+    "arc_image_get_build_info",
+    "arc_image_get_last_error",
+    "arc_image_open",
+    "arc_image_read"
+  ],
+  "vcpkgCommit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+  "upstreamProfile": "eng/provenance/artifact-profiles/native-win-x64-r4.json",
+  "systemPolicy": "eng/native/vcpkg/system-dependencies.v2.json",
+  "rids": {
+    "win-x64": {
+      "package": "ArcForges.Native.Image.Runtime.win-x64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
+      "host": "Windows",
+      "architecture": "x86_64",
+      "triplet": "x64-windows-static-md",
+      "preset": "image-win-x64-v1",
+      "target": "arcslate_image_abi",
+      "library": "ArcImageNative.dll",
+      "libraryIdentity": "ArcImageNative.dll",
+      "buildDirectory": "artifacts/cmake/image/win-x64",
+      "installDirectory": "artifacts/stage/image/win-x64",
+      "installedDirectory": "artifacts/vcpkg-installed",
+      "compiler": {
+        "family": "MSVC",
+        "target": "x86_64",
+        "reviewedRuntimeProfileRequired": true,
+        "toolset": "14.51.36231",
+        "environment": "vcvarsall.bat x64 -vcvars_ver=14.51.36231"
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "image-win-x64-v1"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "image-win-x64-v1"
+        ],
+        [
+          "cmake",
+          "--install",
+          "artifacts/cmake/image/win-x64",
+          "--component",
+          "ImageRuntime"
+        ]
+      ],
+      "productionAdmission": "Actual clean source-bound binary, exact callable exports, copied-byte/dependency/tool/legal closure and reviewed per-RID compiler/runtime identity are mandatory. No producer recipe alone activates a package."
+    },
+    "win-arm64": {
+      "package": "ArcForges.Native.Image.Runtime.win-arm64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
+      "host": "Windows",
+      "architecture": "aarch64",
+      "triplet": "arm64-windows-static-md",
+      "preset": "image-win-arm64-v1",
+      "target": "arcslate_image_abi",
+      "library": "ArcImageNative.dll",
+      "libraryIdentity": "ArcImageNative.dll",
+      "buildDirectory": "artifacts/cmake/image/win-arm64",
+      "installDirectory": "artifacts/stage/image/win-arm64",
+      "installedDirectory": "artifacts/vcpkg-installed/win-arm64",
+      "compiler": {
+        "family": "MSVC",
+        "target": "aarch64",
+        "reviewedRuntimeProfileRequired": true,
+        "toolset": "14.51.36231",
+        "environment": "vcvarsall.bat x64_arm64 -vcvars_ver=14.51.36231"
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "image-win-arm64-v1"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "image-win-arm64-v1"
+        ],
+        [
+          "cmake",
+          "--install",
+          "artifacts/cmake/image/win-arm64",
+          "--component",
+          "ImageRuntime"
+        ]
+      ],
+      "productionAdmission": "Actual clean source-bound binary, exact callable exports, copied-byte/dependency/tool/legal closure and reviewed per-RID compiler/runtime identity are mandatory. No producer recipe alone activates a package."
+    },
+    "linux-x64": {
+      "package": "ArcForges.Native.Image.Runtime.linux-x64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
+      "host": "Linux",
+      "architecture": "x86_64",
+      "triplet": "x64-linux",
+      "preset": "image-linux-x64-v1",
+      "target": "arcslate_image_abi",
+      "library": "libArcImageNative.so",
+      "libraryIdentity": "libArcImageNative.so",
+      "buildDirectory": "artifacts/cmake/image/linux-x64",
+      "installDirectory": "artifacts/stage/image/linux-x64",
+      "installedDirectory": "artifacts/vcpkg-installed/linux-x64",
+      "compiler": {
+        "family": "Clang",
+        "target": "x86_64",
+        "reviewedRuntimeProfileRequired": true
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "image-linux-x64-v1"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "image-linux-x64-v1"
+        ],
+        [
+          "cmake",
+          "--install",
+          "artifacts/cmake/image/linux-x64",
+          "--component",
+          "ImageRuntime"
+        ]
+      ],
+      "productionAdmission": "Actual clean source-bound binary, exact callable exports, copied-byte/dependency/tool/legal closure and reviewed per-RID compiler/runtime identity are mandatory. No producer recipe alone activates a package."
+    },
+    "linux-arm64": {
+      "package": "ArcForges.Native.Image.Runtime.linux-arm64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
+      "host": "Linux",
+      "architecture": "aarch64",
+      "triplet": "arm64-linux",
+      "preset": "image-linux-arm64-v1",
+      "target": "arcslate_image_abi",
+      "library": "libArcImageNative.so",
+      "libraryIdentity": "libArcImageNative.so",
+      "buildDirectory": "artifacts/cmake/image/linux-arm64",
+      "installDirectory": "artifacts/stage/image/linux-arm64",
+      "installedDirectory": "artifacts/vcpkg-installed/linux-arm64",
+      "compiler": {
+        "family": "Clang",
+        "target": "aarch64",
+        "reviewedRuntimeProfileRequired": true,
+        "environment": "Native ARM64 Linux host or separately reviewed actual ARM64 sysroot/toolchain; target name alone is insufficient."
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "image-linux-arm64-v1"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "image-linux-arm64-v1"
+        ],
+        [
+          "cmake",
+          "--install",
+          "artifacts/cmake/image/linux-arm64",
+          "--component",
+          "ImageRuntime"
+        ]
+      ],
+      "productionAdmission": "Actual clean source-bound binary, exact callable exports, copied-byte/dependency/tool/legal closure and reviewed per-RID compiler/runtime identity are mandatory. No producer recipe alone activates a package."
+    },
+    "osx-x64": {
+      "package": "ArcForges.Native.Image.Runtime.osx-x64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
+      "host": "Darwin",
+      "architecture": "x86_64",
+      "triplet": "x64-osx",
+      "preset": "image-osx-x64-v1",
+      "target": "arcslate_image_abi",
+      "library": "libArcImageNative.dylib",
+      "libraryIdentity": "@rpath/libArcImageNative.dylib",
+      "buildDirectory": "artifacts/cmake/image/osx-x64",
+      "installDirectory": "artifacts/stage/image/osx-x64",
+      "installedDirectory": "artifacts/vcpkg-installed/osx-x64",
+      "compiler": {
+        "family": "AppleClang",
+        "target": "x86_64",
+        "reviewedRuntimeProfileRequired": true
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "image-osx-x64-v1"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "image-osx-x64-v1"
+        ],
+        [
+          "cmake",
+          "--install",
+          "artifacts/cmake/image/osx-x64",
+          "--component",
+          "ImageRuntime"
+        ]
+      ],
+      "productionAdmission": "Actual clean source-bound binary, exact callable exports, copied-byte/dependency/tool/legal closure and reviewed per-RID compiler/runtime identity are mandatory. No producer recipe alone activates a package."
+    },
+    "osx-arm64": {
+      "package": "ArcForges.Native.Image.Runtime.osx-arm64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
+      "host": "Darwin",
+      "architecture": "aarch64",
+      "triplet": "arm64-osx",
+      "preset": "image-osx-arm64-v1",
+      "target": "arcslate_image_abi",
+      "library": "libArcImageNative.dylib",
+      "libraryIdentity": "@rpath/libArcImageNative.dylib",
+      "buildDirectory": "artifacts/cmake/image/osx-arm64",
+      "installDirectory": "artifacts/stage/image/osx-arm64",
+      "installedDirectory": "artifacts/vcpkg-installed/osx-arm64",
+      "compiler": {
+        "family": "AppleClang",
+        "target": "aarch64",
+        "reviewedRuntimeProfileRequired": true
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "image-osx-arm64-v1"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "image-osx-arm64-v1"
+        ],
+        [
+          "cmake",
+          "--install",
+          "artifacts/cmake/image/osx-arm64",
+          "--component",
+          "ImageRuntime"
+        ]
+      ],
+      "productionAdmission": "Actual clean source-bound binary, exact callable exports, copied-byte/dependency/tool/legal closure and reviewed per-RID compiler/runtime identity are mandatory. No producer recipe alone activates a package."
+    }
+  }
+}

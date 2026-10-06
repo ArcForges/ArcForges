@@ -1,0 +1,347 @@
+{
+  "schemaVersion": 1,
+  "id": "image-runtime-producer-v1",
+  "family": "arc_image",
+  "abi": {
+    "major": 1,
+    "minor": 1
+  },
+  "sourceProfile": {
+    "path": "eng/provenance/artifact-profiles/native-win-x64-r4.json",
+    "sha256Lf": "1cf40d8075ae94ca095607fb60cb5ea2cb9ed42f9008c92a6e643660c1756589"
+  },
+  "recipes": {
+    "path": "eng/native/image-runtime-producers.v1.json",
+    "sha256Lf": "c5824f0796d7fb237b09332caf5cff63f49684136b956a134d135cbb242dbc7a"
+  },
+  "systemPolicy": {
+    "path": "eng/native/vcpkg/system-dependencies.v2.json",
+    "sha256Lf": "61a6b210a3bd38610fd678eef5b38068beffc60d130c769953f280ef70db98ad"
+  },
+  "triplets": {
+    "win-x64": {
+      "ownedPath": "eng/native/vcpkg/triplets/x64-windows-static-md.cmake",
+      "ownedSha256Lf": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
+      "upstreamPath": "triplets/x64-windows-static-md.cmake",
+      "upstreamSha256Lf": "583a1b57956affe6c3daa5f6eea37867cf663792950ec52e0b91adecb8170c9c"
+    },
+    "win-arm64": {
+      "ownedPath": "eng/native/vcpkg/triplets/arm64-windows-static-md.cmake",
+      "ownedSha256Lf": "3c0df0715e8bd38af5818c65ccf4385e8480216e6e47bf8b33e49fbe44a5cb06",
+      "upstreamPath": null,
+      "upstreamSha256Lf": null
+    },
+    "linux-x64": {
+      "ownedPath": null,
+      "ownedSha256Lf": null,
+      "upstreamPath": "triplets/x64-linux.cmake",
+      "upstreamSha256Lf": "3600011444071beb27b81ff82b3c866e3d4054636e3011609deb313d2baf57fd"
+    },
+    "linux-arm64": {
+      "ownedPath": "eng/native/vcpkg/triplets/arm64-linux.cmake",
+      "ownedSha256Lf": "32f429e019bcda080e470d8321956ab9fb120e770e717e6115e1dfe8dd692013",
+      "upstreamPath": "triplets/arm64-linux.cmake",
+      "upstreamSha256Lf": "d527954d09db3c078a2fd5dfa6c2f819966e0712b5d736aa53cacc0904618636"
+    },
+    "osx-x64": {
+      "ownedPath": null,
+      "ownedSha256Lf": null,
+      "upstreamPath": "triplets/community/x64-osx.cmake",
+      "upstreamSha256Lf": "0cc97ac39ed2fe40688d8bafad0ada7770ba2f0c628308eb0f31f13101beb338"
+    },
+    "osx-arm64": {
+      "ownedPath": null,
+      "ownedSha256Lf": null,
+      "upstreamPath": "triplets/arm64-osx.cmake",
+      "upstreamSha256Lf": "ee01c9458d62d6baf9332438e02f9de2d5daa743b47a61ba6b7d68dd84dc1e65"
+    }
+  },
+  "compilerRuntime": {
+    "win-x64": {
+      "sourceProfileRuntimeId": "microsoft-vc14-runtime-14-51-36247-r1",
+      "directoryVersion": "14.51.36231",
+      "files": {
+        "msvcp140.dll": {
+          "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Windows Software Compatibility Publisher"
+        },
+        "vcruntime140.dll": {
+          "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Windows Software Compatibility Publisher"
+        },
+        "vcruntime140_1.dll": {
+          "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Windows Software Compatibility Publisher"
+        }
+      }
+    },
+    "win-arm64": {
+      "sourceProfileRuntimeId": "microsoft-vc14-runtime-14-51-36247-r1",
+      "directoryVersion": "14.51.36231",
+      "files": {
+        "msvcp140.dll": {
+          "sha256": "167ceac85c2d726c4cd9e39b8881fafdc6de1520c0e67c4f6b271235f9d2a6c5",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Corporation"
+        },
+        "vcruntime140.dll": {
+          "sha256": "3c56f4167e2b3d8e6338497731e6aae8cd7ec46bd6789f9423a8d9cf9a630310",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Corporation"
+        }
+      },
+      "excludedFiles": [
+        {
+          "name": "vcruntime140_1.dll",
+          "sha256": "60c70e34e2e156f8bd214b92c2125c252e17d86ac8a25799ea1a4ecabde1d97c",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Corporation",
+          "reason": "Actual physical PE machine8664 with an ARM64EC hybrid view; not admitted as native ARM64 Image payload. A directory name or valid Microsoft signature does not prove target compatibility."
+        }
+      ]
+    }
+  },
+  "runtimeVersionAuthority": "Exact inspected ELF version requirements and Mach minimumOS are bound per artifact; operating-system prerequisite identity never asserts another family or RID floor.",
+  "publicationGate": "Actual NAT11 implementation artifact, full source/tool/legal/signature and copied-byte closure, independent review and applicable CI; unavailable or unbuilt RID is never registered as a produced package.",
+  "componentRecords": {
+    "bzip2": {
+      "win-x64": "native-bzip2-r4",
+      "win-arm64": "native-image-portable-bzip2-r1",
+      "linux-x64": "native-image-portable-bzip2-r1",
+      "linux-arm64": "native-image-portable-bzip2-r1",
+      "osx-x64": "native-image-portable-bzip2-r1",
+      "osx-arm64": "native-image-portable-bzip2-r1"
+    },
+    "expat": {
+      "win-x64": "native-expat-r4",
+      "win-arm64": "native-image-portable-expat-r1",
+      "linux-x64": "native-image-portable-expat-r1",
+      "linux-arm64": "native-image-portable-expat-r1",
+      "osx-x64": "native-image-portable-expat-r1",
+      "osx-arm64": "native-image-portable-expat-r1"
+    },
+    "fmt": {
+      "win-x64": "native-fmt-r4",
+      "win-arm64": "native-image-portable-fmt-r1",
+      "linux-x64": "native-image-portable-fmt-r1",
+      "linux-arm64": "native-image-portable-fmt-r1",
+      "osx-x64": "native-image-portable-fmt-r1",
+      "osx-arm64": "native-image-portable-fmt-r1"
+    },
+    "imath": {
+      "win-x64": "native-imath-r4",
+      "win-arm64": "native-image-portable-imath-r1",
+      "linux-x64": "native-image-portable-imath-r1",
+      "linux-arm64": "native-image-portable-imath-r1",
+      "osx-x64": "native-image-portable-imath-r1",
+      "osx-arm64": "native-image-portable-imath-r1"
+    },
+    "libdeflate": {
+      "win-x64": "native-libdeflate-r4",
+      "win-arm64": "native-image-portable-libdeflate-r1",
+      "linux-x64": "native-image-portable-libdeflate-r1",
+      "linux-arm64": "native-image-portable-libdeflate-r1",
+      "osx-x64": "native-image-portable-libdeflate-r1",
+      "osx-arm64": "native-image-portable-libdeflate-r1"
+    },
+    "libjpeg-turbo": {
+      "win-x64": "native-libjpeg-turbo-r4",
+      "win-arm64": "native-image-portable-libjpeg-turbo-r1",
+      "linux-x64": "native-image-portable-libjpeg-turbo-r1",
+      "linux-arm64": "native-image-portable-libjpeg-turbo-r1",
+      "osx-x64": "native-image-portable-libjpeg-turbo-r1",
+      "osx-arm64": "native-image-portable-libjpeg-turbo-r1"
+    },
+    "liblzma": {
+      "win-x64": "native-liblzma-r4",
+      "win-arm64": "native-image-portable-liblzma-r1",
+      "linux-x64": "native-image-portable-liblzma-r1",
+      "linux-arm64": "native-image-portable-liblzma-r1",
+      "osx-x64": "native-image-portable-liblzma-r1",
+      "osx-arm64": "native-image-portable-liblzma-r1"
+    },
+    "libpng": {
+      "win-x64": "native-libpng-r4",
+      "win-arm64": "native-image-portable-libpng-r1",
+      "linux-x64": "native-image-portable-libpng-r1",
+      "linux-arm64": "native-image-portable-libpng-r1",
+      "osx-x64": "native-image-portable-libpng-r1",
+      "osx-arm64": "native-image-portable-libpng-r1"
+    },
+    "minizip-ng": {
+      "win-x64": "native-minizip-ng-r4",
+      "win-arm64": "native-image-portable-minizip-ng-r1",
+      "linux-x64": "native-image-portable-minizip-ng-r1",
+      "linux-arm64": "native-image-portable-minizip-ng-r1",
+      "osx-x64": "native-image-portable-minizip-ng-r1",
+      "osx-arm64": "native-image-portable-minizip-ng-r1"
+    },
+    "opencolorio": {
+      "win-x64": "native-opencolorio-r4",
+      "win-arm64": "native-image-portable-opencolorio-r1",
+      "linux-x64": "native-image-portable-opencolorio-r1",
+      "linux-arm64": "native-image-portable-opencolorio-r1",
+      "osx-x64": "native-image-portable-opencolorio-r1",
+      "osx-arm64": "native-image-portable-opencolorio-r1"
+    },
+    "openexr": {
+      "win-x64": "native-openexr-r4",
+      "win-arm64": "native-image-portable-openexr-r1",
+      "linux-x64": "native-image-portable-openexr-r1",
+      "linux-arm64": "native-image-portable-openexr-r1",
+      "osx-x64": "native-image-portable-openexr-r1",
+      "osx-arm64": "native-image-portable-openexr-r1"
+    },
+    "openimageio": {
+      "win-x64": "native-openimageio-r4",
+      "win-arm64": "native-image-portable-openimageio-r1",
+      "linux-x64": "native-image-portable-openimageio-r1",
+      "linux-arm64": "native-image-portable-openimageio-r1",
+      "osx-x64": "native-image-portable-openimageio-r1",
+      "osx-arm64": "native-image-portable-openimageio-r1"
+    },
+    "openjph": {
+      "win-x64": "native-openjph-r4",
+      "win-arm64": "native-image-portable-openjph-r1",
+      "linux-x64": "native-image-portable-openjph-r1",
+      "linux-arm64": "native-image-portable-openjph-r1",
+      "osx-x64": "native-image-portable-openjph-r1",
+      "osx-arm64": "native-image-portable-openjph-r1"
+    },
+    "pystring": {
+      "win-x64": "native-pystring-r4",
+      "win-arm64": "native-image-portable-pystring-r1",
+      "linux-x64": "native-image-portable-pystring-r1",
+      "linux-arm64": "native-image-portable-pystring-r1",
+      "osx-x64": "native-image-portable-pystring-r1",
+      "osx-arm64": "native-image-portable-pystring-r1"
+    },
+    "robin-map": {
+      "win-x64": "native-robin-map-r4",
+      "win-arm64": "native-image-portable-robin-map-r1",
+      "linux-x64": "native-image-portable-robin-map-r1",
+      "linux-arm64": "native-image-portable-robin-map-r1",
+      "osx-x64": "native-image-portable-robin-map-r1",
+      "osx-arm64": "native-image-portable-robin-map-r1"
+    },
+    "tiff": {
+      "win-x64": "native-tiff-r4",
+      "win-arm64": "native-image-portable-tiff-r1",
+      "linux-x64": "native-image-portable-tiff-r1",
+      "linux-arm64": "native-image-portable-tiff-r1",
+      "osx-x64": "native-image-portable-tiff-r1",
+      "osx-arm64": "native-image-portable-tiff-r1"
+    },
+    "vcpkg-cmake": {
+      "win-x64": "native-vcpkg-cmake-r4",
+      "win-arm64": "native-image-portable-vcpkg-cmake-r1",
+      "linux-x64": "native-image-portable-vcpkg-cmake-r1",
+      "linux-arm64": "native-image-portable-vcpkg-cmake-r1",
+      "osx-x64": "native-image-portable-vcpkg-cmake-r1",
+      "osx-arm64": "native-image-portable-vcpkg-cmake-r1"
+    },
+    "vcpkg-cmake-config": {
+      "win-x64": "native-vcpkg-cmake-config-r4",
+      "win-arm64": "native-image-portable-vcpkg-cmake-config-r1",
+      "linux-x64": "native-image-portable-vcpkg-cmake-config-r1",
+      "linux-arm64": "native-image-portable-vcpkg-cmake-config-r1",
+      "osx-x64": "native-image-portable-vcpkg-cmake-config-r1",
+      "osx-arm64": "native-image-portable-vcpkg-cmake-config-r1"
+    },
+    "yaml-cpp": {
+      "win-x64": "native-yaml-cpp-r4",
+      "win-arm64": "native-image-portable-yaml-cpp-r1",
+      "linux-x64": "native-image-portable-yaml-cpp-r1",
+      "linux-arm64": "native-image-portable-yaml-cpp-r1",
+      "osx-x64": "native-image-portable-yaml-cpp-r1",
+      "osx-arm64": "native-image-portable-yaml-cpp-r1"
+    },
+    "zlib": {
+      "win-x64": "native-zlib-r4",
+      "win-arm64": "native-image-portable-zlib-r1",
+      "linux-x64": "native-image-portable-zlib-r1",
+      "linux-arm64": "native-image-portable-zlib-r1",
+      "osx-x64": "native-image-portable-zlib-r1",
+      "osx-arm64": "native-image-portable-zlib-r1"
+    },
+    "zstd": {
+      "win-x64": "native-zstd-r4",
+      "win-arm64": "native-image-portable-zstd-r1",
+      "linux-x64": "native-image-portable-zstd-r1",
+      "linux-arm64": "native-image-portable-zstd-r1",
+      "osx-x64": "native-image-portable-zstd-r1",
+      "osx-arm64": "native-image-portable-zstd-r1"
+    }
+  },
+  "additionalComponents": {
+    "sse2neon": {
+      "rids": [
+        "win-arm64",
+        "linux-arm64",
+        "osx-arm64"
+      ],
+      "features": [],
+      "component": {
+        "record": "native-image-sse2neon-r1",
+        "version": "1.9.1",
+        "role": "runtime-input",
+        "source": {
+          "repository": "https://github.com/DLTcollab/sse2neon",
+          "commit": "92f6de174717aef09033ad21568d5bb9e5470404",
+          "paths": [
+            "LICENSE",
+            "sse2neon.h"
+          ],
+          "spdx": "MIT",
+          "evidence": [
+            {
+              "path": "LICENSE",
+              "sha256": "e962fe0dfa637c465df35d496fb198982eb52b8afd3046f370083c6e9856b34f",
+              "finding": "Actual complete original MIT licence in the pinned v1.9.1 archive and installed copyright; LF-normalized bytes match."
+            },
+            {
+              "path": "sse2neon.h",
+              "sha256": "78632498a57bf7e080e84cb8d74c47ce93b204cece77eab79de2908eb8bc92ed",
+              "finding": "Actual selected ARM SIMD translation header retains the full MIT copyright, permission and warranty notice; no standalone/test source is selected."
+            }
+          ]
+        },
+        "recipe": {
+          "repository": "https://github.com/microsoft/vcpkg",
+          "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+          "files": {
+            "portfile.cmake": "0b5e65df771ddf1bf06e1d6e86a625ede9c459595a346b1caa216a4d604a26df",
+            "vcpkg.json": "c1d89d12a4b0073bbdc7c512de8e45fea3da390408fe888004cd9407bc92aeea"
+          },
+          "licenceScope": "Authored vcpkg header-only build helper is MIT. Exact selected upstream header retains its separate original full MIT notice; no relicensing."
+        },
+        "resources": [
+          {
+            "url": "git+https://github.com/DLTcollab/sse2neon@v1.9.1",
+            "sha512": "ea154fd525cac66e7a26b818b67f370f0386e43fb2fce31f8d2673f99f01c45d746ddc0aa9174da6f233128ec87b669a74892847f529aceb9392a6328bbe5559",
+            "downloadUrl": "https://github.com/DLTcollab/sse2neon/archive/v1.9.1.tar.gz",
+            "cacheName": "DLTcollab-sse2neon-v1.9.1.tar.gz"
+          }
+        ],
+        "legal": [
+          {
+            "path": "LICENSE",
+            "sha256": "e962fe0dfa637c465df35d496fb198982eb52b8afd3046f370083c6e9856b34f"
+          }
+        ],
+        "extras": [],
+        "correspondingSource": null,
+        "scope": "Required ARM-only SIMD translation header selected by the actual pinned Image dependency graph. Complete source archive, original MIT licence/header notice and exact vcpkg recipe are retained per actual runtime candidate."
+      }
+    }
+  }
+}

@@ -38,3 +38,12 @@ The adapter uses the existing authored image open/info/tile/buffer-seal/ack/fini
 protocol. No native pointer or opaque process token becomes a wire ID. Parent admission,
 slot geometry, digest/coverage verification and final output acceptance remain the
 ContentSandbox broker's responsibility.
+
+The production runtime recipes are closed to `win-x64`, `win-arm64`, `linux-x64`,
+`linux-arm64`, `osx-x64` and `osx-arm64`. Each newly introduced producer project is
+non-packable until its actual compiled payload passes source, callable ABI,
+toolchain, dependency, original legal-text and copied-byte admission. A declared
+recipe or an existing compiler does not establish a published runtime or OS
+compatibility. Unbuilt RID packages are absent from the publication registry.
+The portable staging receipt describes exact bytes; publisher authorization is a
+separate signed handoff owned by the native loader/release composition.

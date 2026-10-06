@@ -70,6 +70,11 @@
     <Project Path="src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj" />
     <Project Path="src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj" />
+    <Project Path="src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj" />
+    <Project Path="src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj" />
+    <Project Path="src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj" />
+    <Project Path="src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj" />
+    <Project Path="src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj" />
     <Project Path="src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj" />
   </Folder>
 </Solution>

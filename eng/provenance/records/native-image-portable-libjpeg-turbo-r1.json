@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "id": "native-image-portable-libjpeg-turbo-r1",
+  "kind": "generated",
+  "sourceRepository": "https://github.com/libjpeg-turbo/libjpeg-turbo",
+  "sourceCommit": "c85e6b905bf237038faa936dab160ebfc5da0344",
+  "sourcePaths": [
+    "LICENSE.md",
+    "README.ijg",
+    "CMakeLists.txt"
+  ],
+  "licence": {
+    "spdx": "BSD-3-Clause AND IJG AND Zlib",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
+        "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+      },
+      {
+        "path": "README.ijg",
+        "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+        "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+      }
+    ],
+    "scope": "JPEG library and SIMD implementations under BSD-3-Clause/IJG/Zlib as detailed in LICENSE.md and README.ijg. Command-line tools, testimages, spng utilities and documentation are not packaged. Retain the required Independent JPEG Group acknowledgement.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Original copyright and full applicable terms are retained in each actual licenses/libjpeg-turbo-<actual-triplet>.txt, together with original corresponding source and exact recipes.",
+    "Additional full notices: licenses/provenance/libjpeg-turbo-ijg.txt.",
+    "Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt."
+  ],
+  "targets": [],
+  "artifactTargets": [
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.win-arm64",
+      "kind": "native-component-libjpeg-turbo",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    },
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.linux-x64",
+      "kind": "native-component-libjpeg-turbo",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    },
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.linux-arm64",
+      "kind": "native-component-libjpeg-turbo",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    },
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.osx-x64",
+      "kind": "native-component-libjpeg-turbo",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    },
+    {
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.osx-arm64",
+      "kind": "native-component-libjpeg-turbo",
+      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
+      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+    }
+  ],
+  "disposition": "Copy",
+  "verification": {
+    "kind": "regeneration",
+    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
+    "expected": "New portable Image target registration reuses the unchanged reviewed r4 source/legal/recipe identities. Actual per-RID compiled libraries, source archives, complete original legal bytes, applied triplets and generator receipts must pass production staging. No unbuilt RID activation, OS runtime, signing or deployment success is inferred from these records.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Original copyright and full applicable terms are retained in each actual licenses/libjpeg-turbo-<actual-triplet>.txt, together with original corresponding source and exact recipes. Additional full notices: licenses/provenance/libjpeg-turbo-ijg.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.",
+    "files": [
+      "eng/provenance/NOTICE.txt"
+    ],
+    "distribution": "packages",
+    "reason": "Native package-specific attribution and full originals are independently checked. Build-only records describe retained recipes/legal material, not bundled host implementation."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": {
+    "generators": [
+      {
+        "repository": "https://github.com/Kitware/CMake",
+        "commit": "06cc1d04d8d5a4e13abdadfe20f6937787b1968e",
+        "paths": [
+          "CMakeLists.txt",
+          "LICENSE.rst"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.rst",
+            "sha256": "4382e7c1879ac90e3f101a395d23846fa4dbcaa1eed7265b43681e348754825d",
+            "finding": "CMake 4.3.3 is a BSD-3-Clause build generator. Its implementation/dependencies are not copied into compiled native outputs."
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/Kitware/CMake",
+        "commit": "44125a9e977c834f06ac1e5fe8db55355261ef87",
+        "paths": [
+          "CMakeLists.txt",
+          "LICENSE.rst"
+        ],
+        "spdx": "BSD-3-Clause",
+        "evidence": [
+          {
+            "path": "LICENSE.rst",
+            "sha256": "4382e7c1879ac90e3f101a395d23846fa4dbcaa1eed7265b43681e348754825d",
+            "finding": "CMake 4.4.0 is the BSD-3-Clause script/build generator selected by scripts/vcpkg-tools.json at vcpkg 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb. Actual installed ABI evidence must report this version. Its implementation is not copied into runtime outputs."
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+        "paths": [
+          "ports/libjpeg-turbo/add-options-for-docs-headers.patch",
+          "ports/libjpeg-turbo/portfile.cmake",
+          "ports/libjpeg-turbo/usage",
+          "ports/libjpeg-turbo/vcpkg-cmake-wrapper.cmake",
+          "ports/libjpeg-turbo/vcpkg.json",
+          "ports/libjpeg-turbo/workaround_cmake_system_processor.patch",
+          "scripts/vcpkg-tools.json",
+          "triplets/arm64-linux.cmake",
+          "triplets/arm64-osx.cmake",
+          "triplets/community/x64-osx.cmake",
+          "triplets/x64-linux.cmake",
+          "triplets/x64-windows-static-md.cmake"
+        ],
+        "spdx": "MIT",
+        "evidence": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+            "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "repository": "https://github.com/libjpeg-turbo/libjpeg-turbo",
+        "commit": "c85e6b905bf237038faa936dab160ebfc5da0344",
+        "paths": [
+          "LICENSE.md",
+          "README.ijg",
+          "CMakeLists.txt"
+        ],
+        "spdx": "BSD-3-Clause AND IJG AND Zlib",
+        "evidence": [
+          {
+            "path": "LICENSE.md",
+            "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          },
+          {
+            "path": "README.ijg",
+            "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+          }
+        ]
+      }
+    ],
+    "command": "The closed per-RID Image producer recipe uses actual CMake4.3.3/Ninja1.13.1 owning-root output and pinned vcpkg366 dependency recipes with actual CMake4.4.0 ABI evidence. Complete original source/legal/recipe bytes are matched at staging; host generator implementations are not bundled. Compiler, dependency imports, runtime/OS floors and signed publisher admission are distinct exact artifact handoffs.",
+    "outputSpdx": "BSD-3-Clause AND IJG AND Zlib"
+  },
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "NAT22 maintainer source/legal assessment; independent final source/admission review remains mandatory and is not asserted here.",
+    "reviewedOn": "2026-10-06",
+    "decision": "approved",
+    "rationale": "Register five new portable Image artifact intents using unchanged original r4 source, legal, feature and recipe identities; keep the Winx64 r4 active record and immutable profile/history intact. Per-RID changes fail closed and require separately admitted exact prerequisites. Actual artifact production/publication and full OS acceptance remain separate.",
+    "baselineCommit": "71b6df2db828bc859cca6934ed66aac9b525b5c7",
+    "reconciliation": false
+  },
+  "supersedes": null
+}
