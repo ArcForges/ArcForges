@@ -20,7 +20,7 @@
     },
     {
       "path": "native/CMakeLists.txt",
-      "blob": "9db191dd8e3ed8863e30ee847b180e8985cb3e0d"
+      "blob": "6ea9af71172e37a0aa391b0bf03364007b0fe750"
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
