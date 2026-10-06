@@ -25,9 +25,8 @@ arc_status_t ARC_ABI_CALL arc_image_get_abi_version(uint32_t* out_major, uint32_
 arc_status_t ARC_ABI_CALL arc_image_get_build_info(arc_mut_buffer_t* out_utf8)
 {
     try {
-        if (OIIO::get_string_attribute("format_list").empty()) {
-            return arc::abi::fail(ARC_INTERNAL, "OpenImageIO format probe failed", image_domain);
-        }
+        // Functional readers bind the three embedded factories directly. Do not enumerate dynamic
+        // plugins before the helper's OS restrictions have been applied.
         return arc::abi::write_build_info("ArcImageNative;abi=1.1;openimageio=3.1.14.0;formats=png,tiff,exr;rgba8;"
                                           "rgba32fLinearPremultiplied;maxTileBytes=67108864;maxHandles=64",
                                           out_utf8);

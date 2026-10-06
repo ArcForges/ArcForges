@@ -193,7 +193,11 @@ void codec_tests(const std::filesystem::path& directory)
         require(arc_image_read(handle, &region, &buffer, nullptr) == ARC_OK, "float tile failed");
         require(std::isfinite(floats[0]) && floats[3] > .49F && floats[3] < .51F, "float tile alpha wrong");
         if (std::string_view(extension) != "png")
-            require(std::abs(floats[0] - .375F) < .002F, "linear premultiplied color wrong");
+            if (std::abs(floats[0] -
+                         (metadata.find("\"sourceColorSpace\":\"linear\"") != std::string::npos ? .375F : .261261F)) >=
+                .002F)
+                throw std::runtime_error(std::string(extension) + " float red=" + std::to_string(floats[0]) + " " +
+                                         metadata);
         require(arc_image_close(handle) == ARC_OK, "float reader close failed");
         config = options();
         config.limits.max_width = 18;

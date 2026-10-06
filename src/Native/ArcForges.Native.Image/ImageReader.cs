@@ -302,7 +302,7 @@ internal static class ImageMetadataJson
             if (root.GetProperty("version").GetUInt32() != 1 || width == 0 || height == 0 || width > limits.MaxWidth || height > limits.MaxHeight ||
                 (ulong)width * height > 268435456 || subimages is 0 || subimages > limits.MaxItems || mips is 0 || mips > limits.MaxItems ||
                 subimage >= subimages || mip >= mips || root.GetProperty("subimage").GetUInt32() != subimage || root.GetProperty("mip").GetUInt32() != mip ||
-                root.GetProperty("format").GetUInt32() != (uint)format || codec is not ("png" or "tiff" or "openexr") || space is not ("linear" or "sRGB"))
+                root.GetProperty("format").GetUInt32() != (uint)format || codec is not ("png" or "tiff" or "openexr") || space is null || space.Length is 0 or > 256)
             {
                 throw new InvalidDataException("Native image metadata contradicts the admitted request.");
             }

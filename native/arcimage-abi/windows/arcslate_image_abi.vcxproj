@@ -33,7 +33,7 @@
     </ClCompile>
     <Link><ModuleDefinitionFile>$(ProjectDir)..\exports\windows.def</ModuleDefinitionFile><GenerateDebugInformation>true</GenerateDebugInformation></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="..\src\arcslate_image_abi.cpp" /><ClCompile Include="..\..\shared\src\arc_native_abi.cpp" /></ItemGroup>
+  <ItemGroup><ClCompile Include="..\src\arcslate_image_abi.cpp" /><ClCompile Include="..\src\image_reader.cpp" /><ClCompile Include="..\..\shared\src\arc_native_abi.cpp" /></ItemGroup>
   <ItemGroup><ClInclude Include="..\include\arc\arc_slate_image_abi.h" /><ClInclude Include="..\..\shared\include\arc\arc_native_abi.h" /><ClInclude Include="..\..\shared\src\arc_native_abi_internal.hpp" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <PropertyGroup>
@@ -41,3 +41,4 @@
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
 </Project>
+

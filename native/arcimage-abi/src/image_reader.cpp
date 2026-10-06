@@ -12,11 +12,29 @@
 #include <string>
 #include <vector>
 
+// The pinned static OIIO build embeds these plugin factories in the versioned namespace.
+// Direct binding excludes dynamic plugin discovery and environment-selected libraries.
+OIIO_NAMESPACE_BEGIN
+ImageInput* png_input_imageio_create();
+ImageInput* tiff_input_imageio_create();
+ImageInput* openexr_input_imageio_create();
+OIIO_NAMESPACE_END
+
 namespace {
 constexpr uint32_t domain = 0x494D4147U;
 constexpr uint32_t image_kind = 0x494D4147U;
 constexpr uint64_t max_tile = 64ULL * 1024 * 1024;
 constexpr uint64_t max_pixels = 268435456;
+OIIO::ImageInput::unique_ptr create_codec(std::string_view format)
+{
+    if (format == "png")
+        return OIIO::ImageInput::unique_ptr(OIIO::png_input_imageio_create());
+    if (format == "tiff")
+        return OIIO::ImageInput::unique_ptr(OIIO::tiff_input_imageio_create());
+    if (format == "openexr")
+        return OIIO::ImageInput::unique_ptr(OIIO::openexr_input_imageio_create());
+    return {};
+}
 arc_status_t fail(arc_status_t code, const char* text)
 {
     return arc::abi::fail(code, text, domain);
@@ -140,6 +158,43 @@ arc_status_t validate_limits(const arc_limits_v1& limit)
         return fail(ARC_RESOURCE_LIMIT, "Image limits exceed producer profile");
     return ARC_OK;
 }
+bool valid_utf8(std::string_view value)
+{
+    for (size_t i = 0; i < value.size();) {
+        const auto first = static_cast<unsigned char>(value[i++]);
+        if (first == 0)
+            return false;
+        if (first < 128)
+            continue;
+        uint32_t code = 0, minimum = 0;
+        size_t count = 0;
+        if (first >= 0xC2 && first <= 0xDF) {
+            code = first & 31U;
+            count = 1;
+            minimum = 128;
+        } else if (first >= 0xE0 && first <= 0xEF) {
+            code = first & 15U;
+            count = 2;
+            minimum = 2048;
+        } else if (first >= 0xF0 && first <= 0xF4) {
+            code = first & 7U;
+            count = 3;
+            minimum = 65536;
+        } else
+            return false;
+        if (count > value.size() - i)
+            return false;
+        for (size_t j = 0; j < count; ++j) {
+            const auto next = static_cast<unsigned char>(value[i++]);
+            if ((next & 0xC0U) != 0x80U)
+                return false;
+            code = (code << 6U) | (next & 63U);
+        }
+        if (code < minimum || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF))
+            return false;
+    }
+    return true;
+}
 arc_status_t valid_spec(const OIIO::ImageSpec& spec, const arc_limits_v1& limit)
 {
     if (spec.width <= 0 || spec.height <= 0 || spec.depth != 1 || spec.deep || spec.nchannels < 1 ||
@@ -154,9 +209,12 @@ arc_status_t valid_spec(const OIIO::ImageSpec& spec, const arc_limits_v1& limit)
     if (spec.image_bytes() > limit.max_memory_bytes)
         return fail(ARC_RESOURCE_LIMIT, "Image decode working set exceeds admitted memory");
     for (const auto& name : spec.channelnames) {
-        if (name.empty() || name.size() > 256)
+        if (name.empty() || name.size() > 256 || !valid_utf8(name))
             return fail(ARC_RESOURCE_LIMIT, "Image channel names exceed bounds");
     }
+    const auto color_space = spec.get_string_attribute("oiio:ColorSpace");
+    if (color_space.size() > 256 || !valid_utf8(std::string_view(color_space.data(), color_space.size())))
+        return fail(ARC_CORRUPT, "Image color metadata is invalid");
     return ARC_OK;
 }
 std::string quote(const std::string& value)
@@ -167,7 +225,7 @@ std::string quote(const std::string& value)
         if (c == '"' || c == '\\') {
             result += '\\';
             result += static_cast<char>(c);
-        } else if (c < 32 || c >= 127) {
+        } else if (c < 32) {
             result += "\\u00";
             result += hex[c >> 4];
             result += hex[c & 15];
@@ -179,8 +237,37 @@ std::string quote(const std::string& value)
 bool source_linear(const reader& value)
 {
     const auto space = value.spec.get_string_attribute("oiio:ColorSpace");
-    return space == "Linear" || space == "linear" || space == "lin_rec709" ||
+    return space == "Linear" || space == "linear" || space == "lin_rec709" || space == "lin_rec709_scene" ||
            std::string_view(value.codec->format_name()) == "openexr";
+}
+float source_gamma(const reader& value)
+{
+    if (source_linear(value))
+        return 1.0F;
+    const auto space = value.spec.get_string_attribute("oiio:ColorSpace");
+    if (space == "g22_rec709_scene" || space == "Gamma2.2" || space == "GammaCorrected2.2")
+        return 2.2F;
+    if (space == "g24_rec709_scene" || space == "Gamma2.4" || space == "GammaCorrected2.4")
+        return 2.4F;
+    if (space == "g18_rec709_scene" || space == "Gamma1.8" || space == "GammaCorrected1.8")
+        return 1.8F;
+    const auto gamma = value.spec.get_float_attribute("oiio:Gamma", 0.0F);
+    if (std::isfinite(gamma) && gamma > 0 && gamma <= 10)
+        return gamma;
+    if (space.empty() || space == "sRGB" || space == "srgb_rec709_scene" || space == "srgb_texture")
+        return -1.0F;
+    return 0.0F;
+}
+std::string source_color_space(const reader& value)
+{
+    const float gamma = source_gamma(value);
+    if (gamma == 1.0F)
+        return "linear";
+    if (gamma == -1.0F)
+        return "sRGB";
+    if (gamma > 0.0F)
+        return "gamma" + std::to_string(gamma);
+    return std::string(value.spec.get_string_attribute("oiio:ColorSpace"));
 }
 std::string metadata(const reader& value, uint32_t subimages, uint32_t mips)
 {
@@ -190,14 +277,15 @@ std::string metadata(const reader& value, uint32_t subimages, uint32_t mips)
         ",\"subimages\":" + std::to_string(subimages) + ",\"mips\":" + std::to_string(mips) +
         ",\"subimage\":" + std::to_string(value.options.subimage) + ",\"mip\":" + std::to_string(value.options.mip) +
         ",\"format\":" + std::to_string(value.options.format) + ",\"codec\":" + quote(value.codec->format_name()) +
-        ",\"sourceColorSpace\":" + quote(source_linear(value) ? "linear" : "sRGB") +
+        ",\"sourceColorSpace\":" + quote(source_color_space(value)) +
         ",\"conversionLoss\":" + (value.options.format == ARC_FORMAT_RGBA8 ? "true" : "false") + ",\"channels\":[";
     for (int i = 0; i < s.nchannels; ++i) {
         if (i)
             json += ',';
         const auto type = s.channelformat(i);
         json += "{\"name\":" + quote(s.channelnames[static_cast<size_t>(i)]) + ",\"type\":" + quote(type.c_str()) +
-                ",\"bits\":" + std::to_string(type.size() * 8) + '}';
+                ",\"bits\":" +
+                std::to_string(s.get_int_attribute("oiio:BitsPerSample", static_cast<int>(type.size() * 8))) + '}';
     }
     return json + "]}";
 }
@@ -226,7 +314,7 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         *image = 0;
     if (output)
         output->required = 0;
-    return guarded([&]() -> arc_status_t {
+    const auto result_status = guarded([&]() -> arc_status_t {
         if (!image || !output)
             return fail(ARC_INVALID_ARGUMENT, "Image outputs required");
         auto status = arc::abi::validate_record(io, sizeof(arc_io_v1));
@@ -259,7 +347,7 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         if (!format)
             return fail(ARC_UNSUPPORTED, "Only PNG TIFF EXR admitted");
         // Select exactly the admitted built-in plugin; never probe unrelated codecs or a caller path.
-        value->codec = OIIO::ImageInput::create(format);
+        value->codec = create_codec(format);
         if (!value->codec || !value->codec->set_ioproxy(value->input.get()))
             return fail(ARC_UNSUPPORTED, "Admitted image codec unavailable");
         OIIO::ImageSpec config;
@@ -290,7 +378,7 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         // Some codec directory iterators leave their upstream reader at EOF after a failed seek.
         // Reopen the immutable brokered input before selecting the actual decode state.
         value->codec->close();
-        value->codec = OIIO::ImageInput::create(format);
+        value->codec = create_codec(format);
         value->input->seek(0);
         if (!value->codec || !value->codec->set_ioproxy(value->input.get()) ||
             !value->codec->open(std::string("brokered.") + (std::string_view(format) == "openexr" ? "exr" : format),
@@ -304,6 +392,8 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         status = valid_spec(value->spec, options->limits);
         if (status != ARC_OK)
             return status;
+        if (options->format == ARC_FORMAT_RGBA32F_LINEAR_PREMULTIPLIED && source_gamma(*value) == 0.0F)
+            return fail(ARC_UNSUPPORTED, "Image color transfer requires an unadmitted transform");
         const auto json = metadata(*value, subimages, selected_mips);
         if (json.size() > 65536 || json.size() > options->limits.max_output_bytes)
             return fail(ARC_RESOURCE_LIMIT, "Image metadata exceeds bounds");
@@ -323,6 +413,9 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         std::memcpy(output->data, json.data(), json.size());
         return ARC_OK;
     });
+    if (result_status < 0 && output)
+        output->required = 0;
+    return result_status;
 }
 
 arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1* region, arc_mut_buffer_t* output,
@@ -330,7 +423,7 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
 {
     if (output)
         output->required = 0;
-    return guarded([&]() -> arc_status_t {
+    const auto result_status = guarded([&]() -> arc_status_t {
         if (!output)
             return fail(ARC_INVALID_ARGUMENT, "Image pixel output required");
         auto status = arc::abi::validate_record(region, sizeof(arc_region_v1));
@@ -354,6 +447,8 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
             region->height > static_cast<uint32_t>(s.height) - region->y || region->first_sample ||
             region->sample_count)
             return fail(ARC_INVALID_ARGUMENT, "Image region out of bounds");
+        if (region->width > 2048 || region->height > 2048)
+            return fail(ARC_RESOURCE_LIMIT, "Image tile dimensions exceed profile");
         const uint64_t pixel_size = value.options.format == ARC_FORMAT_RGBA8 ? 4 : 16;
         const uint64_t packed = region->width * pixel_size;
         if (region->row_stride < packed || region->row_stride > max_tile ||
@@ -376,7 +471,7 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
         operation active(*value.input, cancel, value.options.limits.timeout_ms);
         std::vector<float> scratch(static_cast<size_t>(scratch_pixels * s.nchannels));
         std::vector<unsigned char> result(static_cast<size_t>(bytes), 0);
-        const bool linear = source_linear(value);
+        const float gamma = source_gamma(value);
         int red = 0, green = s.nchannels >= 3 ? 1 : 0, blue = s.nchannels >= 3 ? 2 : 0, alpha = s.alpha_channel;
         for (int c = 0; c < s.nchannels; ++c) {
             if (s.channelnames[static_cast<size_t>(c)] == "R")
@@ -437,8 +532,10 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
                     const bool associated = std::string_view(value.codec->format_name()) == "openexr" &&
                                             !s.get_int_attribute("oiio:UnassociatedAlpha", 0);
                     for (int c = 0; c < 3; ++c) {
-                        if (!linear)
+                        if (gamma == -1.0F)
                             rgba[c] = linearize(rgba[c]);
+                        else if (gamma != 1.0F)
+                            rgba[c] = std::copysign(std::pow(std::abs(rgba[c]), gamma), rgba[c]);
                         if (!associated)
                             rgba[c] *= rgba[3];
                     }
@@ -454,6 +551,9 @@ arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1
         std::memcpy(output->data, result.data(), result.size());
         return ARC_OK;
     });
+    if (result_status < 0 && output)
+        output->required = 0;
+    return result_status;
 }
 arc_status_t ARC_ABI_CALL arc_image_close(arc_handle_t image)
 {
