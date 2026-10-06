@@ -3323,5 +3323,20 @@
     "apiSymbol": "ArcForges.Observability.TracePolicy.OnSpanStarted(System.Diagnostics.Activity)",
     "testProject": "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ArcForges.Observability.Desktop.Tests.csproj",
     "testMethod": "ArcForges.Observability.Desktop.Tests.ProductionCompositionTests.RevocableManualListenersRequireActualStartStampAndFenceOldEpochs()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.ComputeEffectSha256(string, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityApprovalBindingTests.AcceptedByteRepresentationHasAFixedCompatibilityVector()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.ComputeEffectSha256(string, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityApprovalBindingTests.PrecomputedBindingRequiresARealApprovalAndTheGateRejectsChangedEffects()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.CapabilityEnforcement.CapabilityEnforcementGate.ComputeEffectSha256(string, ArcForges.Sdk.Contracts.V1.Invocation, ArcForges.Capabilities.CapabilityTarget)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+    "testMethod": "ArcForges.Security.Tests.CapabilityApprovalBindingTests.InvalidInputsCannotProduceAnApprovalBinding()"
   }
 ]

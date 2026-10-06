@@ -13,3 +13,12 @@ alongside ArcForges.Security and ArcForges.Capabilities using compatible
 production Contracts peers. Shared AI assistant invocations use the same owner,
 permission, approval, lease, audit and lifecycle rules. Product and OS acceptance
 remain with the consuming application and PLT.46.
+
+`CapabilityEnforcementGate.ComputeEffectSha256` exposes the gate's exact existing
+effect binding for approval preparation. It snapshots the invocation, includes
+the target product/device/installation/instance/epoch and full command effect,
+and excludes only invocation ID, context, approval ID and lease ID. The service
+and owner gates use this same primitive. Invalid capability/command bindings
+throw an argument exception. Computing a digest grants no permission or approval:
+the actual approval coordinator and fresh final-owner gate remain mandatory.
+Do not mutate a protobuf message concurrently with its snapshot operation.
