@@ -3,6 +3,7 @@ using ArcForges.Security.Audit;
 using ArcForges.Security.Decisions;
 using ArcForges.Security.Egress;
 using ArcForges.Security.Leases;
+using ArcForges.Foundation.Errors;
 using Xunit;
 
 namespace ArcForges.Security.Tests;
@@ -77,6 +78,31 @@ public sealed class CapabilityAuditCompositionTests
         Assert.Equal(LeaseIssueRefusal.AuditUnavailable, issue.Refusal);
         using var reopened = fixture.Reopen();
         Assert.Empty(fixture.Read(reopened));
+    }
+
+    [Fact]
+    public async Task TransferCannotSendWhenItsDurableAuditFails()
+    {
+        var h = new EgressHarness();
+        var request = await h.ApprovedRequestAsync();
+        h.Permit(request);
+        var execution = await h.Pipeline().ExecuteAsync(request, h.Decisions.OwnerOperation.Operation, TestContext.Current.CancellationToken);
+        Assert.Equal(ExecutionStatus.Succeeded, execution.Status);
+        using var fixture = new CompositionStore(request.Actors);
+        var authority = new EgressAuthority(h.Decisions.Clock.Clock, h.Classifier, h.Allowlist, h.Grants,
+            new EgressAuditSink(new EgressDecisionAuditAdapter(fixture.Store, fixture.Software)));
+        fixture.Store.Dispose();
+        var sends = 0;
+        var transfer = await authority.TransferAsync(h.Decisions.OwnerOperation.LastTicket!, EgressHarness.Destination,
+            (_, _) =>
+            {
+                sends++;
+                return ValueTask.FromResult(Outcome.Success("sent"));
+            }, TestContext.Current.CancellationToken);
+        Assert.False(transfer.OperationRan);
+        Assert.Equal(0, sends);
+        Assert.Equal(EgressReason.AuditUnavailable, transfer.Decision.Reason);
+        Assert.Equal("resource.unavailable", DecisionHarness.FailureCode(transfer.Result));
     }
 
     [Fact]
