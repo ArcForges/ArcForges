@@ -231,6 +231,7 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
         packages.append({"id": entry["id"], "version": package_version, "file": name, "sha256": digest})
     native_artifact = (native_directory / "native-artifact.json").read_bytes()
     (directory / "native-artifact.json").write_bytes(native_artifact)
+    native.retain_package_handoff(native_directory, directory, commit)
     manifest = {"schemaVersion": 1, "repository": REPOSITORY, "sourceCommit": commit,
                 "version": package_version, "packages": packages,
                 "nativeArtifactSha256": hashlib.sha256(native_artifact).hexdigest(), "build": identity}
@@ -247,6 +248,7 @@ def verify(directory, package_version, commit=None):
     require(hashlib.sha256(native_bytes).hexdigest() == manifest["nativeArtifactSha256"], "Native artifact record hash mismatch.")
     native_artifact = json.loads(native_bytes)
     native.verify_identity(native_artifact, commit)
+    native.verify_package_handoff(directory, native_artifact, commit)
     entries = catalogue()
     build_identity.verify_source_build(ROOT, manifest['build'])
     documents = []

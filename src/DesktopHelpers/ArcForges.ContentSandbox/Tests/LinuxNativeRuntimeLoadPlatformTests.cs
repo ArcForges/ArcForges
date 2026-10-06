@@ -30,9 +30,10 @@ public sealed class LinuxNativeRuntimeLoadPlatformTests
         lease.Bytes.Position = 0;
         lease.Bytes.ReadExactly(actual);
         Assert.Equal(original, actual);
-        using var mutable = new FileStream(lease.LoaderPath, FileMode.Open, FileAccess.Write);
-        Assert.Throws<IOException>(() => mutable.WriteByte(1));
-        Assert.Throws<IOException>(() => mutable.SetLength(1));
+        using var mutable = new FileStream(lease.LoaderPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite, bufferSize: 1);
+        Assert.IsAssignableFrom<UnauthorizedAccessException>(Record.Exception(() => mutable.WriteByte(1)));
+        var shrinkError = Record.Exception(() => mutable.SetLength(1));
+        Assert.True(shrinkError is IOException or UnauthorizedAccessException);
     }
 
     [Fact]

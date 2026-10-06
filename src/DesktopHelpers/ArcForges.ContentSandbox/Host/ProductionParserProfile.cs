@@ -93,6 +93,7 @@ internal sealed class ProductionParserProfile(PdfDocumentOpener? opener = null, 
         {
             NativeLoader.RequireProduction("ArcPdfNative");
             VerifyLibrary(PdfAbi.GetAbiVersion(), PdfAbi.GetBuildInfo());
+            NativeLoader.RequireProduction("ArcImageNative");
             VerifyImageLibrary(ImageAbi.GetAbiVersion(), ImageAbi.GetBuildInfo());
         }
         catch (ContentParserException)

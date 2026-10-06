@@ -560,6 +560,76 @@ def verify_stage(directory, commit):
     return artifact
 
 
+
+def retain_package_handoff(source, destination, commit):
+    """Retain source-bound family receipts without duplicating native binaries already in NuGet."""
+    source, destination = Path(source), Path(destination)
+    artifact = verify_stage(source, commit)
+    if artifact["schemaVersion"] != 2:
+        return
+    index = _read_document(source / "native-family-index.json")
+    require(not (destination / ".native-inputs").exists()
+            and not (destination / "native-family-index.json").exists(), "Publication handoff already exists.")
+    targets = ["native-family-index.json"] + [row["directory"] + "/native-artifact.json" for row in index["inputs"]]
+    for name in targets:
+        _relative(name)
+        original = source / name
+        expected = digest(original)
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        require(all(not _linked(parent) for parent in (target.parent, *target.parent.parents)),
+                "Linked publication handoff path.")
+        require(original.is_file() and not _linked(original), "Linked publication producer receipt.")
+        with original.open("rb") as incoming:
+            content = incoming.read(16 * 1024 * 1024 + 1)
+        require(len(content) <= 16 * 1024 * 1024, "Unbounded publication producer receipt.")
+        with target.open("xb") as outgoing:
+            outgoing.write(content)
+        require(digest(target) == expected, "Publication receipt changed during handoff.")
+    verify_package_handoff(destination, artifact, commit)
+
+
+def verify_package_handoff(directory, artifact, commit):
+    """Verify retained producer records; packed native bytes are checked against these exact records."""
+    if artifact["schemaVersion"] != 2:
+        return
+    directory = Path(directory)
+    require(digest(directory / "native-family-index.json") == artifact["familyIndexSha256"],
+            "Published native family index hash mismatch.")
+    index = _read_document(directory / "native-family-index.json")
+    require(set(index) == {"schemaVersion", "sourceCommit", "inputs"}
+            and type(index["schemaVersion"]) is int and index["schemaVersion"] == 1
+            and index["sourceCommit"] == commit and isinstance(index["inputs"], list)
+            and 0 < len(index["inputs"]) <= 12, "Invalid published native family index.")
+    expected, packages, coordinates = {}, {}, set()
+    for row in index["inputs"]:
+        require(isinstance(row, dict) and set(row) == {"family", "rid", "directory", "artifactSha256"},
+                "Invalid published family coordinate fields.")
+        _coordinate(row["family"], row["rid"])
+        name = ".native-inputs/" + row["family"] + "-" + row["rid"]
+        require(row["directory"] == name and name not in coordinates, "Escaped or duplicate published family coordinate.")
+        coordinates.add(name)
+        path = directory / name / "native-artifact.json"
+        require(digest(path) == row["artifactSha256"], "Published native producer receipt hash mismatch.")
+        producer = _read_document(path)
+        require(set(producer) == {"schemaVersion", "sourceCommit", "rid", "packages", "build"}
+                and type(producer["schemaVersion"]) is int and producer["schemaVersion"] == 1
+                and producer["sourceCommit"] == commit and producer["rid"] == row["rid"]
+                and producer["build"] == artifact["build"] and isinstance(producer["packages"], list)
+                and len(producer["packages"]) == 1, "Published producer source/build cohort mismatch.")
+        package = producer["packages"][0]
+        identifier = "ArcForges.Native." + row["family"] + ".Runtime." + row["rid"]
+        require(isinstance(package, dict) and package.get("id") == identifier and identifier not in packages,
+                "Published producer package coordinate mismatch.")
+        packages[identifier] = package
+        expected[name.removeprefix(".native-inputs/") + "/native-artifact.json"] = row["artifactSha256"]
+    require(sorted(packages.values(), key=lambda row: row["id"]) == artifact["packages"],
+            "Published family records differ from packed producer inventory.")
+    require(_inventory(directory / ".native-inputs") == expected,
+            "Unexpected, missing or changed published producer receipt.")
+    return index
+
+
 def _verify_legacy_stage(directory, commit):
     artifact = json.loads((directory / "native-artifact.json").read_text())
     verify_identity(artifact, commit)
