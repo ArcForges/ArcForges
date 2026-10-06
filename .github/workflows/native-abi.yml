@@ -113,8 +113,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image_cc="$(readlink -f "$(command -v clang)")"
-          image_cxx="$(readlink -f "$(command -v clang++)")"
+          # Preserve clang++ driver selection; staging hashes its stable physical target.
+          image_cc="$(command -v clang)"
+          image_cxx="$(command -v clang++)"
           test -f "$image_cc" && test -f "$image_cxx"
           cmake --fresh --preset "image-$IMAGE_RID-v1" "-DCMAKE_C_COMPILER=$image_cc" "-DCMAKE_CXX_COMPILER=$image_cxx" -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER=
           cmake --build --preset "image-$IMAGE_RID-v1"
