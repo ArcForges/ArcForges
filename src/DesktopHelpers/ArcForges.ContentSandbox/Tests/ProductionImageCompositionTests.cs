@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Buffers;
 using System.Text;
 using ArcForges.ContentSandbox.Contracts;
 using ArcForges.ContentSandbox.Host;
@@ -406,6 +407,31 @@ public sealed class ImageReaderComponentTests
         Assert.Equal(4, reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
         Assert.True(callbacks > 0);
         Assert.Throws<ObjectDisposedException>(() => reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+    }
+
+    [Fact]
+    public async Task CallerMemoryFailureReleasesTheQueuedBorrowBeforeNativeEntry()
+    {
+        var input = Input();
+        using var reader = await ImageReader.OpenAsync(input, Limits, 0, 0, ImagePixelFormat.Rgba8, Ct);
+        using var memory = new ThrowingMemory();
+        await Assert.ThrowsAsync<InvalidDataException>(() => reader.ReadRegionAsync(0, 0, 1, 1, 4, memory.Buffer, Ct).AsTask());
+        Assert.Equal(4, reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+        await reader.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        Assert.Throws<ObjectDisposedException>(() => reader.ReadRegion(0, 0, 1, 1, 4, new byte[4], Ct));
+    }
+
+    private sealed class ThrowingMemory : MemoryManager<byte>
+    {
+        internal Memory<byte> Buffer => CreateMemory(4);
+
+        public override Span<byte> GetSpan() => throw new InvalidDataException("Caller-owned memory is unavailable.");
+
+        public override MemoryHandle Pin(int elementIndex = 0) => throw new InvalidOperationException("This controlled buffer must not be pinned.");
+
+        public override void Unpin() { }
+
+        protected override void Dispose(bool disposing) { }
     }
 
     private sealed class ComponentInput(byte[] bytes) : IImageInput

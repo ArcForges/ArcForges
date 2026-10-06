@@ -179,7 +179,14 @@ public sealed unsafe class ImageReader : IImageReader
     public int ReadRegion(uint x, uint y, uint width, uint height, ulong rowStride, Span<byte> destination, CancellationToken cancellation)
     {
         ClaimBorrow();
-        return ReadBorrowed(x, y, width, height, rowStride, destination, cancellation);
+        try
+        {
+            return ReadCore(x, y, width, height, rowStride, destination, cancellation);
+        }
+        finally
+        {
+            ReleaseBorrow();
+        }
     }
 
     private void ClaimBorrow()
@@ -197,51 +204,43 @@ public sealed unsafe class ImageReader : IImageReader
         }
     }
 
-    private int ReadBorrowed(uint x, uint y, uint width, uint height, ulong rowStride, Span<byte> destination, CancellationToken cancellation)
+    private int ReadCore(uint x, uint y, uint width, uint height, ulong rowStride, Span<byte> destination, CancellationToken cancellation)
     {
+        cancellation.ThrowIfCancellationRequested();
+        var root = GCHandle.Alloc(cancellation);
         try
         {
-            cancellation.ThrowIfCancellationRequested();
-            var root = GCHandle.Alloc(cancellation);
-            try
+            var token = Token(root);
+            NativeRegionV1 region = new()
             {
-                var token = Token(root);
-                NativeRegionV1 region = new()
+                StructSize = (uint)sizeof(NativeRegionV1),
+                StructVersion = 1,
+                X = x,
+                Y = y,
+                Width = width,
+                Height = height,
+                RowStride = rowStride,
+            };
+            fixed (byte* pointer = destination)
+            {
+                NativeBuffer output = new() { Data = (nint)pointer, Capacity = (ulong)destination.Length };
+                var status = ImageAbi.Read(unchecked((ulong)_handle.DangerousGetHandle()), &region, &output, &token);
+                if (status != 0)
                 {
-                    StructSize = (uint)sizeof(NativeRegionV1),
-                    StructVersion = 1,
-                    X = x,
-                    Y = y,
-                    Width = width,
-                    Height = height,
-                    RowStride = rowStride,
-                };
-                fixed (byte* pointer = destination)
-                {
-                    NativeBuffer output = new() { Data = (nint)pointer, Capacity = (ulong)destination.Length };
-                    var status = ImageAbi.Read(unchecked((ulong)_handle.DangerousGetHandle()), &region, &output, &token);
-                    if (status != 0)
-                    {
-                        throw Failure(status, cancellation);
-                    }
-
-                    if (output.Required != checked(rowStride * height) || output.Required > (ulong)destination.Length)
-                    {
-                        throw new ImageNativeException(NativeStatus.Internal, "Native image tile is incomplete.");
-                    }
-
-                    return checked((int)output.Required);
+                    throw Failure(status, cancellation);
                 }
-            }
-            finally
-            {
-                root.Free();
+
+                if (output.Required != checked(rowStride * height) || output.Required > (ulong)destination.Length)
+                {
+                    throw new ImageNativeException(NativeStatus.Internal, "Native image tile is incomplete.");
+                }
+
+                return checked((int)output.Required);
             }
         }
         finally
         {
-            ReleaseBorrow();
-            GC.KeepAlive(_handle);
+            root.Free();
         }
     }
 
@@ -257,6 +256,8 @@ public sealed unsafe class ImageReader : IImageReader
 
             Monitor.PulseAll(_gate);
         }
+
+        GC.KeepAlive(_handle);
     }
 
     /// <summary>Closes after reserved and active work drains. Only this reader's synchronous input callback may defer its close.</summary>
@@ -304,7 +305,18 @@ public sealed unsafe class ImageReader : IImageReader
         try
         {
             // Do not pass cancellation to Task.Run: even a cancelled queued borrow must execute its finally and release the reservation.
-            task = Task.Run(() => ReadBorrowed(x, y, width, height, rowStride, destination.Span, cancellation));
+            task = Task.Run(() =>
+            {
+                try
+                {
+                    // Caller-owned memory can fail while acquiring its span; that failure still owns the reservation.
+                    return ReadCore(x, y, width, height, rowStride, destination.Span, cancellation);
+                }
+                finally
+                {
+                    ReleaseBorrow();
+                }
+            });
             return new(task);
         }
         finally
