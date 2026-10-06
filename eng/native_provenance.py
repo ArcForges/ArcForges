@@ -630,10 +630,18 @@ def pdfium_download(identity: dict, destination: Path) -> Path:
 
 
 def verify_pdfium_prefix(prefix: Path, value: dict) -> None:
-    require(not prefix.is_symlink() and all(not file.is_symlink() for file in prefix.rglob("*")),
-            "PDFium prefix contains an unapproved symbolic link")
-    actual = {file.relative_to(prefix).as_posix(): sha(file.read_bytes())
-              for file in prefix.rglob("*") if file.is_file()}
+    require(prefix.is_dir() and not prefix.is_symlink(), "PDFium prefix is not an admitted directory")
+    files = {}
+    for index, file in enumerate(prefix.rglob("*")):
+        require(index < len(value["files"]) * 3 + 32, "PDFium prefix inventory exceeds its bound")
+        require(not file.is_symlink(), "PDFium prefix contains an unapproved symbolic link")
+        if file.is_file():
+            name = file.relative_to(prefix).as_posix()
+            require(name in value["files"], "PDFium prefix differs from the complete admitted archive")
+            require(file.stat().st_size <= 8 * 1024 * 1024, "PDFium prefix member exceeds its bound")
+            files[name] = file
+    require(set(files) == set(value["files"]), "PDFium prefix differs from the complete admitted archive")
+    actual = {name: sha(file.read_bytes()) for name, file in files.items()}
     require(actual == value["files"], "PDFium prefix differs from the complete admitted archive")
     args = (prefix / "args.gn").read_text(encoding="utf-8")
     require("pdf_enable_v8 = false" in args and "pdf_enable_xfa = false" in args and

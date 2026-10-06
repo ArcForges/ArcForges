@@ -426,6 +426,15 @@ class PdfiumPrefixTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'complete admitted archive'):
                 native.verify_pdfium_prefix(prefix,profile)
 
+    def test_prefix_member_is_bounded_before_hashing(self):
+        with tempfile.TemporaryDirectory() as t:
+            prefix=Path(t)
+            with (prefix/'args.gn').open('wb') as output:
+                output.seek(8*1024*1024)
+                output.write(b'x')
+            with self.assertRaisesRegex(ValueError,'member exceeds'):
+                native.verify_pdfium_prefix(prefix,{'files':{'args.gn':'0'*64}})
+
     def test_pdf_compiler_runtime_role_is_explicit_and_exact_existing_identity(self):
         profile=native.pdfium_profile()
         admission=profile['compilerRuntime']
