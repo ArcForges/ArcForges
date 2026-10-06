@@ -196,25 +196,7 @@ public sealed class CapabilityInvocationBinding<TArguments, TResult> : Capabilit
             return Propagate<CapabilityInvocationValue, CapabilityResult>(encoded);
         }
 
-        var descriptor = Registration.SnapshotDescriptor();
-        if (!result.HasSchemaId || !string.Equals(result.SchemaId, descriptor.ResponseSchema, StringComparison.Ordinal) ||
-            result.Value is null || result.Value.ValueCase == StructuredValue.ValueOneofCase.None ||
-            (ulong)result.CalculateSize() > descriptor.Limits.MaxOutputBytes)
-        {
-            return Failure<CapabilityInvocationValue>("internal.unexpected");
-        }
-
-        var version = _version(typedResult);
-        if (version is null || version.Kind != ResultVersionKind ||
-            version.Kind == InvocationResultVersionKind.Revision && version.Revision is not { HasValue: true, Value: > 0 } ||
-            version.Kind == InvocationResultVersionKind.NativeContentRev && version.NativeContentRev is not { HasValue: true, Value: > 0 } ||
-            version.Kind == InvocationResultVersionKind.NonVersioned &&
-            (version.Revision is not null || version.NativeContentRev is not null))
-        {
-            return Failure<CapabilityInvocationValue>("internal.unexpected");
-        }
-
-        return Outcome.Success(new CapabilityInvocationValue(result, version));
+        return RestoreResult(result, _version(typedResult));
     }
 
     private static Outcome<TDestination> Propagate<TDestination, TSource>(Outcome<TSource> source) => source.Kind switch
@@ -248,6 +230,31 @@ public abstract class CapabilityInvocationBinding
 
     public string CapabilityKey => Registration.Key;
     public InvocationResultVersionKind ResultVersionKind { get; }
+
+    /// <summary>
+    /// Restore a previously committed result against this exact current binding. This validates the same response schema,
+    /// structured value, output budget and owner-version meaning as dispatch, clones the result, calls no owner and grants no
+    /// authorization. The invocation pipeline still checks current authorization before replaying the host's stored outcome.
+    /// </summary>
+    public Outcome<CapabilityInvocationValue> RestoreResult(CapabilityResult result, InvocationResultVersion version)
+    {
+        var descriptor = Registration.SnapshotDescriptor();
+        if (result is null || !result.HasSchemaId ||
+            !string.Equals(result.SchemaId, descriptor.ResponseSchema, StringComparison.Ordinal) ||
+            result.Value is null || result.Value.ValueCase == StructuredValue.ValueOneofCase.None ||
+            (ulong)result.CalculateSize() > descriptor.Limits.MaxOutputBytes ||
+            version is null || version.Kind != ResultVersionKind ||
+            version.Kind == InvocationResultVersionKind.Revision && version.Revision is not { HasValue: true, Value: > 0 } ||
+            version.Kind == InvocationResultVersionKind.NativeContentRev && version.NativeContentRev is not { HasValue: true, Value: > 0 } ||
+            version.Kind == InvocationResultVersionKind.NonVersioned &&
+            (version.Revision is not null || version.NativeContentRev is not null))
+        {
+            return Outcome.Failure<CapabilityInvocationValue>(TypedFailure.Create("internal.unexpected"));
+        }
+
+        return Outcome.Success(new CapabilityInvocationValue(result, version));
+    }
+
     internal CapabilityRegistration Registration { get; }
     internal abstract ValueTask<Outcome<CapabilityInvocationValue>> InvokeAsync(
         Invocation invocation,

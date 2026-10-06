@@ -23,8 +23,8 @@ public sealed class AuditStore : IDisposable
     private const string AuthorityReceiptTable = "local_audit_authority_receipts";
     private const string PurgeReceiptTable = "local_audit_purge_receipts";
     private const string GateTable = "local_audit_maintenance_gate";
-    private const string EventColumns = "sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month,egress_reason,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_kind,egress_authority_ref,egress_grant_generation,egress_content_sha256";
-    private const int SchemaVersion = 2;
+    private const string EventColumns = "sequence,event_id,occurred_unix_seconds,occurred_nanoseconds,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,partition_year,partition_month,egress_reason,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_kind,egress_authority_ref,egress_grant_generation,egress_content_sha256,decision_detail";
+    private const int SchemaVersion = 3;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Writers = new(PathComparer);
     private static readonly strdelegate_authorizer DatabaseAuthorizer = AuthorizeDatabase;
@@ -36,7 +36,7 @@ public sealed class AuditStore : IDisposable
     private readonly AuditRetentionPolicy retentionPolicy;
     private readonly IClock clock;
     private readonly AuditMaintenanceAuthority maintenanceAuthority;
-    private bool disposed;
+    private int disposed;
 
     public AuditStore(string databasePath, RealmId realm, UserId owner, AuditRetentionPolicy retentionPolicy)
         : this(databasePath, realm, owner, retentionPolicy, Clock.System)
@@ -82,9 +82,13 @@ public sealed class AuditStore : IDisposable
     }
 
     /// <summary>Append one complete typed security event and return its durable sequence and digest.</summary>
-    public AuditEventRecord Append(AuditEvent auditEvent)
+    public AuditEventRecord Append(AuditEvent auditEvent) => Append(auditEvent, CancellationToken.None);
+
+    /// <summary>Durably append, cancelling queued intake or an interrupted transaction; a cancelled operation never reports success.</summary>
+    public AuditEventRecord Append(AuditEvent auditEvent, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(auditEvent);
         EnsureOwner(auditEvent.ActorChain.Owner.Realm, auditEvent.ActorChain.Owner.Id);
         var occurredAt = clock.GetCurrentInstant();
@@ -110,7 +114,7 @@ public sealed class AuditStore : IDisposable
             InsertEvent(connection, transaction, input.EventId, input.Event, input.OccurredAt, input.Hash, input.PolicyId);
             var sequence = LastInsertSequence(connection, transaction);
             return new AuditEventRecord(sequence, input.EventId, input.OccurredAt, input.Event, input.Hash);
-        }, (EventId: eventId, Event: auditEvent, OccurredAt: occurredAt, Hash: fingerprint, PolicyId: retentionPolicy.PolicyId, Partition: partition));
+        }, (EventId: eventId, Event: auditEvent, OccurredAt: occurredAt, Hash: fingerprint, PolicyId: retentionPolicy.PolicyId, Partition: partition), cancellationToken);
     }
 
     /// <summary>Read a bounded page from this file's one configured realm/account owner.</summary>
@@ -438,7 +442,7 @@ public sealed class AuditStore : IDisposable
         }
     }
 
-    public void Dispose() => disposed = true;
+    public void Dispose() => Interlocked.Exchange(ref disposed, 1);
 
     private void InitializeSchemaAndPolicy()
     {
@@ -460,6 +464,18 @@ public sealed class AuditStore : IDisposable
             if (!hasStoreTable && userTableCount != 0)
             {
                 throw new InvalidDataException("The audit database is not empty and has no recognized local audit schema.");
+            }
+
+            if (hasStoreTable)
+            {
+                // Verify identity and immutable policy before any DDL, including the additive migration.
+                var version = VerifyStoredPolicy(connection, transaction, allowLegacy: true);
+                if (version == 2)
+                {
+                    Execute(connection, transaction, $"ALTER TABLE {EventTable} ADD COLUMN decision_detail BLOB NULL;");
+                    Execute(connection, transaction, $"DROP TRIGGER {EventTable}_store_no_update;");
+                    Execute(connection, transaction, $"UPDATE {EventTable}_store SET schema_version={SchemaVersion} WHERE singleton=1;");
+                }
             }
 
             CreateSchema(connection, transaction);
@@ -503,7 +519,7 @@ public sealed class AuditStore : IDisposable
     {
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1),schema_version INTEGER NOT NULL,realm_id TEXT NOT NULL,owner_id TEXT NOT NULL,policy_id TEXT NOT NULL,retention_days INTEGER NOT NULL);");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {GateTable}(singleton INTEGER PRIMARY KEY CHECK(singleton=1),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));");
-        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,event_type INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,capability_id TEXT NOT NULL,executor_id TEXT NOT NULL,resource_kind INTEGER NOT NULL,resource_id TEXT NOT NULL,risk INTEGER NOT NULL,decision INTEGER NOT NULL,reason INTEGER NOT NULL,origin INTEGER NOT NULL,workspace_id TEXT NULL,task_id TEXT NULL,correlation_id TEXT NULL,event_sha256 TEXT NOT NULL,policy_id TEXT NOT NULL,egress_reason INTEGER NULL,egress_data_class INTEGER NULL,egress_destination_class INTEGER NULL,egress_destination_id TEXT NULL,egress_authority_kind INTEGER NULL,egress_authority_ref TEXT NULL,egress_grant_generation TEXT NULL,egress_content_sha256 TEXT NULL,CHECK(partition_month BETWEEN 1 AND 12),CHECK((egress_reason IS NULL AND egress_data_class IS NULL AND egress_destination_class IS NULL AND egress_destination_id IS NULL AND egress_authority_kind IS NULL AND egress_authority_ref IS NULL AND egress_grant_generation IS NULL AND egress_content_sha256 IS NULL AND resource_kind<>0 AND resource_id<>'') OR (egress_reason IS NOT NULL AND egress_data_class IS NOT NULL AND egress_destination_class IS NOT NULL AND egress_authority_kind IS NOT NULL AND egress_content_sha256 IS NOT NULL AND resource_kind=0 AND resource_id='')));");
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {EventTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,event_type INTEGER NOT NULL,actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,capability_id TEXT NOT NULL,executor_id TEXT NOT NULL,resource_kind INTEGER NOT NULL,resource_id TEXT NOT NULL,risk INTEGER NOT NULL,decision INTEGER NOT NULL,reason INTEGER NOT NULL,origin INTEGER NOT NULL,workspace_id TEXT NULL,task_id TEXT NULL,correlation_id TEXT NULL,event_sha256 TEXT NOT NULL,policy_id TEXT NOT NULL,egress_reason INTEGER NULL,egress_data_class INTEGER NULL,egress_destination_class INTEGER NULL,egress_destination_id TEXT NULL,egress_authority_kind INTEGER NULL,egress_authority_ref TEXT NULL,egress_grant_generation TEXT NULL,egress_content_sha256 TEXT NULL,decision_detail BLOB NULL,CHECK(partition_month BETWEEN 1 AND 12),CHECK((egress_reason IS NULL AND egress_data_class IS NULL AND egress_destination_class IS NULL AND egress_destination_id IS NULL AND egress_authority_kind IS NULL AND egress_authority_ref IS NULL AND egress_grant_generation IS NULL AND egress_content_sha256 IS NULL AND resource_kind<>0 AND resource_id<>'') OR (egress_reason IS NOT NULL AND egress_data_class IS NOT NULL AND egress_destination_class IS NOT NULL AND egress_authority_kind IS NOT NULL AND egress_content_sha256 IS NOT NULL AND resource_kind=0 AND resource_id='')));");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {HoldTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,hold_id TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,action INTEGER NOT NULL,reason INTEGER NOT NULL,occurred_unix_seconds INTEGER NOT NULL,occurred_nanoseconds INTEGER NOT NULL CHECK(occurred_nanoseconds BETWEEN 0 AND 999999999),actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL,origin INTEGER NOT NULL,capability_id TEXT NULL REFERENCES {AuthorityReceiptTable}(capability_id),CHECK(action IN (1,2)),CHECK(partition_month BETWEEN 1 AND 12));");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {AuthorityReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE,action INTEGER NOT NULL,policy_id TEXT NOT NULL,partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,issued_unix_seconds INTEGER NOT NULL,issued_nanoseconds INTEGER NOT NULL CHECK(issued_nanoseconds BETWEEN 0 AND 999999999),expires_unix_seconds INTEGER NOT NULL,expires_nanoseconds INTEGER NOT NULL CHECK(expires_nanoseconds BETWEEN 0 AND 999999999),hold_id TEXT NULL,authority_actor_chain BLOB NOT NULL,software_identity TEXT NOT NULL);");
         Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {PurgeReceiptTable}(sequence INTEGER PRIMARY KEY AUTOINCREMENT,capability_id TEXT NOT NULL UNIQUE REFERENCES {AuthorityReceiptTable}(capability_id),partition_realm TEXT NOT NULL,partition_owner TEXT NOT NULL,partition_year INTEGER NOT NULL,partition_month INTEGER NOT NULL,purged_unix_seconds INTEGER NOT NULL,purged_nanoseconds INTEGER NOT NULL CHECK(purged_nanoseconds BETWEEN 0 AND 999999999),event_count INTEGER NOT NULL,first_event_sequence INTEGER NOT NULL,last_event_sequence INTEGER NOT NULL,events_sha256 TEXT NOT NULL,CHECK(event_count>0));");
@@ -528,14 +544,15 @@ public sealed class AuditStore : IDisposable
         Execute(connection, transaction, $"CREATE TRIGGER IF NOT EXISTS {EventTable}_store_no_delete BEFORE DELETE ON {EventTable}_store BEGIN SELECT RAISE(ABORT,'local audit policy is immutable'); END;");
     }
 
-    private void VerifyStoredPolicy(SqliteConnection connection, SqliteTransaction transaction)
+    private int VerifyStoredPolicy(SqliteConnection connection, SqliteTransaction transaction, bool allowLegacy = false)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = $"SELECT schema_version,realm_id,owner_id,policy_id,retention_days FROM {EventTable}_store WHERE singleton=1;";
         using var reader = command.ExecuteReader();
         if (!reader.Read()) throw new InvalidDataException("The local audit policy record is missing.");
-        if (reader.GetInt32(0) != SchemaVersion || reader.GetString(1) != GuidText(realm.Value)
+        var version = reader.GetInt32(0);
+        if ((version != SchemaVersion && !(allowLegacy && version == 2)) || reader.GetString(1) != GuidText(realm.Value)
             || reader.GetString(2) != GuidText(owner.Value) || reader.GetString(3) != GuidText(retentionPolicy.PolicyId)
             || reader.GetInt32(4) != retentionPolicy.RetentionDays)
         {
@@ -543,6 +560,7 @@ public sealed class AuditStore : IDisposable
         }
 
         if (reader.Read()) throw new InvalidDataException("The local audit database has multiple policy records.");
+        return version;
     }
 
     private SqliteConnection OpenConnection(bool queryOnly)
@@ -570,22 +588,35 @@ public sealed class AuditStore : IDisposable
         }
     }
 
-    private T WithWriteTransaction<T, TInput>(Func<SqliteConnection, SqliteTransaction, AuthorizerState, TInput, T> action, TInput input)
+    private T WithWriteTransaction<T, TInput>(Func<SqliteConnection, SqliteTransaction, AuthorizerState, TInput, T> action, TInput input,
+        CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         var writer = Writers.GetOrAdd(writerKey, static _ => new SemaphoreSlim(1, 1));
-        writer.Wait();
+        writer.Wait(cancellationToken);
         try
         {
+            ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
             using var connection = OpenConnection(queryOnly: false);
+            using var cancellation = cancellationToken.Register(static value =>
+            {
+                var active = (SqliteConnection)value!;
+                if (active.Handle is { } handle) raw.sqlite3_interrupt(handle);
+            }, connection);
             using var transaction = connection.BeginTransaction(deferred: false);
             var state = new AuthorizerState();
             SetAuthorizer(connection, state);
             try
             {
                 var result = action(connection, transaction, state, input);
+                cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
                 return result;
+            }
+            catch (SqliteException exception) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException("Audit transaction was interrupted.", exception, cancellationToken);
             }
             finally
             {
@@ -649,7 +680,7 @@ public sealed class AuditStore : IDisposable
         var partition = AuditPartition.For(owner, occurredAt);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT INTO {EventTable}(event_id,occurred_unix_seconds,occurred_nanoseconds,partition_year,partition_month,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,egress_reason,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_kind,egress_authority_ref,egress_grant_generation,egress_content_sha256) VALUES($event,$seconds,$nanoseconds,$year,$month,$type,$actor,$software,$capability,$executor,$resourceKind,$resourceId,$risk,$decision,$reason,$origin,$workspace,$task,$correlation,$hash,$policy,$egressReason,$egressData,$egressDestinationClass,$egressDestination,$egressAuthorityKind,$egressAuthorityRef,$egressGrantGeneration,$egressContent);";
+        command.CommandText = $"INSERT INTO {EventTable}(event_id,occurred_unix_seconds,occurred_nanoseconds,partition_year,partition_month,event_type,actor_chain,software_identity,capability_id,executor_id,resource_kind,resource_id,risk,decision,reason,origin,workspace_id,task_id,correlation_id,event_sha256,policy_id,egress_reason,egress_data_class,egress_destination_class,egress_destination_id,egress_authority_kind,egress_authority_ref,egress_grant_generation,egress_content_sha256,decision_detail) VALUES($event,$seconds,$nanoseconds,$year,$month,$type,$actor,$software,$capability,$executor,$resourceKind,$resourceId,$risk,$decision,$reason,$origin,$workspace,$task,$correlation,$hash,$policy,$egressReason,$egressData,$egressDestinationClass,$egressDestination,$egressAuthorityKind,$egressAuthorityRef,$egressGrantGeneration,$egressContent,$decisionDetail);";
         command.Parameters.AddWithValue("$event", GuidText(eventId));
         command.Parameters.AddWithValue("$seconds", occurredAt.UnixSeconds);
         command.Parameters.AddWithValue("$nanoseconds", (long)occurredAt.Nanoseconds);
@@ -680,6 +711,7 @@ public sealed class AuditStore : IDisposable
         command.Parameters.AddWithValue("$egressAuthorityRef", egress?.AuthorityReference is { } reference ? reference.Value : DBNull.Value);
         command.Parameters.AddWithValue("$egressGrantGeneration", egress?.GrantGeneration is { } generation ? generation.Value : DBNull.Value);
         command.Parameters.AddWithValue("$egressContent", egress is null ? DBNull.Value : egress.Content.Value);
+        command.Parameters.AddWithValue("$decisionDetail", auditEvent.DecisionDetail is { } detail ? DecisionAuditCodec.Encode(detail) : DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -737,7 +769,8 @@ public sealed class AuditStore : IDisposable
         var auditEvent = new AuditEvent((AuditEventType)reader.GetInt32(4), actorChain, software,
             capability, resource,
             (AuditRisk)reader.GetInt32(11), (AuditDecision)reader.GetInt32(12),
-            (AuditDecisionReason)reader.GetInt32(13), (AuditOrigin)reader.GetInt32(14), workspace, task, correlation, egress);
+            (AuditDecisionReason)reader.GetInt32(13), (AuditOrigin)reader.GetInt32(14), workspace, task, correlation, egress,
+            reader.IsDBNull(30) ? null : DecisionAuditCodec.Decode((byte[])reader[30]));
         if (executor != auditEvent.Executor) throw new InvalidDataException("Stored executor does not match the preserved actor chain.");
         if (reader.GetString(19) != GuidText(expectedPolicyId)) throw new InvalidDataException("Event names an unexpected retention policy.");
         var expectedHash = ComputeEventHash(auditEvent, occurredAt, expectedPolicyId, eventId);
@@ -951,7 +984,7 @@ public sealed class AuditStore : IDisposable
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("ArcForges.local_audit.event.v4");
+            writer.Write(auditEvent.DecisionDetail is null ? "ArcForges.local_audit.event.v4" : "ArcForges.local_audit.event.v5");
             writer.Write(GuidText(policyId));
             writer.Write(eventId.ToByteArray());
             writer.Write((int)auditEvent.EventType);
@@ -973,6 +1006,12 @@ public sealed class AuditStore : IDisposable
             WriteOptionalGuid(writer, auditEvent.Task?.Value);
             WriteOptionalGuid(writer, auditEvent.Correlation?.Value);
             WriteOptionalEgress(writer, auditEvent.Egress);
+            if (auditEvent.DecisionDetail is { } detail)
+            {
+                var bytes = DecisionAuditCodec.Encode(detail);
+                writer.Write(bytes.Length);
+                writer.Write(bytes);
+            }
         }
 
         return Convert.ToHexStringLower(SHA256.HashData(stream.ToArray()));
@@ -1043,7 +1082,7 @@ public sealed class AuditStore : IDisposable
 
     private void ThrowIfDisposed()
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
     }
 
     private static void SetAuthorizer(SqliteConnection connection, AuthorizerState state) =>
@@ -1078,6 +1117,7 @@ public sealed class AuditStore : IDisposable
 
         if (action == raw.SQLITE_UPDATE)
         {
+            if (table == $"{EventTable}_store" && authorization.IsInitializing) return raw.SQLITE_OK;
             if (table == GateTable && authorization.IsMaintenance) return raw.SQLITE_OK;
             return IsProtectedAuditTable(table) ? raw.SQLITE_DENY : raw.SQLITE_OK;
         }

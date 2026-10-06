@@ -232,7 +232,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Audit/ArcForges.Security.Audit.csproj",
-      "blob": "9eec88db5a70b056c6e6078fad57df82f8ea3e11"
+      "blob": "000dd0712e2ba402fbcad65bf06ae1ce9ae57276"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.Security.Audit/Tests/ArcForges.Security.Audit.Tests.csproj",

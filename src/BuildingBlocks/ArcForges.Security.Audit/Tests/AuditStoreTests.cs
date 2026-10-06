@@ -48,7 +48,7 @@ public sealed class AuditStoreTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new AuditQuery(fixture.Now.AddMinutes(-1),
             fixture.Now.AddMinutes(1), 10, AuditEventType.None));
 
-        var appended = fixture.Store.Append(eventValue);
+        var appended = fixture.Store.Append(eventValue, TestContext.Current.CancellationToken);
         var occurredAt = appended.OccurredAt.ToDateTimeOffset();
         var page = fixture.Store.Query(new AuditQuery(occurredAt.AddMinutes(-1), occurredAt.AddMinutes(1), 10));
 
@@ -96,7 +96,7 @@ public sealed class AuditStoreTests
     public void OrdinarySqlConnectionsCannotUpdateDeleteOrEnableMaintenanceGate()
     {
         using var fixture = new AuditFixture();
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
 
         using var connection = fixture.OpenRawConnection();
         using var command = connection.CreateCommand();
@@ -128,11 +128,11 @@ public sealed class AuditStoreTests
         var recent = fixture.Now.AddHours(-1);
         var oldTime = recent.AddYears(-2);
         fixture.SetWallClock(oldTime);
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var oldPartition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         var partition = AuditPartition.For(fixture.Actor.Owner, recent);
         fixture.SetWallClock(recent);
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var notExpired = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, partition);
         Assert.Throws<InvalidOperationException>(() => fixture.Store.PurgeExpiredPartition(notExpired));
 
@@ -171,8 +171,8 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 1, 12, 13, 14, 15, TimeSpan.Zero);
         fixture.SetWallClock(oldTime);
-        var first = fixture.Store.Append(fixture.CreateEvent());
-        var second = fixture.Store.Append(fixture.CreateEvent());
+        var first = fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
+        var second = fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         fixture.SetWallClock(oldTime.AddYears(2));
         var capability = fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, partition);
@@ -194,7 +194,7 @@ public sealed class AuditStoreTests
         Assert.Equal(fixture.MaintenanceSoftware, persistedReceipt.Authority.SoftwareIdentity);
         Assert.Throws<InvalidOperationException>(() => fixture.Store.PurgeExpiredPartition(capability));
         fixture.SetWallClock(oldTime.AddDays(4));
-        Assert.Throws<InvalidOperationException>(() => fixture.Store.Append(fixture.CreateEvent()));
+        Assert.Throws<InvalidOperationException>(() => fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -203,7 +203,7 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 3, 4, 5, 6, 7, TimeSpan.Zero);
         fixture.SetWallClock(oldTime);
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         fixture.SetWallClock(oldTime.AddYears(2));
         var holdId = Guid.NewGuid();
@@ -252,7 +252,7 @@ public sealed class AuditStoreTests
             .Select(_ => fixture.CreateEvent())
             .ToArray();
         var writes = events.Select((eventValue, index) => Task.Run(() =>
-            (index % 2 == 0 ? fixture.Store : secondStore).Append(eventValue)));
+            (index % 2 == 0 ? fixture.Store : secondStore).Append(eventValue, TestContext.Current.CancellationToken)));
         var records = await Task.WhenAll(writes);
 
         Assert.Equal(events.Length, records.Select(record => record.Sequence).Distinct().Count());
@@ -282,7 +282,7 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         fixture.Store.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => fixture.Store.Append(fixture.CreateEvent()));
+        Assert.Throws<ObjectDisposedException>(() => fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken));
     }
 
     // The lease tests below prove the PLT.44 typed lease intake contract and the real PLT.43 manager through its sink.
@@ -463,7 +463,7 @@ public sealed class AuditStoreTests
         // A partition with a retained purge receipt refuses appends.
         var oldTime = new DateTimeOffset(2024, 1, 12, 13, 14, 15, TimeSpan.Zero);
         fixture.SetWallClock(oldTime);
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         fixture.SetWallClock(oldTime.AddYears(2));
         _ = fixture.Store.PurgeExpiredPartition(fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, partition));
@@ -920,7 +920,7 @@ public sealed class AuditStoreTests
         var template = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.None));
         var egress = fixture.Store.Append(new AuditEvent(AuditEventType.DataEgressAuthorized, template.Event.ActorChain,
             template.Event.SoftwareIdentity, template.Event.Capability, default, expected, AuditDecision.Allowed,
-            AuditDecisionReason.UserApproved, AuditOrigin.Local, correlation: template.Event.Correlation, egress: template.Event.Egress));
+            AuditDecisionReason.UserApproved, AuditOrigin.Local, correlation: template.Event.Correlation, egress: template.Event.Egress), TestContext.Current.CancellationToken);
         var lease = new CapabilityLeaseAuditAdapter(fixture.Store).Record(fixture.CreateLeaseFact(CapabilityLeaseLifecycleKind.Issued,
             AuditDecisionReason.PolicyAllowed, new AuditCapabilityLeaseId(Guid.NewGuid()), null, risk: level));
 
@@ -964,7 +964,7 @@ public sealed class AuditStoreTests
             var oldTime = new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero);
             fixture.SetWallClock(oldTime);
             _ = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.None));
-            _ = fixture.Store.Append(fixture.CreateEvent());
+            _ = fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
             var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
             var pristine = fixture.Store.Query(new AuditQuery(oldTime.AddDays(-1), oldTime.AddMonths(1), 10));
             Assert.Equal(2, pristine.Count);
@@ -1009,7 +1009,7 @@ public sealed class AuditStoreTests
         _ = fixture.EgressAdapter().Record(fixture.CreateEgressRecord(EgressReason.NotAllowlisted));
         _ = new CapabilityLeaseAuditAdapter(fixture.Store).Record(fixture.CreateLeaseFact(CapabilityLeaseLifecycleKind.Revoked,
             AuditDecisionReason.UserRejected, new AuditCapabilityLeaseId(Guid.NewGuid()), null));
-        _ = fixture.Store.Append(fixture.CreateEvent());
+        _ = fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         var records = fixture.Store.Query(new AuditQuery(oldTime.AddDays(-1), oldTime.AddMonths(1), 10));
         Assert.Equal(3, records.Count);
@@ -1036,7 +1036,7 @@ public sealed class AuditStoreTests
     public void ReopeningWithADifferentOwnerPolicyRetentionOrAForeignDatabaseFailsClosed()
     {
         using var fixture = new AuditFixture();
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var realm = fixture.Actor.Owner.Realm;
         var owner = fixture.Actor.Owner.Id;
 
@@ -1072,13 +1072,13 @@ public sealed class AuditStoreTests
         using var fixture = new AuditFixture();
         var oldTime = new DateTimeOffset(2024, 9, 1, 2, 3, 4, TimeSpan.Zero);
         fixture.SetWallClock(oldTime);
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         var partition = AuditPartition.For(fixture.Actor.Owner, oldTime);
         var holdId = Guid.NewGuid();
         _ = fixture.Store.PlaceLegalHold(holdId, partition, AuditHoldReason.LegalPreservation, fixture.Actor, fixture.OwnerSoftware, AuditOrigin.Local);
         var otherPartition = AuditPartition.For(fixture.Actor.Owner, oldTime.AddMonths(-3));
         fixture.SetWallClock(otherPartition.StartUtc.AddDays(3));
-        fixture.Store.Append(fixture.CreateEvent());
+        fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         fixture.SetWallClock(oldTime.AddYears(2));
         _ = fixture.Store.PurgeExpiredPartition(fixture.Capability(AuditMaintenanceAction.PurgeExpiredPartition, otherPartition));
         Assert.Single(fixture.Store.ReadPurgeReceipts());
@@ -1401,7 +1401,7 @@ public sealed class AuditStoreTests
     private static void AppendAt(AuditFixture fixture, DateTimeOffset when, int count = 1)
     {
         fixture.SetWallClock(when);
-        for (var index = 0; index < count; index++) fixture.Store.Append(fixture.CreateEvent());
+        for (var index = 0; index < count; index++) fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
     }
 
     private static int CountRows(AuditFixture fixture, AuditPartition partition)
@@ -1594,7 +1594,7 @@ public sealed class AuditStoreTests
 
         var writers = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
         {
-            for (var index = 0; index < 25; index++) fixture.Store.Append(fixture.CreateEvent());
+            for (var index = 0; index < 25; index++) fixture.Store.Append(fixture.CreateEvent(), TestContext.Current.CancellationToken);
         }, token)).ToArray();
         var firstRun = Task.Run(() => firstRunner.RunOnce(token), token);
         var secondRun = Task.Run(() => secondRunner.RunOnce(token), token);
