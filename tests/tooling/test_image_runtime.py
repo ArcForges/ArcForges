@@ -96,9 +96,23 @@ class ImageRuntimeTests(unittest.TestCase):
         # Every library, source archive, recipe, SPDX document and legal positive is real.
         # The hostile read view changes only one original raw PDF; no dependency is mocked.
         image.verify_package(entry, read, names, source)
-        with self.assertRaisesRegex(ValueError, "original legal companion differs"):
+        with self.assertRaisesRegex(ValueError, "copied-byte receipt"):
             image.verify_package(entry, lambda name: rewritten if name == grant["output"] else read(name),
                                  names, source)
+        # A self-declared copied hash cannot replace the independently admitted raw original.
+        receipt = json.loads(read(image.RECEIPT))
+        rows = [row for row in receipt["files"] if row["path"] == grant["output"]]
+        self.assertEqual(1, len(rows))
+        rows[0]["sha256"] = hashlib.sha256(rewritten).hexdigest()
+        redeclared = json.dumps(receipt).encode("utf-8")
+
+        def hostile_read(name):
+            if name == grant["output"]:
+                return rewritten
+            return redeclared if name == image.RECEIPT else read(name)
+
+        with self.assertRaisesRegex(ValueError, "original legal companion differs"):
+            image.verify_package(entry, hostile_read, names, source)
 
     def test_cancellation_during_unavailable_producer_artifact_verification_cannot_return_warm_cache(self):
         # The finalized upstream producer artifact is unavailable during this source component check.
