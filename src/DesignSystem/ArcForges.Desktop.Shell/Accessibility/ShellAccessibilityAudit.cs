@@ -18,6 +18,8 @@ public static class AccessibilityRules
     public const string Colour = "AX-COLOUR";
     public const string Identity = "AX-ID";
     public const string Text = "AX-TEXT";
+    public const string State = "AX-STATE";
+    public const string Menu = "AX-MENU";
 }
 
 /// <summary>One violation of the shell accessibility contract. The message is a developer diagnostic, not user text.</summary>
@@ -90,6 +92,45 @@ public static class ShellAccessibilityAudit
             Add(AccessibilityRules.Role, "Unknown role.");
         }
 
+        if (node.Role == AccessibleRole.ToggleButton && node.State.Toggled is null)
+        {
+            Add(AccessibilityRules.State, "A toggle button must expose its checked state.");
+        }
+
+        if (node.State.Toggled is not null && node.Role is not (AccessibleRole.ToggleButton or AccessibleRole.MenuItem))
+        {
+            Add(AccessibilityRules.State, "Checked state applies only to toggle buttons and checkable menu items.");
+        }
+
+        if (node.State.Selected is not null && node.Role is not (AccessibleRole.ListItem or AccessibleRole.MenuItem))
+        {
+            Add(AccessibilityRules.State, "Selection applies only to selectable items.");
+        }
+
+        if (node.State.Expanded is not null && node.Role is not (AccessibleRole.Button or AccessibleRole.ToggleButton or AccessibleRole.MenuItem))
+        {
+            Add(AccessibilityRules.State, "Expanded state applies only to a control that opens content.");
+        }
+
+        if (node.Role is AccessibleRole.MenuBar or AccessibleRole.Menu)
+        {
+            if (node.Keyboard != KeyboardAccess.TabStop ||
+                node.Children.Any(static child => child.Role != AccessibleRole.MenuItem || child.Keyboard != KeyboardAccess.Roving))
+            {
+                Add(AccessibilityRules.Menu, "A menu is one tab stop whose menu items use roving keyboard access.");
+            }
+        }
+
+        if (node.Role == AccessibleRole.MenuItem && parent?.Role is not (AccessibleRole.MenuBar or AccessibleRole.Menu))
+        {
+            Add(AccessibilityRules.Menu, "A menu item must belong to a menu or menu bar.");
+        }
+
+        if (node.Role == AccessibleRole.MenuItem && node.CommandId is null)
+        {
+            Add(AccessibilityRules.Command, "A menu item must name the command its owner executes.");
+        }
+
         CheckText(node.Name, "name", Add, culture);
         CheckText(node.Description, "description", Add, culture);
         if (node.Name is null && node.Role != AccessibleRole.Group)
@@ -124,7 +165,7 @@ public static class ShellAccessibilityAudit
                 Add(AccessibilityRules.Dialog, "A modal element needs a dismiss command bound to Escape.");
             }
 
-            if (!Descendants(node).Any(static child => child.Keyboard == KeyboardAccess.TabStop))
+            if (!EligibleDescendants(node).Any(static child => child.Keyboard == KeyboardAccess.TabStop))
             {
                 Add(AccessibilityRules.Dialog, "A modal element needs at least one focusable control.");
             }
@@ -220,15 +261,25 @@ public static class ShellAccessibilityAudit
     }
 
     private static bool IsInteractive(AccessibleRole role) =>
-        role is AccessibleRole.Button or AccessibleRole.ToggleButton or AccessibleRole.TextBox or
+        role is AccessibleRole.MenuItem or AccessibleRole.Button or AccessibleRole.ToggleButton or AccessibleRole.TextBox or
             AccessibleRole.SearchBox or AccessibleRole.Splitter or AccessibleRole.Link or AccessibleRole.ListItem;
 
-    private static IEnumerable<AccessibleNode> Descendants(AccessibleNode node)
+    private static IEnumerable<AccessibleNode> EligibleDescendants(AccessibleNode node)
     {
+        if (node.State.Disabled)
+        {
+            yield break;
+        }
+
         foreach (AccessibleNode child in node.Children)
         {
+            if (child.State.Disabled)
+            {
+                continue;
+            }
+
             yield return child;
-            foreach (AccessibleNode nested in Descendants(child))
+            foreach (AccessibleNode nested in EligibleDescendants(child))
             {
                 yield return nested;
             }

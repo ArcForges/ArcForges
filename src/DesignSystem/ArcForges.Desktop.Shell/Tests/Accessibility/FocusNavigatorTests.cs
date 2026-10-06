@@ -11,6 +11,58 @@ public sealed class FocusNavigatorTests
 {
     private static readonly LocalizedText Named = new("settings.name");
 
+    [Theory]
+    [InlineData(FlowDirection.LeftToRight, FocusDirection.Right)]
+    [InlineData(FlowDirection.RightToLeft, FocusDirection.Left)]
+    public void MenusKeepDisabledItemsDiscoverableButRefuseActivationAndBusyDoesNotImplyDisabled(FlowDirection flow, FocusDirection forward)
+    {
+        var menu = new ShellSurface("test.menu", new AccessibleNode("test.menu", AccessibleRole.MenuBar, Named,
+            keyboard: KeyboardAccess.TabStop, focusOrder: 1, orientation: NavigationOrientation.Horizontal, children:
+            [
+                new AccessibleNode(new AccessibleState(disabled: true), "test.menu.denied", AccessibleRole.MenuItem,
+                    Named, keyboard: KeyboardAccess.Roving, commandId: "test.denied"),
+                new AccessibleNode(new AccessibleState(busy: true), "test.menu.busy", AccessibleRole.MenuItem,
+                    Named, keyboard: KeyboardAccess.Roving, commandId: "test.cancel"),
+                new AccessibleNode(new AccessibleState(toggled: AccessibleToggleState.On), "test.menu.checked", AccessibleRole.MenuItem,
+                    Named, keyboard: KeyboardAccess.Roving, commandId: "test.toggle"),
+            ]));
+        var navigator = new FocusNavigator(menu, flow);
+        Assert.Equal("test.menu.denied", navigator.CurrentId);
+        Assert.Null(navigator.Activate());
+        Assert.True(navigator.Move(forward));
+        Assert.Equal("test.cancel", navigator.Activate());
+        Assert.True(navigator.Move(forward));
+        Assert.Equal("test.toggle", navigator.Activate());
+        Assert.False(navigator.Move(forward));
+        Assert.False(navigator.MoveNext());
+        Assert.False(navigator.Move(FocusDirection.Down));
+    }
+
+    [Fact]
+    public void DisabledControlsAndDisabledContainersCannotTakeTabFocusOrSupplyAModalTrap()
+    {
+        var surface = new ShellSurface("test.surface", new AccessibleNode("test.root", AccessibleRole.Region, Named,
+            children:
+            [
+                new AccessibleNode(new AccessibleState(disabled: true), "test.denied", AccessibleRole.Button,
+                    Named, keyboard: KeyboardAccess.TabStop, focusOrder: 1, commandId: "test.denied"),
+                new AccessibleNode(new AccessibleState(disabled: true), "test.group", AccessibleRole.Group,
+                    children: [new AccessibleNode("test.hidden", AccessibleRole.Button, Named, keyboard: KeyboardAccess.TabStop,
+                        focusOrder: 2, commandId: "test.hidden")]),
+                new AccessibleNode("test.enabled", AccessibleRole.Button, Named, keyboard: KeyboardAccess.TabStop,
+                    focusOrder: 3, commandId: "test.enabled"),
+            ]));
+        var navigator = new FocusNavigator(surface);
+        Assert.Equal("test.enabled", navigator.CurrentId);
+        Assert.False(navigator.MoveNext());
+        Assert.False(navigator.MovePrevious());
+        Assert.Equal("test.enabled", navigator.Activate());
+        var modal = new ShellSurface("test.modal", new AccessibleNode(new AccessibleState(disabled: true),
+            "test.modal", AccessibleRole.Dialog, Named, isModal: true, dismissCommandId: "test.close", children: surface.Root.Children));
+        Assert.False(navigator.OpenModal(modal));
+        Assert.Equal("test.enabled", navigator.CurrentId);
+    }
+
     [Fact]
     public void TabAndShiftTabVisitEveryTabStopInFocusOrderAndWrap()
     {

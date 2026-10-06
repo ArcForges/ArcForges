@@ -7,6 +7,7 @@
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
 
   <!-- Workspace window -->
+  <data name="menus.name" xml:space="preserve"><value>Workspace menus</value></data>
   <data name="workspace.window.name" xml:space="preserve"><value>Workspace</value></data>
   <data name="workspace.toolbar.name" xml:space="preserve"><value>Workspace toolbar</value></data>
   <data name="workspace.palette-button.name" xml:space="preserve"><value>Open command palette</value></data>

@@ -25,6 +25,40 @@ public enum AccessibleRole
     Status,
     Alert,
     Link,
+    MenuBar,
+    Menu,
+    MenuItem,
+}
+
+/// <summary>The checked state exposed to assistive technology, including a partially checked choice.</summary>
+public enum AccessibleToggleState { Off, On, Mixed }
+
+/// <summary>
+/// An immutable assistive state snapshot. Null means a pattern does not apply, while false means that pattern applies
+/// and is currently inactive. Busy describes work in progress; it never replaces the explicit disabled state.
+/// </summary>
+public sealed record AccessibleState
+{
+    public AccessibleState(AccessibleToggleState? toggled = null, bool? selected = null, bool? expanded = null,
+        bool disabled = false, bool busy = false)
+    {
+        if (toggled is { } value && !Enum.IsDefined(value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(toggled));
+        }
+
+        Toggled = toggled;
+        Selected = selected;
+        Expanded = expanded;
+        Disabled = disabled;
+        Busy = busy;
+    }
+
+    public AccessibleToggleState? Toggled { get; }
+    public bool? Selected { get; }
+    public bool? Expanded { get; }
+    public bool Disabled { get; }
+    public bool Busy { get; }
 }
 
 /// <summary>How an element is reached without a pointer (AX-01, DP-04).</summary>
@@ -92,7 +126,30 @@ public sealed record AccessibleNode
         bool isModal = false,
         string? dismissCommandId = null,
         IEnumerable<AccessibleNode>? children = null)
+        : this(new AccessibleState(), id, role, name, description, keyboard, focusOrder, commandId, isIconOnly,
+            live, stateCues, orientation, isModal, dismissCommandId, children)
     {
+    }
+
+    /// <summary>Creates a node with explicit assistive state, retaining the original constructor's binary signature.</summary>
+    public AccessibleNode(
+        AccessibleState state,
+        string id,
+        AccessibleRole role,
+        LocalizedText? name = null,
+        LocalizedText? description = null,
+        KeyboardAccess keyboard = KeyboardAccess.None,
+        int? focusOrder = null,
+        string? commandId = null,
+        bool isIconOnly = false,
+        LiveRegionPoliteness live = LiveRegionPoliteness.Off,
+        StateCues stateCues = StateCues.None,
+        NavigationOrientation orientation = NavigationOrientation.Vertical,
+        bool isModal = false,
+        string? dismissCommandId = null,
+        IEnumerable<AccessibleNode>? children = null)
+    {
+        ArgumentNullException.ThrowIfNull(state);
         if (!IsIdentifier(id))
         {
             throw new ArgumentException("A node id must be a bounded lowercase dotted identifier.", nameof(id));
@@ -121,6 +178,7 @@ public sealed record AccessibleNode
 
         Id = id;
         Role = role;
+        State = state;
         Name = name;
         Description = description;
         Keyboard = keyboard;
@@ -138,6 +196,9 @@ public sealed record AccessibleNode
     public string Id { get; }
 
     public AccessibleRole Role { get; }
+
+    /// <summary>The assistive state a UI adapter exposes independently of visual state cues.</summary>
+    public AccessibleState State { get; }
 
     /// <summary>The accessible name; required for every role except a generic <see cref="AccessibleRole.Group"/> (AX-03, AX-04).</summary>
     public LocalizedText? Name { get; }
