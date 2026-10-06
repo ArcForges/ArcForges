@@ -167,6 +167,26 @@ public sealed class ProductionBootstrapTests
     }
 
     [Fact]
+    public async Task PublicFactoryComposesTheRealParentProcessReaderAndJoinsOwnedShutdown()
+    {
+        using var root = new LaunchWorld();
+        await using var authority = LocalRpcLaunchAuthority.Create(root.Root);
+        var identity = Launches.Identity();
+        var launch = authority.Launch("actual-parent", identity, LocalRpcLaunchTransport.SuppliedStreams);
+        using var process = Process.GetCurrentProcess();
+        var instance = Guid.NewGuid();
+        var manifest = Parent.Manifest(identity, instance, launch.Descriptor.Parent);
+        manifest.ProcessStartedAt = Wire.ToInstant(new DateTimeOffset(process.StartTime.ToUniversalTime()));
+        await using var host = await LocalRpcParentBootstrapHost.StartAsync(launch, manifest,
+            LocalRpcServer.CreateBuilder(new LocalRpcStreamSupplier()), Ct);
+        Assert.Equal(instance, host.Registration.ParentInstanceId);
+        Assert.Equal(process.Id, host.Registration.Launch.Descriptor.Parent.ProcessId);
+        await host.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        Assert.True(host.Completion.IsCompletedSuccessfully);
+        Assert.True(launch.Revoked.IsCancellationRequested);
+    }
+
+    [Fact]
     public void ActualParentProcessReaderPreservesUtcAndRefusesAnIncorrectStableIdentity()
     {
         using var process = Process.GetCurrentProcess();
