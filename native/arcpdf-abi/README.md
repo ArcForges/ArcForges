@@ -13,14 +13,24 @@ parses PDF bytes.
 - `src/pdf_backend.hpp`: the seam to whatever parses PDF bytes (`backend`, `document`, `byte_source`). Scripts and actions are
   disabled by contract. A backend is never trusted: it may throw, hang, return non-finite geometry or boxes outside the text
   and the engine fails the call closed.
-- `src/backend_none.cpp`: **the only backend this build links is none.** `arc_pdf_open` returns `ARC_UNSUPPORTED`, outputs stay
-  zero, and `arc_pdf_get_build_info` reports `backend=none`. There is no fallback parser. The PDFium (chromium/8044) binding,
-  its source/licence admission and the `Runtime.<rid>` packages are separate, later work; nothing here downloads, builds or
-  vendors PDFium, and the library is not an admitted package.
+- `src/backend_pdfium.cpp`: the real no-V8/no-XFA chromium/8044 backend. It owns its input buffer for the full PDFium document
+  lifetime, disables system-font access, serialises all PDFium calls across documents, extracts Unicode and character geometry,
+  and renders cancellable progressive RGBA8 tiles. It never creates a form environment or dispatches document actions.
+- `src/backend_none.cpp`: the explicitly selected parserless ABI fixture configuration. It refuses open with `ARC_UNSUPPORTED`.
+  Production builds select `ARCFORGES_PDFIUM=ON` and the verified producer prefix; no dependency is downloaded by a consumer.
 - `tests/`: `arcpdf_abi_engine_tests` compiles the engine with a scripted fake backend (`tests/fake_pdf_backend.hpp`, TEST ONLY,
   never part of the library target) and drives it with hostile behaviour; `arcpdf_abi_unsupported_tests` links the real library
-  target and checks the fail-closed configuration. Both are CTest targets run by `native-abi.yml`. They prove the engine, not
-  PDFium.
+  target in the parserless fixture configuration. `arcpdf_abi_pdfium_tests` instead links the real production library and tests
+  first-party PDF page/text/pixels, malformed input, cancellation and concurrent documents. Real parser execution is local
+  opt-in only; the hosted workflow compiles the production library and runs the isolated engine tests.
+
+## Reproducible producer
+
+`python eng/native_provenance.py --acquire-pdfium artifacts/pdfium` verifies the admitted archive and its Sigstore/SLSA
+attestation before exposing `artifacts/pdfium/pdfium`. The immutable profile in `eng/native/vcpkg/pdfium-build.v1.json` pins
+every archive member and all legal texts. The attestation binds the upstream build recipe and invocation; it does not attest
+the separately observed PDFium source commit. Configure with `ARCFORGES_PDFIUM=ON` and that prefix's `share/pdfium` package.
+`Runtime.<rid>` publication is a separately admitted producer closure; this library alone is not a distributable package.
 
 ## Semantics fixed by this library
 
@@ -37,14 +47,15 @@ parses PDF bytes.
   OK read) as `ARC_IO`: a short read is allowed only if the callback reports the end of the input, which the clamped window
   already excludes.
 
-## Obligations this library leaves to the real backend (NAT.15)
+## Containment and acceptance limits
 
-- A real backend must read the input in a loop with a progress guard and must call `call_context::check()` regularly. Deadlines
-  and cancellation are cooperative here: a backend that never checks is bounded only by the helper's own deadline and the
-  operating-system containment, and `arc_pdf_close` blocks until a running call returns.
+- The backend checks every input chunk, text character and rendered row and every progressive rendering callback. PDFium
+  opening and individual third-party operations cannot be interrupted mid-call; the helper deadline and OS containment bound
+  those operations. `arc_pdf_close` drains running calls and borrowed caller callbacks before returning.
 - A box that spans more than a whole chunk window, or that begins before a caller-chosen start, is not carried by any chunk.
-- Scripts and actions must be disabled in the real library, fonts must not be read from the file system inside the sandbox, and
-  the real library must be proven under hostile PDFs (malformed, crashing, hanging) inside the real containment.
+- Local `RealPdfIsolationTests` exercises the production Native AOT helper with real PDFium in Windows AppContainer/Job
+  containment. Broad hostile-corpus crash/hang acceptance, Linux OS observations and whole-product acceptance remain distinct
+  from the component implementation and require their own recorded evidence.
 
 ## Sanitizer check
 

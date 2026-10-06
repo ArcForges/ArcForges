@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 from ctypes import wintypes
 from datetime import date
@@ -13,9 +14,12 @@ import os
 from pathlib import Path
 import shutil
 import ssl
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
@@ -533,10 +537,129 @@ def approve_runtime(path: Path, value: dict) -> dict:
     return actual
 
 
+def pdfium_profile(root: Path = ROOT) -> dict:
+    """The separate, immutable PDFium producer admission; the existing Image profile stays intact."""
+    value = provenance.document(provenance.read(root, "eng/native/vcpkg/pdfium-build.v1.json"))
+    require(value["schemaVersion"] == 1 and value["id"] == "pdfium-chromium-8044-win-x64-r1" and
+            value["version"] == "155.0.8044.0" and value["rid"] == "win-x64", "Unknown PDFium build profile")
+    require(value["configuration"] == {"pdf_enable_v8": False, "pdf_enable_xfa": False,
+                                       "target_cpu": "x64", "target_os": "win"}, "Unapproved PDFium configuration")
+    require(value["attestation"]["repository"] == "bblanchon/pdfium-binaries" and
+            value["attestation"]["workflow"] == ".github/workflows/build-all.yml" and
+            value["attestation"]["recipeCommit"] == "5453f3afc4785cbad82c05f6ceb4dabea0cb81a0",
+            "Unapproved PDFium producer identity")
+    for identity in (value["archive"], value["attestation"]):
+        download_identity(identity["url"])
+        provenance.digest(identity["sha256"])
+        require(type(identity["maximumBytes"]) is int and 0 < identity["maximumBytes"] <= 8 * 1024 * 1024,
+                "Invalid PDFium transfer bound")
+    require(value["archive"]["url"] == "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-win-x64.tgz" and
+            value["attestation"]["url"] == "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-attestation.json",
+            "Changed PDFium source coordinate")
+    for name, expected in value["files"].items():
+        provenance.path(name)
+        provenance.digest(expected)
+    for name, expected in value["legalFiles"].items():
+        require(name.startswith("third-party/pdfium/chromium-8044/"), "PDFium legal target escapes ownership")
+        require(sha(provenance.read(root, name)) == expected, "Changed PDFium legal text: " + name)
+    return value
+
+
+def pdfium_download(identity: dict, destination: Path) -> Path:
+    """One bounded trust handoff, cache by digest; retry only transient transport errors, never bad bytes."""
+    if destination.exists():
+        require(destination.is_file() and destination.stat().st_size <= identity["maximumBytes"],
+                "PDFium cache exceeds admission bound")
+        require(sha(destination.read_bytes()) == identity["sha256"], "PDFium cache digest mismatch")
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(3):
+        temporary = None
+        try:
+            request = urllib.request.Request(identity["url"], headers={"User-Agent": "ArcForges-PDFium-producer/1.0"})
+            with urllib.request.urlopen(request, timeout=60) as response, tempfile.NamedTemporaryFile(
+                    dir=destination.parent, prefix=".pdfium-", delete=False) as output:
+                temporary = Path(output.name)
+                total = 0
+                while block := response.read(64 * 1024):
+                    total += len(block)
+                    require(total <= identity["maximumBytes"], "PDFium transfer exceeds admission bound")
+                    output.write(block)
+            require(sha(temporary.read_bytes()) == identity["sha256"], "PDFium download digest mismatch")
+            temporary.replace(destination)
+            return destination
+        except (urllib.error.URLError, TimeoutError) as error:
+            transient = not isinstance(error, urllib.error.HTTPError) or error.code in {408, 429, 500, 502, 503, 504}
+            if not transient or attempt == 2:
+                raise
+            time.sleep((0.5, 2.0)[attempt])
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    raise RuntimeError("PDFium transfer did not complete")
+
+
+def verify_pdfium_prefix(prefix: Path, value: dict) -> None:
+    actual = {file.relative_to(prefix).as_posix(): sha(file.read_bytes())
+              for file in prefix.rglob("*") if file.is_file()}
+    require(actual == value["files"], "PDFium prefix differs from the complete admitted archive")
+    args = (prefix / "args.gn").read_text(encoding="utf-8")
+    require("pdf_enable_v8 = false" in args and "pdf_enable_xfa = false" in args and
+            'target_cpu = "x64"' in args and 'target_os = "win"' in args,
+            "PDFium executable features or RID changed")
+
+
+def acquire_pdfium(directory: Path, root: Path = ROOT) -> dict:
+    """Fetch/verify the reviewed producer build, never a consumer-time dependency download."""
+    value = pdfium_profile(root)
+    directory = directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    archive = pdfium_download(value["archive"], directory / "pdfium-win-x64.tgz")
+    bundle = pdfium_download(value["attestation"], directory / "pdfium-attestation.json")
+    # gh verifies the Sigstore certificate, signature and transparency inclusion, not just JSON fields.
+    verified = subprocess.run([
+        "gh", "attestation", "verify", str(archive), "--repo", value["attestation"]["repository"],
+        "--bundle", str(bundle), "--deny-self-hosted-runners", "--source-digest", value["attestation"]["recipeCommit"],
+        "--signer-workflow", value["attestation"]["repository"] + "/" + value["attestation"]["workflow"], "--format", "json",
+    ], check=True, capture_output=True, text=True, timeout=120)
+    require(bool(json.loads(verified.stdout)), "PDFium attestation verification produced no receipt")
+    statement = json.loads(base64.b64decode(json.loads(bundle.read_text())["dsseEnvelope"]["payload"], validate=True))
+    require(any(subject["name"] == archive.name and subject["digest"] == {"sha256": value["archive"]["sha256"]}
+                for subject in statement["subject"]), "PDFium attestation lacks the admitted subject")
+    require(statement["predicate"]["runDetails"]["metadata"]["invocationId"] == value["attestation"]["invocation"],
+            "PDFium producer invocation changed")
+    prefix = directory / "pdfium"
+    if prefix.exists():
+        verify_pdfium_prefix(prefix, value)
+    else:
+        with tempfile.TemporaryDirectory(dir=directory, prefix=".pdfium-extract-") as temporary:
+            staging = Path(temporary) / "pdfium"
+            staging.mkdir()
+            with tarfile.open(archive, "r:gz") as tar:
+                for member in tar.getmembers():
+                    provenance.path(member.name.rstrip("/"))
+                    require(member.isdir() or member.isfile() and member.name in value["files"],
+                            "Unapproved PDFium archive member")
+                    require(member.size <= value["archive"]["maximumBytes"], "PDFium member exceeds its bound")
+                tar.extractall(staging, filter="data")
+            verify_pdfium_prefix(staging, value)
+            staging.replace(prefix)
+    receipt = {"profile": value["id"], "archiveSha256": value["archive"]["sha256"],
+               "attestationSha256": value["attestation"]["sha256"], "producerInvocation": value["attestation"]["invocation"],
+               "recipeCommit": value["attestation"]["recipeCommit"], "rid": value["rid"],
+               "version": value["version"], "cryptographicVerification": "GitHub CLI Sigstore/SLSA verification passed"}
+    (directory / "pdfium-build-receipt.json").write_bytes(canonical(receipt))
+    return receipt
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", type=Path)
+    parser.add_argument("--acquire-pdfium", type=Path)
     args = parser.parse_args()
+    if args.acquire_pdfium:
+        print(json.dumps(acquire_pdfium(args.acquire_pdfium)))
+        sys.exit(0)
     value = profile()
     results = []
     if args.stage:

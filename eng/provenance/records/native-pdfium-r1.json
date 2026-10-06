@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "id": "native-pdfium-r1",
+  "kind": "legal-text",
+  "sourceRepository": "https://github.com/bblanchon/pdfium-binaries",
+  "sourceCommit": "5453f3afc4785cbad82c05f6ceb4dabea0cb81a0",
+  "sourcePaths": [
+    "LICENSE",
+    "steps/08-licenses.sh"
+  ],
+  "licence": {
+    "spdx": "BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "LICENSE",
+        "sha256": "8854f4388f1ca13b3ad9baa42e95f5546b4c0b17109c159256d3eca7be39b09b",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "abseil.txt",
+        "sha256": "f54fff0b905df5b3464527c652a30e903b172d6dcab4d89b5e6f105d5e4a4603",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "agg23.txt",
+        "sha256": "c110d3ea2ad77467ce0dcff7d3337e6c8be8049a5103f4b9bd5fd911a77972e5",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "fast_float.txt",
+        "sha256": "bf1b57355feca8fce77ee95f48002f8d4789fb71b30ec7599c06cda4901fbb2b",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "freetype.txt",
+        "sha256": "f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "icu.txt",
+        "sha256": "93679f4389d53b6835d89843f251844fb9bc455b35bab036d3c8e7abe497a47a",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "lcms.txt",
+        "sha256": "7312b68c5b25e9bf2b828706fb4e29588f22705112f411fd42e1f7d84c3d139a",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "libjpeg_turbo.ijg",
+        "sha256": "db16a04128171879c60708d171b88d97345a2dd20f9bfc173680a4497c73f704",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "libjpeg_turbo.txt",
+        "sha256": "be2b2b5ab168bce87bc3e31f2a5c5adba4b7f6e9e51d618e958d1d46972ebd95",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "libopenjpeg.txt",
+        "sha256": "c5ab0890a737c2dfa7ba675036554f6d17741d98629b0c2a145354d00617e6b2",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "libpng.txt",
+        "sha256": "452390433ba0f88aa3e2b122c647741b72a0c117cd6ed7a329b49785aecb5511",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "llvm-libc.txt",
+        "sha256": "3b6226c32e168c83b891d8d6f0d3c29c2116dc3ef93dc93c307b54f279ecf383",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "pdfium.txt",
+        "sha256": "961eacd9633fff6d051db7208b755e9210e30efac7adec3e6a6d52798f0ccf0e",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "simdutf.txt",
+        "sha256": "c172a0ba936ff31230febb5dad869e25cb7c1a07480c7a381be8cf011bb52719",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      },
+      {
+        "path": "zlib.txt",
+        "sha256": "33fd641c9f3b0e0be64bc78fea9e94807674cdd70c48477599226cb8956565fe",
+        "finding": "Verbatim legal text from the exact pinned, attested chromium/8044 win-x64 producer archive; preserved full terms and attribution."
+      }
+    ],
+    "scope": "All 15 verbatim notice files for the pinned non-V8/no-XFA PDFium producer. No third-party implementation is copied into repository sources. Binary provenance and complete archive closure are independently bound by eng/native/vcpkg/pdfium-build.v1.json.",
+    "copyingPermission": "Required redistribution of the complete upstream licence/attribution texts under each bundled permissive component licence."
+  },
+  "attribution": [
+    "PDFium Authors, Benoit Blanchon, FreeType, Unicode ICU, Anti-Grain Geometry, and all original copyright holders retained in the full 15 legal texts."
+  ],
+  "targets": [
+    {
+      "path": "third-party/pdfium/chromium-8044/LICENSE",
+      "sha256": "8854f4388f1ca13b3ad9baa42e95f5546b4c0b17109c159256d3eca7be39b09b",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/abseil.txt",
+      "sha256": "f54fff0b905df5b3464527c652a30e903b172d6dcab4d89b5e6f105d5e4a4603",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/agg23.txt",
+      "sha256": "c110d3ea2ad77467ce0dcff7d3337e6c8be8049a5103f4b9bd5fd911a77972e5",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/fast_float.txt",
+      "sha256": "bf1b57355feca8fce77ee95f48002f8d4789fb71b30ec7599c06cda4901fbb2b",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/freetype.txt",
+      "sha256": "f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/icu.txt",
+      "sha256": "93679f4389d53b6835d89843f251844fb9bc455b35bab036d3c8e7abe497a47a",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/lcms.txt",
+      "sha256": "7312b68c5b25e9bf2b828706fb4e29588f22705112f411fd42e1f7d84c3d139a",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/libjpeg_turbo.ijg",
+      "sha256": "db16a04128171879c60708d171b88d97345a2dd20f9bfc173680a4497c73f704",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/libjpeg_turbo.txt",
+      "sha256": "be2b2b5ab168bce87bc3e31f2a5c5adba4b7f6e9e51d618e958d1d46972ebd95",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/libopenjpeg.txt",
+      "sha256": "c5ab0890a737c2dfa7ba675036554f6d17741d98629b0c2a145354d00617e6b2",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/libpng.txt",
+      "sha256": "452390433ba0f88aa3e2b122c647741b72a0c117cd6ed7a329b49785aecb5511",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/llvm-libc.txt",
+      "sha256": "3b6226c32e168c83b891d8d6f0d3c29c2116dc3ef93dc93c307b54f279ecf383",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/pdfium.txt",
+      "sha256": "961eacd9633fff6d051db7208b755e9210e30efac7adec3e6a6d52798f0ccf0e",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/simdutf.txt",
+      "sha256": "c172a0ba936ff31230febb5dad869e25cb7c1a07480c7a381be8cf011bb52719",
+      "normalization": "raw"
+    },
+    {
+      "path": "third-party/pdfium/chromium-8044/zlib.txt",
+      "sha256": "33fd641c9f3b0e0be64bc78fea9e94807674cdd70c48477599226cb8956565fe",
+      "normalization": "raw"
+    }
+  ],
+  "artifactTargets": [],
+  "disposition": "Copy",
+  "verification": {
+    "kind": "byte-match",
+    "command": "python eng/check_provenance.py --owner DesktopPlatform",
+    "expected": "All verbatim legal target hashes match the exact attested archive; no source-build claim is made.",
+    "artifacts": [
+      {
+        "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-win-x64.tgz",
+        "sha256": "78a17d9a5f14467631c26a3ac8741b27a0471ecc05bd6a119b523598160a0537",
+        "members": [
+          "LICENSE",
+          "licenses/abseil.txt",
+          "licenses/agg23.txt",
+          "licenses/fast_float.txt",
+          "licenses/freetype.txt",
+          "licenses/icu.txt",
+          "licenses/lcms.txt",
+          "licenses/libjpeg_turbo.ijg",
+          "licenses/libjpeg_turbo.md",
+          "licenses/libopenjpeg.txt",
+          "licenses/libpng.txt",
+          "licenses/llvm-libc.txt",
+          "licenses/pdfium.txt",
+          "licenses/simdutf.txt",
+          "licenses/zlib.txt"
+        ]
+      }
+    ]
+  },
+  "notice": {
+    "required": true,
+    "text": "PDFium chromium/8044 is used only inside ContentSandbox with V8/XFA disabled; all 15 upstream legal texts are retained verbatim. Full component terms, FreeType attribution and LLVM exceptions govern redistribution.",
+    "files": [
+      "eng/provenance/NOTICE.txt"
+    ],
+    "distribution": "source",
+    "reason": "Complete immutable producer notices supplement the first-party distribution notice."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": null,
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "Independent NAT.15 reviewer at the pull request exact head (approval required before merge)",
+    "reviewedOn": "2026-10-06",
+    "decision": "approved",
+    "rationale": "Equivalently admitted producer build provenance: pinned archive, cryptographically verified GitHub Sigstore/SLSA identity, pinned no-V8/no-XFA recipe/configuration and complete producer legal inventory. No claim of an ArcForges source build. PDFium BSD-3-Clause and bundled permissive third-party components; every shipped legal text retained verbatim. FreeType attribution is retained, LLVM exceptions and all bundled alternatives are preserved.",
+    "baselineCommit": "f833de3410183d8c59b17ec54229e06ad1370d98",
+    "reconciliation": false
+  },
+  "supersedes": null
+}

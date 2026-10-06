@@ -259,9 +259,9 @@ internal sealed class OsHarness : IDisposable
 
     internal byte[] Digest { get; }
 
-    internal static OsHarness Create()
+    internal static OsHarness Create(bool production = false)
     {
-        var published = Environment.GetEnvironmentVariable("ARCFORGES_CONTENTSANDBOX_FIXTURE")!;
+        var published = Environment.GetEnvironmentVariable(production ? "ARCFORGES_CONTENTSANDBOX_PRODUCTION" : "ARCFORGES_CONTENTSANDBOX_FIXTURE")!;
         var directory = Path.Combine(Path.GetTempPath(), "arcforges-cs-os-fixture-" + Guid.NewGuid().ToString("N")[..8]);
         _ = Directory.CreateDirectory(directory);
         foreach (var file in Directory.GetFiles(published))
@@ -279,7 +279,7 @@ internal sealed class OsHarness : IDisposable
             PropagationFlags.None,
             AccessControlType.Allow));
         info.SetAccessControl(security);
-        var executable = Path.Combine(directory, "ArcForges.ContentSandbox.HostileFixture.exe");
+        var executable = Path.Combine(directory, production ? "ArcForges.ContentSandbox.exe" : "ArcForges.ContentSandbox.HostileFixture.exe");
         return new OsHarness(directory, executable, SHA256.HashData(File.ReadAllBytes(executable)));
     }
 
@@ -358,17 +358,18 @@ internal static class ParentMode
         }
 
         var executable = Environment.GetEnvironmentVariable("ARCFORGES_CS_HELPER")!;
+        var production = Environment.GetEnvironmentVariable("ARCFORGES_CS_PARENT_PRODUCTION") == "1";
         var options = new ContentSandboxLaunchOptions
         {
             HelperPath = executable,
             HelperSha256 = SHA256.HashData(File.ReadAllBytes(executable)),
-            ParserProfile = HostileFixture.HostileProfile.ProfileId,
+            ParserProfile = production ? Host.ProductionParserProfile.ProfileId : HostileFixture.HostileProfile.ProfileId,
             RuntimeRoot = Environment.GetEnvironmentVariable("ARCFORGES_CS_ROOT")!,
             SlotCapacityBytes = 1024 * 1024,
             LaunchTimeout = TimeSpan.FromSeconds(60),
         };
         var launcher = new ContentSandboxLauncher(options);
-        var result = launcher.LaunchAsync(Encoding.UTF8.GetBytes("HOSTILE1\nimage 8 8\n")).AsTask().GetAwaiter().GetResult();
+        var result = launcher.LaunchAsync(production ? FirstPartyPdfFixture.Bytes() : Encoding.UTF8.GetBytes("HOSTILE1\nimage 8 8\n")).AsTask().GetAwaiter().GetResult();
         if (!result.IsSuccess)
         {
             Console.Out.WriteLine("FAILED " + result.Failure!.Code + " " + result.Detail);

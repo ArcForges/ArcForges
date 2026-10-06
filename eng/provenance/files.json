@@ -1004,7 +1004,12 @@
     "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpJson.cs",
     "src/BuildingBlocks/ArcForges.Observability.Desktop/OtlpMetricCollector.cs",
     "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/OtlpExporterTests.cs",
-    "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ProductionCompositionTests.cs"
+    "src/BuildingBlocks/ArcForges.Observability.Desktop/Tests/ProductionCompositionTests.cs",
+    "eng/native/vcpkg/pdfium-build.v1.json",
+    "eng/provenance/records/native-pdfium-r1.json",
+    "native/arcpdf-abi/src/backend_pdfium.cpp",
+    "native/arcpdf-abi/tests/arcpdf_abi_pdfium_tests.cpp",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealPdfIsolationTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
@@ -1016,7 +1021,22 @@
     "third-party/contracts/LICENSE.txt": "contracts-apache-legal-r1",
     "third-party/opentimelineio/LICENSE.txt": "otio-legal-r1",
     "third-party/opentimelineio/NOTICE.txt": "otio-legal-r1",
-    "eng/design_graph.py": "plan-delivery-graph-r1"
+    "eng/design_graph.py": "plan-delivery-graph-r1",
+    "third-party/pdfium/chromium-8044/abseil.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/agg23.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/fast_float.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/freetype.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/icu.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/lcms.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/libjpeg_turbo.ijg": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/libjpeg_turbo.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/libopenjpeg.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/libpng.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/LICENSE": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/llvm-libc.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/pdfium.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/simdutf.txt": "native-pdfium-r1",
+    "third-party/pdfium/chromium-8044/zlib.txt": "native-pdfium-r1"
   },
   "artifacts": [
     "native-bzip2-r4",
