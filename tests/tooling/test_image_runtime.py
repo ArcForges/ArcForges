@@ -511,6 +511,36 @@ class ImageRuntimeTests(unittest.TestCase):
                 self.assertFalse((cache / "source.tar.gz").exists())
                 self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
 
+    def test_exact_historical_tiff_gitlab_transport_preserves_original_descriptor_hash_and_cache(self):
+        _, material = image.profile()
+        row = material["sourceProfile"]["components"]["tiff"]["resources"][0]
+        original = dict(row)
+        actual_url = "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz"
+        self.assertEqual(actual_url, image._source_download_url(row))
+        for key, value in (("url", row["url"] + "foreign"), ("downloadUrl", row["downloadUrl"] + "?foreign"),
+                           ("cacheName", "foreign.tar.gz")):
+            changed = dict(row)
+            changed[key] = value
+            self.assertEqual(changed["downloadUrl"], image._source_download_url(changed))
+        self.assertEqual(original, row)
+        # Only the unavailable HTTP body is a fixture; the real descriptor and
+        # exact transport request are exercised against the actual filesystem.
+        content, calls = b"Unavailable original HTTP body fixture.", []
+
+        def opener(request, **kwargs):
+            calls.append(request.full_url)
+            response = io.BytesIO(content)
+            response.url = request.full_url
+            return response
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            self.assertRaisesRegex(ValueError, "digest mismatch", image._acquire_source_asset, row, cache,
+                                   time.monotonic() + 10, None, opener, None)
+            self.assertEqual([actual_url], calls)
+            self.assertFalse((cache / row["cacheName"]).exists())
+            self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
+
     def test_original_source_eof_close_cancellation_and_deadline_never_publish(self):
         content = b"Complete original source."
         row = {"url": "git+https://example.invalid/source@fixed", "downloadUrl": "https://example.invalid/source.tar.gz",

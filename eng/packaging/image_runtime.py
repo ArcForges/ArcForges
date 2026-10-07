@@ -267,11 +267,23 @@ def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
     _legal_bytes(row, downloads, cancelled)
 
 
+def _source_download_url(row):
+    # Preserve the immutable historical resource descriptor. Its GitLab
+    # downloadUrl used GitHub archive syntax; the exact pinned vcpkg_from_gitlab
+    # recipe retrieves this same source/ref/hash through GitLab's archive route.
+    if (row["url"], row["downloadUrl"], row["cacheName"]) == (
+            "git+https://gitlab.com/libtiff/libtiff@v4.7.2",
+            "https://gitlab.com/libtiff/libtiff/archive/v4.7.2.tar.gz",
+            "libtiff-libtiff-v4.7.2.tar.gz"):
+        return "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz"
+    return row["downloadUrl"]
+
+
 def _acquire_source_asset(row, downloads, deadline, cancelled, opener, context):
     require(isinstance(row, dict) and set(row) == {"url", "downloadUrl", "sha512", "cacheName"} and
             isinstance(row["sha512"], str) and re.fullmatch("[0-9a-f]{128}", row["sha512"]),
             "Invalid admitted original Image source resource.")
-    _acquire_original_asset(row["cacheName"], row["downloadUrl"], row["sha512"], "sha512", MAX_MATERIAL,
+    _acquire_original_asset(row["cacheName"], _source_download_url(row), row["sha512"], "sha512", MAX_MATERIAL,
                             downloads, deadline, cancelled, opener, context)
 
 
