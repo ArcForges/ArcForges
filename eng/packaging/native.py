@@ -624,11 +624,11 @@ def combine(directory, inputs, commit, cancelled=None):
                 before = _inventory(original, check=check)
                 retained = staging / ".native-inputs" / (family + "-" + rid)
                 _copy_inventory(original, retained, before, check)
-                require(_inventory(retained) == before, "Producer bytes changed during composition.")
+                require(_inventory(retained, check=check) == before, "Producer bytes changed during composition.")
                 verify_family_stage(retained, commit, family, rid, cancelled=lambda: (check(), False)[1])
                 destination = staging / identifier
                 _copy_inventory(retained / identifier, destination, _inventory(retained / identifier, check=check), check)
-                require(_inventory(destination) == _inventory(retained / identifier), "Native payload changed during handoff.")
+                require(_inventory(destination, check=check) == _inventory(retained / identifier, check=check), "Native payload changed during handoff.")
                 packages.append(artifact["packages"][0])
                 rows.append({"family": family, "rid": rid, "directory": retained.relative_to(staging).as_posix(),
                              "artifactSha256": digest(retained / "native-artifact.json")})

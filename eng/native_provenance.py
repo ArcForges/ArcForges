@@ -1141,7 +1141,7 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
     available = {(name.casefold() if rid.startswith("win-") else name): path for name, path in originals.items()}
     allowed = {name.casefold() if rid.startswith("win-") else name for name in policy["systemImports"]}
     while pending:
-        if cancelled and cancelled(): raise InterruptedError("PDF runtime sealing cancelled")
+        check()
         name = pending.pop(); key = name.casefold() if rid.startswith("win-") else name
         if key in chosen: continue
         require(key in available, "Missing owned/transitive PDF runtime input: " + name)
@@ -1199,10 +1199,10 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
                       "kind": "pdfium-production-composition-input", "profile": sdk["id"], "build": identity,
                       "admission": admission, "ownedProducerRecipe": recipe, "compilerRuntimeAdmission": runtime_admission,
                       "compilerRuntimeSignatures": signatures, "files": [{"path": name, "sha256": checksum}
-                          for name, checksum in sorted(producer._inventory(staging).items())]}
+                          for name, checksum in sorted(producer._inventory(staging, check=check).items())]}
             (staging / "pdfium-production-input.json").write_bytes(canonical(result))
             verify_pdf_runtime_input(staging, audit["sourceCommit"], root, cancelled=lambda: (check(), False)[1])
-            if cancelled and cancelled(): raise InterruptedError("PDF promotion cancelled")
+            check()
             producer._flush_tree(staging, check=check)
             staging.replace(destination)
             producer._flush_directory(destination.parent)
@@ -1438,13 +1438,13 @@ def stage_pdf_runtime(destination: Path, rid: str, sealed_input: Path, root: Pat
             package = staging / identifier
             before = producer._inventory(sealed_input, check=check)
             producer._copy_inventory(sealed_input, package, before, check)
-            require(producer._inventory(package) == before, "PDF sealed bytes changed during package handoff")
+            require(producer._inventory(package, check=check) == before, "PDF sealed bytes changed during package handoff")
             copied = verify_pdf_runtime_input(package, source, root, cancelled=lambda: (check(), False)[1])
             require(copied["inspectedBinaries"] == handoff["inspectedBinaries"], "PDF copied metadata changed")
             _prepare_pdf_runtime(package, rid, source, handoff, imports, system_hash, root)
             artifact = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "build": handoff["build"],
                         "packages": [{"id": identifier, "files": [{"path": path, "sha256": checksum}
-                                     for path, checksum in sorted(producer._inventory(package).items())]}]}
+                                     for path, checksum in sorted(producer._inventory(package, check=check).items())]}]}
             (staging / "native-artifact.json").write_bytes(canonical(artifact))
             verify_pdf_runtime_stage(staging, source, root, cancelled=lambda: (check(), False)[1])
             check()
