@@ -40,7 +40,15 @@ class ImageRuntimeTests(unittest.TestCase):
             read = lambda name: (root / "package" / name).read_bytes()
             declared = set(payload) - {image.RECEIPT, "README.md", "LICENSE"}
             image._image_payload_names(entry, read, set(payload), declared, root)
-            for extra in ("build/foreign.props", "foreign.exe", "foreign.nuspec", "package/services/metadata/foreign.props"):
+            for metadata in ("package/services/metadata/core-properties/nuget.psmdcp",
+                             "package/services/metadata/core-properties/0123456789abcdef0123456789abcdef.psmdcp"):
+                path = root / "package" / metadata; path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"ordinary NuGet core-properties envelope")
+                image._image_payload_names(entry, read, set(payload) | {metadata}, declared, root)
+            for extra in ("build/foreign.props", "foreign.exe", "foreign.nuspec", "package/services/metadata/foreign.props",
+                          "package/services/metadata/core-properties/nuget.psmdcp.exe",
+                          "package/services/metadata/core-properties/foreign.psmdcp",
+                          "package/services/metadata/core-properties/NuGet.psmdcp"):
                 with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "Unexpected"):
                     image._image_payload_names(entry, read, set(payload) | {extra}, declared, root)
             for name in ("buildTransitive/" + ident + ".targets", "NOTICE.md", "README.md", "LICENSE"):

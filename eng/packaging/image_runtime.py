@@ -1220,7 +1220,8 @@ def _image_payload_names(entry, read, names, declared, root):
     # Ordinary NuGet envelope metadata is the only unbound material allowed
     # beside the actual producer inventory; build/foreign.props is executable.
     standard = {"_rels/.rels", "[Content_Types].xml", entry["id"] + ".nuspec", ".signature.p7s",
-                "build-identity.json", "README.md", "LICENSE"}
+                "build-identity.json", "README.md", "LICENSE",
+                "package/services/metadata/core-properties/nuget.psmdcp"}
     standard.update(name for name in names if re.fullmatch(
         r"package/services/metadata/core-properties/[a-f0-9]{32}\.psmdcp", name))
     require(names <= set(declared) | {RECEIPT} | standard, "Unexpected Image package material.")
