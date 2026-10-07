@@ -291,8 +291,8 @@
     "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
     "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
     "tests/AssistantAbstractionsTests/packages.lock.json": "1667785cabc624022e388bce93384f0a551faa9d28a4a982c0c7b35234492acd",
-    "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
-    "tests/LocalRpcAotTests/packages.lock.json": "c40f841f3b009de18556ab935f0d34213c0a45bf56261d9aae1a4d1b4e10076a",
+    "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "6a2af833717894b78b87738e5573b47e12514318876ef8c43fe86d98fad6c802",
+    "tests/LocalRpcAotTests/packages.lock.json": "1e42e756d32a80b03a29a85c8de6cc233c0bf8a9e7f8ccf18431a5d2fce589e6",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
     "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
     "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
@@ -831,19 +831,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-codex-20261006-security",
-    "reviewer": "Independent native-image session: full source15374522 approved6028166068; exact accepted-parent metadata successor approval required before integration.",
+    "owner": "w-codex-20261006-observability",
+    "reviewer": "Independent exact-head source/admission review by w-codex-20261006-native-image is required before merge.",
     "reviewedOn": "2026-10-07",
-    "baselineCommit": "0ac0fbf368f3e15d78008834219321acd4ad1390",
-    "maintenanceAssessment": "Minimum second partial NAT25 producer: preserve exact immutable historical r4 package subset, add closed family/RID dispatch and source-bound actual-subset/index handoff. Include complete actual PDF sealed-input adapter rather than missing-function hook, with five actual hash/member/attestation/GN/SBOM/legal-pinned upstream SDK input profiles and distinct owned compiler recipe. All62 NuGet and10 Python coordinate/content/licence rows unchanged; original PDF legal closure and Chromium8044 noV8/noXFA are unchanged. Source/compiler/CRT admission is distinct from approved publisher signing and target OS execution. No catalogue/project/package/RID activation in this partial delivery. Final narrow accepted-parent rechain consumes actual PLT11 mergeb1a599 and its Boundary Platform324 pin plus accepted GOV25 exact index verifier0ac0fb without any owned functional/profile/test byte change; all incoming immutable receipts/policies/catalogue/project/lock/import identities remain preserved.",
+    "baselineCommit": "e33333490fd31f359ce6b6bfb2388e3aa02f7d7b",
+    "maintenanceAssessment": "PRF.04 retains the independently source-preapproved 95d6be7 real Native AOT parent/child production bootstrap and original bidirectional probe. It composes the accepted PLT11 actual LocalRpc parent host over private OS process streams and published Contracts324. Natural rebase preserves every accepted PLT59/60/61/62/NAT11/GOV25/NAT25 package, policy, signer and source record. Accepted shared selectors already provide exact Platform/Foundation324; no redundant selector or third-party/framework upgrade is introduced. SDK10.0.400 normal restore of the exact probe and actual LocalRpc dependency succeeded and left all lock bytes unchanged. Only the existing project blob, new probe source and immutable prf-04-r2 receipt are admitted; original prf-04-r1 and every other historical receipt remain byte-identical.",
     "upgradeChecks": {
-      "compilation": "Python portable production modules compile. Actual available file-lock/process-death/flush/error and upstream admission contract tests pass; projects/locks/native compiled source are unchanged, retained applicable hosted checks required on the reviewed head.",
-      "aot-trim": "No managed/native ABI or compilation input changes. Retained applicable native and existing nine AOT compile gates remain required; no new hosted consumer or OS acceptance execution.",
-      "compatibility": "Historical r4 native coordinates remain exact under schema1; schema2 selects only registered actual verified family/RID inputs with same source/build identity. All managed packages remain mandatory. Distinct complete producer receipts survive publication handoff; missing/extra/foreign/duplicate/cohort changes refuse.",
-      "licence-provenance": "Five actual upstream archives and GitHub Sigstore bundles were cryptographically admitted at existing full NAT25 component handoff, exact GN architecture/OS and all44/45 members observed, all15 original PDF legal files and SPDX aggregates retained. Existing matching PDFium licence expression unchanged. New owned producer profile separately closes actual compiler/tool/hash/cache/CRT/grant facts; ARM64EC_1 remains excluded. No invented foreign-OS compiled payload or signing proof.",
-      "security-sbom": "Bounded JSON/member/hash inventories, closed upstream receipts, source/cache copy races, kernel writer lock and crash recovery, file persistence/error-before-promotion and exact publication handoff tests. Copied bytes and index are checked at every real handoff; unsigned schema1/schema2 receipts are not publisher authentication.",
-      "runtime-performance-migration": "No performance/database migration/target-OS isolation claim. Actual foreign upstream binaries inspected without execution; ordinary fake-unavailable adapter tests do not certify deployment. Windows copied-file fsync is observed, not directory/physical power-loss proof; POSIX directories are flushed before/after promotion.",
-      "framework-runtime-posture": "SDK10.0.400/net10 and all current contracts, NuGet/Python/native ABI/dependency identities unchanged; no toolchain install or Android/Kotlin/ART/R8 change."
+      "compilation": "Actual 95d6 source SDK10.0.400 Release build and scoped formatter/verification passed with zero warnings/errors. On accepted e333 NAT25 parent, SDK10.0.400 normal probe/LocalRpc restore succeeded with all locks unchanged. Current exact-head hosted build/tests/package-policy checks remain mandatory.",
+      "aot-trim": "Actual same 95d6 probe published win-x64 Native AOT with zero warnings/errors and executed with dynamicCode=false. Current retained CI AOT compilation is required; no repeated unchanged AOT build or Linux/macOS execution is claimed.",
+      "compatibility": "Historical approximately2000-line bidirectional probe is preserved. Actual Windows private parent/four-child composition exercises generated Challenge/Confirm, genuine parent process identity, HMAC/resource/UUID binding, malformed and unauthenticated refusal, pre-cancellation, eight same-command renewals with bounded retry only for typed zero-dispatch ControlBusy, actual disconnect/relaunch fresh grant and rejected proof, bounded owned process cleanup. Actual complete default entrypoint also passed the historical probe followed by production composition.",
+      "licence-provenance": "Exact accepted generated Contracts324 source/publication and all62 NuGet/10 Python coordinates/content hashes are preserved. New AGPL-owned probe and own immutable successor receipt are appended to actual source ownership. No new external binary, package or legal input is invented.",
+      "security-sbom": "Actual descriptor/peer/auth/proof/lease/channel lifecycle component and Windows process evidence is retained. Same-user denied launch fixtures do not prove a second authenticated OS account or OS sandbox isolation. Signed/installed helper, all-RID and whole-series acceptance remain separately owned; source signing tool provenance is not publisher enrollment.",
+      "runtime-performance-migration": "No persistent data migration or product listener. The production parent uses the actual accepted PLT11 generated host and private streams, no TCP fallback or copied wire DTO. Current CI/publication and reviewed delivery ledger remain required; full OS/product acceptance is separately deferred.",
+      "framework-runtime-posture": "Existing pinned SDK10.0.400/C#14/net10, trim/AOT warnings-as-errors and native/Android framework posture remain unchanged. No gate suppression or mock deployment/OS claim."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -1135,8 +1135,8 @@
       "tests/ArchitectureTests/packages.lock.json": "e2090c8b97e17e0ec5899d8819ac16997a6e0e1df1f3b545c55e5cb39d823168",
       "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
       "tests/AssistantAbstractionsTests/packages.lock.json": "1667785cabc624022e388bce93384f0a551faa9d28a4a982c0c7b35234492acd",
-      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
-      "tests/LocalRpcAotTests/packages.lock.json": "c40f841f3b009de18556ab935f0d34213c0a45bf56261d9aae1a4d1b4e10076a",
+      "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "6a2af833717894b78b87738e5573b47e12514318876ef8c43fe86d98fad6c802",
+      "tests/LocalRpcAotTests/packages.lock.json": "1e42e756d32a80b03a29a85c8de6cc233c0bf8a9e7f8ccf18431a5d2fce589e6",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
       "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
       "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
@@ -1150,7 +1150,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-11-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-25-dispatch-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1161,7 +1161,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-25-dispatch-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/prf-04-r2.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

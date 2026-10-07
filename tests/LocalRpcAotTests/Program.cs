@@ -36,6 +36,18 @@ internal static partial class Program
     {
         try
         {
+            if (args.Length > 0 && args[0] == "--production-bootstrap-worker")
+            {
+                await ProductionBootstrapProbe.RunWorkerAsync(args.Length == 2 && args[1] == "bad-proof").ConfigureAwait(false);
+                return 0;
+            }
+
+            if (args.Length == 1 && args[0] == "--production-bootstrap-only")
+            {
+                await ProductionBootstrapProbe.RunAsync().ConfigureAwait(false);
+                return 0;
+            }
+
             if (args.Length > 0 && args[0] == "--worker")
             {
                 return await RunWorkerAsync(args[1..]).ConfigureAwait(false);
@@ -60,6 +72,7 @@ internal static partial class Program
             }
 
             await RunProbeAsync().ConfigureAwait(false);
+            await ProductionBootstrapProbe.RunAsync().ConfigureAwait(false);
             return 0;
         }
         catch (Exception exception)
