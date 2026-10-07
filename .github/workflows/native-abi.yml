@@ -174,7 +174,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   image-family-publication:
-    # Compose only real outputs from the four supported producer jobs. The
+    # Compose four actual Image outputs and the already-compiled PDF win-x64 output.
     # admitted six-RID catalogue never activates an unbuilt macOS container.
     needs: [image-portable-inputs, native-win-x64]
     runs-on: ubuntu-latest
@@ -192,18 +192,23 @@ jobs:
           pattern: image-production-input-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/image-family-inputs
           merge-multiple: false
-      - name: Compose the actual Image producer cohort without executing native code
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: native-pdf-stage-win-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-family-inputs/native-pdf-stage-win-x64-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Compose the actual Image/Pdf producer cohort without executing native code
         id: image-artifact
         shell: pwsh
         run: |
           $rids = @('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')
           $names = @($rids | ForEach-Object { "image-production-input-$_-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" })
+          $names += "native-pdf-stage-win-x64-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $actual = @(Get-ChildItem artifacts/image-family-inputs -Directory | ForEach-Object { $_.Name })
-          if (@(Compare-Object ($names | Sort-Object) ($actual | Sort-Object)).Count) { throw 'Unexpected/missing actual Image producer artifact.' }
+          if (@(Compare-Object ($names | Sort-Object) ($actual | Sort-Object)).Count) { throw 'Unexpected/missing actual Image/Pdf producer artifact.' }
           $arguments = @('eng/packaging/native.py', 'combine', '--directory', 'artifacts/native-image-publication')
           foreach ($name in $names) { $arguments += @('--input-directory', "artifacts/image-family-inputs/$name") }
           python @arguments
-          if ($LASTEXITCODE) { throw 'Actual Image family/source/build/index/copy verification failed.' }
+          if ($LASTEXITCODE) { throw 'Actual Image/Pdf family/source/build/index/copy verification failed.' }
           "name=native-image-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -360,6 +365,14 @@ jobs:
           sccache --show-stats || exit /b 1
       - name: Seal the production PDF composition input for NAT.25
         run: python eng/native_provenance.py --stage-pdfium-input artifacts/pdfium-production-input
+      - name: Stage the actual compiled PDF win-x64 runtime input
+        run: python eng/packaging/native.py stage --family Pdf --rid win-x64 --sealed-input artifacts/pdfium-production-input --directory artifacts/pdf-native-stage/win-x64
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-pdf-stage-win-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/pdf-native-stage/win-x64/
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pdfium-production-input-${{ github.run_id }}-${{ github.run_attempt }}
