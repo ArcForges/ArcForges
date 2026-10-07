@@ -315,9 +315,29 @@ internal static class NonWireMetadataPolicy
                 || assembly.Name == "protobuf-net" && name.StartsWith("ProtoBuf.", StringComparison.Ordinal));
     }
 
+    /// <summary>Immutable owner buckets; candidate order and the authoritative Same comparison are retained.</summary>
+    internal sealed class OwnerIndex
+    {
+        private readonly System.Collections.Frozen.FrozenDictionary<string, KeyValuePair<INamedTypeSymbol, ProjectFacts>[]> _owners;
+
+        public OwnerIndex(IReadOnlyDictionary<INamedTypeSymbol, ProjectFacts> projects)
+        {
+            _owners = System.Collections.Frozen.FrozenDictionary.ToFrozenDictionary(
+                projects.GroupBy(pair => Key(pair.Key), StringComparer.Ordinal),
+                group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        }
+
+        private static string Key(ITypeSymbol type) => type.ToDisplayString().TrimEnd('?');
+        public INamedTypeSymbol? First(ITypeSymbol type) => _owners.TryGetValue(Key(type), out var candidates)
+            ? candidates.FirstOrDefault(pair => Same(pair.Key, type)).Key : null;
+        public bool HasAdapter(ITypeSymbol type) => _owners.TryGetValue(Key(type), out var candidates)
+            && candidates.Any(pair => Same(pair.Key, type)
+                && pair.Value.Classification.Role is ProjectRole.PublicApiAdapter or ProjectRole.LocalRpcAdapter);
+    }
+
     private sealed class Flow
     {
-        private readonly IReadOnlyDictionary<INamedTypeSymbol, ProjectFacts> _projects;
+        private readonly OwnerIndex _owners;
         private readonly HashSet<INamedTypeSymbol> _metadata;
         private readonly Dictionary<ISymbol, List<(ExpressionSyntax Expression, SemanticModel Model)>> _sources = new(SymbolEqualityComparer.Default);
         private int _steps;
@@ -325,7 +345,7 @@ internal static class NonWireMetadataPolicy
         public Flow(IReadOnlyDictionary<INamedTypeSymbol, ProjectFacts> projects,
             IReadOnlyDictionary<string, Microsoft.CodeAnalysis.CSharp.CSharpCompilation> compilations, HashSet<INamedTypeSymbol> metadata)
         {
-            _projects = projects; _metadata = metadata;
+            _owners = new OwnerIndex(projects); _metadata = metadata;
             foreach (var compilation in compilations.Values)
                 foreach (var tree in compilation.SyntaxTrees)
                 {
@@ -400,7 +420,7 @@ internal static class NonWireMetadataPolicy
             string identity = named.ToDisplayString() + "|" + named.ContainingAssembly.Identity;
             if (!visited.Add(identity)) return false;
             if (named.TypeArguments.Any(argument => Reaches(argument, visited))) return true;
-            var owned = _projects.Keys.FirstOrDefault(candidate => Same(candidate, named));
+            var owned = _owners.First(named);
             if (owned is null || _metadata.Contains(owned)) return false;
             foreach (var member in owned.GetMembers())
             {
@@ -433,8 +453,7 @@ internal static class NonWireMetadataPolicy
             if (method.DeclaringSyntaxReferences.Length == 0 && (method.ContainingAssembly.Name == "Newtonsoft.Json" && type == "Newtonsoft.Json.JsonConvert" && method.Name == "SerializeObject"
                 || method.ContainingAssembly.Name == "protobuf-net" && type == "ProtoBuf.Serializer" && method.Name.StartsWith("Serialize", StringComparison.Ordinal))) return true;
             if (method.DeclaredAccessibility != Accessibility.Public) return false;
-            return _projects.Any(pair => Same(pair.Key, method.ContainingType)
-                && pair.Value.Classification.Role is ProjectRole.PublicApiAdapter or ProjectRole.LocalRpcAdapter);
+            return _owners.HasAdapter(method.ContainingType);
         }
 
         private bool Symbol(ISymbol symbol, HashSet<ISymbol> visited)
