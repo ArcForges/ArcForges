@@ -962,7 +962,14 @@ public sealed class ContentSandboxInvocation : IAsyncDisposable
         {
             await _operations.WaitAsync(linked.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Admission is part of the invocation: it must use the same reserved cancellation lifecycle
+            // even while another call owns the data gate. No semaphore permit was acquired here.
+            _ = await CancelAsync().ConfigureAwait(false);
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (OperationCanceledException)
         {
             return ContentSandboxResult<T>.Fail("resource.parser_failed");
         }

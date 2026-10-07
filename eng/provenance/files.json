@@ -1100,7 +1100,8 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ProductionContainmentHarnessTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealProductionImageContainmentTests.cs",
     "docs/production-parser-containment.md",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/InvocationCancellationAdmissionTests.cs"
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/InvocationCancellationAdmissionTests.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ProductionContainmentProfile.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
