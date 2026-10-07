@@ -203,11 +203,20 @@ public sealed class InstallationCredentialBroker : IAsyncDisposable
             token.ThrowIfCancellationRequested();
             try
             {
-                var result = WaitHandle.WaitAny([_mutex, token.WaitHandle]);
-                if (result != 0) throw new OperationCanceledException(token);
+                if (OperatingSystem.IsWindows())
+                {
+                    var result = WaitHandle.WaitAny([_mutex, token.WaitHandle]);
+                    if (result != 0) throw new OperationCanceledException(token);
+                }
+                else
+                {
+                    // Unix named mutexes cannot participate in WaitAny with the token event.
+                    // Retain the actual thread-affine named mutex, with bounded cancellation checks.
+                    while (!_mutex.WaitOne(20)) token.ThrowIfCancellationRequested();
+                }
                 acquired = true;
             }
-            catch (AbandonedMutexException exception) when (exception.MutexIndex == 0) { acquired = true; }
+            catch (AbandonedMutexException exception) when (exception.MutexIndex == 0 || !OperatingSystem.IsWindows()) { acquired = true; }
             token.ThrowIfCancellationRequested();
             if (!_principal.IsCurrent()) return Failure<T>("perm.resource_denied", EffectCertainty.DidNotHappen);
             return operation(effects, token);
