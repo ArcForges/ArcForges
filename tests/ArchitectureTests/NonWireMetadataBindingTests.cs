@@ -361,6 +361,83 @@ public sealed class NonWireMetadataBindingTests
 
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.TrimStart('\uFEFF').Replace("\r\n", "\n", StringComparison.Ordinal))));
 
+    [Xunit.Fact]
+    public void OwnerIndexPreservesFirstOwnerAndEveryMatchingAdapterRole()
+    {
+        var first = FixtureCompiler.Create("SameOwner", new Dictionary<string, string> { ["first.cs"] = "namespace Shared; public class Payload {}" }).GetTypeByMetadataName("Shared.Payload")!;
+        var second = FixtureCompiler.Create("SameOwner", new Dictionary<string, string> { ["second.cs"] = "namespace Shared; public class Payload {}" }).GetTypeByMetadataName("Shared.Payload")!;
+        var foreign = FixtureCompiler.Create("ForeignOwner", new Dictionary<string, string> { ["foreign.cs"] = "namespace Shared; public class Payload {}" }).GetTypeByMetadataName("Shared.Payload")!;
+        var missing = FixtureCompiler.Create("MissingOwner", new Dictionary<string, string> { ["missing.cs"] = "namespace Shared; public class Payload {}" }).GetTypeByMetadataName("Shared.Payload")!;
+        var projects = new Dictionary<INamedTypeSymbol, ProjectFacts>(SymbolEqualityComparer.Default)
+        {
+            [foreign] = IndexProject("foreign", ProjectRole.LocalRpcAdapter),
+            [first] = IndexProject("first", ProjectRole.Contracts),
+            [second] = IndexProject("second", ProjectRole.PublicApiAdapter),
+        };
+        Xunit.Assert.Equal(3, projects.Count);
+        var index = new NonWireMetadataPolicy.OwnerIndex(projects);
+        Xunit.Assert.Same(first, index.First(second));
+        Xunit.Assert.True(index.HasAdapter(first));
+        Xunit.Assert.Same(foreign, index.First(foreign));
+        Xunit.Assert.True(index.HasAdapter(foreign));
+        Xunit.Assert.Null(index.First(missing));
+        Xunit.Assert.False(index.HasAdapter(missing));
+        var reverse = new NonWireMetadataPolicy.OwnerIndex(new Dictionary<INamedTypeSymbol, ProjectFacts>(SymbolEqualityComparer.Default)
+        {
+            [second] = projects[second],
+            [first] = projects[first],
+        });
+        Xunit.Assert.Same(second, reverse.First(first));
+        Xunit.Assert.True(reverse.HasAdapter(first));
+    }
+
+    [Xunit.Fact]
+    public void ThousandsOfRealOwnersResolveExactSymbolsWithoutForeignNameAliasing()
+    {
+        var source = new StringBuilder("namespace Large;");
+        const int count = 4096;
+        for (int i = 0; i < count; i++) source.Append(" public sealed class T").Append(i).Append(" {}");
+        var compilation = FixtureCompiler.Create("LargeOwner", new Dictionary<string, string> { ["large.cs"] = source.ToString() });
+        var projects = new Dictionary<INamedTypeSymbol, ProjectFacts>(SymbolEqualityComparer.Default);
+        var expected = new INamedTypeSymbol[count];
+        for (int i = 0; i < count; i++)
+        {
+            expected[i] = compilation.GetTypeByMetadataName("Large.T" + i)!;
+            projects.Add(expected[i], IndexProject("owner-" + i, i % 2 == 0 ? ProjectRole.Contracts : ProjectRole.LocalRpcAdapter));
+        }
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var index = new NonWireMetadataPolicy.OwnerIndex(projects);
+        for (int i = count - 1; i >= 0; i--)
+        {
+            Xunit.Assert.Same(expected[i], index.First(expected[i]));
+            Xunit.Assert.Equal(i % 2 != 0, index.HasAdapter(expected[i]));
+        }
+        var foreign = FixtureCompiler.Create("Foreign", new Dictionary<string, string> { ["foreign.cs"] = "namespace Large; public class T4095 {}" }).GetTypeByMetadataName("Large.T4095")!;
+        Xunit.Assert.Null(index.First(foreign));
+        Xunit.Assert.False(index.HasAdapter(foreign));
+        Console.WriteLine($"GOV25: indexed {count} actual owner symbols and resolved all first-owner/adapter vectors in {timer.ElapsedMilliseconds} ms.");
+    }
+
+    [Xunit.Fact]
+    public void CompletePolicyRetainsMetadataRefusalWithThousandsOfUnrelatedTypes()
+    {
+        var source = new StringBuilder("using Metadata;");
+        for (int i = 0; i < 2048; i++) source.Append(" public sealed class Unrelated").Append(i).Append(" { public string Name => string.Empty; }");
+        source.Append(" internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize<object>(Catalog.All[0]); }");
+        using var fixture = new Fixture(extra: source.ToString());
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var findings = fixture.Check();
+        Xunit.Assert.Equal(2049, findings.Length);
+        Xunit.Assert.Single(findings, finding => finding.Message.Contains("escapes through", StringComparison.Ordinal));
+        Xunit.Assert.Equal(2048, findings.Count(finding => finding.Message.StartsWith("Wire type is not bound to generated owned schema: Unrelated", StringComparison.Ordinal)));
+        Console.WriteLine($"GOV25: complete policy evaluated 2048 unrelated real types, preserving every generated-wire refusal and the metadata refusal in {timer.ElapsedMilliseconds} ms.");
+    }
+
+    private static ProjectFacts IndexProject(string name, ProjectRole role) => new(
+        new ProjectClassification(name + "/" + name + ".csproj", role, "DesktopPlatform"),
+        "net10.0", "Library", "AGPL-3.0-only", "AGPL", [], [], [],
+        new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal));
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "arcforges-metadata-" + Guid.NewGuid().ToString("N"));
