@@ -422,8 +422,24 @@ def _external_module(downloads, definition, root, cancelled):
             require(digest(_regular(target), cancelled) == definition["sha256"],
                     "Existing external Image module differs from its original source.")
         else:
-            _write_bytes(target, content)
-            _directory_sync(target.parent)
+            descriptor, temporary_name = tempfile.mkstemp(prefix=".Template.pm.image-tool-", dir=target.parent)
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(content)
+                    output.flush()
+                    os.fsync(output.fileno())
+                _cancel(cancelled)
+                require(digest(_regular(temporary), cancelled) == definition["sha256"],
+                        "External Image utility temporary bytes differ.")
+                try:
+                    os.link(temporary, target)  # Atomic no-overwrite; partial bytes never become final.
+                except FileExistsError:
+                    require(digest(_regular(target), cancelled) == definition["sha256"],
+                            "Concurrent external Image utility bytes differ.")
+                _directory_sync(target.parent)
+            finally:
+                temporary.unlink(missing_ok=True)
     return _regular(target).resolve(strict=True)
 
 

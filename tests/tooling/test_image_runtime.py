@@ -117,6 +117,33 @@ class ImageRuntimeTests(unittest.TestCase):
             with patch.object(image, "_external_probe", return_value="1.56\t" + str(module)), self.assertRaisesRegex(ValueError, "loaded"):
                 image._observe_loaded_module(Path("unavailable-linux-perl"), module, definition)
 
+    def test_external_module_partial_write_never_publishes_and_retry_preserves_foreign_final(self):
+        # Only unavailable archived source acquisition is supplied; real file
+        # creation/fsync/error cleanup/promotion/retry execute.
+        content = b"original external utility component bytes"
+        definition = {"legal": [{}], "member": "external/Template.pm", "sha256": hashlib.sha256(content).hexdigest()}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); final = root / "artifacts/image-external-tools/module/Text/Template.pm"
+            actual = os.fdopen
+            class FailingOutput:
+                def __init__(self, descriptor, mode): self.stream = actual(descriptor, mode)
+                def __enter__(self): return self
+                def __exit__(self, *args): self.stream.close()
+                def write(self, material):
+                    self.stream.write(material[:3]); self.stream.flush()
+                    raise OSError("injected partial-write before promotion")
+            with patch.object(image, "_legal_bytes", return_value=content), \
+                    patch.object(image.os, "fdopen", side_effect=FailingOutput), self.assertRaisesRegex(OSError, "partial-write"):
+                image._external_module(root, definition, root, None)
+            self.assertFalse(final.exists())
+            self.assertEqual([], list(final.parent.glob(".Template.pm.image-tool-*")))
+            with patch.object(image, "_legal_bytes", return_value=content):
+                self.assertEqual(content, image._external_module(root, definition, root, None).read_bytes())
+                final.write_bytes(b"foreign preexisting utility")
+                with self.assertRaisesRegex(ValueError, "Existing"):
+                    image._external_module(root, definition, root, None)
+                self.assertEqual(b"foreign preexisting utility", final.read_bytes())
+
     def test_actual_tool_process_output_errors_and_cancellation_drain_owned_child(self):
         self.assertEqual("component", image._external_probe(sys.executable, ["-c", "print('component')"]))
         for command in ("print('x'*5000)", "raise SystemExit(3)"):
