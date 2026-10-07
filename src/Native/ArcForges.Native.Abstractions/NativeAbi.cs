@@ -794,6 +794,12 @@ internal sealed class WindowsNativeRuntimeLoadPlatform : INativeRuntimeLoadPlatf
     }
 }
 
+/// <summary>Opaque owned module address; only the complete verified runtime controls its lifetime.</summary>
+internal readonly struct NativeModuleAddress(nint value)
+{
+    internal readonly nint Value = value;
+}
+
 /// <summary>Authenticated complete native closure. Nothing is executed until every bounded file and dependency has passed admission.</summary>
 internal sealed class NativeVerifiedRuntime : IDisposable
 {
@@ -801,7 +807,7 @@ internal sealed class NativeVerifiedRuntime : IDisposable
     private readonly INativeRuntimeLoadPlatform _platform;
     private readonly List<INativeRuntimeFileLease> _files = [];
     private readonly List<nint> _handles = [];
-    private nint _owned;
+    private NativeModuleAddress _owned;
     private bool _disposed;
 
     private NativeVerifiedRuntime(INativeRuntimeLoadPlatform platform) => _platform = platform;
@@ -813,7 +819,7 @@ internal sealed class NativeVerifiedRuntime : IDisposable
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return _owned;
+                return _owned.Value;
             }
         }
     }
@@ -996,12 +1002,12 @@ internal sealed class NativeVerifiedRuntime : IDisposable
                 var handle = platform.Load(leases[name].LoaderPath);
                 if (handle == 0) { throw new DllNotFoundException("The native platform returned no loaded module."); }
                 runtime._handles.Add(handle);
-                if (comparer.Equals(name, ownedName)) { runtime._owned = handle; }
+                if (comparer.Equals(name, ownedName)) { runtime._owned = new NativeModuleAddress(handle); }
             }
 
             foreach (var export in expectedExports)
             {
-                if (!platform.HasExport(runtime._owned, export)) { throw new EntryPointNotFoundException(export); }
+                if (!platform.HasExport(runtime._owned.Value, export)) { throw new EntryPointNotFoundException(export); }
             }
 
             cancellationToken.ThrowIfCancellationRequested();

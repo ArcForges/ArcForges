@@ -38,6 +38,19 @@ internal static partial class LinuxNative
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
     internal static partial nint Syscall(nint number, nint argument1, nint argument2, nint argument3, nint argument4, nint argument5);
 
+    [LibraryImport("libdl.so.2", EntryPoint = "dlopen", StringMarshalling = StringMarshalling.Utf8)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    internal static partial nint DlOpen(string path, int flags);
+    [LibraryImport("libdl.so.2", EntryPoint = "dlsym", StringMarshalling = StringMarshalling.Utf8)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    internal static partial nint DlSym(nint handle, string name);
+    [LibraryImport("libdl.so.2", EntryPoint = "dlclose")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    internal static partial int DlClose(nint handle);
+    [LibraryImport("libdl.so.2", EntryPoint = "dlerror")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    internal static partial nint DlError();
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct RlimitValue
     {

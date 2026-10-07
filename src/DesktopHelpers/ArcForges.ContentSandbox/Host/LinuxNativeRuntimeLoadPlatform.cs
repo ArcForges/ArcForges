@@ -161,10 +161,10 @@ internal sealed unsafe partial class LinuxNativeRuntimeLoadPlatform : INativeRun
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_sealedFiles.ContainsKey(loaderPath)) { throw new InvalidDataException("Foreign or released native sealed-file locator."); }
             if (_loadedHandles.Values.Sum() >= 128) { throw new InvalidDataException("The retained native module inventory exceeds its production bound."); }
-            _ = DlError();
+            _ = LinuxNative.DlError();
             // NOW refuses unresolved symbols before an apparently successful handle
             // can escape. LOCAL avoids introducing symbols into the global namespace.
-            var handle = DlOpen(loaderPath, 2);
+            var handle = LinuxNative.DlOpen(loaderPath, 2);
             if (handle == 0) { throw new DllNotFoundException("Immediate native linkage refused the verified closure."); }
             _loadedHandles.TryGetValue(handle, out var references);
             _loadedHandles[handle] = checked(references + 1);
@@ -184,9 +184,9 @@ internal sealed unsafe partial class LinuxNativeRuntimeLoadPlatform : INativeRun
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_loadedHandles.ContainsKey(handle)) { throw new InvalidOperationException("Foreign or released native closure handle."); }
-            _ = DlError();
-            var address = DlSym(handle, name);
-            return DlError() == 0 && address != 0;
+            _ = LinuxNative.DlError();
+            var address = LinuxNative.DlSym(handle, name);
+            return LinuxNative.DlError() == 0 && address != 0;
         }
     }
 
@@ -196,24 +196,12 @@ internal sealed unsafe partial class LinuxNativeRuntimeLoadPlatform : INativeRun
         lock (_gate)
         {
             if (!_loadedHandles.TryGetValue(handle, out var references)) { throw new InvalidOperationException("Foreign or released native closure handle."); }
-            if (DlClose(handle) != 0) { throw new InvalidOperationException("Native closure handle release failed."); }
+            if (LinuxNative.DlClose(handle) != 0) { throw new InvalidOperationException("Native closure handle release failed."); }
             if (references == 1) { _loadedHandles.Remove(handle); }
             else { _loadedHandles[handle] = references - 1; }
         }
     }
 
-    [LibraryImport("libdl.so.2", EntryPoint = "dlopen", StringMarshalling = StringMarshalling.Utf8)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-    private static partial nint DlOpen(string path, int flags);
-    [LibraryImport("libdl.so.2", EntryPoint = "dlsym", StringMarshalling = StringMarshalling.Utf8)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-    private static partial nint DlSym(nint handle, string name);
-    [LibraryImport("libdl.so.2", EntryPoint = "dlclose")]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-    private static partial int DlClose(nint handle);
-    [LibraryImport("libdl.so.2", EntryPoint = "dlerror")]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-    private static partial nint DlError();
     public void Dispose()
     {
         lock (_gate)
@@ -225,7 +213,7 @@ internal sealed unsafe partial class LinuxNativeRuntimeLoadPlatform : INativeRun
             {
                 for (var index = 0; index < pair.Value; index++)
                 {
-                    if (DlClose(pair.Key) != 0) { failures.Add(new InvalidOperationException("Native module disposal failed.")); }
+                    if (LinuxNative.DlClose(pair.Key) != 0) { failures.Add(new InvalidOperationException("Native module disposal failed.")); }
                 }
             }
 
