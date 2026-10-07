@@ -176,8 +176,10 @@ internal static class WindowsHelperSigner
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var start = new ProcessStartInfo(Path.GetFullPath(tool))
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
             WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(tool))!,
         };
         foreach (var argument in arguments) { start.ArgumentList.Add(argument); }

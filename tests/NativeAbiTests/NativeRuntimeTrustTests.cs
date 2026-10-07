@@ -129,7 +129,10 @@ public sealed class NativeRuntimeTrustTests
         var digest = Convert.ToHexStringLower(SHA256.HashData(bytes));
         var manifest = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            schemaVersion = 1, sourceCommit = new string('a', 40), rid = "win-x64", library = "ArcPdfNative",
+            schemaVersion = 1,
+            sourceCommit = new string('a', 40),
+            rid = "win-x64",
+            library = "ArcPdfNative",
             abi = new { major = 1, minor = 1 },
             files = new[]
             {

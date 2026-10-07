@@ -1,6 +1,6 @@
 # NuGet package production
 
-`packages.json` admits four packages in one exact-version release set:
+`packages.json` is the reviewed publication catalogue. Every managed/build package is mandatory in its release cohort; native entries activate only when the source-bound composition index names actual verified input bytes for that family and RID. A catalogue entry does not establish that an artifact was built or published. The historical Windows Image producer remains supported independently of portable inputs.
 
 | Packages | Delivered content |
 |---|---|
@@ -9,10 +9,19 @@
 | `ArcForges.Native.Image` | Source-generated C# bindings for every existing entry point |
 | Image `.Runtime.win-x64` | Actual owned DLL, full non-system DLL closure, CRT, C headers, import library and provenance |
 
-The retained image ABI provides version, dependency build-information and thread-local error queries.
-Image decoding and sandbox containment are not implemented by these
-bindings. Shared placeholders and the internal ABI probe project are excluded from this
-Windows release. See [scope and validation evidence](../../docs/native-package-release.md).
+Image and PDF functional parser bindings remain internal to the approved ContentSandbox helper. Their native C ABI diagnostics are retained, and the product-facing parser control remains the ContentSandbox Broker. Probe-only exports, placeholders, unsigned input receipts and a successful native inspection cannot establish a production parser release. See [scope and validation evidence](../../docs/native-package-release.md).
+
+## Authenticated native release composition
+
+`native.py combine --directory <new-output> --input-directory <verified-family-input> ... --commit <source>` retains the complete original inputs in a source-bound schema2 family index. Each input's actual compiled files, recipes, original legal texts and source/build evidence are checked by its dedicated Image/PDF adapter. Unknown coordinates, foreign source cohorts, unregistered activation, changed bytes, links/special files, oversized or growing files and cancellation refuse. Copying uses one bounded operation budget, create-only promotion and flushed files/directories; these checks are component evidence, not physical power-loss or installed OS isolation proof.
+
+Production authorization is a separate step. `native.py sign-release --directory <new-signed-output> --unsigned-directory <verified-composition> --commit <source> --release-version <version> --approved-spki <operator-approved-der> --key-id <operator-approved-id> --signer-tool-profile <operator-approved-tool-json> --pem <private-reference>` creates schema3 signed output. The alternative private provider is `--certificate-thumbprint` plus `--store-location CurrentUser|LocalMachine`. This never enrolls a key, takes approval from a downloaded artifact, emits private material or overwrites an existing candidate. The real nonpackable ReleaseSigner CLI produces ES256 envelopes that bind the source/version/RID/library, manifest and canonical policy. Policy v2 additionally binds the SHA256 of the complete original producer receipt and family index; opaque source metadata, including Image compiled SPDX paths and complete external-tool receipts, is preserved unchanged. `.native-unsigned` retains all original source evidence.
+
+`verify-release` requires the same independently approved public key, key ID and execution-tool profile, and no private provider. A tool profile is a closed schema1 object with `command` (one absolute self-contained NativeAOT ReleaseSigner executable) and `files` (exact absolute path/SHA256 rows for the complete tool payload). A mutable dotnet host/framework invocation is refused. Windows verifies actual trusted OS ownership and conservative DACLs over the installation and ancestor directories, restricts the locator to the actual OS boot drive, and retains no-write/no-delete kernel leases over the complete payload through confirmed process exit. POSIX requires root-owned no-follow non-group/other-writable files/directories with no access ACLs and a nonroot caller. The restricted child environment cannot select startup/preload/search injections. Every payload file is rechecked, but post-hashing alone is never installation authority. Missing protected provisioning, inaccessible/foreign keys and failed real CLI operations refuse. Ordinary component tests may substitute explicitly unavailable protected-installation attestation while exercising actual kernel byte leases and NativeAOT crypto; that substitution is never proof of deployed OS protection.
+
+For signed outputs, `packages.py pack|verify|smoke` requires all three `--approved-spki`, `--key-id`, and `--signer-tool-profile` inputs. Signature verification precedes package inspection. `.native-release` retains the complete signed candidate and unchanged producer evidence through publication, and every archive payload byte and file name must match that authenticated candidate. Ordinary NuGet framing and independently checked owned legal/readme/build-identity material are the only additional archive entries. Supplying release authority for an unsigned candidate refuses instead of silently downgrading. Existing unsigned historical input verification remains available for its original component/publication boundary; it does not establish signed production authorization.
+
+The Windows `sign-helper`/`verify-helper` CLI uses only the protected, SHA256-pinned installed SDK28000 SignTool. Actual Windows trust, the approved primary leaf, RFC3161 evidence, current code-signing private provider, bounded child cleanup and create-only durable promotion are mandatory. The launcher separately keeps the actual executable handle and checks the application-owned helper hash plus Windows trust. An SDK verification test or a generated ES256 component key is not an enrolled ArcForges signing credential, a published signed helper, or all-RID/full-product acceptance. Those real release and installation checks remain explicitly owned by NAT25, PLT54/45/46, PLT63 and APP03.
 
 ## Local and PR candidates
 

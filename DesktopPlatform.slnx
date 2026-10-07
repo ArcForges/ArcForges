@@ -78,4 +78,7 @@
     <Project Path="src/Native/ArcForges.Native.Pdf.Runtime.osx-x64/ArcForges.Native.Pdf.Runtime.osx-x64.csproj" />
     <Project Path="src/Native/ArcForges.Native.Pdf.Runtime.osx-arm64/ArcForges.Native.Pdf.Runtime.osx-arm64.csproj" />
   </Folder>
+  <Folder Name="/eng/packaging/">
+    <Project Path="eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj" />
+  </Folder>
 </Solution>

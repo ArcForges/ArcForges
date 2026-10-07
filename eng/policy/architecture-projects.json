@@ -502,5 +502,13 @@
     "module": "",
     "production": false,
     "aot": false
+  },
+  {
+    "path": "eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj",
+    "role": "BuildTool",
+    "owner": "DesktopPlatform",
+    "module": "",
+    "production": false,
+    "aot": false
   }
 ]

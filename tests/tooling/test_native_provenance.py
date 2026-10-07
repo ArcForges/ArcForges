@@ -105,11 +105,11 @@ class PdfSealedCompositionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(all(os.environ.get(name) for name in ("ARCFORGES_PDF_SEALED_TEST_INPUT",
-    "ARCFORGES_NATIVE_RELEASE_TEST_SIGNER_DLL", "ARCFORGES_NATIVE_RELEASE_TEST_HOST",
+    "ARCFORGES_NATIVE_RELEASE_TEST_SIGNER_AOT",
     "ARCFORGES_NATIVE_RELEASE_TEST_PEM", "ARCFORGES_NATIVE_RELEASE_TEST_SPKI")),
     "Actual admitted PDF bytes and actual compiled signer/test-key references are required.")
 class ActualNativeReleaseCompositionTests(unittest.TestCase):
-    """Real cached producer/FS/CLI/crypto; only unavailable current CI checkout identity is substituted.
+    """Real cached producer/FS/NativeAOT/crypto. Only unavailable checkout/protected install are substituted.
 
     Test key references are explicit component fixtures, never production enrollment.
     No parser execution, real signing account, package publication or OS isolation is claimed.
@@ -121,11 +121,16 @@ class ActualNativeReleaseCompositionTests(unittest.TestCase):
         self.version, self.key_id = "1.0.0-component.1", "explicit-component-fixture-only"
         self.pem = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_PEM"])
         self.spki = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_SPKI"])
-        host = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_HOST"])
-        assembly = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_SIGNER_DLL"])
-        pins = [(str(host), producer.digest(host))]
-        pins.extend((str(path), producer.digest(path)) for path in assembly.parent.iterdir() if path.is_file())
-        self.signer = producer.OfflineReleaseSigner((str(host), str(assembly)), tuple(pins))
+        if os.name != "nt": self.skipTest("This actual NativeAOT/kernel lease component fixture targets Windows.")
+        executable = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_SIGNER_AOT"])
+        pins = [(str(path), producer.digest(path)) for path in executable.parent.iterdir() if path.is_file()]
+        self.signer = producer.OfflineReleaseSigner((str(executable),), tuple(pins))
+        # Current process lacks elevation to provision the root-owned production
+        # installation. Substitute only that unavailable installation authority;
+        # real CreateFile sharing, held canonical bytes and AOT crypto remain.
+        provisioning = patch.object(producer, "_windows_tool_authority", return_value=None)
+        provisioning.start()
+        self.addCleanup(provisioning.stop)
 
     def prepare(self, directory):
         family = directory / "family"
@@ -206,7 +211,7 @@ class ActualNativeReleaseCompositionTests(unittest.TestCase):
             copied_pins = tuple((str(payload / Path(name).relative_to(original_payload)), digest)
                     if Path(name).is_relative_to(original_payload) else (name, digest)
                     for name, digest in self.signer.pins)
-            substituted = producer.OfflineReleaseSigner((self.signer.command[0], str(payload / Path(self.signer.command[-1]).name)), copied_pins)
+            substituted = producer.OfflineReleaseSigner((str(payload / Path(self.signer.command[-1]).name),), copied_pins)
             (payload / "foreign.runtimeconfig.json").write_bytes(b"unadmitted executable configuration")
             with self.assertRaisesRegex(ValueError, "complete admitted signer payload"):
                 producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
@@ -216,6 +221,36 @@ class ActualNativeReleaseCompositionTests(unittest.TestCase):
             producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
                                          self.signer, pem=self.pem)
             producer.verify_signed_release(signed, self.source, self.version, self.spki, self.key_id, self.signer)
+
+    def test_actual_kernel_leases_prevent_swap_restore_before_real_aot_exec(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = Path(temporary) / "tool"
+            shutil.copytree(Path(self.signer.command[0]).parent, payload)
+            executable = payload / Path(self.signer.command[0]).name
+            pins = tuple((str(path), producer.digest(path)) for path in payload.iterdir() if path.is_file())
+            signer = producer.OfflineReleaseSigner((str(executable),), pins)
+            actual_start = producer.subprocess.Popen
+            attempts = []
+            def competing_writer(*args, **kwargs):
+                for path, _ in pins:
+                    # Every admitted dependency/material file remains kernel-held.
+                    with self.assertRaises(OSError) as write:
+                        with Path(path).open("wb") as output: output.write(b"replaced signer")
+                    self.assertEqual(13, write.exception.errno) # CRT fopen reports actual sharing refusal as EACCES.
+                    with self.assertRaises(OSError) as rename:
+                        Path(path).rename(Path(path + ".swapped"))
+                    self.assertEqual(32, rename.exception.winerror)
+                    attempts.append(path)
+                return actual_start(*args, **kwargs)
+            with patch.object(producer.subprocess, "Popen", side_effect=competing_writer), self.assertRaisesRegex(ValueError, "refused"):
+                # Real signed native CLI refuses missing closed arguments; the
+                # process is actual AOT, not a mock success acknowledgement.
+                signer.run(["verify"], producer._progress(None))
+            self.assertEqual(len(pins), len(attempts))
+            for path, checksum in pins:
+                self.assertEqual(checksum, producer.digest(Path(path)))
+            # Actual sharing protection ends only after confirmed child exit.
+            with executable.open("ab") as output: output.write(b"post-exit fixture mutation")
 
     def test_actual_authenticated_handoff_and_closed_archive_projection(self):
         # The archive framing is constructed here to exercise inspection, not to
@@ -347,6 +382,26 @@ class PdfSealedCompositionTests(unittest.TestCase):
             path.write_bytes(path.read_bytes().replace(b'"schemaVersion": 1,', b'"schemaVersion": 1,"schemaVersion": 1,', 1))
             with self.assertRaisesRegex(ValueError, "Duplicate"):
                 native.verify_pdf_runtime_input(candidate, self.source)
+
+
+class ProtectedSignerAdmissionTests(unittest.TestCase):
+    def test_managed_host_framework_or_unpinned_command_cannot_execute(self):
+        executable = Path(sys.executable).absolute()
+        tools = [producer.OfflineReleaseSigner((str(executable), str(executable.parent / "ArcForges.Native.ReleaseSigner.dll")),
+                                               ((str(executable), producer.digest(executable)),)),
+                 producer.OfflineReleaseSigner((str(executable),), ((str(executable), producer.digest(executable)),))]
+        for tool in tools:
+            with self.subTest(command=tool.command), patch.object(producer.subprocess, "Popen") as child, self.assertRaises(ValueError):
+                tool.run(["verify"], producer._progress(None))
+            child.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Actual Windows kernel security descriptor component.")
+    def test_real_installed_os_owner_is_distinct_from_mutable_user_worktree(self):
+        with self.assertRaisesRegex(ValueError, "unprivileged"):
+            producer._windows_tool_lease(producer.ROOT, directory=True, payload=True)
+        program_files = Path(os.environ["ProgramFiles"])
+        handle, _, close = producer._windows_tool_lease(program_files, directory=True, payload=True)
+        self.assertTrue(close(handle))
 
 
 class NativeClosureTests(unittest.TestCase):

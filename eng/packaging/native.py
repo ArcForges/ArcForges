@@ -699,26 +699,206 @@ def _release_digest(path, check, maximum=512 * 1024 * 1024):
     return _bounded_file(path, check, maximum=maximum)[0]
 
 
+def _protected_posix_tool(path, *, directory=False):
+    """Real installation authority. An advisory flock or user-owned directory is insufficient."""
+    require(os.geteuid() != 0, "A privileged caller cannot claim protection against its own writable tool installation.")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    if directory: flags |= os.O_DIRECTORY
+    descriptor = os.open(path, flags)
+    try:
+        details = os.fstat(descriptor)
+        require(details.st_uid == 0 and not details.st_mode & 0o022
+                and (stat.S_ISDIR(details.st_mode) if directory else stat.S_ISREG(details.st_mode)),
+                "The release tool installation is not OS-owned and protected from unprivileged writes.")
+        require(not any(name in ("system.posix_acl_access", "system.posix_acl_default", "com.apple.system.Security")
+                        for name in os.listxattr(path, follow_symlinks=False)), "Extended tool installation ACLs are not admitted.")
+        current = os.stat(path, follow_symlinks=False)
+        require((current.st_dev, current.st_ino) == (details.st_dev, details.st_ino), "Tool installation identity changed during admission.")
+        return os.fdopen(descriptor, "rb") if not directory else descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _windows_tool_authority(handle, *, directory, payload):
+    """Actual OS attestation; the test seam is only for unavailable protected provisioning."""
+    import ctypes
+    from ctypes import wintypes
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security.GetSecurityInfo.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p)]
+    security.GetSecurityInfo.restype = wintypes.DWORD
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    descriptor = None
+    try:
+        owner, acl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        require(security.GetSecurityInfo(handle, 1, 5, ctypes.byref(owner), None, ctypes.byref(acl), None,
+                ctypes.byref(descriptor)) == 0 and owner.value and acl.value,
+                "Cannot establish actual tool installation ownership and DACL.")
+        def sid(pointer):
+            prefix = ctypes.string_at(pointer, 8)
+            require(prefix[0] == 1 and prefix[1] <= 15, "Unbounded installation SID.")
+            raw = ctypes.string_at(pointer, 8 + prefix[1] * 4)
+            return "S-1-" + str(int.from_bytes(raw[2:8], "big")) + "".join("-" + str(value) for value in struct.unpack_from("<" + "I" * raw[1], raw, 8))
+        trusted = {"S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}
+        require(sid(owner.value) in trusted, "The release tool installation has an unprivileged owner.")
+        header = ctypes.string_at(acl, 8)
+        size, count = struct.unpack_from("<HH", header, 2)
+        require(8 <= size <= 65535 and count <= 512, "Unbounded installation DACL.")
+        offset = 8
+        # Ancestors cannot permit replacing the protected child or changing their
+        # DACL. The payload itself additionally forbids adding/modifying material.
+        forbidden = 0x10000000 | 0x40000000 | 0x000D0040
+        if payload or not directory: forbidden |= 0x00000116
+        for _ in range(count):
+            require(offset + 8 <= size, "Truncated installation ACE.")
+            ace = ctypes.string_at(acl.value + offset, 8)
+            kind, flags, length, mask = struct.unpack("<BBHI", ace)
+            require(length >= 8 and offset + length <= size and kind in (0, 1), "Unsupported installation DACL entry.")
+            if kind == 0 and not flags & 8 and mask & forbidden:
+                require(sid(acl.value + offset + 8) in trusted, "The tool installation grants unprivileged mutation authority.")
+            offset += length
+        require(offset <= size, "Malformed installation DACL size.")
+    finally:
+        if descriptor and descriptor.value: kernel.LocalFree(descriptor)
+
+
+def _windows_tool_lease(path, *, directory=False, payload=False):
+    """Held kernel bytes and conservative OS DACL authority; no pathname-only approval."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                  wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    kernel.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    security.GetSecurityInfo.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p)]
+    security.GetSecurityInfo.restype = wintypes.DWORD
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    handle = kernel.CreateFileW(str(path), 0x80020000 if not directory else 0x00020080,
+        1, None, 3, 0x00200000 | (0x02000000 if directory else 0), None)
+    require(handle != ctypes.c_void_p(-1).value, "Cannot retain the protected release-tool kernel lease.")
+    descriptor = None
+    returned = False
+    try:
+        _windows_tool_authority(handle, directory=directory, payload=payload)
+        physical = ctypes.create_unicode_buffer(32768)
+        length = kernel.GetFinalPathNameByHandleW(handle, physical, len(physical), 2)
+        require(0 < length < len(physical) and physical.value.startswith("\\Device\\"), "Cannot establish the actual protected tool locator.")
+        # CreateProcess rejects NT/GLOBALROOT and volume-GUID executable names on
+        # this supported Windows boundary (actual component probes returned87).
+        # Use only the canonical OS boot-drive pathname, whose boot-created DOS
+        # device cannot be redefined by an unprivileged caller:
+        # https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-definedosdevicea
+        windows = ctypes.create_unicode_buffer(32768)
+        require(0 < kernel.GetWindowsDirectoryW(windows, len(windows)) < len(windows)
+                and os.path.normcase(Path(windows.value).drive) == os.path.normcase(path.drive),
+                "The protected tool must reside on the actual Windows boot installation drive.")
+        canonical = ctypes.create_unicode_buffer(32768)
+        length = kernel.GetFinalPathNameByHandleW(handle, canonical, len(canonical), 0)
+        require(0 < length < len(canonical) and canonical.value.startswith("\\\\?\\")
+                and os.path.normcase(canonical.value[4:]) == os.path.normcase(str(path)),
+                "The held execution material differs from its canonical protected boot-drive location.")
+        locator = str(path)
+        if directory:
+            returned = True
+            return handle, locator, kernel.CloseHandle
+        descriptor = msvcrt.open_osfhandle(int(handle), os.O_RDONLY)
+        handle = None
+        try:
+            return os.fdopen(descriptor, "rb"), locator
+        except BaseException:
+            os.close(descriptor)
+            raise
+    finally:
+        if handle and not returned: kernel.CloseHandle(handle)
+
+
+@contextmanager
+def _signer_execution(files, executable, check):
+    """Keep real protected file/directory authority throughout admission, exec and exit."""
+    leases, directories = [], []
+    try:
+        root = executable.parent
+        require(all(Path(name).parent == root for name in files), "Signer payload must be one closed installation directory.")
+        require(all(not _linked(path) for path in (root, *root.parents)), "Linked release tool installation.")
+        for path in reversed((root, *root.parents)):
+            check()
+            if os.name == "nt": directories.append(_windows_tool_lease(path, directory=True, payload=path == root))
+            else: directories.append(_protected_posix_tool(path, directory=True))
+        invocation = None
+        for name, checksum in files.items():
+            check()
+            if os.name == "nt": stream, locator = _windows_tool_lease(Path(name))
+            else: stream, locator = _protected_posix_tool(Path(name)), name
+            leases.append(stream)
+            digest = hashlib.sha256()
+            total = 0
+            while block := stream.read(65536):
+                check()
+                total += len(block)
+                require(total <= 256 * 1024 * 1024, "Unbounded protected execution material.")
+                digest.update(block)
+            require(total > 0 and digest.hexdigest() == checksum, "The held signing tool differs from its separately approved producer.")
+            if Path(name) == executable:
+                invocation = locator
+                stream.seek(0)
+                binary = stream.read(256 * 1024 * 1024 + 1)
+                if os.name == "nt":
+                    details = pe(binary)
+                    base = struct.unpack_from("<I", binary, 60)[0] + 24
+                    require(struct.unpack_from("<II", binary, base + 112 + 14 * 8) == (0, 0)
+                            and all(system_dependency(name) for name in details["imports"]),
+                            "Only the reviewed self-contained native executable and OS dependencies are admitted.")
+                else: require(binary.startswith((b"\x7fELF", b"\xcf\xfa\xed\xfe")), "The signer must be an admitted self-contained native executable.")
+        require(invocation is not None, "Missing held signer executable.")
+        environment = {name: value for name, value in os.environ.items()
+            if name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA")}
+        if os.name == "nt":
+            import ctypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            windows, system = ctypes.create_unicode_buffer(32768), ctypes.create_unicode_buffer(32768)
+            require(0 < kernel.GetWindowsDirectoryW(windows, len(windows)) < len(windows)
+                    and 0 < kernel.GetSystemDirectoryW(system, len(system)) < len(system),
+                    "Cannot establish actual OS execution directories.")
+            environment.update(SystemRoot=windows.value, WINDIR=windows.value, PATH=system.value)
+        else: environment["PATH"] = "/usr/bin:/bin"
+        yield invocation, environment
+    finally:
+        for stream in reversed(leases): stream.close()
+        for directory in reversed(directories):
+            if os.name == "nt": directory[2](directory[0])
+            else: os.close(directory)
+
+
 @dataclass(frozen=True)
 class OfflineReleaseSigner:
     """Trusted release-operator tool configuration, never authority supplied by an artifact.
 
-    command is the reviewed native CLI or reviewed dotnet host plus CLI assembly;
-    pins binds the entire admitted tool payload as well as every command executable.
+    command is the reviewed self-contained NativeAOT CLI, never a mutable dotnet host/framework;
+    pins binds the entire admitted protected tool payload.
     The release job supplies this configuration from its separately trusted build.
     """
     command: tuple
     pins: tuple
 
     def run(self, arguments, check):
-        require(1 <= len(self.command) <= 2 and self.pins and len(self.pins) <= 128,
+        require(len(self.command) == 1 and self.pins and len(self.pins) <= 128,
                 "Missing bounded release signer tool configuration.")
         require(all(isinstance(item, str) and Path(item).is_absolute() for item in self.command)
-                and Path(self.command[-1]).name in ("ArcForges.Native.ReleaseSigner", "ArcForges.Native.ReleaseSigner.exe",
-                                                   "ArcForges.Native.ReleaseSigner.dll")
-                and (len(self.command) == 1 and Path(self.command[0]).suffix != ".dll"
-                     or len(self.command) == 2 and Path(self.command[0]).name in ("dotnet", "dotnet.exe")
-                        and Path(self.command[1]).suffix == ".dll"), "Unadmitted signing tool execution contract.")
+                and Path(self.command[0]).name == ("ArcForges.Native.ReleaseSigner.exe" if os.name == "nt" else "ArcForges.Native.ReleaseSigner"),
+                "Unadmitted signing tool execution contract.")
         files = {}
         for name, checksum in self.pins:
             path = Path(name)
@@ -736,9 +916,9 @@ class OfflineReleaseSigner:
         check()
         # The actual CLI emits closed refusal categories only. Do not forward a
         # provider diagnostic, secret reference, stdout or unbounded pipe into logs.
-        with subprocess.Popen([*self.command, *arguments], stdin=subprocess.DEVNULL,
+        with _signer_execution(files, Path(self.command[0]), check) as (invocation, environment), subprocess.Popen([invocation, *arguments], executable=invocation, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                cwd=Path(self.command[-1]).parent) as child:
+                cwd=Path(self.command[-1]).parent, env=environment) as child:
             try:
                 while child.poll() is None:
                     check()
