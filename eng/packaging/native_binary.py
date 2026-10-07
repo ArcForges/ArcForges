@@ -138,6 +138,207 @@ def inspect_bytes(data, rid):
     return _inspect_bytes(data, rid, executable=False)
 
 
+def _macho_signature_layout(data, rid):
+    """Extract only transformation boundaries; the ordinary inspector validates code mappings."""
+    info = _inspect_bytes(data, rid, executable=True)
+    r = Reader(data)
+    count, size = r.unpack("<II", 16)
+    commands, signature, linkedit, occupied = [], None, None, []
+    cursor = 32
+
+    def payload(offset, length):
+        if length:
+            r.span(offset, length)
+            occupied.append((offset, offset + length))
+
+    for _ in range(count):
+        tag, length = r.unpack("<II", cursor)
+        command = bytes(r.span(cursor, length))
+        if tag == 0x1d:
+            require(length == 16 and signature is None, "Duplicate or invalid Mach signature command.")
+            signature = (cursor, *r.unpack("<II", cursor + 8))
+        else:
+            commands.append((cursor, tag, command))
+        if tag == 0x19:
+            name = command[8:24].rstrip(b"\0")
+            address, memory, offset, extent, maximum, protections, sections, _ = r.unpack("<QQQQIIII", cursor + 24)
+            if name == b"__LINKEDIT":
+                require(linkedit is None and length == 72 and sections == 0 and
+                        not (maximum | protections) & 4 and extent > 0 and
+                        offset >= 32 + size and offset + extent == len(data),
+                        "Mach signature requires a unique nonexecutable tail LINKEDIT.")
+                linkedit = (cursor, address, memory, offset, extent)
+            for index in range(sections):
+                section = cursor + 72 + 80 * index
+                section_size = r.unpack("<Q", section + 40)[0]
+                raw = r.unpack("<I", section + 48)[0]
+                flags = r.unpack("<I", section + 64)[0]
+                if flags & 0xff not in (1, 12, 18):
+                    payload(raw, section_size)
+                relocation, relocations = r.unpack("<II", section + 56)
+                payload(relocation, relocations * 8)
+        elif tag == 2:
+            symbol, symbols, strings, string_size = r.unpack("<IIII", cursor + 8)
+            payload(symbol, symbols * 16)
+            payload(strings, string_size)
+        elif tag == 0xb:
+            require(length == 80, "Invalid Mach dynamic symbol command.")
+            for field, width in ((32, 8), (40, 56), (48, 4), (56, 4), (64, 8), (72, 8)):
+                offset, elements = r.unpack("<II", cursor + field)
+                payload(offset, elements * width)
+        elif tag in (0x22, 0x80000022):
+            for field in range(8, 48, 8):
+                payload(*r.unpack("<II", cursor + field))
+        elif tag in (0x1e, 0x26, 0x29, 0x2b, 0x2e, 0x80000033, 0x80000034):
+            require(length == 16, "Invalid Mach linkedit payload command.")
+            payload(*r.unpack("<II", cursor + 8))
+        elif tag not in (0xc, 0x80000018, 0x8000001f, 0x80000023, 0x8000001c,
+                         0x32, 0x24, 0x80000028, 4, 5, 0x1b, 0x2a, 0x1d):
+            raise ValueError("Mach signing transformation has an unexamined load command.")
+        cursor += length
+    require(linkedit is not None, "Mach signing transformation lacks LINKEDIT.")
+    tail = signature[1] if signature is not None else len(data)
+    require(linkedit[3] <= tail and all(end <= tail for _, end in occupied),
+            "Mach signature overlaps nonsignature payload.")
+    require(all(start >= 32 + size for start, end in occupied if end > start),
+            "Mach payload overlaps load command bytes.")
+    if signature is not None:
+        require(signature[2] > 0 and tail + signature[2] == len(data),
+                "Mach signature allocation is not the unique file tail.")
+    return info, commands, signature, linkedit, occupied, 32 + size
+
+
+def _validate_macho_superblob(data, offset, allocation, original=False):
+    """Validate bounded embedded signature structure, without authenticating any publisher."""
+    require(12 <= allocation <= 16 * 1024 * 1024, "Unbounded Mach signature allocation.")
+    r = Reader(data)
+    r.span(offset, allocation)
+    magic, length, count = r.unpack(">III", offset)
+    require(magic == 0xfade0cc0 and 0 < count <= 64 and
+            12 + 8 * count <= length <= allocation,
+            "Invalid Mach signature SuperBlob.")
+    require(not any(r.span(offset + length, allocation - length)),
+            "Mach signature has nonzero allocation padding.")
+    ranges, slots, directories = [], set(), []
+    for index in range(count):
+        slot, begin = r.unpack(">II", offset + 12 + index * 8)
+        require(slot not in slots and (slot in (0, 2, 5, 7, 0x10000) or 0x1000 <= slot < 0x1005),
+                "Duplicate or unexamined Mach signature slot.")
+        slots.add(slot)
+        require(12 + count * 8 <= begin <= length - 8, "Mach signature blob overlaps its index.")
+        blob_magic, extent = r.unpack(">II", offset + begin)
+        require(8 <= extent <= length - begin, "Mach signature subblob escapes allocation.")
+        ranges.append((begin, begin + extent))
+        if slot == 0 or 0x1000 <= slot < 0x1005:
+            require(blob_magic == 0xfade0c02 and extent >= 44, "Invalid Mach CodeDirectory.")
+            base = offset + begin
+            version, flags, hashes, identifier, special, codes, limit = r.unpack(">IIIIIII", base + 8)
+            require(0x20001 <= version <= 0x20500, "Unexamined Mach CodeDirectory version.")
+            header = (96 if version >= 0x20500 else 88 if version >= 0x20400 else
+                      64 if version >= 0x20300 else 52 if version >= 0x20200 else
+                      48 if version >= 0x20100 else 44)
+            require(extent >= header, "Truncated Mach CodeDirectory header.")
+            width, algorithm, _, page = r.unpack("BBBB", base + 36)
+            require(algorithm in (1, 2, 3, 4) and width == {1: 20, 2: 32, 3: 20, 4: 48}[algorithm] and
+                    page <= 16 and special <= 11 and codes <= MAX_TABLE and
+                    r.unpack(">I", base + 40)[0] == 0, "Invalid Mach CodeDirectory hash layout.")
+            if version >= 0x20100:
+                require(r.unpack(">I", base + 44)[0] == 0, "Mach scatter signing is outside the closed recipe.")
+            if version >= 0x20300:
+                require(r.unpack(">I", base + 52)[0] == 0, "Invalid Mach CodeDirectory reserved field.")
+                wide_limit = r.unpack(">Q", base + 56)[0]
+                limit = wide_limit or limit
+            require(limit == offset and codes == (1 if page == 0 else (limit + (1 << page) - 1) >> page),
+                    "Mach CodeDirectory does not cover the exact nonsignature prefix.")
+            hash_begin = hashes - special * width
+            require(header <= hash_begin <= hashes <= extent and codes * width <= extent - hashes,
+                    "Mach CodeDirectory hash slots escape its blob.")
+            require(hashes + codes * width == extent,
+                    "Mach CodeDirectory has unexamined trailing bytes.")
+            require(header <= identifier < hash_begin and
+                    data.find(b"\0", base + identifier, base + hash_begin) > base + identifier,
+                    "Mach CodeDirectory identifier is not bounded.")
+            if version >= 0x20200:
+                team = r.unpack(">I", base + 48)[0]
+                require(team == 0 or header <= team < hash_begin and
+                        data.find(b"\0", base + team, base + hash_begin) >= base + team,
+                        "Mach CodeDirectory team string is not bounded.")
+            if version >= 0x20500:
+                require(r.unpack(">I", base + 92)[0] == 0,
+                        "Mach pre-encrypt signing is outside the closed recipe.")
+            directories.append(flags)
+        else:
+            require(blob_magic == {2: 0xfade0c01, 5: 0xfade7171, 7: 0xfade7172,
+                                   0x10000: 0xfade0b01}[slot], "Mach signature slot/blob kind differs.")
+    require(0 in slots and directories, "Mach signature lacks its primary CodeDirectory.")
+    if original:
+        require(all(flags & 2 for flags in directories) and 0x10000 not in slots,
+                "Original Mach signature is not linker/ad-hoc.")
+    previous = 12 + 8 * count
+    for begin, end in sorted(ranges):
+        require(begin >= previous and not any(r.span(offset + previous, begin - previous)),
+                "Overlapping Mach signature blobs or hidden gap.")
+        previous = end
+    require(not any(r.span(offset + previous, length - previous)), "Hidden Mach signature tail.")
+
+
+def verify_macho_signature_transform(original: bytes, signed: bytes, rid: str) -> BinaryInfo:
+    """Prove the closed signing byte transformation, never OS trust or signing authorization."""
+    require(rid in ("osx-x64", "osx-arm64"), "Mach signing RID is not admitted.")
+    old = _macho_signature_layout(original, rid)
+    new = _macho_signature_layout(signed, rid)
+    old_info, old_commands, old_signature, old_link, occupied, old_end = old
+    new_info, new_commands, new_signature, new_link, _, new_end = new
+    require(new_signature is not None, "Signed Mach executable lacks a signature.")
+    if old_signature is not None:
+        _validate_macho_superblob(original, old_signature[1], old_signature[2], original=True)
+    _validate_macho_superblob(signed, new_signature[1], new_signature[2])
+    require(old_info == new_info and len(old_commands) == len(new_commands),
+            "Mach signing changed executable identity or command inventory.")
+    insertion = old_signature is None
+    if insertion:
+        require(new_end == old_end + 16 and new_signature[0] == old_end and
+                not any(original[old_end:old_end + 16]) and len(original[old_end:old_end + 16]) == 16 and
+                all(end <= old_end or start >= old_end + 16 for start, end in occupied),
+                "Mach signature insertion lacks original zero header padding.")
+    else:
+        require(new_end == old_end and new_signature[0] == old_signature[0],
+                "Mach signature command moved.")
+    old_tail = old_signature[1] if old_signature is not None else len(original)
+    new_tail = new_signature[1]
+    require(new_tail == (old_tail + 15) & ~15 and not any(signed[old_tail:new_tail]),
+            "Mach signing relocated the body or added hidden alignment bytes.")
+    require(old_link[:2] == new_link[:2] and old_link[3] == new_link[3] and
+            new_link[4] == len(signed) - new_link[3], "Mach LINKEDIT mapping changed.")
+    alignment = 4096 if rid == "osx-x64" else 16384
+    require(old_link[2] == (old_link[4] + alignment - 1) & -alignment and
+            new_link[2] == (new_link[4] + alignment - 1) & -alignment,
+            "Mach LINKEDIT memory extent differs from architecture alignment.")
+    masks = [(16, 24), (old_link[0] + 32, old_link[0] + 40),
+             (old_link[0] + 48, old_link[0] + 56),
+             (new_signature[0], new_signature[0] + 16)]
+    previous = 0
+    for begin, end in sorted(masks):
+        require(begin >= previous and end <= old_tail and original[previous:begin] == signed[previous:begin],
+                "Mach signing changed nonsignature bytes.")
+        previous = end
+    require(original[previous:old_tail] == signed[previous:old_tail],
+            "Mach signing changed nonsignature body bytes.")
+    require(struct.unpack_from("<II", signed, 16) ==
+            tuple(value + (1 if index == 0 else 16) * insertion for index, value in
+                  enumerate(struct.unpack_from("<II", original, 16))),
+            "Mach signature insertion changed header counters unexpectedly.")
+    for (old_offset, old_tag, old_command), (new_offset, new_tag, new_command) in zip(old_commands, new_commands):
+        require(old_offset == new_offset and old_tag == new_tag,
+                "Mach signing reordered existing load commands.")
+        if old_offset == old_link[0]:
+            require(old_command[:32] == new_command[:32] and old_command[40:48] == new_command[40:48] and
+                    old_command[56:] == new_command[56:], "Mach signing changed LINKEDIT protections/layout.")
+        else:
+            require(old_command == new_command, "Mach signing changed a load command.")
+    return new_info
+
+
 def _inspect_bytes(data, rid, executable):
     require(rid in RIDS, "Native RID is not admitted.")
     reader = Reader(data)

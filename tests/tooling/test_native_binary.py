@@ -544,5 +544,166 @@ class ActualUpstreamBinaryTests(unittest.TestCase):
                     self.assertEqual(("ADVAPI32.dll", "GDI32.dll", "KERNEL32.dll", "USER32.dll"), info.imports)
 
 
+class MachSignatureTransformationTests(unittest.TestCase):
+    """Structural byte witnesses only; no codesign, publisher, entitlement or OS proof."""
+
+    @staticmethod
+    def signature(adhoc=False, reserved=0, limit=0x1100):
+        codes = (limit + 4095) // 4096
+        directory = struct.pack(">IIIIIIIIIBBBBI", 0xfade0c02, 48 + codes * 32, 0x20001,
+                                2 if adhoc else 0, 48, 44, 0, codes, limit, 32, 2, 0, 12, 0)
+        directory += b"id\0\0" + bytes(codes * 32)
+        return struct.pack(">IIIII", 0xfade0cc0, 20 + len(directory), 1, 0, 20) + directory + bytes(reserved)
+
+    @staticmethod
+    def original(cpu=0x01000007):
+        data = NativeExecutableTests.mach_executable(cpu)
+        count, size = struct.unpack_from("<II", data, 16)
+        end = 32 + size
+        data[end:0x600] = bytes(0x600 - end)
+        link = bytearray(72)
+        put(link, 0, "<II", 0x19, 72)
+        link[8:18] = b"__LINKEDIT"
+        alignment = 4096 if cpu == 0x01000007 else 16384
+        put(link, 24, "<QQQQIIII", 0x4000, alignment, 0x1000, 0x100, 1, 1, 0, 0)
+        data[end:end + 72] = link
+        put(data, 16, "<II", count + 1, size + 72)
+        data.extend(bytes(0x100))
+        data[0x1000:0x1008] = b"material"
+        return data
+
+    @classmethod
+    def sign(cls, original, cpu=0x01000007, adhoc=False, reserved=0):
+        data = bytearray(original)
+        count, size = struct.unpack_from("<II", data, 16)
+        end, cursor, signature_offset, link_offset = 32 + size, 32, None, None
+        for _ in range(count):
+            tag, length = struct.unpack_from("<II", data, cursor)
+            if tag == 0x1d:
+                signature_offset = cursor
+            if tag == 0x19 and bytes(data[cursor + 8:cursor + 24]).rstrip(b"\0") == b"__LINKEDIT":
+                link_offset = cursor
+            cursor += length
+        if signature_offset is None:
+            signature_offset = end
+            put(data, 16, "<II", count + 1, size + 16)
+            tail = len(data)
+        else:
+            tail = struct.unpack_from("<I", data, signature_offset + 8)[0]
+            del data[tail:]
+        offset = (tail + 15) & ~15
+        data.extend(bytes(offset - len(data)))
+        blob = cls.signature(adhoc, reserved, offset)
+        data.extend(blob)
+        put(data, signature_offset, "<IIII", 0x1d, 16, offset, len(blob))
+        file_offset = struct.unpack_from("<Q", data, link_offset + 40)[0]
+        extent = len(data) - file_offset
+        alignment = 4096 if cpu == 0x01000007 else 16384
+        put(data, link_offset + 32, "<Q", (extent + alignment - 1) & -alignment)
+        put(data, link_offset + 48, "<Q", extent)
+        return data
+
+    def test_both_architectures_insertion_adhoc_replacement_and_reserved_zeros(self):
+        for cpu, rid in ((0x01000007, "osx-x64"), (0x0100000c, "osx-arm64")):
+            original = self.original(cpu)
+            signed = self.sign(original, cpu, reserved=16)
+            actual = binary.verify_macho_signature_transform(bytes(original), bytes(signed), rid)
+            self.assertEqual(0x800, actual.entrypoint)
+            self.assertEqual("executable", actual.kind)
+            adhoc = self.sign(original, cpu, adhoc=True)
+            replaced = self.sign(adhoc, cpu, reserved=32)
+            self.assertEqual(actual, binary.verify_macho_signature_transform(bytes(adhoc), bytes(replaced), rid))
+
+    def test_code_data_command_mapping_entry_and_header_changes_refuse(self):
+        original = self.original()
+        signed = self.sign(original)
+        mutations = ((0x800, 1), (0x1000, 1), (28, 1), (32 + 56, 1), (32 + 32, 1), (32 + 104, 1))
+        for offset, value in mutations:
+            hostile = bytearray(signed)
+            hostile[offset] ^= value
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+
+    def test_padding_extra_tail_signature_ranges_and_original_nonadhoc_refuse(self):
+        original = self.original()
+        signed = self.sign(original)
+        with self.assertRaisesRegex(ValueError, "ad-hoc"):
+            binary.verify_macho_signature_transform(bytes(signed), bytes(self.sign(signed)), "osx-x64")
+        end = 32 + struct.unpack_from("<I", original, 20)[0]
+        dirty = bytearray(original)
+        dirty[end + 1] = 1
+        with self.assertRaisesRegex(ValueError, "padding"):
+            binary.verify_macho_signature_transform(bytes(dirty), bytes(signed), "osx-x64")
+        for offset, fmt, values in ((len(original), ">I", (0,)),
+                                    (len(original) + 16, ">I", (12,)),
+                                    (len(original) + 4, ">I", (4096,)),
+                                    (len(original) + 8, ">I", (65,)),
+                                    (len(original) + 12, ">I", (0xdead,))):
+            hostile = bytearray(signed)
+            put(hostile, offset, fmt, *values)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+        hostile = bytearray(signed)
+        hostile.append(1)
+        with self.assertRaises(ValueError):
+            binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+        for rid in ("win-x64", "osx-arm64", "unavailable"):
+            with self.assertRaises(ValueError):
+                binary.verify_macho_signature_transform(bytes(original), bytes(signed), rid)
+
+    def test_code_directory_internal_offsets_versions_and_prefix_coverage_refuse(self):
+        original = self.original()
+        signed = self.sign(original)
+        directory = len(original) + 20
+        mutations = ((8, ">I", 0x20600), (16, ">I", 4), (20, ">I", 1000),
+                     (24, ">I", 1000), (28, ">I", 0), (32, ">I", 0),
+                     (36, "B", 1), (37, "B", 99), (39, "B", 255), (40, ">I", 1))
+        for offset, fmt, value in mutations:
+            hostile = bytearray(signed)
+            put(hostile, directory + offset, fmt, value)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+
+    def test_duplicate_signature_index_and_linkedit_code_mappings_refuse(self):
+        original = self.original()
+        signed = self.sign(original)
+        count, size = struct.unpack_from("<II", signed, 16)
+        signature_command = 32 + size - 16
+        hostile = bytearray(signed)
+        hostile[signature_command + 16:signature_command + 32] = hostile[signature_command:signature_command + 16]
+        put(hostile, 16, "<II", count + 1, size + 16)
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+        link_command = signature_command - 72
+        for offset, value in ((link_command + 56, 5), (link_command + 60, 5),
+                              (link_command + 40, 0x800), (link_command + 32, 0x3000)):
+            hostile = bytearray(signed)
+            put(hostile, offset, "<I", value)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+        # Export metadata may not be truncated merely because it lies in a replaced signature tail.
+        adhoc = self.sign(original, adhoc=True)
+        cursor = 32
+        for _ in range(struct.unpack_from("<I", adhoc, 16)[0]):
+            tag, length = struct.unpack_from("<II", adhoc, cursor)
+            if tag == 0x80000033:
+                put(adhoc, cursor + 8, "<II", len(original), 12)
+                break
+            cursor += length
+        with self.assertRaises(ValueError):
+            binary.verify_macho_signature_transform(bytes(adhoc), bytes(self.sign(adhoc)), "osx-x64")
+
+    def test_non_signature_commands_cannot_be_reordered_or_extended(self):
+        original = self.original()
+        signed = self.sign(original)
+        count, size = struct.unpack_from("<II", signed, 16)
+        hostile = bytearray(signed)
+        end = 32 + size
+        put(hostile, end, "<II", 0xdead, 8)
+        put(hostile, 16, "<II", count + 1, size + 8)
+        with self.assertRaisesRegex(ValueError, "unexamined"):
+            binary.verify_macho_signature_transform(bytes(original), bytes(hostile), "osx-x64")
+
+
 if __name__ == "__main__":
     unittest.main()
