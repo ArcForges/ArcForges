@@ -761,6 +761,71 @@ class ImageRuntimeTests(unittest.TestCase):
                 child.stdin.close()
                 child.stdout.close()
 
+    def test_compiled_posix_alias_requires_exact_inventory_target_and_never_admits_runtime_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "lib"
+            directory.mkdir()
+            target, alias = directory / "libpng16.a", directory / "libpng.a"
+            target.write_bytes(b"Actual static archive component fixture")
+            expected = hashlib.sha256(target.read_bytes()).hexdigest()
+            try:
+                alias.symlink_to(target.name)
+            except OSError:
+                self.skipTest("Actual host cannot create POSIX-style symlink fixture.")
+            inventory = {"x64-linux/lib/libpng16.a": ("x64-linux/lib/libpng16.a", expected),
+                         "x64-linux/lib/libpng.a": ("x64-linux/lib/libpng.a", expected)}
+            image._verify_compiled_input(alias, root, "x64-linux", inventory, expected, None)
+            self.assertRaisesRegex(ValueError, "Linked", image._regular, alias, root)
+            self.assertRaisesRegex(ValueError, "absent", image._verify_compiled_input, alias, root,
+                                   "x64-linux", {}, expected, None)
+            bad = dict(inventory)
+            bad["x64-linux/lib/libpng16.a"] = ("x64-linux/lib/LIBPNG16.a", expected)
+            self.assertRaisesRegex(ValueError, "aliased", image._verify_compiled_input, alias, root,
+                                   "x64-linux", bad, expected, None)
+            target.write_bytes(b"Changed archive bytes")
+            self.assertRaisesRegex(ValueError, "bytes differ", image._verify_compiled_input, alias, root,
+                                   "x64-linux", inventory, expected, None)
+            target.write_bytes(b"Actual static archive component fixture")
+            alias.unlink()
+            alias.symlink_to("../foreign.a")
+            self.assertRaisesRegex(ValueError, "Unsafe", image._verify_compiled_input, alias, root,
+                                   "x64-linux", inventory, expected, None)
+            alias.unlink()
+            alias.symlink_to(str(target.resolve()))
+            self.assertRaisesRegex(ValueError, "Unsafe", image._verify_compiled_input, alias, root,
+                                   "x64-linux", inventory, expected, None)
+            alias.unlink()
+            middle = directory / "middle.a"
+            middle.symlink_to(target.name)
+            alias.symlink_to(middle.name)
+            self.assertRaisesRegex(ValueError, "Linked", image._verify_compiled_input, alias, root,
+                                   "x64-linux", inventory, expected, None)
+
+    def test_compiled_posix_alias_retarget_during_actual_hash_refuses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target, alias, replacement = root / "actual.a", root / "alias.a", root / "other.a"
+            target.write_bytes(b"Same admitted bytes")
+            replacement.write_bytes(target.read_bytes())
+            try:
+                alias.symlink_to(target.name)
+            except OSError:
+                self.skipTest("Actual host cannot create POSIX-style symlink fixture.")
+            expected = hashlib.sha256(target.read_bytes()).hexdigest()
+            inventory = {"x64-linux/actual.a": ("x64-linux/actual.a", expected)}
+            actual_digest = image.digest
+
+            def retarget(path, cancelled=None, *args, **kwargs):
+                result = actual_digest(path, cancelled, *args, **kwargs)
+                alias.unlink()
+                alias.symlink_to(replacement.name)
+                return result
+
+            with patch.object(image, "digest", side_effect=retarget):
+                self.assertRaisesRegex(ValueError, "changed", image._verify_compiled_input, alias, root,
+                                       "x64-linux", inventory, expected, None)
+
     def test_real_dependency_abi_tool_receipts_refuse_mismatched_or_duplicate_versions(self):
         base = {"buildTools": {"vcpkgCMake": "4.4.0"}}
         with tempfile.TemporaryDirectory() as temporary:

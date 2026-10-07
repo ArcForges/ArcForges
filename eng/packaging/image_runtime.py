@@ -771,6 +771,30 @@ def _compiled_expected(admitted, path):
     return row[1]
 
 
+def _verify_compiled_input(path, root, triplet, admitted, expected, cancelled):
+    path, root = Path(path), Path(root)
+    if not _link(path):
+        require(digest(_regular(path, root), cancelled) == expected,
+                "Actual compiled/header Image dependency differs from its SBOM.")
+        return
+    # vcpkg installs POSIX static-library/pkgconfig aliases. They are inventory
+    # evidence only: neither symlinks nor link targets become copied runtime paths.
+    require(path.is_symlink() and not (hasattr(path, "is_junction") and path.is_junction()),
+            "Invalid compiled Image alias kind.")
+    before = path.lstat()
+    relative = os.readlink(path)
+    _path(relative)  # No absolute target, traversal or normalized alias spelling.
+    target = _regular(path.parent / relative, root)
+    target_name = triplet + "/" + target.relative_to(root).as_posix()
+    require(_compiled_expected(admitted, target_name) == expected,
+            "Compiled Image alias target differs from its exact admitted SPDX inventory.")
+    require(digest(target, cancelled) == expected, "Compiled Image alias target bytes differ from its SPDX inventory.")
+    after = path.lstat()
+    require(before.st_dev == after.st_dev and before.st_ino == after.st_ino and
+            before.st_mtime_ns == after.st_mtime_ns and before.st_size == after.st_size and
+            os.readlink(path) == relative, "Compiled Image alias changed during verification.")
+
+
 def _verify_compiled_runtime(row, triplet, compiled, content):
     source_path = row.get("sourceSpdxPath")
     require(isinstance(source_path, str) and source_path.startswith(triplet + "/") and
@@ -823,11 +847,8 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
         require(digest(share / "copyright", cancelled, lf=True) in expected_legal,
                 "Image dependency legal material differs from reviewed originals: " + name)
         for relative, expected in _compiled_inventory(sbom, triplet, compiled):
-            require(not _link(inputs.installed_directory / triplet / relative),
-                    "Linked compiled Image dependency material: " + name + "/" + relative)
-            require(digest(_regular(inputs.installed_directory / triplet / relative,
-                    inputs.installed_directory / triplet), cancelled) == expected,
-                    "Actual compiled/header Image dependency differs from its SBOM: " + name + "/" + relative)
+            _verify_compiled_input(inputs.installed_directory / triplet / relative,
+                                  inputs.installed_directory / triplet, triplet, compiled, expected, cancelled)
         for resource in component["resources"]:
             source = _regular(inputs.downloads / resource["cacheName"], inputs.downloads)
             require(digest(source, cancelled, "sha512") == resource["sha512"], "Image source archive integrity mismatch.")

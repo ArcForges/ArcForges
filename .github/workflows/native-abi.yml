@@ -85,6 +85,8 @@ jobs:
         shell: pwsh
         run: |
           if ($IsLinux) {
+            # Inherited force-system mode emits ABI tool version0. Preserve real pinned version detection.
+            Remove-Item Env:VCPKG_FORCE_SYSTEM_BINARIES -ErrorAction SilentlyContinue
             python eng/packaging/image_runtime.py acquire-legal --rid $env:IMAGE_RID --downloads $env:VCPKG_DOWNLOADS
             if ($LASTEXITCODE) { throw 'Original Linux external-tool legal acquisition failed.' }
             python eng/packaging/image_runtime.py observe-tools --rid $env:IMAGE_RID --downloads $env:VCPKG_DOWNLOADS
