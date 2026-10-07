@@ -923,6 +923,23 @@ class PortablePdfiumProfileTests(unittest.TestCase):
 
 
 class NativeFamilyFilesystemTests(unittest.TestCase):
+    def test_outer_real_deadline_survives_nested_unavailable_adapter_verification(self):
+        # The Image adapter has not been admitted into this partial producer.
+        # Only that unavailable dependency is faked; the real monotonic budget
+        # and central callback handoff execute without a fake clock.
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); identifier='ArcForges.Native.Image.Runtime.win-x64'
+            (root/identifier).mkdir(); (root/identifier/'image-production-input.json').write_bytes(b'{}')
+            producer.write_json(root/'native-artifact.json',{'sourceCommit':'a'*40,'rid':'win-x64','packages':[{'id':identifier}]})
+            def unavailable_verify(directory,source,repo,cancelled=None):
+                time.sleep(.03)
+                cancelled()
+                self.fail('Nested adapter escaped original deadline')
+            guard=producer._progress(deadline=time.monotonic()+.015)
+            with patch.dict(sys.modules,{'image_runtime':SimpleNamespace(verify_stage=unavailable_verify)}):
+                with self.assertRaises(TimeoutError):
+                    producer.verify_family_stage(root,'a'*40,'Image','win-x64',cancelled=lambda:(guard(),False)[1])
+
     def test_real_copy_refuses_growth_replacement_extra_material_and_cancellation(self):
         for fault in ('grow', 'replace', 'extra', 'cancel'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:

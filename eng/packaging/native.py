@@ -394,7 +394,7 @@ def _linked(path):
 
 
 def _progress(cancelled=None, deadline=None):
-    deadline = time.monotonic() + 180 if deadline is None else deadline
+    deadline = min(time.monotonic() + 180, deadline) if deadline is not None else time.monotonic() + 180
     def check():
         if cancelled is not None and cancelled(): raise InterruptedError("Native composition cancelled.")
         if time.monotonic() >= deadline: raise TimeoutError("Native composition deadline exceeded.")
@@ -454,12 +454,13 @@ def _copy_inventory(source, destination, expected, check=None):
     for name, checksum in sorted(expected.items()):
         check()
         name = _relative(name)
+        require(len(name.split("/")) <= 65, "Native copy depth exceeds its bound.")
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         require(all(not _linked(parent) for parent in (target.parent, *target.parent.parents)),
                 "Linked native copy destination.")
         with target.open("xb") as outgoing:
-            actual, size = _bounded_file(source / name, check, outgoing)
+            actual, size = _bounded_file(source / name, check, outgoing, maximum=4 * 1024 * 1024 * 1024 - total)
         total += size
         require(total <= 4 * 1024 * 1024 * 1024 and actual == checksum,
                 "Native copy inventory bytes/aggregate differ.")
@@ -580,9 +581,9 @@ def verify_family_stage(directory, commit, family, rid, cancelled=None):
         package = Path(directory) / expected
         if (package / "image-production-input.json").is_file():
             import image_runtime
-            return image_runtime.verify_stage(Path(directory), commit, ROOT)
+            return image_runtime.verify_stage(Path(directory), commit, ROOT, cancelled=cancelled)
         require(rid == "win-x64", "Only the historical win-x64 Image stage has a legacy receipt.")
-        return _verify_legacy_stage(Path(directory), commit)
+        return _verify_legacy_stage(Path(directory), commit, cancelled=cancelled)
     return native_provenance.verify_pdf_runtime_stage(Path(directory), commit, ROOT, cancelled=cancelled)
 
 
@@ -657,8 +658,8 @@ def verify_stage(directory, commit, cancelled=None):
             return native_provenance.verify_pdf_runtime_stage(directory, commit, ROOT, cancelled=cancelled)
         if len(packages) == 1 and (directory / packages[0]["id"] / "image-production-input.json").is_file():
             import image_runtime
-            return image_runtime.verify_stage(directory, commit, ROOT)
-        return _verify_legacy_stage(directory, commit)
+            return image_runtime.verify_stage(directory, commit, ROOT, cancelled=cancelled)
+        return _verify_legacy_stage(directory, commit, cancelled=cancelled)
     verify_identity(artifact, commit)
     require(digest(directory / "native-family-index.json") == artifact["familyIndexSha256"],
             "Native family index differs from its bound artifact.")
@@ -762,18 +763,24 @@ def verify_package_handoff(directory, artifact, commit):
     return index
 
 
-def _verify_legacy_stage(directory, commit):
+def _verify_legacy_stage(directory, commit, cancelled=None):
+    check = _progress(cancelled)
+    check()
+    before = _inventory(directory, check=check)
     artifact = json.loads((directory / "native-artifact.json").read_text())
     verify_identity(artifact, commit)
     for package in artifact["packages"]:
+        check()
         base = directory / package["id"]
         native_provenance.verify(package["id"], lambda path: native_provenance.provenance.read(base, path),
                                  {p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()})
         require({str(p.relative_to(base)).replace("\\", "/") for p in base.rglob("*") if p.is_file()}
                 == {p["path"] for p in package["files"]}, "Unexpected/missing native artifact file.")
         for row in package["files"]:
+            check()
             path = (base / row["path"]).resolve()
-            require(path.is_relative_to(base.resolve()) and digest(path) == row["sha256"], "Native artifact hash/path mismatch.")
+            require(path.is_relative_to(base.resolve()) and _bounded_file(path, check)[0] == row["sha256"], "Native artifact hash/path mismatch.")
+    require(_inventory(directory, check=check) == before, "Legacy native stage changed during verification.")
     print("Native artifact source, package set and file hashes verified.", flush=True)
     return artifact
 

@@ -1118,7 +1118,7 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
     require(not audit["dirty"], "PDF producer requires clean admitted source")
     identity = build_identity.build_identity(root)
     recipe = _pdf_portable_recipe(build_directory, native_prefix, pdfium_directory / "pdfium", rid,
-                                  identity, root, cancelled)
+                                  identity, root, lambda: (check(), False)[1])
     own_profile = provenance.document(provenance.read(root, "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json"))
     policy, _ = _pdf_system_policy(rid, root)
     owned_name = own_profile["rids"][rid]["library"]
@@ -1201,7 +1201,7 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
                       "compilerRuntimeSignatures": signatures, "files": [{"path": name, "sha256": checksum}
                           for name, checksum in sorted(producer._inventory(staging).items())]}
             (staging / "pdfium-production-input.json").write_bytes(canonical(result))
-            verify_pdf_runtime_input(staging, audit["sourceCommit"], root)
+            verify_pdf_runtime_input(staging, audit["sourceCommit"], root, cancelled=lambda: (check(), False)[1])
             if cancelled and cancelled(): raise InterruptedError("PDF promotion cancelled")
             producer._flush_tree(staging, check=check)
             staging.replace(destination)
@@ -1423,7 +1423,7 @@ def stage_pdf_runtime(destination: Path, rid: str, sealed_input: Path, root: Pat
     require(rid in producer.RIDS, "Unadmitted PDF runtime RID")
     require(not destination.exists(), "PDF package candidate exists; preserve tested bytes")
     source = producer._read_document(sealed_input / "pdfium-production-input.json")["sourceCommit"]
-    handoff = verify_pdf_runtime_input(sealed_input, source, root, cancelled=cancelled)
+    handoff = verify_pdf_runtime_input(sealed_input, source, root, cancelled=lambda: (check(), False)[1])
     require(handoff["rid"] == rid, "PDF input has a different RID")
     import build_identity
     require(source == build_identity.git(root, "rev-parse", "HEAD"), "PDF input must match the actual packaging source cohort")
@@ -1439,14 +1439,14 @@ def stage_pdf_runtime(destination: Path, rid: str, sealed_input: Path, root: Pat
             before = producer._inventory(sealed_input, check=check)
             producer._copy_inventory(sealed_input, package, before, check)
             require(producer._inventory(package) == before, "PDF sealed bytes changed during package handoff")
-            copied = verify_pdf_runtime_input(package, source, root, cancelled=cancelled)
+            copied = verify_pdf_runtime_input(package, source, root, cancelled=lambda: (check(), False)[1])
             require(copied["inspectedBinaries"] == handoff["inspectedBinaries"], "PDF copied metadata changed")
             _prepare_pdf_runtime(package, rid, source, handoff, imports, system_hash, root)
             artifact = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "build": handoff["build"],
                         "packages": [{"id": identifier, "files": [{"path": path, "sha256": checksum}
                                      for path, checksum in sorted(producer._inventory(package).items())]}]}
             (staging / "native-artifact.json").write_bytes(canonical(artifact))
-            verify_pdf_runtime_stage(staging, source, root, cancelled=cancelled)
+            verify_pdf_runtime_stage(staging, source, root, cancelled=lambda: (check(), False)[1])
             check()
             producer._flush_tree(staging, check=check)
             check()
@@ -1519,7 +1519,7 @@ def verify_pdf_runtime_stage(directory: Path, source_commit: str, root: Path = R
         expected[name] = row["sha256"]
     require(producer._inventory(package, check=check) == expected, "PDF package file bytes/closure differ")
     verify_pdf_package({"id": identifier, "rid": artifact["rid"], "library": "ArcPdfNative"},
-                       lambda name: provenance.read(package, name), set(expected), source_commit, root, cancelled=cancelled)
+                       lambda name: provenance.read(package, name), set(expected), source_commit, root, cancelled=lambda: (check(), False)[1])
     require(producer._inventory(directory, check=check) == {"native-artifact.json": digest_file(directory / "native-artifact.json"),
             **{identifier + "/" + name: checksum for name, checksum in expected.items()}}, "Unexpected PDF artifact material")
     return artifact
@@ -1556,7 +1556,7 @@ def verify_pdf_package(entry: dict, read, names: set[str], source_commit: str, r
             path.parent.mkdir(parents=True, exist_ok=True)
             require(not path.exists(), "Repeated reconstructed PDF producer material")
             path.write_bytes(content)
-        inspected = verify_pdf_runtime_input(handoff, source_commit, root, cancelled=cancelled)
+        inspected = verify_pdf_runtime_input(handoff, source_commit, root, cancelled=lambda: (check(), False)[1])
         check()
     require(read("native-manifest.json") == read(f"runtimes/{rid}/native/ArcPdfNative.manifest.json"), "PDF deployed manifest differs")
     manifest = provenance.document(read("native-manifest.json"))
