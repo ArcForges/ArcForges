@@ -312,6 +312,11 @@ internal sealed class OsHarness : IDisposable
         && Environment.GetEnvironmentVariable("ARCFORGES_CONTENTSANDBOX_OS") == "1"
         && Directory.Exists(Environment.GetEnvironmentVariable("ARCFORGES_CONTENTSANDBOX_FIXTURE"));
 
+    // The explicit local component mode selects only a profile registered in the separate hostile fixture.
+    // That profile must preload both genuine production libraries before applying the same OS restrictions.
+    internal static bool UsesProductionNativeClosure =>
+        Environment.GetEnvironmentVariable("ARCFORGES_CONTENTSANDBOX_NATIVE_HOSTILE") == "1";
+
     internal string ExecutablePath { get; }
 
     internal byte[] Digest { get; }
@@ -344,7 +349,7 @@ internal sealed class OsHarness : IDisposable
     {
         HelperPath = ExecutablePath,
         HelperSha256 = Digest,
-        ParserProfile = HostileFixture.HostileProfile.ProfileId,
+        ParserProfile = UsesProductionNativeClosure ? Host.ProductionParserProfile.ProfileId : HostileFixture.HostileProfile.ProfileId,
         LocalUnsignedFixture = true,
         RuntimeRoot = Fixtures.NewRoot(),
         Limits = new ContentSandboxLimits { TimeoutMs = 10000, MaxWidth = 4096, MaxHeight = 4096 },
@@ -421,7 +426,7 @@ internal static class ParentMode
         {
             HelperPath = executable,
             HelperSha256 = SHA256.HashData(File.ReadAllBytes(executable)),
-            ParserProfile = production ? Host.ProductionParserProfile.ProfileId : HostileFixture.HostileProfile.ProfileId,
+            ParserProfile = production || OsHarness.UsesProductionNativeClosure ? Host.ProductionParserProfile.ProfileId : HostileFixture.HostileProfile.ProfileId,
             LocalUnsignedFixture = true,
             RuntimeRoot = Environment.GetEnvironmentVariable("ARCFORGES_CS_ROOT")!,
             SlotCapacityBytes = 1024 * 1024,
