@@ -1102,7 +1102,13 @@
     "docs/production-parser-containment.md",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/InvocationCancellationAdmissionTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ProductionContainmentProfile.cs",
-    "docs/build-policy-non-wire-cycle-detection.md"
+    "docs/build-policy-non-wire-cycle-detection.md",
+    "docs/native-installation-credential-custody.md",
+    "src/BuildingBlocks/ArcForges.Security.Secrets/InstallationCredentialBroker.cs",
+    "src/BuildingBlocks/ArcForges.Security.Secrets/InstallationCredentialModels.cs",
+    "src/BuildingBlocks/ArcForges.Security.Secrets/InstallationCredentialRecord.cs",
+    "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/InstallationCredentialStartupHook.cs",
+    "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/InstallationCredentialTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

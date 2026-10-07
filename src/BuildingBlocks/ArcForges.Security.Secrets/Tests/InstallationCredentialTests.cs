@@ -29,6 +29,7 @@ public sealed class InstallationCredentialTests
         await using var reopened = Broker(scope, store);
         var repeated = Value(await reopened.InitializeNewInstallationAsync(TestContext.Current.CancellationToken));
         Assert.Equal(original.GetPublicKey(), repeated.GetPublicKey()); Assert.Equal(1, repeated.KeyVersion); Assert.Equal(1, store.Writes);
+        Assert.Equal("InstallationCredentialIdentity:[public metadata]", original.ToString());
         Assert.All(store.ReadBuffers, static bytes => Assert.All(bytes, static value => Assert.Equal(0, value)));
     }
 
