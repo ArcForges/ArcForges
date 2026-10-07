@@ -1,0 +1,12 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+# Bounded non-wire metadata flow analysis
+
+The production shared Build.Policy engine classifies only exact reviewed immutable metadata types. Generated wire records, RPC arguments and serializer payloads must never carry that metadata, including through object erasure, getters, wrappers or collection projections.
+
+A single flow query shares its type traversal and active symbol stack. A recursive wire Parser/Clone or descriptor cycle cannot restart a fresh traversal context. Completed semantic states are reused only inside that query. Reset clears every visited state, semantic identifier and budget counter before the next payload, attribute or invocation query.
+
+Expression reuse binds the actual Roslyn symbol and substituted type, and retains every receiver and argument origin. Composite keys use length framing. Unsupported expressions retain exact syntax-node and compilation identity rather than a guessed equivalence. Ordinary scalar projections remain safe; generic type arguments and object initializer origins remain part of the analysis.
+
+The limits are a total 65,536 distinct charged traversal states per query, 256 active source symbols and 256 active expression frames. These are total-state and active-depth limits, independent of worklist size. Type and array traversal uses an explicit charged worklist so deep signatures do not borrow the CLR call stack. Primitive scalar-array proof remains separately bounded at 128 layers and semantic key construction at 32 layers. A genuinely fresh over-limit graph or unresolved origin still fails closed. This is neither a generated-code exemption nor permission to serialize a metadata catalogue. Existing exact owner, source-hash, shape, serializer-symbol and RPC rules remain in force.
+
+The focused compiled regressions cover safe self/mutual cycles, metadata-bearing branches after a cycle, distinct generic receiver/argument origins, named and reordered Select arguments, safe scalar arrays, deep array element origins, source and expression depth refusal, and more than 65,536 genuinely fresh states. These checks establish component behavior. The real ApplicationReflection diagnostic measured 35,337 charged states, source depth 132 and expression depth 216; that measurement motivates the reviewed finite bounds and does not replace production component or consumer gates. Real consumer candidate CI and ordinary source-bound package publication remain separate delivery gates; no OS or deployment acceptance is inferred from source analysis.

@@ -10,7 +10,9 @@ namespace ArcForges.Build.Policy.Architecture;
 /// <summary>Source-bound, closed immutable metadata classification; never a namespace or wire exemption.</summary>
 internal static class NonWireMetadataPolicy
 {
-    private const int TraversalLimit = 2048;
+    private const int TraversalLimit = 65536;
+    private const int SourceDepthLimit = 256;
+    private const int ExpressionDepthLimit = 256;
     private static readonly HashSet<string> Strings = new(StringComparer.Ordinal)
     {
         "OperationId", "Binding", "Surface", "Scope", "Idempotency", "Profile", "SourceRule", "Capability",
@@ -296,6 +298,16 @@ internal static class NonWireMetadataPolicy
         || type is INamedTypeSymbol named && named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
             && named.DeclaringSyntaxReferences.Length == 0 && Core(named.ContainingAssembly) && Primitive(named.TypeArguments[0]);
 
+    private static bool ScalarValueType(ITypeSymbol? type)
+    {
+        for (int depth = 0; depth < 128; depth++)
+        {
+            if (type is not IArrayTypeSymbol array) return Primitive(type);
+            type = array.ElementType;
+        }
+        return false;
+    }
+
     private static bool Canonical(SemanticModel model, InvocationExpressionSyntax invocation, string type, string name) =>
         model.GetSymbolInfo(invocation).Symbol is IMethodSymbol method && method.Name == name
         && method.ContainingType.ToDisplayString() == type && method.DeclaringSyntaxReferences.Length == 0 && Core(method.ContainingAssembly);
@@ -341,6 +353,16 @@ internal static class NonWireMetadataPolicy
         private readonly HashSet<INamedTypeSymbol> _metadata;
         private readonly Dictionary<ISymbol, List<(ExpressionSyntax Expression, SemanticModel Model)>> _sources = new(SymbolEqualityComparer.Default);
         private int _steps;
+        // Query-local semantic states; no result or traversal budget survives Reset.
+        private readonly HashSet<string> _queryTypes = new(StringComparer.Ordinal);
+        private readonly HashSet<ITypeSymbol> _queryArrayTypes = new(SymbolEqualityComparer.Default);
+        private readonly HashSet<ISymbol> _querySymbols = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ISymbol, bool> _queryCompletedSymbols = new(SymbolEqualityComparer.Default);
+        private int _queryExpressionDepth;
+        private readonly HashSet<string> _queryExpressions = new(StringComparer.Ordinal);
+        private readonly Dictionary<ISymbol,int> _querySymbolIds = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<SyntaxNode,int> _queryNodeIds = [];
+        private readonly Dictionary<Compilation,int> _queryCompilationIds = [];
         public bool Exhausted { get; private set; }
         public Flow(IReadOnlyDictionary<INamedTypeSymbol, ProjectFacts> projects,
             IReadOnlyDictionary<string, Microsoft.CodeAnalysis.CSharp.CSharpCompilation> compilations, HashSet<INamedTypeSymbol> metadata)
@@ -380,15 +402,15 @@ internal static class NonWireMetadataPolicy
                         if (node is InvocationExpressionSyntax projection && Canonical(model, projection, "System.Linq.Enumerable", "Select")
                             && model.GetSymbolInfo(projection).Symbol is IMethodSymbol select)
                         {
-                            var selector = projection.ArgumentList.Arguments.LastOrDefault()?.Expression;
-                            var source = select.ReducedFrom is not null && projection.Expression is MemberAccessExpressionSyntax receiver
-                                ? receiver.Expression : projection.ArgumentList.Arguments.FirstOrDefault()?.Expression;
+                            var selector = BoundArgument(projection, model, "selector");
+                            var source = BoundArgument(projection, model, "source");
                             var parameter = selector switch
                             {
                                 SimpleLambdaExpressionSyntax simple => model.GetDeclaredSymbol(simple.Parameter),
                                 ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
                                 AnonymousMethodExpressionSyntax anonymous => anonymous.ParameterList?.Parameters.FirstOrDefault() is { } first ? model.GetDeclaredSymbol(first) : null,
-                                _ => model.GetSymbolInfo(selector!).Symbol is IMethodSymbol selected ? selected.Parameters.FirstOrDefault() : null,
+                                null => null,
+                                _ => model.GetSymbolInfo(selector).Symbol is IMethodSymbol selected ? selected.Parameters.FirstOrDefault() : null,
                             };
                             if (source is not null) Add(parameter, source, model);
                         }
@@ -396,7 +418,7 @@ internal static class NonWireMetadataPolicy
                 }
         }
 
-        public void Reset() { _steps = 0; Exhausted = false; }
+        public void Reset() { _steps = 0; _queryExpressionDepth = 0; Exhausted = false; _queryTypes.Clear(); _queryArrayTypes.Clear(); _querySymbols.Clear(); _queryCompletedSymbols.Clear(); _queryExpressions.Clear(); _querySymbolIds.Clear(); _queryNodeIds.Clear(); _queryCompilationIds.Clear(); }
         private bool Step() { if (++_steps <= TraversalLimit) return true; Exhausted = true; return false; }
         private void Add(ISymbol? symbol, ExpressionSyntax expression, SemanticModel model)
         {
@@ -413,27 +435,54 @@ internal static class NonWireMetadataPolicy
 
         public bool Reaches(ITypeSymbol type, HashSet<string> visited)
         {
-            if (!Step()) return false;
-            if (_metadata.Any(metadata => Same(metadata, type))) return true;
-            if (type is IArrayTypeSymbol array) return Reaches(array.ElementType, visited);
-            if (type is not INamedTypeSymbol named) return false;
-            string identity = named.ToDisplayString() + "|" + named.ContainingAssembly.Identity;
-            if (!visited.Add(identity)) return false;
-            if (named.TypeArguments.Any(argument => Reaches(argument, visited))) return true;
-            var owned = _owners.First(named);
-            if (owned is null || _metadata.Contains(owned)) return false;
-            foreach (var member in owned.GetMembers())
+            // Explicit DFS work items preserve every generic/member origin without
+            // borrowing the CLR call stack for arbitrarily deep type/array shapes.
+            visited = _queryTypes;
+            var pending = new Stack<(ITypeSymbol? Type, ISymbol? Source)>();
+            pending.Push((type, null));
+            while (pending.TryPop(out var item))
             {
-                var types = member switch
+                if (Exhausted) return false;
+                if (item.Source is { } source)
                 {
-                    IFieldSymbol field => new[] { field.Type },
-                    IPropertySymbol property => [property.Type],
-                    IMethodSymbol method => method.Parameters.Select(parameter => parameter.Type).Append(method.ReturnType),
-                    IEventSymbol eventSymbol => [eventSymbol.Type],
-                    _ => Enumerable.Empty<ITypeSymbol>(),
-                };
-                if (types.Any(argument => Reaches(argument, visited))) return true;
-                if (member is IFieldSymbol or IPropertySymbol && Symbol(member, new HashSet<ISymbol>(SymbolEqualityComparer.Default))) return true;
+                    if (Symbol(source, _querySymbols)) return true;
+                    continue;
+                }
+                var current = item.Type!;
+                if (_metadata.Any(metadata => Same(metadata, current))) return true;
+                if (ScalarValueType(current)) continue;
+                if (current is IArrayTypeSymbol array)
+                {
+                    if (!_queryArrayTypes.Add(array)) continue;
+                    if (!Step()) return false;
+                    pending.Push((array.ElementType, null));
+                    continue;
+                }
+                if (current is not INamedTypeSymbol named) continue;
+                string identity = named.ToDisplayString() + "|" + named.ContainingAssembly.Identity;
+                if (!visited.Add(identity)) continue;
+                var owned = _owners.First(named);
+                if (owned is null && named.TypeArguments.Length == 0) continue;
+                if (!Step()) return false;
+                if (owned is not null && !_metadata.Contains(owned))
+                {
+                    foreach (var member in owned.GetMembers().Reverse())
+                    {
+                        // LIFO reverses scheduling only; actual traversal remains
+                        // declared member/type-argument order and first owner wins.
+                        if (member is IFieldSymbol or IPropertySymbol) pending.Push((null, member));
+                        var types = member switch
+                        {
+                            IFieldSymbol field => new[] { field.Type },
+                            IPropertySymbol property => [property.Type],
+                            IMethodSymbol method => method.Parameters.Select(parameter => parameter.Type).Append(method.ReturnType),
+                            IEventSymbol eventSymbol => [eventSymbol.Type],
+                            _ => Enumerable.Empty<ITypeSymbol>(),
+                        };
+                        foreach (var dependency in types.Reverse()) pending.Push((dependency, null));
+                    }
+                }
+                foreach (var argument in named.TypeArguments.Reverse()) pending.Push((argument, null));
             }
             return false;
         }
@@ -458,22 +507,106 @@ internal static class NonWireMetadataPolicy
 
         private bool Symbol(ISymbol symbol, HashSet<ISymbol> visited)
         {
+            visited = _querySymbols;
             symbol = symbol.OriginalDefinition;
-            if (visited.Count >= 128) { Exhausted = true; return false; }
-            if (!Step() || !visited.Add(symbol)) return false;
+            var valueType = symbol switch { IFieldSymbol f => f.Type, IPropertySymbol p => p.Type, ILocalSymbol l => l.Type, IParameterSymbol p => p.Type, IMethodSymbol m => m.ReturnType, _ => null };
+            if (ScalarValueType(valueType)) return false;
+            if (!_sources.ContainsKey(symbol)
+                && (symbol is not IPropertySymbol { GetMethod: { } sourceGetter } || !_sources.ContainsKey(sourceGetter.OriginalDefinition))) return false;
+            if (_queryCompletedSymbols.TryGetValue(symbol, out bool completed)) return completed;
+            if (visited.Contains(symbol)) return false;
+            if (visited.Count >= SourceDepthLimit) { Exhausted = true; return false; }
+            if (!Step()) return false;
+            visited.Add(symbol);
+            bool reaches = false;
             try
             {
-                return symbol is IPropertySymbol { GetMethod: { } getter } && Symbol(getter, visited)
+                reaches = symbol is IPropertySymbol { GetMethod: { } getter } && Symbol(getter, visited)
                     || _sources.TryGetValue(symbol, out var values) && values.Any(value => Expression(value.Expression, value.Model, visited));
+                return reaches;
             }
-            finally { _ = visited.Remove(symbol); }
+            finally
+            {
+                _ = visited.Remove(symbol);
+                if (!Exhausted) _queryCompletedSymbols[symbol] = reaches;
+            }
+        }
+
+        private static ExpressionSyntax? BoundArgument(InvocationExpressionSyntax invocation, SemanticModel model, string parameterName)
+        {
+            if (model.GetOperation(invocation) is not Microsoft.CodeAnalysis.Operations.IInvocationOperation operation) return null;
+            return operation.Arguments.FirstOrDefault(argument => argument.Parameter?.Name == parameterName)?.Value.Syntax as ExpressionSyntax;
+        }
+
+        private int SymbolId(ISymbol? symbol)
+        {
+            if (symbol is null) return -1;
+            if (!_querySymbolIds.TryGetValue(symbol, out int id)) { id=_querySymbolIds.Count; _querySymbolIds.Add(symbol,id); }
+            return id;
+        }
+        // Equivalent value states retain the actual bound symbol, substituted type and every receiver/argument origin.
+        // Raw syntax + compilation identity remains the conservative fallback for unsupported constructs.
+        private string ExpressionKey(ExpressionSyntax expression, SemanticModel model, int depth)
+        {
+            if (ScalarValueType(model.GetTypeInfo(expression).Type)) return "scalar:" + SymbolId(model.GetTypeInfo(expression).Type);
+            string Raw()
+            {
+                if (!_queryNodeIds.TryGetValue(expression,out int node)) {node=_queryNodeIds.Count;_queryNodeIds.Add(expression,node);}
+                if (!_queryCompilationIds.TryGetValue(model.Compilation,out int compilation)) {compilation=_queryCompilationIds.Count;_queryCompilationIds.Add(model.Compilation,compilation);}
+                return "syntax:"+compilation+":"+node;
+            }
+            if (depth>=32) return Raw();
+            string valueType=":type:"+SymbolId(model.GetTypeInfo(expression).Type);
+            string Source(ExpressionSyntax value)=>ExpressionKey(value,model,depth+1);
+            string Part(string value)=>value.Length+":"+value;
+            string Arguments(IEnumerable<ExpressionSyntax> values)=>string.Concat(values.Select(value=>Part(Source(value))));
+            var symbol=model.GetSymbolInfo(expression).Symbol;
+            if (symbol is INamespaceSymbol) return "namespace:" + SymbolId(symbol);
+            if (symbol is INamedTypeSymbol representedType) return "type:" + SymbolId(representedType);
+            return expression switch
+            {
+                IdentifierNameSyntax when symbol is not null => "name:"+SymbolId(symbol)+valueType,
+                MemberAccessExpressionSyntax member when symbol is not null => "member:"+SymbolId(symbol)+valueType+":receiver:"+Part(Source(member.Expression)),
+                ElementAccessExpressionSyntax element => "element:"+SymbolId(symbol)+valueType+":receiver:"+Part(Source(element.Expression))+":indices:"+Arguments(element.ArgumentList.Arguments.Select(a=>a.Expression)),
+                InvocationExpressionSyntax invocation when symbol is IMethodSymbol => "call:"+SymbolId(symbol)+valueType+":method:"+Part(Source(invocation.Expression))+":arguments:"+string.Concat(invocation.ArgumentList.Arguments.Select(argument => Part(argument.NameColon?.Name.Identifier.ValueText ?? "position") + Part(argument.RefKindKeyword.ValueText) + Part(Source(argument.Expression)))),
+                CastExpressionSyntax cast => "cast"+valueType+":value:"+Part(Source(cast.Expression)),
+                ParenthesizedExpressionSyntax parenthesized => Source(parenthesized.Expression),
+                TypeOfExpressionSyntax represented => "typeof:"+SymbolId(model.GetTypeInfo(represented.Type).Type),
+                BaseObjectCreationExpressionSyntax creation when symbol is not null && creation.Initializer is null => "create:"+SymbolId(symbol)+valueType+":arguments:"+Arguments(creation.ArgumentList?.Arguments.Select(a=>a.Expression)??[]),
+                _=>Raw(),
+            };
         }
 
         public bool Expression(ExpressionSyntax expression, SemanticModel model, HashSet<ISymbol> visited)
         {
-            if (!Step()) return false;
+            if (Exhausted) return false;
+            if (_queryExpressionDepth >= ExpressionDepthLimit) { Exhausted = true; return false; }
+            _queryExpressionDepth++;
+            try { return ExpressionCore(expression, model, visited); }
+            finally { _queryExpressionDepth--; }
+        }
+
+        private bool ExpressionCore(ExpressionSyntax expression, SemanticModel model, HashSet<ISymbol> visited)
+        {
             var type = model.GetTypeInfo(expression).Type;
-            if (Primitive(type)) return false;
+            if (ScalarValueType(type)) return false;
+            if (model.GetSymbolInfo(expression).Symbol is INamespaceSymbol) return false;
+            if (model.GetSymbolInfo(expression).Symbol is INamedTypeSymbol namedType) return Reaches(namedType, _queryTypes);
+            if (expression is TypeOfExpressionSyntax typeOf && model.GetTypeInfo(typeOf.Type).Type is { } represented)
+                return Reaches(represented, _queryTypes);
+            if (expression is ThisExpressionSyntax
+                || expression is BaseObjectCreationExpressionSyntax { Initializer: null } emptyCreation
+                    && (emptyCreation.ArgumentList is null || emptyCreation.ArgumentList.Arguments.Count == 0))
+                return type is not null && Reaches(type, _queryTypes);
+            // A pure bound identifier is the same value-origin state as its symbol lookup, not a second source.
+            // Member/element/call expressions keep independent receiver and argument traversal states.
+            if (expression is IdentifierNameSyntax && model.GetSymbolInfo(expression).Symbol is ILocalSymbol or IParameterSymbol or IFieldSymbol or IPropertySymbol)
+            {
+                if (type is not null && Reaches(type, _queryTypes)) return true;
+                return Symbol(model.GetSymbolInfo(expression).Symbol!, _querySymbols);
+            }
+            if (!_queryExpressions.Add(ExpressionKey(expression, model, 0))) return false;
+            if (!Step()) return false;
             if (model.GetSymbolInfo(expression).Symbol is IPropertySymbol { Name: "ActorKinds" or "PatScopes" } strings
                 && _metadata.Any(metadata => Same(metadata, strings.ContainingType)) && List(strings.Type, out var element)
                 && element.SpecialType == SpecialType.System_String) return false;
@@ -490,23 +623,28 @@ internal static class NonWireMetadataPolicy
                 });
             if (expression is AnonymousObjectCreationExpressionSyntax anonymous)
                 return anonymous.Initializers.Any(initializer => Expression(initializer.Expression, model, visited));
-            if (expression is BaseObjectCreationExpressionSyntax creation && creation.ArgumentList is { } arguments
-                && arguments.Arguments.Any(argument => Expression(argument.Expression, model, visited))) return true;
+            if (expression is BaseObjectCreationExpressionSyntax creation)
+                return creation.ArgumentList?.Arguments.Any(argument => Expression(argument.Expression, model, visited)) == true
+                    || creation.Initializer?.Expressions.Any(value => Expression(value, model, visited)) == true;
             if (expression is InvocationExpressionSyntax invocation && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol method)
             {
                 if (method.Name == "Select" && method.ContainingType.ToDisplayString() == "System.Linq.Enumerable" && Core(method.ContainingAssembly))
                 {
-                    var selector = invocation.ArgumentList.Arguments.LastOrDefault()?.Expression;
+                    var selector = BoundArgument(invocation, model, "selector");
+                    if (selector is null) { Exhausted = true; return false; }
                     if (selector is LambdaExpressionSyntax lambda)
                         return lambda.ExpressionBody is { } body ? Expression(body, model, visited)
                             : lambda.Block?.DescendantNodes().OfType<ReturnStatementSyntax>().Any(returned => returned.Expression is { } value && Expression(value, model, visited)) == true;
-                    return selector is not null && model.GetSymbolInfo(selector).Symbol is IMethodSymbol selected && Symbol(selected, visited);
+                    return model.GetSymbolInfo(selector).Symbol is IMethodSymbol selected && Symbol(selected, visited);
                 }
                 if (Symbol(method, visited)) return true;
                 if (invocation.Expression is MemberAccessExpressionSyntax receiver && Expression(receiver.Expression, model, visited)) return true;
                 return invocation.ArgumentList.Arguments.Any(argument => Expression(argument.Expression, model, visited));
             }
-            if (model.GetSymbolInfo(expression).Symbol is { } symbol && Symbol(symbol, visited)) return true;
+            if (model.GetSymbolInfo(expression).Symbol is { } symbol)
+            {
+                if (Symbol(symbol, visited)) return true;
+            }
             return expression.ChildNodes().OfType<ExpressionSyntax>().Any(child => Expression(child, model, visited));
         }
     }
