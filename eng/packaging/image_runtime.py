@@ -196,7 +196,7 @@ def _legal_bytes(row, cache, cancelled=None):
     return content
 
 
-def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
+def _acquire_original_asset(cache_name, url, expected, algorithm, limit, downloads, deadline, cancelled, opener, context):
     caller_cancelled = cancelled
 
     def operation_cancelled():
@@ -204,11 +204,10 @@ def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
         return caller_cancelled is not None and caller_cancelled()
 
     cancelled = operation_cancelled
-    native_provenance.asset(row)
-    _path(row["cacheName"])
-    target = downloads / row["cacheName"]
-    expected = row["sourceSha256"] or row["sourceSha512"]
-    algorithm = "sha256" if row["sourceSha256"] else "sha512"
+    native_provenance.download_identity(url)
+    _path(cache_name)
+    require(Path(cache_name).name == cache_name, "Escaping original Image source cache path.")
+    target = downloads / cache_name
     with _stage_lock(target, cancelled):
         for attempt in range(3):
             _cancel(cancelled)
@@ -220,7 +219,7 @@ def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
             descriptor, temporary_name = tempfile.mkstemp(prefix=".image-legal-", dir=downloads)
             temporary = Path(temporary_name)
             try:
-                request = urllib.request.Request(row["url"], headers={"User-Agent": native_provenance.VISUAL_STUDIO_LICENSE_USER_AGENT})
+                request = urllib.request.Request(url, headers={"User-Agent": native_provenance.VISUAL_STUDIO_LICENSE_USER_AGENT})
                 timeout = min(10, max(0.001, deadline - time.monotonic()))
                 with os.fdopen(descriptor, "wb") as output, opener(request, timeout=timeout, context=context) as response:
                     native_provenance.download_identity(response.url)
@@ -232,7 +231,7 @@ def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
                         if not content:
                             break
                         total += len(content)
-                        require(total <= (MAX_MATERIAL if row["member"] is not None else 8_000_000),
+                        require(total <= limit,
                                 "Unbounded Image legal acquisition.")
                         output.write(content)
                         checksum.update(content)
@@ -253,7 +252,23 @@ def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
                 time.sleep(delay)
             finally:
                 temporary.unlink(missing_ok=True)
+
+
+def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
+    native_provenance.asset(row)
+    _acquire_original_asset(row["cacheName"], row["url"], row["sourceSha256"] or row["sourceSha512"],
+                            "sha256" if row["sourceSha256"] else "sha512",
+                            MAX_MATERIAL if row["member"] is not None else 8_000_000,
+                            downloads, deadline, cancelled, opener, context)
     _legal_bytes(row, downloads, cancelled)
+
+
+def _acquire_source_asset(row, downloads, deadline, cancelled, opener, context):
+    require(isinstance(row, dict) and set(row) == {"url", "downloadUrl", "sha512", "cacheName"} and
+            isinstance(row["sha512"], str) and re.fullmatch("[0-9a-f]{128}", row["sha512"]),
+            "Invalid admitted original Image source resource.")
+    _acquire_original_asset(row["cacheName"], row["downloadUrl"], row["sha512"], "sha512", MAX_MATERIAL,
+                            downloads, deadline, cancelled, opener, context)
 
 
 def acquire_legal_inputs(downloads, rid, root=ROOT, cancelled=None, opener=None):
@@ -274,6 +289,11 @@ def acquire_legal_inputs(downloads, rid, root=ROOT, cancelled=None, opener=None)
     context = ssl.create_default_context()
     opener = opener or urllib.request.urlopen
     completed = set()
+    # A compiled dependency cache does not include its original source downloads.
+    # Acquire only missing admitted archives; valid cached bytes are never redownloaded.
+    sources = [row for component in base["components"].values() for row in component["resources"]]
+    for row in sources:
+        _acquire_source_asset(row, downloads, deadline, cancelled, opener, context)
     for row in rows:
         native_provenance.asset(row)
         _path(row["cacheName"])
@@ -283,7 +303,8 @@ def acquire_legal_inputs(downloads, rid, root=ROOT, cancelled=None, opener=None)
             continue
         _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context)
         completed.add(target.name)
-    return {"rid": rid, "verifiedLegalInputs": sorted(completed)}
+    return {"rid": rid, "verifiedLegalInputs": sorted(completed),
+            "verifiedSourceInputs": sorted({row["cacheName"] for row in sources})}
 
 
 def profile(root=ROOT):

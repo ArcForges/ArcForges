@@ -456,6 +456,61 @@ class ImageRuntimeTests(unittest.TestCase):
                 self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
                 self.assertEqual(0 if mode == "deadline" else 3 if mode == "retry-exhaustion" else 1, len(calls))
 
+    def test_warm_binary_cache_acquires_pinned_original_sources_once_and_preserves_foreign_cache(self):
+        content = b"Complete original source archive fixture.\n"
+        row = {"url": "git+https://example.invalid/source@fixed", "downloadUrl": "https://example.invalid/source.tar.gz",
+               "sha512": hashlib.sha512(content).hexdigest(), "cacheName": "source.tar.gz"}
+        calls = []
+
+        def opener(request, **kwargs):
+            calls.append(request.full_url)
+            response = io.BytesIO(content)
+            response.url = request.full_url
+            return response
+
+        base = {"components": {"source": {"resources": [row], "extras": []}}, "platformRuntime": {"legal": []}}
+        with tempfile.TemporaryDirectory() as temporary, patch.object(image, "profile", return_value=({}, {})), \
+                patch.object(image, "_selection", return_value=(base, {})):
+            cache = Path(temporary)
+            result = image.acquire_legal_inputs(cache, "win-x64", opener=opener)
+            self.assertEqual(["source.tar.gz"], result["verifiedSourceInputs"])
+            self.assertEqual(content, (cache / "source.tar.gz").read_bytes())
+            image.acquire_legal_inputs(cache, "win-x64", opener=lambda *a, **k: self.fail("Valid source cache was redownloaded."))
+            self.assertEqual([row["downloadUrl"]], calls)
+            (cache / "source.tar.gz").write_bytes(b"foreign original source bytes")
+            self.assertRaisesRegex(ValueError, "preserved", image.acquire_legal_inputs, cache, "win-x64", opener=opener)
+            self.assertEqual(b"foreign original source bytes", (cache / "source.tar.gz").read_bytes())
+
+    def test_original_source_sha512_cancellation_and_invalid_resource_never_publish(self):
+        content = b"Original archive fixture."
+        row = {"url": "git+https://example.invalid/source@fixed", "downloadUrl": "https://example.invalid/source.tar.gz",
+               "sha512": hashlib.sha512(content).hexdigest(), "cacheName": "source.tar.gz"}
+        for mode in ("digest", "cancel", "path", "schema"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                cache, cancelled = Path(temporary), [False]
+                selected = dict(row)
+                if mode == "path":
+                    selected["cacheName"] = "nested/source.tar.gz"
+                if mode == "schema":
+                    selected["foreign"] = True
+
+                class Response(io.BytesIO):
+                    def read1(self, size):
+                        result = super().read1(size)
+                        if mode == "cancel":
+                            cancelled[0] = True
+                        return result
+
+                def opener(request, **kwargs):
+                    response = Response(content if mode != "digest" else b"wrong archive")
+                    response.url = request.full_url
+                    return response
+
+                self.assertRaises(ValueError, image._acquire_source_asset, selected, cache, time.monotonic() + 10,
+                                  lambda: cancelled[0], opener, None)
+                self.assertFalse((cache / "source.tar.gz").exists())
+                self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
+
     def test_offline_legal_archive_requires_one_regular_pinned_member(self):
         content = b"Complete fixture legal document.\n"
         for mode in ("valid", "duplicate", "symlink"):
