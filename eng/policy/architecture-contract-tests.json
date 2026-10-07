@@ -3378,5 +3378,40 @@
     "apiSymbol": "ArcForges.LocalRpc.LocalRpcParentBootstrapHost.DisposeAsync()",
     "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
     "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.ActualSharedServiceAuthenticatesRenewsAndReturnsTheFrozenParentManifest()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialBroker.GetPlatformSupport(ArcForges.Security.Secrets.InstallationCredentialPlatform)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.AbsentAdaptersAndRequiredOsIsolationAreExplicitTypedRefusals()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialBroker.CreateForCurrentPlatform(ArcForges.Security.Secrets.InstallationCredentialScope, ArcForges.Security.Secrets.SecretIsolationPolicy, System.TimeSpan?)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.AbsentAdaptersAndRequiredOsIsolationAreExplicitTypedRefusals()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialBroker.InitializeNewInstallationAsync(System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.ThrownSuccessfulWriteIsReconciledAndUncertainReadbackIsNotRepeated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialBroker.OpenExistingAsync(ArcForges.Security.Secrets.InstallationCredentialIdentity, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.MissingExpectedWrongExpectedAndCorruptionNeverReplaceAKey()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialBroker.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.DisposalJoinsHeldNativeAdapterWorkAndAllCallersObserveOneDrain()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialIdentity.GetPublicKey()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.StableProtectedTupleSurvivesRestartAndMetadataCannotBeMutated()"
+  },
+  {
+    "apiSymbol": "ArcForges.Security.Secrets.InstallationCredentialIdentity.ToString()",
+    "testProject": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
+    "testMethod": "ArcForges.Security.Secrets.Tests.InstallationCredentialTests.StableProtectedTupleSurvivesRestartAndMetadataCannotBeMutated()"
   }
 ]

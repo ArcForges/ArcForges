@@ -52,6 +52,23 @@ The real OS round trip is an explicit local opt-in via `ARCFORGES_LOCAL_OS_SECRE
 normal tests remain offline, and the two Windows-only tests are reported as skipped everywhere else,
 including hosted CI. The Windows adapter's execution evidence is therefore a local opt-in run, not CI.
 
+## Installation credential custody
+
+`InstallationCredentialBroker` accepts an explicit pre-authentication realm, product,
+platform and persistent installation scope. `InitializeNewInstallationAsync` reuses
+the stable protected P256 identity; `OpenExistingAsync` requires the expected public
+key/version and refuses missing, corrupt or mismatched state. The returned identity
+provides a defensive canonical DER-SPKI copy. Concurrent operations use a bounded,
+current-user installation mutex, reconcile uncertain writes by readback and drain on
+disposal.
+
+The real Windows adapter reports `SameUserShared`; macOS/Linux composition reports
+typed unsupported results. The namespace and mutex do not establish hostile-sibling
+OS isolation. This custody core is the PLT.65 package producer; PLT.64's five typed
+signers consume their actual published contract helpers separately. See
+[the custody contract](../../../docs/native-installation-credential-custody.md) for
+actual component/Windows/AOT observations and remaining acceptance owners.
+
 ## Known limits
 
 - Grant expiry uses the monotonic clock (`TimeProvider.GetTimestamp`), so a wall-clock change cannot extend

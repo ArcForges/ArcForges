@@ -28,7 +28,10 @@ public sealed class InvocationCancellationAdmissionTests
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
                 await invocation.GetImageInfoAsync(image.Value, token));
             Assert.Equal(token, error.CancellationToken);
-            Assert.Equal(LocalRpcBrokerSessionState.Cancelled, invocation.BrokerSession!.State);
+            // CancelSession may already have shut down the physical pair. Cancelled is
+            // the withdrawal phase; Closed is its legitimate terminal successor.
+            Assert.True(invocation.BrokerSession!.State is
+                LocalRpcBrokerSessionState.Cancelled or LocalRpcBrokerSessionState.Closed);
             Assert.False((await invocation.GetImageInfoAsync(image.Value, Ct)).IsSuccess);
         }
         finally { _ = await invocation.CancelAsync(); }
@@ -55,9 +58,14 @@ public sealed class InvocationCancellationAdmissionTests
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
                 await queued.WaitAsync(TimeSpan.FromSeconds(8), Ct));
             Assert.Equal(caller.Token, error.CancellationToken);
-            Assert.Equal(LocalRpcBrokerSessionState.Cancelled, invocation.BrokerSession!.State);
+            Assert.True(invocation.BrokerSession!.State is
+                LocalRpcBrokerSessionState.Cancelled or LocalRpcBrokerSessionState.Closed);
+            // A closed transport alone is insufficient: prove that the actual borrowed
+            // parser observed its invocation cancellation through the reserved control.
+            await profile.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
             var ended = await borrowed.WaitAsync(TimeSpan.FromSeconds(8), Ct);
             Assert.False(ended.IsSuccess);
+            Assert.False((await invocation.GetImageInfoAsync(image.Value, Ct)).IsSuccess);
         }
         finally { _ = await invocation.CancelAsync(); }
     }
@@ -65,15 +73,16 @@ public sealed class InvocationCancellationAdmissionTests
     private sealed class WaitingProfile : IContentParserProfile
     {
         internal TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<bool> Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string Id => "admission-wait-test";
 
-        public IImageParser? CreateImageParser() => new WaitingImage(Entered);
+        public IImageParser? CreateImageParser() => new WaitingImage(Entered, Cancelled);
 
         public IPdfParser? CreatePdfParser() => null;
     }
 
-    private sealed class WaitingImage(TaskCompletionSource<bool> entered) : IImageParser
+    private sealed class WaitingImage(TaskCompletionSource<bool> entered, TaskCompletionSource<bool> cancelled) : IImageParser
     {
         private readonly HostileImageParser _fixture = new();
 
@@ -83,9 +92,17 @@ public sealed class InvocationCancellationAdmissionTests
         public int ReadTile(SandboxRegion region, uint format, Span<byte> destination, ParserContext context)
         {
             _ = entered.TrySetResult(true);
-            _ = context.Cancelled.WaitHandle.WaitOne(TimeSpan.FromSeconds(20));
-            context.Cancelled.ThrowIfCancellationRequested();
-            return _fixture.ReadTile(region, format, destination, context);
+            try
+            {
+                _ = context.Cancelled.WaitHandle.WaitOne(TimeSpan.FromSeconds(20));
+                context.Cancelled.ThrowIfCancellationRequested();
+                return _fixture.ReadTile(region, format, destination, context);
+            }
+            finally
+            {
+                if (context.Cancelled.IsCancellationRequested)
+                    _ = cancelled.TrySetResult(true);
+            }
         }
 
         public void Dispose() => _fixture.Dispose();
