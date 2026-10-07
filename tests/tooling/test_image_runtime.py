@@ -25,6 +25,30 @@ import native_consumer
 
 
 class ImageRuntimeTests(unittest.TestCase):
+    def test_real_package_material_refuses_unbound_executable_and_changed_owned_targets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); ident = "ArcForges.Native.Image.Runtime.linux-x64"
+            readme = root / "src/Native" / ident / "README.md"
+            readme.parent.mkdir(parents=True); readme.write_bytes(b"actual owned README")
+            (root / "LICENSE").write_bytes(b"actual owned original legal text")
+            entry = {"id": ident, "rid": "linux-x64"}
+            payload = {"buildTransitive/" + ident + ".targets": image._image_targets("linux-x64"),
+                       "NOTICE.md": image._image_notice(), image.RECEIPT: b"unavailable compiled producer receipt",
+                       "README.md": readme.read_bytes(), "LICENSE": (root / "LICENSE").read_bytes()}
+            for name, content in payload.items():
+                path = root / "package" / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
+            read = lambda name: (root / "package" / name).read_bytes()
+            declared = set(payload) - {image.RECEIPT, "README.md", "LICENSE"}
+            image._image_payload_names(entry, read, set(payload), declared, root)
+            for extra in ("build/foreign.props", "foreign.exe", "foreign.nuspec", "package/services/metadata/foreign.props"):
+                with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "Unexpected"):
+                    image._image_payload_names(entry, read, set(payload) | {extra}, declared, root)
+            for name in ("buildTransitive/" + ident + ".targets", "NOTICE.md", "README.md", "LICENSE"):
+                path = root / "package" / name; original = path.read_bytes(); path.write_bytes(original + b"unadmitted change")
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "differ"):
+                    image._image_payload_names(entry, read, set(payload), declared, root)
+                path.write_bytes(original)
+
     def test_cancellation_reaches_verification_before_and_after_actual_component_read(self):
         with patch.object(image, "_inventory") as inventory, self.assertRaises(image.StageCancelled):
             image.verify_stage(Path("unavailable"), "a" * 40, cancelled=lambda: True)

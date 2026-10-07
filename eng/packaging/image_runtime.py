@@ -1116,11 +1116,8 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
                                            "binaryFiles": rows, "buildDependencies": upstream, "buildTools": tools})
             targets = package / "buildTransitive" / (recipe["package"] + ".targets")
             targets.parent.mkdir(parents=True, exist_ok=True)
-            _write_bytes(targets, ('<Project><!-- SPDX-License-Identifier: AGPL-3.0-only -->\n'
-                               '<Target Name="RequireImageRuntimeRid" BeforeTargets="PrepareForBuild">\n'
-                               '<Error Condition="\'$(RuntimeIdentifier)\' != \'' + rid + '\'" Text="Image runtime requires ' + rid + '." />\n'
-                               '</Target></Project>\n').encode("utf-8"))
-            _write_bytes(package / "NOTICE.md", b"# Image runtime notices\n\nOwned ABI: AGPL-3.0-only. Original dependency legal texts, SPDX/source identities, selected source archives and applied recipes are retained. OS libraries are prerequisites and are never redistributed as this package. Compiler/runtime floors are the actual inspected per-artifact metadata. Staging is not publisher authorization or OS acceptance.\n")
+            _write_bytes(targets, _image_targets(rid))
+            _write_bytes(package / "NOTICE.md", _image_notice())
             receipt = {"schemaVersion": 1, "kind": "image-runtime-production-input", "sourceCommit": identity["sourceCommit"],
                        "rid": rid, "package": recipe["package"], "profile": PROFILE, "profileSha256Lf": digest(root / PROFILE, lf=True),
                        "recipeSha256Lf": value["recipes"]["sha256Lf"], "build": identity, "producer": tools,
@@ -1142,6 +1139,35 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
                         staging.name.startswith("." + destination.name + ".image-stage-") and not _link(staging),
                         "Image temporary ownership changed.")
                 shutil.rmtree(staging)
+
+
+def _image_targets(rid):
+    require(rid in native_binary.RIDS, "Unadmitted Image target RID.")
+    return ('<Project><!-- SPDX-License-Identifier: AGPL-3.0-only -->\n'
+            '<Target Name="RequireImageRuntimeRid" BeforeTargets="PrepareForBuild">\n'
+            '<Error Condition="\'$(RuntimeIdentifier)\' != \'' + rid + '\'" Text="Image runtime requires ' + rid + '." />\n'
+            '</Target></Project>\n').encode("utf-8")
+
+
+def _image_notice():
+    return b"# Image runtime notices\n\nOwned ABI: AGPL-3.0-only. Original dependency legal texts, SPDX/source identities, selected source archives and applied recipes are retained. OS libraries are prerequisites and are never redistributed as this package. Compiler/runtime floors are the actual inspected per-artifact metadata. Staging is not publisher authorization or OS acceptance.\n"
+
+
+def _image_payload_names(entry, read, names, declared, root):
+    # Ordinary NuGet envelope metadata is the only unbound material allowed
+    # beside the actual producer inventory; build/foreign.props is executable.
+    standard = {"_rels/.rels", "[Content_Types].xml", entry["id"] + ".nuspec", ".signature.p7s",
+                "build-identity.json", "README.md", "LICENSE"}
+    standard.update(name for name in names if re.fullmatch(
+        r"package/services/metadata/core-properties/[a-f0-9]{32}\.psmdcp", name))
+    require(names <= set(declared) | {RECEIPT} | standard, "Unexpected Image package material.")
+    if "LICENSE" in names:
+        require(read("LICENSE") == (Path(root) / "LICENSE").read_bytes(), "Image owned package licence differs.")
+    if "README.md" in names:
+        path = Path(root) / "src/Native" / entry["id"] / "README.md"
+        require(read("README.md") == _regular(path, root).read_bytes(), "Image owned package readme differs.")
+    require(read("buildTransitive/" + entry["id"] + ".targets") == _image_targets(entry["rid"])
+            and read("NOTICE.md") == _image_notice(), "Image generated targets/notice differ from owned source.")
 
 
 def verify_package(entry, read, names, source_commit, root=ROOT, cancelled=None):
@@ -1187,6 +1213,7 @@ def verify_package(entry, read, names, source_commit, root=ROOT, cancelled=None)
     bound_prefixes = ("runtimes/", "include/", "sdk/", "sources/", "recipes/", "licenses/", "provenance/", "buildTransitive/")
     require({name for name in names if name.startswith(bound_prefixes) or name in ("native-manifest.json", "sbom.json", "NOTICE.md")} ==
             set(declared.values()), "Image package has unbound/missing production material.")
+    _image_payload_names(entry, read, names, declared.values(), root)
     for binding in (PROFILE, value["sourceProfile"]["path"], value["recipes"]["path"], value["systemPolicy"]["path"]):
         require(hashlib.sha256(read("provenance/" + Path(binding).name).replace(b"\r\n", b"\n")).hexdigest() ==
                 digest(Path(root) / binding, lf=True), "Copied Image admission/profile input differs from authority.")
