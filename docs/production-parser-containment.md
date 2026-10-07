@@ -21,6 +21,17 @@ local unsigned-component Image scenarios. Their existing friend-only fixture opt
 owned local Native AOT composition to be tested. This mode is never product release trust and
 never closes PG-12/PG-22 or an authenticated installed-helper acceptance gate.
 
+`ARCFORGES_CONTENTSANDBOX_NATIVE_HOSTILE=1`, alongside the existing OS/Fixture opt-ins, reuses
+all maintained hostile OS scenarios with the separate fixture's production-loading profile.
+The fixture must preload both actual admitted Image/Pdf libraries through the production
+preparer before OS restrictions; unavailable or invalid bytes refuse launch. Its parser bodies
+remain the existing first-party attacks for files, secrets, network, processes, native fault,
+hang, memory exhaustion, cancellation, private-storage cleanup and parent death. The parent-death
+entry point selects the same profile. This is actual OS boundary evidence with those libraries
+loaded, never evidence that a genuine format exploit triggered the first-party scripted attack
+or that the nonpackable fixture is an authenticated installed production helper. The default
+hostile fixture mode is preserved, and real-codec checks use the production helper separately.
+
 `ARCFORGES_CONTENTSANDBOX_RELEASE_CONFIG` selects a separate operator/application-owned JSON
 configuration for `AuthenticatedProductionContainmentTests`. The harness accepts at most 8192
 bytes, exact fields with no duplicates, canonical absolute locators, an exact helper SHA-256,

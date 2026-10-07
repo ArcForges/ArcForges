@@ -129,7 +129,7 @@ public sealed class AuthenticatedProductionContainmentTests
         await using var invocation = await LaunchAsync(launcher, FirstPartyImageFixtures.Create(codec), Ct);
         await AssertImageAsync(invocation, Ct);
         await invocation.CloseAsync();
-        Assert.Equal(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(Ct));
+        await AssertCleanExitAsync(invocation, Ct);
         harness.Evidence("actual " + codec + " tile/bounds/closed-handle/clean-exit", invocation);
         await RefusedInputAsync(launcher, FirstPartyImageFixtures.Create(codec)[..8], Ct);
         await ImageScenarioAsync(launcher, codec, Ct);
@@ -159,7 +159,7 @@ public sealed class AuthenticatedProductionContainmentTests
             Assert.True((await invocation.ClosePdfAsync(opened.Value, Ct)).IsSuccess);
             Assert.False((await invocation.GetPdfPageAsync(opened.Value, 0, Ct)).IsSuccess);
             await invocation.CloseAsync();
-            Assert.Equal(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(Ct));
+            await AssertCleanExitAsync(invocation, Ct);
             harness.Evidence("actual PDF page/text/tile/closed-handle/clean-exit", invocation);
         }
 
@@ -175,7 +175,7 @@ internal static class ProductionImageScenarios
         await using var invocation = await LaunchAsync(launcher, FirstPartyImageFixtures.Create(codec), cancellation);
         await AssertImageAsync(invocation, cancellation, format);
         await invocation.CloseAsync();
-        Assert.Equal(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(cancellation));
+        await AssertCleanExitAsync(invocation, cancellation);
     }
 
     internal static async Task AssertImageAsync(ContentSandboxInvocation invocation, CancellationToken cancellation, uint format = 1)
@@ -215,7 +215,14 @@ internal static class ProductionImageScenarios
         Assert.False(result.IsSuccess);
         Assert.NotNull(result.Failure);
         await invocation.CloseAsync();
-        Assert.Equal(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(cancellation));
+        await AssertCleanExitAsync(invocation, cancellation);
+    }
+
+    internal static async Task AssertCleanExitAsync(ContentSandboxInvocation invocation, CancellationToken cancellation)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        Assert.Equal(ContentSandboxContract.ExitClean, await invocation.WaitForExitAsync(deadline.Token));
     }
 
     internal static async Task<ContentSandboxInvocation> LaunchAsync(ContentSandboxLauncher launcher, byte[] input, CancellationToken cancellation)
