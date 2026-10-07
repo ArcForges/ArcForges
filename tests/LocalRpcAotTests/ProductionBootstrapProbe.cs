@@ -99,7 +99,10 @@ internal static class ProductionBootstrapProbe
             var manifest = Manifest(child.Identity, child.InstanceId, endpoint);
             var malformed = new LocalBootstrapServiceChallengeRequest
             {
-                Meta = null, Caller = manifest, InstanceId = ToId(child.InstanceId), Challenge = ByteString.CopyFrom(child.ClientChallenge.Span),
+                Meta = null,
+                Caller = manifest,
+                InstanceId = ToId(child.InstanceId),
+                Challenge = ByteString.CopyFrom(child.ClientChallenge.Span),
             };
             await ExpectRefusalAsync(() => client.ChallengeAsync(malformed, cancellationToken: cancellation).ResponseAsync).ConfigureAwait(false);
             using (var cancelled = new CancellationTokenSource())
@@ -115,7 +118,10 @@ internal static class ProductionBootstrapProbe
             }
             var challenge = await client.ChallengeAsync(new()
             {
-                Meta = Meta(), Caller = manifest, InstanceId = ToId(child.InstanceId), Challenge = ByteString.CopyFrom(child.ClientChallenge.Span),
+                Meta = Meta(),
+                Caller = manifest,
+                InstanceId = ToId(child.InstanceId),
+                Challenge = ByteString.CopyFrom(child.ClientChallenge.Span),
             }, cancellationToken: cancellation);
             Require(ContractShapeValidation.IsValid(challenge)
                 && FromId(challenge.Value.Server.InstanceId) == parentInstance
@@ -128,7 +134,8 @@ internal static class ProductionBootstrapProbe
             {
                 var request = new LocalBootstrapServiceConfirmRequest
                 {
-                    Meta = Meta(), ChallengeId = challenge.Value.ChallengeId,
+                    Meta = Meta(),
+                    ChallengeId = challenge.Value.ChallengeId,
                     Proof = ByteString.CopyFrom(badProof ? new byte[32] : proof),
                 };
                 if (badProof)
@@ -192,10 +199,15 @@ internal static class ProductionBootstrapProbe
         using var process = Process.GetCurrentProcess();
         return new()
         {
-            SchemaVersion = "1", AppId = identity.BuildId, InstallationId = ToId(Guid.NewGuid()), InstanceId = ToId(instance),
-            ProcessId = (ulong)process.Id, ProcessStartedAt = ToInstant(new DateTimeOffset(process.StartTime.ToUniversalTime())),
+            SchemaVersion = "1",
+            AppId = identity.BuildId,
+            InstallationId = ToId(Guid.NewGuid()),
+            InstanceId = ToId(instance),
+            ProcessId = (ulong)process.Id,
+            ProcessStartedAt = ToInstant(new DateTimeOffset(process.StartTime.ToUniversalTime())),
             Endpoint = new() { Transport = endpoint.Transport == LocalRpcTransport.NamedPipe ? "pipe" : "uds", Address = endpoint.Address, InstanceId = ToId(instance) },
-            BuildHash = Convert.ToHexStringLower(identity.BuildDigest.Span), ContractSetHash = Convert.ToHexStringLower(identity.ContractSetDigest.Span),
+            BuildHash = Convert.ToHexStringLower(identity.BuildDigest.Span),
+            ContractSetHash = Convert.ToHexStringLower(identity.ContractSetDigest.Span),
             ContractMajors = { identity.ProtocolVersion },
         };
     }
@@ -204,7 +216,8 @@ internal static class ProductionBootstrapProbe
     {
         try { await operation().ConfigureAwait(false); }
         catch (RpcException error) when (error.StatusCode == StatusCode.Unauthenticated
-            || (revokedHost && error.StatusCode is StatusCode.Unavailable or StatusCode.Cancelled)) { return; }
+            || (revokedHost && error.StatusCode is StatusCode.Unavailable or StatusCode.Cancelled))
+        { return; }
         throw new InvalidOperationException("The actual generated service must refuse unauthorized/malformed input.");
     }
 
