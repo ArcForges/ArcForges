@@ -402,6 +402,45 @@ public sealed class NonWireMetadataBindingTests
     }
 
     [Xunit.Theory]
+    [Xunit.InlineData("(Identity(Metadata.Catalog.All[0]))", true)]
+    [Xunit.InlineData("((object)Metadata.Catalog.All[0])", true)]
+    [Xunit.InlineData("(Identity(new object()))", false)]
+    [Xunit.InlineData("((object)new object())", false)]
+    public void ParenthesizedErasedOriginsAreTraversedBeforeSemanticReuse(string payload, bool denied)
+    {
+        using var fixture = new Fixture(extra: "internal static class Sender { private static object Identity(object value) => value; private static string Send() => System.Text.Json.JsonSerializer.Serialize(" + payload + "); }");
+        Xunit.Assert.Equal(denied, fixture.Check().Any(finding => finding.Message.Contains("escapes through", StringComparison.Ordinal)));
+    }
+
+    [Xunit.Theory]
+    [Xunit.InlineData("System.Func<Metadata.Policy, object> selector = value => value;", "Metadata.Catalog.All", true)]
+    [Xunit.InlineData("System.Func<object, object> selector = value => value;", "Metadata.Catalog.All.Cast<object>()", true)]
+    [Xunit.InlineData("System.Func<Metadata.Policy, string> selector = value => value.OperationId;", "Metadata.Catalog.All", false)]
+    public void DelegateSelectorsRequireAProvedScalarResultOrFailClosed(string declaration, string source, bool denied)
+    {
+        using var fixture = new Fixture(extra: "using System.Linq; internal static class Sender { private static string Send() { " + declaration + " return System.Text.Json.JsonSerializer.Serialize(" + source + ".Select(selector)); } }");
+        Xunit.Assert.Equal(denied, fixture.Check().Any(finding => finding.Message.Contains("escapes through", StringComparison.Ordinal)));
+    }
+
+    [Xunit.Theory]
+    [Xunit.InlineData("Metadata.Catalog.All[0]", true)]
+    [Xunit.InlineData("\"safe\"", false)]
+    public void ConstructedOwnedGenericWrappersRetainTheirOriginalGetterSources(string value, bool denied)
+    {
+        using var fixture = new Fixture(extra: "internal sealed class Wrapper<T> { public object Value => " + value + "; } internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize<object>(new Wrapper<object>()); }");
+        Xunit.Assert.Equal(denied, fixture.Check().Any(finding => finding.Message.Contains("escapes through", StringComparison.Ordinal)));
+    }
+
+    [Xunit.Theory]
+    [Xunit.InlineData("object", false)]
+    [Xunit.InlineData("Metadata.Policy", true)]
+    public void ConstructedNestedGenericWrappersRetainActualOuterArguments(string argument, bool denied)
+    {
+        using var fixture = new Fixture(extra: "internal sealed class Outer<T> { internal sealed class Nested { public T? Value { get; } } } internal static class Sender { private static string Send() => System.Text.Json.JsonSerializer.Serialize<object>(new Outer<" + argument + ">.Nested()); }");
+        Xunit.Assert.Equal(denied, fixture.Check().Any(finding => finding.Message.Contains("escapes through", StringComparison.Ordinal)));
+    }
+
+    [Xunit.Theory]
     [Xunit.InlineData(100, false)]
     [Xunit.InlineData(300, true)]
     public void ExpressionDepthIsFiniteAndRefusesAnUnresolvedDeepPayload(int depth, bool denied)

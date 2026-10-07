@@ -360,9 +360,10 @@ internal static class NonWireMetadataPolicy
         private readonly Dictionary<ISymbol, bool> _queryCompletedSymbols = new(SymbolEqualityComparer.Default);
         private int _queryExpressionDepth;
         private readonly HashSet<string> _queryExpressions = new(StringComparer.Ordinal);
-        private readonly Dictionary<ISymbol,int> _querySymbolIds = new(SymbolEqualityComparer.Default);
-        private readonly Dictionary<SyntaxNode,int> _queryNodeIds = [];
-        private readonly Dictionary<Compilation,int> _queryCompilationIds = [];
+        private readonly Dictionary<ISymbol, int> _querySymbolIds = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<SyntaxNode, int> _queryNodeIds = [];
+        private readonly Dictionary<Compilation, int> _queryCompilationIds = [];
+        private readonly Dictionary<(ExpressionSyntax Node, Compilation Compilation, int Depth), string> _queryExpressionKeys = [];
         public bool Exhausted { get; private set; }
         public Flow(IReadOnlyDictionary<INamedTypeSymbol, ProjectFacts> projects,
             IReadOnlyDictionary<string, Microsoft.CodeAnalysis.CSharp.CSharpCompilation> compilations, HashSet<INamedTypeSymbol> metadata)
@@ -418,7 +419,7 @@ internal static class NonWireMetadataPolicy
                 }
         }
 
-        public void Reset() { _steps = 0; _queryExpressionDepth = 0; Exhausted = false; _queryTypes.Clear(); _queryArrayTypes.Clear(); _querySymbols.Clear(); _queryCompletedSymbols.Clear(); _queryExpressions.Clear(); _querySymbolIds.Clear(); _queryNodeIds.Clear(); _queryCompilationIds.Clear(); }
+        public void Reset() { _steps = 0; _queryExpressionDepth = 0; Exhausted = false; _queryTypes.Clear(); _queryArrayTypes.Clear(); _querySymbols.Clear(); _queryCompletedSymbols.Clear(); _queryExpressions.Clear(); _querySymbolIds.Clear(); _queryNodeIds.Clear(); _queryCompilationIds.Clear(); _queryExpressionKeys.Clear(); }
         private bool Step() { if (++_steps <= TraversalLimit) return true; Exhausted = true; return false; }
         private void Add(ISymbol? symbol, ExpressionSyntax expression, SemanticModel model)
         {
@@ -462,6 +463,11 @@ internal static class NonWireMetadataPolicy
                 string identity = named.ToDisplayString() + "|" + named.ContainingAssembly.Identity;
                 if (!visited.Add(identity)) continue;
                 var owned = _owners.First(named);
+                // Constructed generic values retain the authoritative declared source
+                // owner. Same/first-owner identity remains unchanged; actual substituted
+                // members and original source symbols are both available below.
+                if (owned is null && named.IsGenericType && _owners.First(named.OriginalDefinition) is { } definition)
+                    owned = definition.Arity == 0 ? definition : definition.Construct(named.TypeArguments.ToArray());
                 if (owned is null && named.TypeArguments.Length == 0) continue;
                 if (!Step()) return false;
                 if (owned is not null && !_metadata.Contains(owned))
@@ -482,6 +488,8 @@ internal static class NonWireMetadataPolicy
                         foreach (var dependency in types.Reverse()) pending.Push((dependency, null));
                     }
                 }
+                for (var container = named.ContainingType; container is not null; container = container.ContainingType)
+                    foreach (var argument in container.TypeArguments.Reverse()) pending.Push((argument, null));
                 foreach (var argument in named.TypeArguments.Reverse()) pending.Push((argument, null));
             }
             return false;
@@ -541,39 +549,50 @@ internal static class NonWireMetadataPolicy
         private int SymbolId(ISymbol? symbol)
         {
             if (symbol is null) return -1;
-            if (!_querySymbolIds.TryGetValue(symbol, out int id)) { id=_querySymbolIds.Count; _querySymbolIds.Add(symbol,id); }
+            if (!_querySymbolIds.TryGetValue(symbol, out int id)) { id = _querySymbolIds.Count; _querySymbolIds.Add(symbol, id); }
             return id;
         }
         // Equivalent value states retain the actual bound symbol, substituted type and every receiver/argument origin.
         // Raw syntax + compilation identity remains the conservative fallback for unsupported constructs.
         private string ExpressionKey(ExpressionSyntax expression, SemanticModel model, int depth)
         {
+            var state = (expression, model.Compilation, depth);
+            if (_queryExpressionKeys.TryGetValue(state, out var cached)) return cached;
+            string key = ExpressionKeyCore(expression, model, depth);
+            // This caches only a deterministic key, never proof. Bound memory and
+            // retain the original computation when the cache is full.
+            if (_queryExpressionKeys.Count < TraversalLimit) _queryExpressionKeys.Add(state, key);
+            return key;
+        }
+
+        private string ExpressionKeyCore(ExpressionSyntax expression, SemanticModel model, int depth)
+        {
             if (ScalarValueType(model.GetTypeInfo(expression).Type)) return "scalar:" + SymbolId(model.GetTypeInfo(expression).Type);
             string Raw()
             {
-                if (!_queryNodeIds.TryGetValue(expression,out int node)) {node=_queryNodeIds.Count;_queryNodeIds.Add(expression,node);}
-                if (!_queryCompilationIds.TryGetValue(model.Compilation,out int compilation)) {compilation=_queryCompilationIds.Count;_queryCompilationIds.Add(model.Compilation,compilation);}
-                return "syntax:"+compilation+":"+node;
+                if (!_queryNodeIds.TryGetValue(expression, out int node)) { node = _queryNodeIds.Count; _queryNodeIds.Add(expression, node); }
+                if (!_queryCompilationIds.TryGetValue(model.Compilation, out int compilation)) { compilation = _queryCompilationIds.Count; _queryCompilationIds.Add(model.Compilation, compilation); }
+                return "syntax:" + compilation + ":" + node;
             }
-            if (depth>=32) return Raw();
-            string valueType=":type:"+SymbolId(model.GetTypeInfo(expression).Type);
-            string Source(ExpressionSyntax value)=>ExpressionKey(value,model,depth+1);
-            string Part(string value)=>value.Length+":"+value;
-            string Arguments(IEnumerable<ExpressionSyntax> values)=>string.Concat(values.Select(value=>Part(Source(value))));
-            var symbol=model.GetSymbolInfo(expression).Symbol;
+            if (depth >= 32) return Raw();
+            string valueType = ":type:" + SymbolId(model.GetTypeInfo(expression).Type);
+            string Source(ExpressionSyntax value) => ExpressionKey(value, model, depth + 1);
+            string Part(string value) => value.Length + ":" + value;
+            string Arguments(IEnumerable<ExpressionSyntax> values) => string.Concat(values.Select(value => Part(Source(value))));
+            var symbol = model.GetSymbolInfo(expression).Symbol;
             if (symbol is INamespaceSymbol) return "namespace:" + SymbolId(symbol);
             if (symbol is INamedTypeSymbol representedType) return "type:" + SymbolId(representedType);
             return expression switch
             {
-                IdentifierNameSyntax when symbol is not null => "name:"+SymbolId(symbol)+valueType,
-                MemberAccessExpressionSyntax member when symbol is not null => "member:"+SymbolId(symbol)+valueType+":receiver:"+Part(Source(member.Expression)),
-                ElementAccessExpressionSyntax element => "element:"+SymbolId(symbol)+valueType+":receiver:"+Part(Source(element.Expression))+":indices:"+Arguments(element.ArgumentList.Arguments.Select(a=>a.Expression)),
-                InvocationExpressionSyntax invocation when symbol is IMethodSymbol => "call:"+SymbolId(symbol)+valueType+":method:"+Part(Source(invocation.Expression))+":arguments:"+string.Concat(invocation.ArgumentList.Arguments.Select(argument => Part(argument.NameColon?.Name.Identifier.ValueText ?? "position") + Part(argument.RefKindKeyword.ValueText) + Part(Source(argument.Expression)))),
-                CastExpressionSyntax cast => "cast"+valueType+":value:"+Part(Source(cast.Expression)),
+                IdentifierNameSyntax when symbol is not null => "name:" + SymbolId(symbol) + valueType,
+                MemberAccessExpressionSyntax member when symbol is not null => "member:" + SymbolId(symbol) + valueType + ":receiver:" + Part(Source(member.Expression)),
+                ElementAccessExpressionSyntax element => "element:" + SymbolId(symbol) + valueType + ":receiver:" + Part(Source(element.Expression)) + ":indices:" + Arguments(element.ArgumentList.Arguments.Select(a => a.Expression)),
+                InvocationExpressionSyntax invocation when symbol is IMethodSymbol => "call:" + SymbolId(symbol) + valueType + ":method:" + Part(Source(invocation.Expression)) + ":arguments:" + string.Concat(invocation.ArgumentList.Arguments.Select(argument => Part(argument.NameColon?.Name.Identifier.ValueText ?? "position") + Part(argument.RefKindKeyword.ValueText) + Part(Source(argument.Expression)))),
+                CastExpressionSyntax cast => "cast" + valueType + ":value:" + Part(Source(cast.Expression)),
                 ParenthesizedExpressionSyntax parenthesized => Source(parenthesized.Expression),
-                TypeOfExpressionSyntax represented => "typeof:"+SymbolId(model.GetTypeInfo(represented.Type).Type),
-                BaseObjectCreationExpressionSyntax creation when symbol is not null && creation.Initializer is null => "create:"+SymbolId(symbol)+valueType+":arguments:"+Arguments(creation.ArgumentList?.Arguments.Select(a=>a.Expression)??[]),
-                _=>Raw(),
+                TypeOfExpressionSyntax represented => "typeof:" + SymbolId(model.GetTypeInfo(represented.Type).Type),
+                BaseObjectCreationExpressionSyntax creation when symbol is not null && creation.Initializer is null => "create:" + SymbolId(symbol) + valueType + ":arguments:" + Arguments(creation.ArgumentList?.Arguments.Select(a => a.Expression) ?? []),
+                _ => Raw(),
             };
         }
 
@@ -588,6 +607,9 @@ internal static class NonWireMetadataPolicy
 
         private bool ExpressionCore(ExpressionSyntax expression, SemanticModel model, HashSet<ISymbol> visited)
         {
+            // A transparent parent has the child's key. Traverse through the normal
+            // depth fence before inserting that key, or the child suppresses itself.
+            if (expression is ParenthesizedExpressionSyntax parentheses) return Expression(parentheses.Expression, model, visited);
             var type = model.GetTypeInfo(expression).Type;
             if (ScalarValueType(type)) return false;
             if (model.GetSymbolInfo(expression).Symbol is INamespaceSymbol) return false;
@@ -612,7 +634,6 @@ internal static class NonWireMetadataPolicy
                 && element.SpecialType == SpecialType.System_String) return false;
             if (type is not null && Reaches(type, new HashSet<string>(StringComparer.Ordinal))) return true;
             if (expression is CastExpressionSyntax cast) return Expression(cast.Expression, model, visited);
-            if (expression is ParenthesizedExpressionSyntax parentheses) return Expression(parentheses.Expression, model, visited);
             if (expression is TupleExpressionSyntax tuple) return tuple.Arguments.Any(argument => Expression(argument.Expression, model, visited));
             if (expression is CollectionExpressionSyntax collection)
                 return collection.Elements.Any(element => element switch
@@ -635,7 +656,13 @@ internal static class NonWireMetadataPolicy
                     if (selector is LambdaExpressionSyntax lambda)
                         return lambda.ExpressionBody is { } body ? Expression(body, model, visited)
                             : lambda.Block?.DescendantNodes().OfType<ReturnStatementSyntax>().Any(returned => returned.Expression is { } value && Expression(value, model, visited)) == true;
-                    return model.GetSymbolInfo(selector).Symbol is IMethodSymbol selected && Symbol(selected, visited);
+                    if (model.GetSymbolInfo(selector).Symbol is IMethodSymbol selected) return Symbol(selected, visited);
+                    if (model.GetTypeInfo(selector).Type is INamedTypeSymbol { DelegateInvokeMethod: { } invoked }
+                        && ScalarValueType(invoked.ReturnType)) return false;
+                    // An unresolved delegate returning an erased/complex value has
+                    // no complete source proof. Do not discard its receiver origin.
+                    Exhausted = true;
+                    return false;
                 }
                 if (Symbol(method, visited)) return true;
                 if (invocation.Expression is MemberAccessExpressionSyntax receiver && Expression(receiver.Expression, model, visited)) return true;
