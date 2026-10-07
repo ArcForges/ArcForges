@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from contextlib import contextmanager
 import time
 
@@ -361,12 +362,12 @@ def stage(directory, vcpkg, installed_root):
     verify_stage(directory, commit)
 
 
-def _read_document(path, maximum=16 * 1024 * 1024):
+def _read_document(path, maximum=16 * 1024 * 1024, check=None):
     path = Path(path)
     require(path.is_file() and not path.is_symlink() and path.stat().st_size <= maximum,
             "Missing, linked or unbounded native document.")
     collected = io.BytesIO()
-    _bounded_file(path.absolute(), _progress(), collected, maximum=maximum)
+    _bounded_file(path.absolute(), check or _progress(), collected, maximum=maximum)
     content = collected.getvalue()
     require(len(content) <= maximum, "Native document grew beyond its bound.")
 
@@ -651,7 +652,7 @@ def verify_stage(directory, commit, cancelled=None):
     check = _progress(cancelled)
     check()
     directory = Path(directory)
-    artifact = _read_document(directory / "native-artifact.json")
+    artifact = _read_document(directory / "native-artifact.json", check=check)
     if artifact.get("schemaVersion") != 2:
         packages = artifact.get("packages", [])
         if len(packages) == 1 and packages[0].get("id", "").startswith("ArcForges.Native.Pdf.Runtime."):
@@ -692,6 +693,407 @@ def verify_stage(directory, commit, cancelled=None):
     require(_inventory(directory, check=check) == expected, "Unexpected, missing or changed composed native material.")
     return artifact
 
+
+
+def _release_digest(path, check, maximum=512 * 1024 * 1024):
+    return _bounded_file(path, check, maximum=maximum)[0]
+
+
+def _protected_posix_tool(path, *, directory=False):
+    """Real installation authority. An advisory flock or user-owned directory is insufficient."""
+    require(os.geteuid() != 0, "A privileged caller cannot claim protection against its own writable tool installation.")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    if directory: flags |= os.O_DIRECTORY
+    descriptor = os.open(path, flags)
+    try:
+        details = os.fstat(descriptor)
+        require(details.st_uid == 0 and not details.st_mode & 0o022
+                and (stat.S_ISDIR(details.st_mode) if directory else stat.S_ISREG(details.st_mode)),
+                "The release tool installation is not OS-owned and protected from unprivileged writes.")
+        require(not any(name in ("system.posix_acl_access", "system.posix_acl_default", "com.apple.system.Security")
+                        for name in os.listxattr(path, follow_symlinks=False)), "Extended tool installation ACLs are not admitted.")
+        current = os.stat(path, follow_symlinks=False)
+        require((current.st_dev, current.st_ino) == (details.st_dev, details.st_ino), "Tool installation identity changed during admission.")
+        return os.fdopen(descriptor, "rb") if not directory else descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _windows_tool_authority(handle, *, directory, payload):
+    """Actual OS attestation; the test seam is only for unavailable protected provisioning."""
+    import ctypes
+    from ctypes import wintypes
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security.GetSecurityInfo.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p)]
+    security.GetSecurityInfo.restype = wintypes.DWORD
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    descriptor = None
+    try:
+        owner, acl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        require(security.GetSecurityInfo(handle, 1, 5, ctypes.byref(owner), None, ctypes.byref(acl), None,
+                ctypes.byref(descriptor)) == 0 and owner.value and acl.value,
+                "Cannot establish actual tool installation ownership and DACL.")
+        def sid(pointer):
+            prefix = ctypes.string_at(pointer, 8)
+            require(prefix[0] == 1 and prefix[1] <= 15, "Unbounded installation SID.")
+            raw = ctypes.string_at(pointer, 8 + prefix[1] * 4)
+            return "S-1-" + str(int.from_bytes(raw[2:8], "big")) + "".join("-" + str(value) for value in struct.unpack_from("<" + "I" * raw[1], raw, 8))
+        trusted = {"S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}
+        require(sid(owner.value) in trusted, "The release tool installation has an unprivileged owner.")
+        header = ctypes.string_at(acl, 8)
+        size, count = struct.unpack_from("<HH", header, 2)
+        require(8 <= size <= 65535 and count <= 512, "Unbounded installation DACL.")
+        offset = 8
+        # Ancestors cannot permit replacing the protected child or changing their
+        # DACL. The payload itself additionally forbids adding/modifying material.
+        forbidden = 0x10000000 | 0x40000000 | 0x000D0040
+        if payload or not directory: forbidden |= 0x00000116
+        for _ in range(count):
+            require(offset + 8 <= size, "Truncated installation ACE.")
+            ace = ctypes.string_at(acl.value + offset, 8)
+            kind, flags, length, mask = struct.unpack("<BBHI", ace)
+            require(length >= 8 and offset + length <= size and kind in (0, 1), "Unsupported installation DACL entry.")
+            if kind == 0 and not flags & 8 and mask & forbidden:
+                require(sid(acl.value + offset + 8) in trusted, "The tool installation grants unprivileged mutation authority.")
+            offset += length
+        require(offset <= size, "Malformed installation DACL size.")
+    finally:
+        if descriptor and descriptor.value: kernel.LocalFree(descriptor)
+
+
+def _windows_tool_lease(path, *, directory=False, payload=False):
+    """Held kernel bytes and conservative OS DACL authority; no pathname-only approval."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                  wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    kernel.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    security.GetSecurityInfo.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p)]
+    security.GetSecurityInfo.restype = wintypes.DWORD
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    handle = kernel.CreateFileW(str(path), 0x80020000 if not directory else 0x00020080,
+        1, None, 3, 0x00200000 | (0x02000000 if directory else 0), None)
+    require(handle != ctypes.c_void_p(-1).value, "Cannot retain the protected release-tool kernel lease.")
+    descriptor = None
+    returned = False
+    try:
+        _windows_tool_authority(handle, directory=directory, payload=payload)
+        physical = ctypes.create_unicode_buffer(32768)
+        length = kernel.GetFinalPathNameByHandleW(handle, physical, len(physical), 2)
+        require(0 < length < len(physical) and physical.value.startswith("\\Device\\"), "Cannot establish the actual protected tool locator.")
+        # CreateProcess rejects NT/GLOBALROOT and volume-GUID executable names on
+        # this supported Windows boundary (actual component probes returned87).
+        # Use only the canonical OS boot-drive pathname, whose boot-created DOS
+        # device cannot be redefined by an unprivileged caller:
+        # https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-definedosdevicea
+        windows = ctypes.create_unicode_buffer(32768)
+        require(0 < kernel.GetWindowsDirectoryW(windows, len(windows)) < len(windows)
+                and os.path.normcase(Path(windows.value).drive) == os.path.normcase(path.drive),
+                "The protected tool must reside on the actual Windows boot installation drive.")
+        canonical = ctypes.create_unicode_buffer(32768)
+        length = kernel.GetFinalPathNameByHandleW(handle, canonical, len(canonical), 0)
+        require(0 < length < len(canonical) and canonical.value.startswith("\\\\?\\")
+                and os.path.normcase(canonical.value[4:]) == os.path.normcase(str(path)),
+                "The held execution material differs from its canonical protected boot-drive location.")
+        locator = str(path)
+        if directory:
+            returned = True
+            return handle, locator, kernel.CloseHandle
+        descriptor = msvcrt.open_osfhandle(int(handle), os.O_RDONLY)
+        handle = None
+        try:
+            return os.fdopen(descriptor, "rb"), locator
+        except BaseException:
+            os.close(descriptor)
+            raise
+    finally:
+        if handle and not returned: kernel.CloseHandle(handle)
+
+
+@contextmanager
+def _signer_execution(files, executable, check):
+    """Keep real protected file/directory authority throughout admission, exec and exit."""
+    leases, directories = [], []
+    try:
+        root = executable.parent
+        require(all(Path(name).parent == root for name in files), "Signer payload must be one closed installation directory.")
+        require(all(not _linked(path) for path in (root, *root.parents)), "Linked release tool installation.")
+        for path in reversed((root, *root.parents)):
+            check()
+            if os.name == "nt": directories.append(_windows_tool_lease(path, directory=True, payload=path == root))
+            else: directories.append(_protected_posix_tool(path, directory=True))
+        invocation = None
+        for name, checksum in files.items():
+            check()
+            if os.name == "nt": stream, locator = _windows_tool_lease(Path(name))
+            else: stream, locator = _protected_posix_tool(Path(name)), name
+            leases.append(stream)
+            digest = hashlib.sha256()
+            total = 0
+            while block := stream.read(65536):
+                check()
+                total += len(block)
+                require(total <= 256 * 1024 * 1024, "Unbounded protected execution material.")
+                digest.update(block)
+            require(total > 0 and digest.hexdigest() == checksum, "The held signing tool differs from its separately approved producer.")
+            if Path(name) == executable:
+                invocation = locator
+                stream.seek(0)
+                binary = stream.read(256 * 1024 * 1024 + 1)
+                if os.name == "nt":
+                    details = pe(binary)
+                    base = struct.unpack_from("<I", binary, 60)[0] + 24
+                    require(struct.unpack_from("<II", binary, base + 112 + 14 * 8) == (0, 0)
+                            and all(system_dependency(name) for name in details["imports"]),
+                            "Only the reviewed self-contained native executable and OS dependencies are admitted.")
+                else: require(binary.startswith((b"\x7fELF", b"\xcf\xfa\xed\xfe")), "The signer must be an admitted self-contained native executable.")
+        require(invocation is not None, "Missing held signer executable.")
+        environment = {name: value for name, value in os.environ.items()
+            if name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA")}
+        if os.name == "nt":
+            import ctypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            windows, system = ctypes.create_unicode_buffer(32768), ctypes.create_unicode_buffer(32768)
+            require(0 < kernel.GetWindowsDirectoryW(windows, len(windows)) < len(windows)
+                    and 0 < kernel.GetSystemDirectoryW(system, len(system)) < len(system),
+                    "Cannot establish actual OS execution directories.")
+            environment.update(SystemRoot=windows.value, WINDIR=windows.value, PATH=system.value)
+        else: environment["PATH"] = "/usr/bin:/bin"
+        yield invocation, environment
+    finally:
+        for stream in reversed(leases): stream.close()
+        for directory in reversed(directories):
+            if os.name == "nt": directory[2](directory[0])
+            else: os.close(directory)
+
+
+@dataclass(frozen=True)
+class OfflineReleaseSigner:
+    """Trusted release-operator tool configuration, never authority supplied by an artifact.
+
+    command is the reviewed self-contained NativeAOT CLI, never a mutable dotnet host/framework;
+    pins binds the entire admitted protected tool payload.
+    The release job supplies this configuration from its separately trusted build.
+    """
+    command: tuple
+    pins: tuple
+
+    def run(self, arguments, check):
+        require(len(self.command) == 1 and self.pins and len(self.pins) <= 128,
+                "Missing bounded release signer tool configuration.")
+        require(all(isinstance(item, str) and Path(item).is_absolute() for item in self.command)
+                and Path(self.command[0]).name == ("ArcForges.Native.ReleaseSigner.exe" if os.name == "nt" else "ArcForges.Native.ReleaseSigner"),
+                "Unadmitted signing tool execution contract.")
+        files = {}
+        for name, checksum in self.pins:
+            path = Path(name)
+            require(path.is_absolute() and str(path) not in files and re.fullmatch("[a-f0-9]{64}", checksum),
+                    "Unadmitted release signer tool pin.")
+            require(_release_digest(path, check, maximum=256 * 1024 * 1024) == checksum,
+                    "The real signing tool differs from its separately approved producer.")
+            files[str(path)] = checksum
+        require(all(str(Path(item)) in files for item in self.command), "Unpinned release signer invocation.")
+        payload_root = Path(self.command[-1]).parent
+        payload = _inventory(payload_root, check=check)
+        require({str(payload_root / name): checksum for name, checksum in payload.items()}
+                == {name: checksum for name, checksum in files.items() if Path(name).is_relative_to(payload_root)},
+                "The complete admitted signer payload differs from its closed producer pins.")
+        check()
+        # The actual CLI emits closed refusal categories only. Do not forward a
+        # provider diagnostic, secret reference, stdout or unbounded pipe into logs.
+        with _signer_execution(files, Path(self.command[0]), check) as (invocation, environment), subprocess.Popen([invocation, *arguments], executable=invocation, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                cwd=Path(self.command[-1]).parent, env=environment) as child:
+            try:
+                while child.poll() is None:
+                    check()
+                    time.sleep(.02)
+                require(child.returncode == 0, "The real offline release signer refused.")
+            except BaseException:
+                if child.poll() is None: child.kill()
+                child.wait(timeout=10)
+                raise
+        check()
+        for name, checksum in files.items():
+            require(_release_digest(Path(name), check, maximum=256 * 1024 * 1024) == checksum,
+                    "The admitted signing tool changed during invocation.")
+        require(_inventory(payload_root, check=check) == payload, "The signing tool payload changed during invocation.")
+
+
+def _release_arguments(package, version, commit, base, approved_spki, key_id):
+    match = re.fullmatch(r"ArcForges\.Native\.(Image|Pdf)\.Runtime\.(.+)", package["id"])
+    require(match is not None, "Unknown signed native release coordinate.")
+    family, rid = match.groups()
+    _coordinate(family, rid)
+    library = "Arc" + family + "Native"
+    runtime = base / "runtimes" / rid / "native"
+    return runtime, library, ["--manifest", str(runtime / (library + ".manifest.json")),
+            "--profile", str(runtime / (library + ".profile.json")), "--approved-spki", str(approved_spki),
+            "--key-id", key_id, "--rid", rid, "--library", library, "--version", version, "--source", commit]
+
+
+def _release_expected_profile(original, producer, index_hash):
+    require(isinstance(original, dict) and set(original) == {"schemaVersion", "library", "rid",
+            "producerProfileSha256", "systemPolicySha256", "systemImports"}
+            and type(original["schemaVersion"]) is int and original["schemaVersion"] == 1,
+            "Only the exact verified unsigned runtime policy can become a signed release policy.")
+    return {**original, "schemaVersion": 2, "producerReceiptSha256": producer, "familyIndexSha256": index_hash}
+
+
+def verify_signed_release(directory, commit, version, approved_spki, key_id, signer, cancelled=None):
+    """Verify publisher authority separately from unchanged complete producer evidence."""
+    check = _progress(cancelled)
+    guard = lambda: (check(), False)[1]
+    directory = Path(directory).absolute()
+    artifact = _read_document(directory / "native-artifact.json", check=check)
+    require(set(artifact) == {"schemaVersion", "sourceCommit", "rid", "build", "packages", "packageVersion",
+            "keyId", "approvedSpkiSha256", "unsignedArtifactSha256", "familyIndexSha256"}
+            and type(artifact["schemaVersion"]) is int and artifact["schemaVersion"] == 3
+            and artifact["sourceCommit"] == commit and artifact["rid"] == "multi"
+            and artifact["packageVersion"] == version and artifact["keyId"] == key_id,
+            "Signed native release identity differs from the requested authoritative cohort.")
+    spki_hash = _release_digest(Path(approved_spki), check, maximum=4096)
+    require(spki_hash == artifact["approvedSpkiSha256"], "The release key differs from independently approved authority.")
+    raw = directory / ".native-unsigned"
+    unsigned = verify_stage(raw, commit, cancelled=guard)
+    require(unsigned["schemaVersion"] == 2 and artifact["build"] == unsigned["build"]
+            and _release_digest(raw / "native-artifact.json", check) == artifact["unsignedArtifactSha256"]
+            and artifact["familyIndexSha256"] == unsigned["familyIndexSha256"],
+            "Signed release lost its exact source-bound unsigned producer evidence.")
+    require(isinstance(artifact["packages"], list) and len(artifact["packages"]) == len(unsigned["packages"])
+            and [row["id"] for row in artifact["packages"]] == [row["id"] for row in unsigned["packages"]],
+            "Signed release package subset differs from its actual producer.")
+    expected = {"native-artifact.json": _release_digest(directory / "native-artifact.json", check)}
+    expected.update({".native-unsigned/" + name: digest for name, digest in _inventory(raw, check=check).items()})
+    for package, source in zip(artifact["packages"], unsigned["packages"], strict=True):
+        check()
+        require(set(package) == set(source), "Signed release changed package record meaning.")
+        require(all(package[name] == source[name] for name in source if name != "files"), "Signed release changed source package metadata.")
+        original = raw / package["id"]
+        current = directory / package["id"]
+        runtime, library, arguments = _release_arguments(package, version, commit, current, approved_spki, key_id)
+        relative = runtime.relative_to(current).as_posix()
+        receipt = "image-production-input.json" if library == "ArcImageNative" else "pdf-runtime-production.json"
+        receipt_hash = _release_digest(original / receipt, check)
+        profile = _release_expected_profile(_read_document(original / relative / (library + ".profile.json"), maximum=1024 * 1024, check=check),
+                                            receipt_hash, artifact["familyIndexSha256"])
+        profile_bytes = io.BytesIO()
+        _bounded_file(runtime / (library + ".profile.json"), check, profile_bytes, maximum=1024 * 1024)
+        require(profile_bytes.getvalue() == build_identity.canonical(profile),
+                "Signed native policy lost canonical complete producer/index binding.")
+        original_files = _inventory(original, check=check)
+        actual = _inventory(current, check=check)
+        profile_path, signature_path = relative + "/" + library + ".profile.json", relative + "/" + library + ".signature.json"
+        require(set(actual) == set(original_files) | {signature_path}, "Unexpected or missing signed native payload.")
+        require(all(actual[name] == checksum for name, checksum in original_files.items() if name != profile_path),
+                "Signed release altered actual compiled/source/legal/producer bytes.")
+        require(package["files"] == [{"path": name, "sha256": checksum} for name, checksum in sorted(actual.items())],
+                "Signed release package inventory differs from actual bounded bytes.")
+        signer.run(["verify", *arguments, "--signature", str(runtime / (library + ".signature.json"))], check)
+        require(_release_digest(Path(approved_spki), check, maximum=4096) == spki_hash,
+                "Release publisher approval changed during verification.")
+        expected.update({package["id"] + "/" + name: checksum for name, checksum in actual.items()})
+    require(_inventory(directory, check=check) == expected, "Unexpected, missing or changed signed release material.")
+    return artifact
+
+
+def sign_native_release(directory, source, commit, version, approved_spki, key_id, signer,
+                        pem=None, certificate_thumbprint=None, store_location=None, cancelled=None):
+    """Produce a new signed cohort; immutable unsigned builds are retained untouched."""
+    require(bool(pem) != bool(certificate_thumbprint) and bool(store_location) == bool(certificate_thumbprint),
+            "Exactly one real release signing provider is required.")
+    require(isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version)
+            and isinstance(key_id, str) and re.fullmatch(r"[0-9A-Za-z._-]{1,128}", key_id), "Invalid release identity.")
+    check = _progress(cancelled)
+    guard = lambda: (check(), False)[1]
+    source, directory = Path(source).absolute(), Path(directory).absolute()
+    unsigned = verify_stage(source, commit, cancelled=guard)
+    require(unsigned["schemaVersion"] == 2, "Signed releases require the exact composed family index.")
+    approved_spki = Path(approved_spki).absolute()
+    key_hash = _release_digest(approved_spki, check, maximum=4096)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    require(all(not _linked(path) for path in (directory.parent, *directory.parent.parents)), "Linked signed-release parent.")
+    with _exclusive_stage(directory, check=check):
+        require(not directory.exists(), "Preserve the existing signed release candidate.")
+        with tempfile.TemporaryDirectory(prefix=".native-sign-", dir=directory.parent) as temporary:
+            staging = Path(temporary) / "candidate"
+            staging.mkdir()
+            raw = staging / ".native-unsigned"
+            _copy_inventory(source, raw, _inventory(source, check=check), check)
+            verify_stage(raw, commit, cancelled=guard)
+            packages = []
+            for package in unsigned["packages"]:
+                current = staging / package["id"]
+                _copy_inventory(raw / package["id"], current, _inventory(raw / package["id"], check=check), check)
+                runtime, library, arguments = _release_arguments(package, version, commit, current, approved_spki, key_id)
+                receipt = "image-production-input.json" if library == "ArcImageNative" else "pdf-runtime-production.json"
+                profile_path = runtime / (library + ".profile.json")
+                profile = _release_expected_profile(_read_document(profile_path, maximum=1024 * 1024, check=check), _release_digest(current / receipt, check),
+                                                    unsigned["familyIndexSha256"])
+                profile_path.write_bytes(build_identity.canonical(profile))
+                signature = runtime / (library + ".signature.json")
+                provider = ["--pem", str(Path(pem).absolute())] if pem else ["--certificate-thumbprint", certificate_thumbprint,
+                                                                           "--store-location", store_location]
+                signer.run(["sign", *arguments, "--output", str(signature), *provider], check)
+                require(_release_digest(approved_spki, check, maximum=4096) == key_hash, "Release key approval changed during signing.")
+                packages.append({**package, "files": [{"path": name, "sha256": checksum}
+                        for name, checksum in sorted(_inventory(current, check=check).items())]})
+            artifact = {"schemaVersion": 3, "sourceCommit": commit, "rid": "multi", "build": unsigned["build"],
+                        "packages": packages, "packageVersion": version, "keyId": key_id, "approvedSpkiSha256": key_hash,
+                        "unsignedArtifactSha256": _release_digest(raw / "native-artifact.json", check),
+                        "familyIndexSha256": unsigned["familyIndexSha256"]}
+            write_json(staging / "native-artifact.json", artifact)
+            verify_signed_release(staging, commit, version, approved_spki, key_id, signer, cancelled=guard)
+            check()
+            _flush_tree(staging, check=check)
+            check()
+            staging.replace(directory)
+            _flush_directory(directory.parent)
+    return artifact
+
+
+def retain_signed_package_handoff(source, destination, commit, version, approved_spki, key_id, signer, cancelled=None):
+    """Publication keeps real raw evidence and signed candidate bytes, not self-declared success."""
+    check = _progress(cancelled)
+    source, destination = Path(source).absolute(), Path(destination).absolute()
+    retained = destination / ".native-release"
+    require(not retained.exists(), "Preserve the existing signed publication handoff.")
+    original = _inventory(source, check=check)
+    try:
+        _copy_inventory(source, retained, original, check)
+        verify_signed_release(retained, commit, version, approved_spki, key_id, signer,
+                              cancelled=lambda: (check(), False)[1])
+        require(_inventory(source, check=check) == original, "Signed source changed during publication handoff.")
+        _flush_tree(retained, check=check)
+        _flush_directory(destination)
+    except BaseException:
+        if retained.exists(): shutil.rmtree(retained)
+        raise
+
+
+def release_signer_tool(path):
+    """Load caller-supplied reviewed tool configuration; never consume artifact-supplied authority."""
+    tool = _read_document(path, maximum=1024 * 1024)
+    require(set(tool) == {"schemaVersion", "command", "files"} and type(tool["schemaVersion"]) is int
+            and tool["schemaVersion"] == 1 and isinstance(tool["command"], list) and isinstance(tool["files"], list)
+            and all(isinstance(row, dict) and set(row) == {"path", "sha256"} for row in tool["files"]),
+            "Invalid separately approved signer-tool producer configuration.")
+    return OfflineReleaseSigner(tuple(tool["command"]), tuple((row["path"], row["sha256"]) for row in tool["files"]))
 
 
 def retain_package_handoff(source, destination, commit):
@@ -786,8 +1188,10 @@ def _verify_legacy_stage(directory, commit, cancelled=None):
 
 
 def verify_identity(artifact, commit):
-    if artifact.get("schemaVersion") == 2:
+    if artifact.get("schemaVersion") in (2, 3):
+        extra = {"packageVersion", "keyId", "approvedSpkiSha256", "unsignedArtifactSha256"} if artifact["schemaVersion"] == 3 else set()
         require(set(artifact) == {"schemaVersion", "sourceCommit", "rid", "packages", "build", "familyIndexSha256"}
+                | extra
                 and artifact["sourceCommit"] == commit and artifact["rid"] == "multi", "Composed native identity mismatch.")
         require(isinstance(artifact["familyIndexSha256"], str) and re.fullmatch("[a-f0-9]{64}", artifact["familyIndexSha256"]),
                 "Invalid native family-index digest.")
@@ -802,13 +1206,13 @@ def verify_identity(artifact, commit):
             "Invalid native artifact package inventory.")
     actual = {row["id"] for row in artifact["packages"]}
     require(len(actual) == len(artifact["packages"])
-            and (actual.issubset(expected) if artifact.get("schemaVersion") == 2 else actual == expected),
+            and (actual.issubset(expected) if artifact.get("schemaVersion") in (2, 3) else actual == expected),
             "Native artifact package set mismatch.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["stage", "verify", "combine"])
+    parser.add_argument("command", choices=["stage", "verify", "combine", "sign-release", "verify-release"])
     parser.add_argument("--directory", type=Path, default=ROOT / "artifacts/native-packages")
     parser.add_argument("--vcpkg-root", type=Path, default=os.environ.get("VCPKG_ROOT", "C:/vcpkg"))
     parser.add_argument("--installed-root", type=Path, default=ROOT / "artifacts/vcpkg-installed")
@@ -821,6 +1225,14 @@ if __name__ == "__main__":
     parser.add_argument("--compiler-runtime", type=Path)
     parser.add_argument("--sealed-input", type=Path)
     parser.add_argument("--input-directory", type=Path, action="append", default=[])
+    parser.add_argument("--unsigned-directory", type=Path)
+    parser.add_argument("--release-version")
+    parser.add_argument("--approved-spki", type=Path)
+    parser.add_argument("--key-id")
+    parser.add_argument("--signer-tool-profile", type=Path)
+    parser.add_argument("--pem", type=Path)
+    parser.add_argument("--certificate-thumbprint")
+    parser.add_argument("--store-location", choices=["CurrentUser", "LocalMachine"])
     args = parser.parse_args()
     if args.command == "stage":
         if args.family is None:
@@ -846,5 +1258,20 @@ if __name__ == "__main__":
         require(args.family is None and args.rid is None, "Composition derives exact coordinates from verified inputs.")
         combine(args.directory.absolute(), args.input_directory, args.commit or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())
+    elif args.command in ("sign-release", "verify-release"):
+        require(args.family is None and args.rid is None and args.approved_spki is not None
+                and args.release_version is not None and args.key_id is not None and args.signer_tool_profile is not None,
+                "Signed release needs separate explicit source/version/public-key/tool authority.")
+        signer = release_signer_tool(args.signer_tool_profile)
+        commit = args.commit or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        if args.command == "sign-release":
+            require(args.unsigned_directory is not None, "An actual complete unsigned family producer is required.")
+            sign_native_release(args.directory, args.unsigned_directory, commit, args.release_version,
+                args.approved_spki, args.key_id, signer, pem=args.pem, certificate_thumbprint=args.certificate_thumbprint,
+                store_location=args.store_location)
+        else:
+            require(args.pem is None and args.certificate_thumbprint is None and args.store_location is None,
+                    "Verification accepts no private signing provider.")
+            verify_signed_release(args.directory, commit, args.release_version, args.approved_spki, args.key_id, signer)
     else:
         verify_stage(args.directory.resolve(), args.commit or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())

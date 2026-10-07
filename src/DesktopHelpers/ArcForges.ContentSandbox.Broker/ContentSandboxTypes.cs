@@ -104,6 +104,12 @@ public sealed record ContentSandboxLaunchOptions
 
     /// <summary>The directory of the AppContainer identity locks on Windows; the per-user default when null.</summary>
     public string? SlotLockDirectory { get; init; }
+
+    // Friend-only opt-in for locally compiled regression fixtures. Product callers cannot waive release trust.
+    internal bool LocalUnsignedFixture { get; init; }
+
+    /// <summary>The exact authenticated native release cohort. Required for the production parser composition.</summary>
+    public ContentSandboxReleaseTrust? ReleaseTrust { get; init; }
 }
 
 /// <summary>The geometry and bytes of one verified tile. The bytes are the parent's private copy, verified against the sealed digest.</summary>

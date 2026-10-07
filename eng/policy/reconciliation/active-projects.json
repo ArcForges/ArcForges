@@ -28,7 +28,7 @@
     },
     {
       "path": "native/arcpdf-abi/CMakeLists.txt",
-      "blob": "ff726aeb3f1cc46ba800c587bb689816db22d3e6"
+      "blob": "164e1383f90ed090fcd9253b8351ac534bb5a31d"
     },
     {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
@@ -160,7 +160,7 @@
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
-      "blob": "b23ff89a056f690780f87daf15f2df997f016556"
+      "blob": "13eb096a32489425472c6ab041d4e39c8a372eae"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
@@ -172,7 +172,7 @@
     },
     {
       "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
-      "blob": "32742a65b4e25d04b40e0dfb519ef3201359c6ba"
+      "blob": "e686279eaa3f7be2c7629d9a1c74729a070e88ef"
     },
     {
       "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
@@ -184,7 +184,7 @@
     },
     {
       "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
-      "blob": "155342fc571527dc20c1615abd6630dd44d01623"
+      "blob": "fbbdc2c79ae6da31cca00104ed4b595380a6d0fa"
     },
     {
       "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
@@ -196,7 +196,7 @@
     },
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
-      "blob": "e2ddd8ea87705280a92fdbba21630610fe2ff503"
+      "blob": "a94eb3ff4515e10bc267fe11910816be7cc028ae"
     },
     {
       "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
@@ -253,6 +253,34 @@
     {
       "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
       "blob": "001f6d6855882333dba77d60083d1091c2ac8dba"
+    },
+    {
+      "path": "eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj",
+      "blob": "25ae7191a512fe5a6873931f34e6bdd205410cd5"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-arm64/ArcForges.Native.Pdf.Runtime.linux-arm64.csproj",
+      "blob": "a2a5fd2cd351f3c78a01221f4f545631e3e1fa4e"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-x64/ArcForges.Native.Pdf.Runtime.linux-x64.csproj",
+      "blob": "9cfed90661e1b6f8931c6a613f214bed8f38a0b6"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-arm64/ArcForges.Native.Pdf.Runtime.osx-arm64.csproj",
+      "blob": "5bc1aec5c3520797b0ba2c1c289e7df17d69c631"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-x64/ArcForges.Native.Pdf.Runtime.osx-x64.csproj",
+      "blob": "f102db2a3bc8312bb6335fac7139bd5673ccad31"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.win-arm64/ArcForges.Native.Pdf.Runtime.win-arm64.csproj",
+      "blob": "d626a3e8695e22bf50fbb6470afab372f7e14e38"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.win-x64/ArcForges.Native.Pdf.Runtime.win-x64.csproj",
+      "blob": "923320c4ad4fbb89a23729f24cca5eaa57b37c51"
     },
     {
       "path": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",

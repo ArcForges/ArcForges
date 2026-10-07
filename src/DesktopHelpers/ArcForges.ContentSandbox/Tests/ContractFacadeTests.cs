@@ -12,7 +12,7 @@ namespace ArcForges.ContentSandbox.Tests;
 /// <summary>The thin facade: the fixed contract facts, the launch frame, the record mapping and the budget. Offline; no process is started.</summary>
 public sealed class ContractFacadeTests
 {
-    private static ContentSandboxLaunchFrame Frame(Action<List<ContentSandboxHandleEntry>>? handles = null, string profile = "hostile-test-parser", byte[]? bootstrap = null, ContentSandboxLimits? limits = null, ulong inputLength = 100, IReadOnlyList<ulong>? slots = null)
+    private static ContentSandboxLaunchFrame Frame(Action<List<ContentSandboxHandleEntry>>? handles = null, string profile = "hostile-test-parser", byte[]? bootstrap = null, ContentSandboxLimits? limits = null, ulong inputLength = 100, IReadOnlyList<ulong>? slots = null, byte[]? nativeBootstrap = null)
     {
         var list = new List<ContentSandboxHandleEntry>
         {
@@ -35,7 +35,7 @@ public sealed class ContractFacadeTests
             limits ?? new ContentSandboxLimits(),
             list,
             profile,
-            bootstrap ?? [1, 2, 3, 4]);
+            bootstrap ?? [1, 2, 3, 4], nativeBootstrap);
     }
 
     [Fact]
@@ -71,6 +71,23 @@ public sealed class ContractFacadeTests
         Assert.False(decoded.TryGetHandle(ContentSandboxHandleRole.Slot2, out _));
         decoded.Dispose();
         Assert.All(decoded.BootstrapResource, value => Assert.Equal(0, value));
+    }
+
+    [Fact]
+    public void ReleaseNativeBootstrapRoundTripsInVersionTwoWithoutChangingHistoricalVersionOne()
+    {
+        byte[] release = "{\"fixture\":true}"u8.ToArray();
+        using var current = Frame(nativeBootstrap: release);
+        var encoded = current.Encode();
+        using var decoded = ContentSandboxLaunchFrame.Decode(encoded.AsSpan(4));
+        Assert.Equal(release, decoded.NativeBootstrap);
+        Assert.Equal((byte)2, encoded[13]);
+        using var previous = Frame();
+        Assert.Equal((byte)1, previous.Encode()[13]);
+        var oversized = encoded.ToArray();
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(oversized.AsSpan(oversized.Length - release.Length - 4), ContentSandboxLaunchFrame.MaxNativeBootstrapBytes + 1);
+        _ = Assert.Throws<FormatException>(() => ContentSandboxLaunchFrame.Decode(oversized.AsSpan(4)));
+        _ = Assert.Throws<ArgumentException>(() => Frame(nativeBootstrap: new byte[ContentSandboxLaunchFrame.MaxNativeBootstrapBytes + 1]));
     }
 
     [Theory]

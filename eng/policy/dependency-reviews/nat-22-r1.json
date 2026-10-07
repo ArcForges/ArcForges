@@ -3,8 +3,8 @@
     "owner": "w-codex-20261006-image",
     "reviewer": "Independent exact-head source/admission approval and applicable CI required before merge.",
     "reviewedOn": "2026-10-07",
-    "baselineCommit": "9ad996a0e23d3868b00289476a1b42cf76a47e58",
-    "maintenanceAssessment": "NAT.22 admits complete six-RID Image producer/inspection/staging/consumer contracts and payload-gated runtime containers. Normal publication selects only four actually compiled Windows/Linux source-bound producer inputs; macOS containers remain inactive without actual artifacts. Preserve legacy win-x64 r4, all accepted history and all managed/Python coordinates. ARM-only sse2neon1.9.1 and Linux-only OpenSSL3.6.3/core plus vcpkg-cmake-get-vars2025-05-29 are minimum real prerequisites. Entire original source/legal/recipe bytes and mixed utility contexts are retained. External make4.3/Perl5.38.2/TextTemplate1.56 are separate noncopying execution tools with actual hashes, closed loaded-module/Configure/environment binding, full original terms and cancellation/lifecycle limits; no copied GPL/Artistic implementation or generated-source permission.",
+    "baselineCommit": "9469efeb78c2ef8b2981c54e0be65253f5f193d8",
+    "maintenanceAssessment": "NAT.22 admits complete six-RID Image producer/inspection/staging/consumer contracts and payload-gated runtime containers. Normal publication selects only four actually compiled Windows/Linux source-bound producer inputs; macOS containers remain inactive without actual artifacts. Preserve legacy win-x64 r4, all accepted history and all managed/Python coordinates. ARM-only sse2neon1.9.1 and Linux-only OpenSSL3.6.3/core plus vcpkg-cmake-get-vars2025-05-29 are minimum real prerequisites. Entire original source/legal/recipe bytes and mixed utility contexts are retained. External make4.3/Perl5.38.2/TextTemplate1.56 are separate noncopying execution tools with actual hashes, closed loaded-module/Configure/environment binding, full original terms and cancellation/lifecycle limits; no copied GPL/Artistic implementation or generated-source permission. Unaccepted candidate rechain after archiving original raw/Git bytes: accepted NAT25 runtime source9469 and its immutable receipt are preserved; original own candidate input snapshot retained as history, current complete actual union is sealed in nat22r3.",
     "upgradeChecks": {
       "compilation": "Actual earlier available win-x64 and cross-win-arm64 production component compiles/stages passed at retained source checkpoints. Final source-cohort Windows/Linux producer compile and package gates are mandatory on applicable current CI; no unbuilt macOS or ARM execution claim.",
       "aot-trim": "Retained managed bindings stay internal/helper-friend gated and use the reviewed C ABI1.1; no AOT/trim suppression or native consumer execution in CI. Existing exact-head AOT compile gates remain mandatory; native runtime diagnostics are explicit local only.",
@@ -359,7 +359,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/prf-04-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-25-runtime-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",

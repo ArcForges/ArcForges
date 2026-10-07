@@ -41,11 +41,11 @@
           "role": "native-build"
         },
         {
-          "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
+          "path": "native/arcpdf-abi/CMakeLists.txt",
           "role": "native-build"
         },
         {
-          "path": "native/arcpdf-abi/CMakeLists.txt",
+          "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
           "role": "native-build"
         },
         {
@@ -59,22 +59,6 @@
         {
           "path": "src/BuildingBlocks/ArcForges.Assistant.Abstractions/ArcForges.Assistant.Abstractions.csproj",
           "role": "aot-library"
-        },
-        {
-          "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
-          "role": "test-or-build-tool"
         },
         {
           "path": "src/BuildingBlocks/ArcForges.Desktop.Experience/ArcForges.Desktop.Experience.csproj",
@@ -129,15 +113,15 @@
           "role": "aot-library"
         },
         {
-          "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
           "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/ArcForges.Persistence.Derived.csproj",
           "role": "aot-library"
         },
         {
           "path": "src/BuildingBlocks/ArcForges.Persistence.Derived/Tests/ArcForges.Persistence.Derived.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Observability/Tests/ArcForges.Observability.Tests.csproj",
           "role": "test-or-build-tool"
         },
         {
@@ -161,14 +145,6 @@
           "role": "test-or-build-tool"
         },
         {
-          "path": "src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
           "path": "src/BuildingBlocks/ArcForges.Security/ArcForges.Security.csproj",
           "role": "aot-library"
         },
@@ -182,6 +158,82 @@
         },
         {
           "path": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
+          "role": "aot-host"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Capabilities/ArcForges.Capabilities.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Capabilities/Tests/ArcForges.Capabilities.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Contributions/ArcForges.Contributions.csproj",
+          "role": "aot-library"
+        },
+        {
+          "path": "src/BuildingBlocks/ArcForges.Contributions/Tests/ArcForges.Contributions.Tests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
+          "role": "test-or-build-tool"
+        },
+        {
+          "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
           "role": "test-or-build-tool"
         },
         {
@@ -201,28 +253,44 @@
           "role": "test-or-build-tool"
         },
         {
-          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/ArcForges.ContentSandbox.Broker.csproj",
+          "path": "src/BuildingBlocks/ArcForges.Security.Secrets/ArcForges.Security.Secrets.csproj",
           "role": "aot-library"
         },
         {
-          "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
-          "role": "aot-host"
-        },
-        {
-          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj",
+          "path": "src/BuildingBlocks/ArcForges.Security.Secrets/Tests/ArcForges.Security.Secrets.Tests.csproj",
           "role": "test-or-build-tool"
         },
         {
-          "path": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
+          "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
           "role": "test-or-build-tool"
         },
         {
-          "path": "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj",
-          "role": "aot-library"
+          "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-arm64/ArcForges.Native.Pdf.Runtime.linux-arm64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-x64/ArcForges.Native.Pdf.Runtime.linux-x64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-arm64/ArcForges.Native.Pdf.Runtime.osx-arm64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-x64/ArcForges.Native.Pdf.Runtime.osx-x64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Pdf.Runtime.win-arm64/ArcForges.Native.Pdf.Runtime.win-arm64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "src/Native/ArcForges.Native.Pdf.Runtime.win-x64/ArcForges.Native.Pdf.Runtime.win-x64.csproj",
+          "role": "package-container"
+        },
+        {
+          "path": "eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj",
+          "role": "test-or-build-tool"
         },
         {
           "path": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
@@ -243,46 +311,6 @@
         {
           "path": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
           "role": "package-container"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Image.Runtime.win-x64/ArcForges.Native.Image.Runtime.win-x64.csproj",
-          "role": "package-container"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj",
-          "role": "test-or-build-tool"
-        },
-        {
-          "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
-          "role": "test-or-build-tool"
         }
       ]
     },

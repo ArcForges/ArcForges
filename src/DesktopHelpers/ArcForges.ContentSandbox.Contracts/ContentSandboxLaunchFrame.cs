@@ -54,6 +54,7 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
 {
     internal const int MaxFrameBytes = 16 * 1024;
     internal const int MaxBootstrapBytes = 4096;
+    internal const int MaxNativeBootstrapBytes = 8192;
     private const ushort FormatVersion = 1;
     private static readonly byte[] Magic = "ARCFCS01"u8.ToArray();
 
@@ -69,7 +70,8 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
         ContentSandboxLimits limits,
         IReadOnlyList<ContentSandboxHandleEntry> handles,
         string parserProfile,
-        byte[] bootstrapResource)
+        byte[] bootstrapResource,
+        byte[]? nativeBootstrap = null)
     {
         Profile = profile;
         InvocationId = invocationId;
@@ -83,6 +85,11 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
         Handles = handles;
         ParserProfile = parserProfile;
         BootstrapResource = bootstrapResource;
+        NativeBootstrap = nativeBootstrap?.ToArray() ?? [];
+        if (NativeBootstrap.Length > MaxNativeBootstrapBytes)
+        {
+            throw new ArgumentException("The native release bootstrap exceeds its bound.", nameof(nativeBootstrap));
+        }
     }
 
     internal ContentSandboxProfileKind Profile { get; }
@@ -109,6 +116,9 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
 
     /// <summary>The launch descriptor followed by the one-use secret (the LocalRpc bootstrap resource). Zeroed by <see cref="Dispose"/>.</summary>
     internal byte[] BootstrapResource { get; }
+
+    /// <summary>Closed release-native locator, approved publisher keys and exact immutable artifact identities; never a command-line path.</summary>
+    internal byte[] NativeBootstrap { get; }
 
     /// <summary>True for a parser-profile identifier of 1 to 64 characters from <c>[A-Za-z0-9._-]</c>.</summary>
     internal static bool IsParserProfile(string? value)
@@ -150,7 +160,7 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
     {
         using var body = new MemoryStream();
         body.Write(Magic);
-        WriteU16(body, FormatVersion);
+        WriteU16(body, NativeBootstrap.Length == 0 ? FormatVersion : (ushort)2);
         body.WriteByte((byte)Profile);
         body.WriteByte(0);
         WriteGuid(body, InvocationId);
@@ -184,6 +194,12 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
         body.Write(profile);
         WriteU32(body, (uint)BootstrapResource.Length);
         body.Write(BootstrapResource);
+        if (NativeBootstrap.Length != 0)
+        {
+            WriteU32(body, (uint)NativeBootstrap.Length);
+            body.Write(NativeBootstrap);
+        }
+
         if (body.Length > MaxFrameBytes)
         {
             throw new InvalidOperationException("The launch frame exceeds its bound.");
@@ -227,11 +243,13 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
     internal static ContentSandboxLaunchFrame Decode(ReadOnlySpan<byte> body)
     {
         var cursor = new Cursor(body);
-        if (!cursor.Take(Magic.Length).SequenceEqual(Magic) || cursor.U16() != FormatVersion)
+        if (!cursor.Take(Magic.Length).SequenceEqual(Magic))
         {
             throw new FormatException("The launch frame is not this version.");
         }
 
+        var version = cursor.U16();
+        if (version is not (1 or 2)) { throw new FormatException("The launch frame is not this version."); }
         var profile = (ContentSandboxProfileKind)cursor.U8();
         if (!Enum.IsDefined(profile) || cursor.U8() != 0)
         {
@@ -314,21 +332,31 @@ internal sealed class ContentSandboxLaunchFrame : IDisposable
             throw new FormatException("The bootstrap resource is outside its bound.");
         }
 
-        var bootstrap = cursor.Take((int)bootstrapLength).ToArray();
+        var bootstrap = cursor.Take((int)bootstrapLength);
+        ReadOnlySpan<byte> nativeBootstrap = [];
+        if (version == 2)
+        {
+            var nativeLength = cursor.U32();
+            if (nativeLength is 0 or > MaxNativeBootstrapBytes)
+            {
+                throw new FormatException("The native release bootstrap is outside its bound.");
+            }
+
+            nativeBootstrap = cursor.Take((int)nativeLength);
+        }
+
         if (!cursor.AtEnd)
         {
-            CryptographicOperations.ZeroMemory(bootstrap);
             throw new FormatException("The launch frame has trailing bytes.");
         }
 
         if (invocation == Guid.Empty || lease == Guid.Empty || inputId == Guid.Empty || generation == 0
             || inputLength is 0 || inputLength > limits.MaxInputBytes || !limits.IsWithinProfile() || !IsParserProfile(parserProfile))
         {
-            CryptographicOperations.ZeroMemory(bootstrap);
             throw new FormatException("The launch frame carries a value outside the profile.");
         }
 
-        return new ContentSandboxLaunchFrame(profile, invocation, lease, generation, inputId, inputLength, digest, capacities, limits, handles, parserProfile, bootstrap);
+        return new ContentSandboxLaunchFrame(profile, invocation, lease, generation, inputId, inputLength, digest, capacities, limits, handles, parserProfile, bootstrap.ToArray(), nativeBootstrap.ToArray());
     }
 
     /// <summary>Zeroes the bootstrap resource (which holds the one-use secret).</summary>
