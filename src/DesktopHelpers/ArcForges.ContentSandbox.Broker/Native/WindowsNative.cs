@@ -291,4 +291,12 @@ internal static unsafe partial class WindowsNative
         internal nint SignatureSettings;
     }
 
+    [LibraryImport("Userenv.dll", EntryPoint = "DeleteAppContainerProfile", StringMarshalling = StringMarshalling.Utf16)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static partial int DeleteAppContainerProfile(string name);
+
+    [LibraryImport("Userenv.dll", EntryPoint = "GetAppContainerFolderPath", StringMarshalling = StringMarshalling.Utf16)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static partial int GetAppContainerFolderPath(string sid, out nint path);
+
 }

@@ -100,6 +100,8 @@ public sealed class RepositoryPolicyTests
             ["WinTrust.dll:WinVerifyTrust"] = (broker, false, false),
             ["Userenv.dll:CreateAppContainerProfile"] = (broker, true, false),
             ["Userenv.dll:DeriveAppContainerSidFromAppContainerName"] = (broker, true, false),
+            ["Userenv.dll:DeleteAppContainerProfile"] = (broker, true, false),
+            ["Userenv.dll:GetAppContainerFolderPath"] = (broker, true, false),
             ["libc:close"] = (broker, false, true),
             ["libc:fcntl"] = (broker, false, true),
             ["libc:kill"] = (broker, false, true),

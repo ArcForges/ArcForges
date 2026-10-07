@@ -273,6 +273,82 @@ class ActualNativeReleaseCompositionTests(unittest.TestCase):
                             publication.inspect(archive_path, entry, self.version, self.source, files)
 
 
+@unittest.skipUnless(os.environ.get("ARCFORGES_PDF_SEALED_TEST_INPUT"), "Actual source-bound PDF producer input is required; no mocked native proof.")
+class PdfSealedCompositionTests(unittest.TestCase):
+    def setUp(self):
+        self.original = Path(os.environ["ARCFORGES_PDF_SEALED_TEST_INPUT"])
+        self.source = json.loads((self.original / "pdfium-production-input.json").read_text(encoding="utf-8"))["sourceCommit"]
+
+    def test_actual_complete_sdk_engine_legal_crt_and_source_handoff(self):
+        result = native.verify_pdf_runtime_input(self.original, self.source)
+        self.assertEqual("ArcPdfNative.dll", next(row["name"] for row in result["inspectedBinaries"] if row["name"] == "ArcPdfNative.dll"))
+        self.assertEqual(15, len(native.pdfium_profile()["legalFiles"]))
+
+    def test_actual_pdf_package_closes_foreign_runtime_targets_and_generated_bytes(self):
+        # Genuine admitted SDK/native bytes and production package generator/verifier;
+        # this does not execute native code or claim signing/deployment.
+        inspected=native.verify_pdf_runtime_input(self.original,self.source)
+        policy,system_hash=native._pdf_system_policy('win-x64',native.ROOT)
+        imports=native._pdf_closed_imports(inspected['inspectedBinaries'],'win-x64',policy)
+        entry={'id':'ArcForges.Native.Pdf.Runtime.win-x64','rid':'win-x64','library':'ArcPdfNative'}
+        with tempfile.TemporaryDirectory() as temporary:
+            package=Path(temporary)/'package'; producer._copy_inventory(self.original,package,producer._inventory(self.original))
+            native._prepare_pdf_runtime(package,'win-x64',self.source,inspected,imports,system_hash,native.ROOT)
+            read=lambda name:(package/name).read_bytes()
+            native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+            for extra in ('runtimes/win-x64/native/foreign.dll','buildTransitive/foreign.targets'):
+                path=package/extra; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(b'foreign unadmitted executable')
+                with self.subTest(extra=extra),self.assertRaisesRegex(ValueError,'Unexpected/missing'):
+                    native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+                path.unlink()
+            for name in ('sbom.json','NOTICE.md','buildTransitive/'+entry['id']+'.targets'):
+                path=package/name; original=path.read_bytes(); path.write_bytes(original+b'changed')
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'generated'):
+                    native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+                path.write_bytes(original)
+            native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+
+    def test_changed_dependency_legal_attestation_and_header_refuse_even_when_inventory_is_rewritten(self):
+        for path in ["provenance/pdfium-attestation.json", "licenses/pdfium/pdfium.txt", "include/arc/arc_pdf_abi.h",
+                     "runtimes/win-x64/native/pdfium.dll", "runtimes/win-x64/native/msvcp140.dll"]:
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as temporary:
+                candidate = Path(temporary) / "candidate"
+                shutil.copytree(self.original, candidate)
+                target = candidate / path
+                target.write_bytes(target.read_bytes() + b"tampered")
+                receipt = json.loads((candidate / "pdfium-production-input.json").read_text(encoding="utf-8"))
+                next(row for row in receipt["files"] if row["path"] == path)["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+                (candidate / "pdfium-production-input.json").write_bytes(native.canonical(receipt))
+                with self.assertRaises(ValueError):
+                    native.verify_pdf_runtime_input(candidate, self.source)
+
+    def test_mixed_source_forged_admission_and_extra_files_refuse(self):
+        for mutation in ("source", "admission", "extra"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                candidate = Path(temporary) / "candidate"
+                shutil.copytree(self.original, candidate)
+                receipt_path = candidate / "pdfium-production-input.json"
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                if mutation == "source":
+                    receipt["sourceCommit"] = "a" * 40
+                elif mutation == "admission":
+                    receipt["admission"]["recipeCommit"] = "b" * 40
+                else:
+                    (candidate / "extra.bin").write_bytes(b"undeclared")
+                receipt_path.write_bytes(native.canonical(receipt))
+                with self.assertRaises(ValueError):
+                    native.verify_pdf_runtime_input(candidate, self.source)
+
+    def test_duplicate_receipt_fields_are_rejected_before_any_native_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate = Path(temporary) / "candidate"
+            shutil.copytree(self.original, candidate)
+            path = candidate / "pdfium-production-input.json"
+            path.write_bytes(path.read_bytes().replace(b'"schemaVersion": 1,', b'"schemaVersion": 1,"schemaVersion": 1,', 1))
+            with self.assertRaisesRegex(ValueError, "Duplicate"):
+                native.verify_pdf_runtime_input(candidate, self.source)
+
+
 class NativeClosureTests(unittest.TestCase):
     def setUp(self):
         self.package = "Example.Runtime.win-x64"

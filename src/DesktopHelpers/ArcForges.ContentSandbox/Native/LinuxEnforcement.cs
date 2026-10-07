@@ -143,7 +143,7 @@ internal static class LinuxEnforcement
 
     private static unsafe bool ApplySeccomp(LinuxArchitecture architecture)
     {
-        var bytes = SeccompProgram.Serialize(SeccompProgram.Build(architecture));
+        var bytes = SeccompProgram.Serialize(SeccompProgram.Build(architecture, Environment.ProcessId));
         var filter = (byte*)NativeMemory.Alloc((nuint)bytes.Length);
         try
         {

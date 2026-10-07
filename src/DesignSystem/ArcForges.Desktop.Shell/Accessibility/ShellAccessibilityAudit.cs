@@ -37,6 +37,18 @@ public static class ShellAccessibilityAudit
 
     /// <summary>Returns every contract violation across <paramref name="surfaces"/>; an empty list means the declarations conform.</summary>
     public static IReadOnlyList<AccessibilityFinding> Evaluate(IEnumerable<ShellSurface> surfaces, CultureInfo? culture = null)
+        => EvaluateCore(surfaces, null, culture);
+
+    /// <summary>Audits names and descriptions against the owner's exact embedded resources and the shared text policy.</summary>
+    public static IReadOnlyList<AccessibilityFinding> Evaluate(
+        ShellResourceScope resources, IEnumerable<ShellSurface> surfaces, CultureInfo? culture = null)
+    {
+        ArgumentNullException.ThrowIfNull(resources);
+        return EvaluateCore(surfaces, resources, culture);
+    }
+
+    private static System.Collections.ObjectModel.ReadOnlyCollection<AccessibilityFinding> EvaluateCore(
+        IEnumerable<ShellSurface> surfaces, ShellResourceScope? resources, CultureInfo? culture)
     {
         ArgumentNullException.ThrowIfNull(surfaces);
         ShellSurface[] items = surfaces.Take(MaximumSurfaces + 1).ToArray();
@@ -59,7 +71,7 @@ public static class ShellAccessibilityAudit
             }
 
             int lastOrder = 0;
-            Visit(surface, surface.Root, parent: null, effective, nodeIds, findings, ref lastOrder, ref visited);
+            Visit(surface, surface.Root, parent: null, effective, resources, nodeIds, findings, ref lastOrder, ref visited);
         }
 
         return Array.AsReadOnly(findings.ToArray());
@@ -70,6 +82,7 @@ public static class ShellAccessibilityAudit
         AccessibleNode node,
         AccessibleNode? parent,
         CultureInfo culture,
+        ShellResourceScope? resources,
         HashSet<string> nodeIds,
         List<AccessibilityFinding> findings,
         ref int lastOrder,
@@ -131,8 +144,8 @@ public static class ShellAccessibilityAudit
             Add(AccessibilityRules.Command, "A menu item must name the command its owner executes.");
         }
 
-        CheckText(node.Name, "name", Add, culture);
-        CheckText(node.Description, "description", Add, culture);
+        CheckText(node.Name, "name", Add, culture, resources);
+        CheckText(node.Description, "description", Add, culture, resources);
         if (node.Name is null && node.Role != AccessibleRole.Group)
         {
             Add(node.IsIconOnly ? AccessibilityRules.IconName : AccessibilityRules.Name, "Every role except a generic group needs an accessible name.");
@@ -189,7 +202,7 @@ public static class ShellAccessibilityAudit
 
         foreach (AccessibleNode child in node.Children)
         {
-            Visit(surface, child, node, culture, nodeIds, findings, ref lastOrder, ref visited);
+            Visit(surface, child, node, culture, resources, nodeIds, findings, ref lastOrder, ref visited);
         }
     }
 
@@ -234,29 +247,30 @@ public static class ShellAccessibilityAudit
         }
     }
 
-    private static void CheckText(LocalizedText? text, string purpose, Action<string, string> add, CultureInfo culture)
+    private static void CheckText(LocalizedText? text, string purpose, Action<string, string> add, CultureInfo culture, ShellResourceScope? resources)
     {
         if (text is null)
         {
             return;
         }
 
-        if (!ShellText.Defines(text.Key))
-        {
-            add(AccessibilityRules.Text, $"The {purpose} key is not defined in the shell resources.");
-            return;
-        }
-
         try
         {
-            if (string.IsNullOrWhiteSpace(ShellText.Resolve(text, culture)))
+            if (!(resources?.Defines(text.Key) ?? ShellText.Defines(text.Key)))
+            {
+                add(AccessibilityRules.Text, $"The {purpose} key is not defined in the bound resources.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(resources is null ? ShellText.Resolve(text, culture) : resources.Resolve(text, culture)))
             {
                 add(AccessibilityRules.Name, $"The {purpose} resolves to blank text.");
             }
         }
-        catch (FormatException)
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException or
+            System.Resources.MissingManifestResourceException or System.Resources.MissingSatelliteAssemblyException)
         {
-            add(AccessibilityRules.Text, $"The {purpose} cannot be formatted with its arguments.");
+            add(AccessibilityRules.Text, $"The {purpose} cannot be resolved with its resources and arguments.");
         }
     }
 

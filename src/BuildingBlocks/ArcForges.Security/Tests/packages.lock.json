@@ -278,6 +278,7 @@
       "arcforges.localrpc": {
         "type": "Project",
         "dependencies": {
+          "ArcForges.Contracts.LocalRpc.Platform": "[1.0.0-ci.324.1, )",
           "Grpc.AspNetCore.Server": "[2.83.0, )",
           "Grpc.Net.Client": "[2.84.0, )"
         }
@@ -324,6 +325,19 @@
         "contentHash": "z0Vgu7TzX0BqYcr6cbbhQW52Riy4RdOHwQDR5Z3uS+QnZKS6oYKDhRyrVAuG2zjQb3ND2yf+N//haMerWgdArA==",
         "dependencies": {
           "Google.Protobuf": "3.36.1"
+        }
+      },
+      "ArcForges.Contracts.LocalRpc.Platform": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.0-ci.324.1, )",
+        "resolved": "1.0.0-ci.324.1",
+        "contentHash": "tFod3Qb/vm+BMwQt0hD2Rdfw6hhKrh1jEx+UoKfb203p5elKB5jch7y9ylnQs0P0itaSWXYVWNH9Lp4Co+Narw==",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "1.0.0-ci.324.1",
+          "ArcForges.Contracts.PublicApi": "1.0.0-ci.324.1",
+          "ArcForges.Sdk.Contracts": "1.0.0-ci.324.1",
+          "Google.Protobuf": "3.36.1",
+          "Grpc.Core.Api": "2.84.0"
         }
       },
       "Grpc.AspNetCore.Server": {
