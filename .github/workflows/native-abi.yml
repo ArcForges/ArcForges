@@ -4,6 +4,8 @@ on:
   workflow_call:
     outputs:
       artifact_name:
+        value: ${{ jobs.image-family-publication.outputs.artifact_name }}
+      legacy_artifact_name:
         value: ${{ jobs.native-win-x64.outputs.artifact_name }}
   workflow_dispatch:
 permissions:
@@ -152,6 +154,45 @@ jobs:
         with:
           name: image-production-input-${{ matrix.rid }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/image-production-input/${{ matrix.rid }}/
+          if-no-files-found: error
+          retention-days: 30
+  image-family-publication:
+    # Compose only real outputs from the four supported producer jobs. The
+    # admitted six-RID catalogue never activates an unbuilt macOS container.
+    needs: [image-portable-inputs, native-win-x64]
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.image-artifact.outputs.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: image-production-input-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-family-inputs
+          merge-multiple: false
+      - name: Compose the actual Image producer cohort without executing native code
+        id: image-artifact
+        shell: pwsh
+        run: |
+          $rids = @('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')
+          $names = @($rids | ForEach-Object { "image-production-input-$_-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" })
+          $actual = @(Get-ChildItem artifacts/image-family-inputs -Directory | ForEach-Object { $_.Name })
+          if (@(Compare-Object ($names | Sort-Object) ($actual | Sort-Object)).Count) { throw 'Unexpected/missing actual Image producer artifact.' }
+          $arguments = @('eng/packaging/native.py', 'combine', '--directory', 'artifacts/native-image-publication')
+          foreach ($name in $names) { $arguments += @('--input-directory', "artifacts/image-family-inputs/$name") }
+          python @arguments
+          if ($LASTEXITCODE) { throw 'Actual Image family/source/build/index/copy verification failed.' }
+          "name=native-image-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.image-artifact.outputs.name }}
+          path: artifacts/native-image-publication/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
   native-win-x64:

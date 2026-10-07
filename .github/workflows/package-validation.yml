@@ -258,5 +258,8 @@ jobs:
         with:
           name: ${{ steps.version.outputs.artifact_name }}
           path: artifacts/packages/
+          # Retain the source-bound native family receipt directory at the
+          # publisher trust handoff; it contains no signing credentials.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30

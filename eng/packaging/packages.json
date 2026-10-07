@@ -466,6 +466,217 @@
         "NOTICE.md",
         "build-identity.json"
       ]
+    },
+    {
+      "id": "ArcForges.Native.Image.Runtime.win-arm64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Image"
+      ],
+      "rid": "win-arm64",
+      "library": "ArcImageNative",
+      "prefix": "arc_image",
+      "header": "native/arcimage-abi/include/arc/arc_slate_image_abi.h",
+      "triplet": "arm64-windows-static-md",
+      "vcpkgRoots": [
+        "openimageio"
+      ],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "runtimes/win-arm64/native/ArcImageNative.dll",
+        "runtimes/win-arm64/native/ArcImageNative.manifest.json",
+        "include/arc/arc_slate_image_abi.h",
+        "include/arc/arc_native_abi.h",
+        "sdk/win-arm64/lib/ArcImageNative.lib",
+        "buildTransitive/ArcForges.Native.Image.Runtime.win-arm64.targets",
+        "build-identity.json",
+        "image-production-input.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_image_close",
+        "arc_image_get_abi_version",
+        "arc_image_get_build_info",
+        "arc_image_get_last_error",
+        "arc_image_open",
+        "arc_image_read"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Image.Runtime.linux-x64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Image"
+      ],
+      "rid": "linux-x64",
+      "library": "ArcImageNative",
+      "prefix": "arc_image",
+      "header": "native/arcimage-abi/include/arc/arc_slate_image_abi.h",
+      "triplet": "x64-linux",
+      "vcpkgRoots": [
+        "openimageio"
+      ],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "runtimes/linux-x64/native/libArcImageNative.so",
+        "runtimes/linux-x64/native/ArcImageNative.manifest.json",
+        "include/arc/arc_slate_image_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Image.Runtime.linux-x64.targets",
+        "build-identity.json",
+        "image-production-input.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_image_close",
+        "arc_image_get_abi_version",
+        "arc_image_get_build_info",
+        "arc_image_get_last_error",
+        "arc_image_open",
+        "arc_image_read"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Image.Runtime.linux-arm64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Image"
+      ],
+      "rid": "linux-arm64",
+      "library": "ArcImageNative",
+      "prefix": "arc_image",
+      "header": "native/arcimage-abi/include/arc/arc_slate_image_abi.h",
+      "triplet": "arm64-linux",
+      "vcpkgRoots": [
+        "openimageio"
+      ],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "runtimes/linux-arm64/native/libArcImageNative.so",
+        "runtimes/linux-arm64/native/ArcImageNative.manifest.json",
+        "include/arc/arc_slate_image_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Image.Runtime.linux-arm64.targets",
+        "build-identity.json",
+        "image-production-input.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_image_close",
+        "arc_image_get_abi_version",
+        "arc_image_get_build_info",
+        "arc_image_get_last_error",
+        "arc_image_open",
+        "arc_image_read"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Image.Runtime.osx-x64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Image"
+      ],
+      "rid": "osx-x64",
+      "library": "ArcImageNative",
+      "prefix": "arc_image",
+      "header": "native/arcimage-abi/include/arc/arc_slate_image_abi.h",
+      "triplet": "x64-osx",
+      "vcpkgRoots": [
+        "openimageio"
+      ],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "runtimes/osx-x64/native/libArcImageNative.dylib",
+        "runtimes/osx-x64/native/ArcImageNative.manifest.json",
+        "include/arc/arc_slate_image_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Image.Runtime.osx-x64.targets",
+        "build-identity.json",
+        "image-production-input.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_image_close",
+        "arc_image_get_abi_version",
+        "arc_image_get_build_info",
+        "arc_image_get_last_error",
+        "arc_image_open",
+        "arc_image_read"
+      ]
+    },
+    {
+      "id": "ArcForges.Native.Image.Runtime.osx-arm64",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
+      "kind": "native",
+      "dependencies": [
+        "ArcForges.Native.Image"
+      ],
+      "rid": "osx-arm64",
+      "library": "ArcImageNative",
+      "prefix": "arc_image",
+      "header": "native/arcimage-abi/include/arc/arc_slate_image_abi.h",
+      "triplet": "arm64-osx",
+      "vcpkgRoots": [
+        "openimageio"
+      ],
+      "requiredFiles": [
+        "README.md",
+        "LICENSE",
+        "NOTICE.md",
+        "native-manifest.json",
+        "sbom.json",
+        "runtimes/osx-arm64/native/libArcImageNative.dylib",
+        "runtimes/osx-arm64/native/ArcImageNative.manifest.json",
+        "include/arc/arc_slate_image_abi.h",
+        "include/arc/arc_native_abi.h",
+        "buildTransitive/ArcForges.Native.Image.Runtime.osx-arm64.targets",
+        "build-identity.json",
+        "image-production-input.json"
+      ],
+      "abi": {
+        "major": 1,
+        "minor": 1
+      },
+      "exports": [
+        "arc_image_close",
+        "arc_image_get_abi_version",
+        "arc_image_get_build_info",
+        "arc_image_get_last_error",
+        "arc_image_open",
+        "arc_image_read"
+      ]
     }
   ]
 }
