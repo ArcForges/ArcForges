@@ -1092,7 +1092,8 @@
     "src/Native/ArcForges.Native.Pdf.Runtime.win-x64/README.md",
     "src/Native/ArcForges.Native.Pdf.Runtime.win-x64/packages.lock.json",
     "tests/NativeAbiTests/NativeReleaseCommandTests.cs",
-    "tests/NativeAbiTests/NativeRuntimeTrustTests.cs"
+    "tests/NativeAbiTests/NativeRuntimeTrustTests.cs",
+    "eng/policy/dependency-reviews/nat-25-runtime-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
