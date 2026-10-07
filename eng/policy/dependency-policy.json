@@ -1230,7 +1230,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/prf-04-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-22-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1241,7 +1241,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-22-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-22-r2.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
