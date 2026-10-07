@@ -39,6 +39,13 @@ LICENCES = {**{name: "permissive" for name in
 # Additional exact expressions reviewed for this owner's existing native closure.
 LICENCES.update({name: "permissive" for name in ('0BSD', 'Zlib', 'MIT-0', 'libpng-2.0', 'bzip2-1.0.6', 'libtiff', 'NCSA', 'BSL-1.0', 'MIT AND BSD-3-Clause', 'BSD-3-Clause AND IJG AND Zlib', 'BSD-3-Clause AND BSD-2-Clause AND LicenseRef-ICC-Software-0.2 AND LicenseRef-SunSoft-1994', 'Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT AND NCSA AND BSL-1.0 AND Zlib AND Unlicense', 'libtiff AND LicenseRef-Berkeley-LZW-Rescinded', 'LicenseRef-pkgconf-Permissive')})
 LICENCES["LGPL-2.1-or-later"] = "agpl-compatible"
+EXTERNAL_TOOL_LICENCES = {
+    "make": "GPL-3.0-or-later",
+    "perl": "GPL-1.0-or-later OR Artistic-1.0-Perl",
+    "text-template": "GPL-1.0-or-later OR Artistic-1.0",
+}
+EXTERNAL_TOOL_VERSIONS = {"make": "4.3", "perl": "5.38.2", "text-template": "1.56"}
+LICENCES.update({expression: "gpl-only" for expression in EXTERNAL_TOOL_LICENCES.values()})
 LICENCES["BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG"] = "permissive"
 
 
@@ -119,6 +126,34 @@ def source(value: dict, boundary: str) -> None:
     licence_evidence(value["evidence"])
 
 
+def external_tools(value: list, expected: list | None = None) -> None:
+    """Observe noncopying host tools; this never grants source/generation reuse."""
+    require(isinstance(value, list) and 0 < len(value) <= 3, "Missing or unbounded external tools")
+    seen = set()
+    for item in value:
+        fields(item, "id repository commit version role executable licence")
+        ident = item["id"]
+        require(ident in EXTERNAL_TOOL_LICENCES and ident not in seen, "Unknown or duplicate external tool")
+        seen.add(ident)
+        repository(item["repository"])
+        digest(item["commit"], (40, 64))
+        require(item["version"] == EXTERNAL_TOOL_VERSIONS[ident], "Unreviewed external tool version")
+        require(item["role"] == "noncopying-external-execution", "External tool cannot authorize copied material")
+        executable = item["executable"]
+        fields(executable, "name version sha256")
+        require(executable["name"] == ("Template.pm" if ident == "text-template" else ident) and
+                executable["version"] == item["version"], "External tool executable identity differs")
+        digest(executable["sha256"])
+        licence = item["licence"]
+        fields(licence, "spdx category evidence scope")
+        require(licence["spdx"] == EXTERNAL_TOOL_LICENCES[ident] and licence["category"] == "gpl-only",
+                "External tool legal expression/category differs")
+        licence_evidence(licence["evidence"])
+        text(licence["scope"])
+    if expected is not None:
+        require(value == expected, "External tool identity/version/hash/legal observation differs")
+
+
 def read(root: Path, relative: str) -> bytes:
     path(relative)
     target = root / relative
@@ -142,7 +177,9 @@ def policy(value: dict, owner: str) -> None:
 
 
 def record(value: dict, boundary: str) -> None:
-    fields(value, RECORD_FIELDS)
+    fields(value, RECORD_FIELDS + (" externalTools" if "externalTools" in value else ""))
+    if "externalTools" in value:
+        external_tools(value["externalTools"])
     require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1, "Invalid record schema")
     identifier(value["id"])
     require(value["kind"] in {"source", "patch", "generated", "legal-text"}, "Unknown material kind")

@@ -1,55 +1,50 @@
 {
   "schemaVersion": 1,
-  "id": "native-image-sse2neon-r1",
+  "id": "native-image-openssl-r1",
   "kind": "generated",
-  "sourceRepository": "https://github.com/DLTcollab/sse2neon",
-  "sourceCommit": "92f6de174717aef09033ad21568d5bb9e5470404",
+  "sourceRepository": "https://github.com/openssl/openssl",
+  "sourceCommit": "e5c234b0c471a676ae6141d2f157df61eb293477",
   "sourcePaths": [
-    "LICENSE",
-    "sse2neon.h"
+    "LICENSE.txt",
+    "Configure",
+    "Configurations",
+    "crypto",
+    "include",
+    "providers",
+    "ssl",
+    "engines",
+    "util/perl/OpenSSL"
   ],
   "licence": {
-    "spdx": "MIT",
+    "spdx": "Apache-2.0",
     "category": "permissive",
     "evidence": [
       {
-        "path": "LICENSE",
-        "sha256": "e962fe0dfa637c465df35d496fb198982eb52b8afd3046f370083c6e9856b34f",
-        "finding": "Actual complete original MIT licence in the pinned v1.9.1 archive and installed copyright; LF-normalized bytes match."
-      },
-      {
-        "path": "sse2neon.h",
-        "sha256": "78632498a57bf7e080e84cb8d74c47ce93b204cece77eab79de2908eb8bc92ed",
-        "finding": "Actual selected ARM SIMD translation header retains the full MIT copyright, permission and warranty notice; no standalone/test source is selected."
+        "path": "LICENSE.txt",
+        "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+        "finding": "Original full Apache2 licence for individually selected runtime/header/Configure/templates. Whole original archive separately retains dual-licensed Text-Template utility; no aggregate Apache claim."
       }
     ],
-    "scope": "The actual required ARM-only sse2neon.h is distributed under MIT with the complete original SSE2NEON Contributors copyright, permission and warranty notice. Preserve the full original licence and corresponding source archive. No standalone upstream tests or executables are selected.",
+    "scope": "Linux-only actual minizip wzaes/openssl prerequisite. Individually selected runtime/header/Configure/templates Apache2; noncopying external utilities are distinct. Complete original source/legal/recipe retained.",
     "copyingPermission": null
   },
   "attribution": [
-    "Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt.",
-    "Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence."
+    "Linux-only actual minizip wzaes/openssl prerequisite. Individually selected runtime/header/Configure/templates Apache2; noncopying external utilities are distinct. Complete original source/legal/recipe retained.",
+    "Original full licence, complete immutable corresponding source archive when applicable, and exact authored MIT vcpkg recipe notices are retained. Whole OpenSSL archive separately preserves original Text-Template dual-licence attribution without runtime/source reuse permission."
   ],
   "targets": [],
   "artifactTargets": [
     {
-      "project": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
-      "package": "ArcForges.Native.Image.Runtime.win-arm64",
-      "kind": "native-component-sse2neon",
+      "project": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
+      "package": "ArcForges.Native.Image.Runtime.linux-x64",
+      "kind": "native-component-openssl",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
       "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     },
     {
       "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
       "package": "ArcForges.Native.Image.Runtime.linux-arm64",
-      "kind": "native-component-sse2neon",
-      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
-    },
-    {
-      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
-      "package": "ArcForges.Native.Image.Runtime.osx-arm64",
-      "kind": "native-component-sse2neon",
+      "kind": "native-component-openssl",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
       "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     }
@@ -63,12 +58,12 @@
   },
   "notice": {
     "required": true,
-    "text": "Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt. Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence.",
+    "text": "Linux-only actual minizip wzaes/openssl prerequisite. Individually selected runtime/header/Configure/templates Apache2; noncopying external utilities are distinct. Complete original source/legal/recipe retained. Original full licence, complete immutable corresponding source archive when applicable, and exact authored MIT vcpkg recipe notices are retained. Whole OpenSSL archive separately preserves original Text-Template dual-licence attribution without runtime/source reuse permission.",
     "files": [
       "eng/provenance/NOTICE.txt"
     ],
     "distribution": "packages",
-    "reason": "Native package-specific attribution and full originals are independently checked. Build-only records describe retained recipes/legal material, not bundled host implementation."
+    "reason": "Linux-only actual prerequisite and distinct original aggregate context. Noncopying host implementation is never bundled."
   },
   "lifetime": {
     "status": "permanent",
@@ -134,37 +129,39 @@
     ],
     "inputs": [
       {
-        "repository": "https://github.com/DLTcollab/sse2neon",
-        "commit": "92f6de174717aef09033ad21568d5bb9e5470404",
+        "repository": "https://github.com/openssl/openssl",
+        "commit": "e5c234b0c471a676ae6141d2f157df61eb293477",
         "paths": [
-          "LICENSE",
-          "sse2neon.h"
+          "LICENSE.txt",
+          "Configure",
+          "Configurations",
+          "crypto",
+          "include",
+          "providers",
+          "ssl",
+          "engines",
+          "util/perl/OpenSSL"
         ],
-        "spdx": "MIT",
+        "spdx": "Apache-2.0",
         "evidence": [
           {
-            "path": "LICENSE",
-            "sha256": "e962fe0dfa637c465df35d496fb198982eb52b8afd3046f370083c6e9856b34f",
-            "finding": "Actual complete original MIT licence in the pinned v1.9.1 archive and installed copyright; LF-normalized bytes match."
-          },
-          {
-            "path": "sse2neon.h",
-            "sha256": "78632498a57bf7e080e84cb8d74c47ce93b204cece77eab79de2908eb8bc92ed",
-            "finding": "Actual selected ARM SIMD translation header retains the full MIT copyright, permission and warranty notice; no standalone/test source is selected."
+            "path": "LICENSE.txt",
+            "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+            "finding": "Original full Apache2 licence for individually selected runtime/header/Configure/templates. Whole original archive separately retains dual-licensed Text-Template utility; no aggregate Apache claim."
           }
         ]
       }
     ],
     "command": "The selected sse2neon.h is compiled into required ARM Image dependency inputs using actual admitted per-RID compiler/recipe/tool identities. Header-only upstream source archive, complete MIT copyright/permission/warranty notice and authored vcpkg recipe are retained; no upstream executable or excluded test suite is shipped.",
-    "outputSpdx": "MIT"
+    "outputSpdx": "Apache-2.0"
   },
   "review": {
     "owner": "Licensing and Provenance Owner",
     "reviewer": "NAT22 actual full source/archive/LICENSE/header assessment; independent exact-head source/admission review is required before merge.",
-    "reviewedOn": "2026-10-06",
+    "reviewedOn": "2026-10-07",
     "decision": "approved",
-    "rationale": "Actual necessary ARM-only prerequisite from pinned vcpkg source. Verified the exact archive SHA512, complete original 1083-byte MIT licence and 484176-byte selected header with full MIT notice; installed copyright equals the original licence. Upstream tag currently identifies immutable92f6de, not asserted cryptographic attestation. Full source/legal/recipe copies are bound by real producer receipts. No standalone test/tool source is selected.",
-    "baselineCommit": "71b6df2db828bc859cca6934ed66aac9b525b5c7",
+    "rationale": "Actual pinned Linux prerequisite and complete original byte/legal assessment; independent final source/admission review and real current-source production remain mandatory.",
+    "baselineCommit": "53b550d04ac1200955464224823fab752ea7ff0e",
     "reconciliation": false
   },
   "supersedes": null

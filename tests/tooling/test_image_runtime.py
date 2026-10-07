@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Real filesystem and offline contract tests; no substitute production decoder."""
+import copy
 import hashlib
 import io
 import json
@@ -24,6 +25,104 @@ import native_consumer
 
 
 class ImageRuntimeTests(unittest.TestCase):
+    def test_cancellation_reaches_verification_before_and_after_actual_component_read(self):
+        with patch.object(image, "_inventory") as inventory, self.assertRaises(image.StageCancelled):
+            image.verify_stage(Path("unavailable"), "a" * 40, cancelled=lambda: True)
+        inventory.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / image.RECEIPT).write_bytes(b"{}")
+            cancelled = False
+
+            def read(name):
+                nonlocal cancelled
+                content = (directory / name).read_bytes()
+                cancelled = True
+                return content
+
+            entry = {"id": "ArcForges.Native.Image.Runtime.win-x64", "rid": "win-x64", "library": "ArcImageNative"}
+            with self.assertRaises(image.StageCancelled):
+                image.verify_package(entry, read, {image.RECEIPT}, "a" * 40, cancelled=lambda: cancelled)
+
+    @unittest.skipUnless(os.environ.get("ARCFORGES_IMAGE_LINUX_LEGAL_COMPONENT"),
+                         "Retained original archives/legal bytes only; unavailable Linux host tools are explicit fixtures.")
+    def test_actual_original_linux_tool_legal_handoff_and_independent_tamper_refusal(self):
+        cache = Path(os.environ["ARCFORGES_IMAGE_LINUX_LEGAL_COMPONENT"])
+        value, _ = image.profile(ROOT)
+        definitions = image._external_definitions(value)
+        legal_bytes = {legal["output"]: image._legal_bytes(legal, cache)
+                       for definition in definitions.values() for legal in definition["legal"]}
+        identity = {"component-only": "not Linux execution or deployment"}
+        rows = [image._external_row(ident, definitions[ident], {
+            "name": "Template.pm" if ident == "text-template" else ident,
+            "version": definitions[ident]["version"],
+            "sha256": definitions[ident]["sha256"] if ident == "text-template" else
+            hashlib.sha256(("unavailable Linux " + ident).encode()).hexdigest()})
+                for ident in ("make", "perl", "text-template")]
+        observation = {"schemaVersion": 1, "rid": "linux-x64", "build": identity,
+                       "selectors": {"make": "/usr/bin/make", "perl": "/usr/bin/perl"},
+                       "tools": rows, "releaseMakefileSha256": "e" * 64}
+        image._verify_external_handoff(observation, value, "linux-x64", identity, legal_bytes.__getitem__)
+        for mutation in ("legal", "version", "module", "role", "source", "missing"):
+            altered = copy.deepcopy(observation)
+            content = dict(legal_bytes)
+            if mutation == "legal":
+                name = definitions["make"]["legal"][0]["output"]
+                content[name] += b"tampered"
+            elif mutation == "version":
+                altered["tools"][0]["version"] = altered["tools"][0]["executable"]["version"] = "4.4"
+            elif mutation == "module": altered["tools"][2]["executable"]["sha256"] = "f" * 64
+            elif mutation == "role": altered["tools"][0]["role"] = "copied-template"
+            elif mutation == "source": altered["build"] = {"foreign": True}
+            else: altered["tools"].pop()
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                image._verify_external_handoff(altered, value, "linux-x64", identity, content.__getitem__)
+
+    def test_actual_tool_process_output_errors_and_cancellation_drain_owned_child(self):
+        self.assertEqual("component", image._external_probe(sys.executable, ["-c", "print('component')"]))
+        for command in ("print('x'*5000)", "raise SystemExit(3)"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                image._external_probe(sys.executable, ["-c", command])
+        children = []
+        actual = subprocess.Popen
+        calls = 0
+
+        def launch(*args, **kwargs):
+            child = actual(*args, **kwargs)
+            children.append(child)
+            return child
+
+        def cancel():
+            nonlocal calls
+            calls += 1
+            return calls >= 3
+
+        with patch.object(image.subprocess, "Popen", side_effect=launch), self.assertRaises(image.StageCancelled):
+            image._external_probe(sys.executable, ["-c", "import time;time.sleep(30)"], cancel)
+        self.assertEqual(1, len(children))
+        self.assertIsNotNone(children[0].poll())
+
+    def test_linux_minimum_inputs_and_original_external_tool_expressions_are_closed(self):
+        value, material = image.profile(ROOT)
+        definitions = image._external_definitions(value)
+        self.assertEqual({"make", "perl", "text-template"}, set(definitions))
+        self.assertEqual(20, len(value["additionalComponents"]["openssl"]["component"]["recipe"]["files"]))
+        self.assertEqual(6, len(value["additionalComponents"]["vcpkg-cmake-get-vars"]["component"]["recipe"]["files"]))
+        for mutate in (lambda v: v["externalToolDefinitions"]["perl"].update(version="5.36.0"),
+                       lambda v: v["externalToolDefinitions"]["make"].update(legal=[]),
+                       lambda v: v["externalToolDefinitions"].update(foreign={})):
+            changed = copy.deepcopy(value)
+            mutate(changed)
+            with self.assertRaises(ValueError):
+                image._external_definitions(changed)
+        changed = copy.deepcopy(value)
+        changed["featureOverrides"]["win-x64"] = {"minizip-ng": ["openssl"]}
+        with self.assertRaisesRegex(ValueError, "feature override"):
+            image._selection("win-x64", changed, material)
+        if not sys.platform.startswith("linux"):
+            with self.assertRaisesRegex(ValueError, "actual Linux producer"):
+                image.observe_external_tools(Path("unavailable"), "linux-x64")
+
     @unittest.skipUnless(os.environ.get("ARCFORGES_IMAGE_C17_COMPONENT") and os.name == "nt",
                          "Explicit existing loaded-codec C17 component diagnostic only; never CI/package acceptance.")
     def test_actual_existing_c17_loaded_codec_refuses_wrong_build_suffix(self):
@@ -122,7 +221,7 @@ class ImageRuntimeTests(unittest.TestCase):
             (cache / "retained").write_bytes(b"existing producer bytes")
             cancelled = threading.Event()
 
-            def unavailable_producer_verifier(*args):
+            def unavailable_producer_verifier(*args, **kwargs):
                 cancelled.set()
                 return {"rid": "win-x64"}
 
@@ -320,7 +419,13 @@ class ImageRuntimeTests(unittest.TestCase):
         original = material["sourceProfile"]["components"]
         for rid in native_binary.RIDS:
             selected, features = image._selection(rid, value, material)
-            self.assertEqual(set(original) | ({"sse2neon"} if rid.endswith("arm64") else set()), set(selected["components"]))
+            additions = ({"sse2neon"} if rid.endswith("arm64") else set())
+            if rid.startswith("linux-"):
+                additions |= {"openssl", "vcpkg-cmake-get-vars"}
+                self.assertIn("openssl", features["minizip-ng"])
+            else:
+                self.assertNotIn("openssl", features["minizip-ng"])
+            self.assertEqual(set(original) | additions, set(selected["components"]))
             self.assertEqual(set(selected["components"]), set(features))
             for name in original:
                 source = selected["components"][name]
@@ -331,7 +436,7 @@ class ImageRuntimeTests(unittest.TestCase):
                     self.assertEqual(original[name]["record"], source["record"])
                 else:
                     self.assertEqual("native-image-portable-" + name + "-r1", source["record"])
-            self.assertEqual(21 if rid.endswith("x64") else 22, len(selected["components"]))
+            self.assertEqual(21 + len(additions), len(selected["components"]))
         self.assertEqual("native-imath-r4", original["imath"]["record"])
 
     def test_safe_material_paths_refuse_escape_and_ambiguous_names(self):

@@ -20,6 +20,87 @@ def sha(value):
     return hashlib.sha256(value).hexdigest()
 
 
+class ExternalToolTests(unittest.TestCase):
+    def tool(self):
+        return {"id": "make", "repository": "https://git.savannah.gnu.org/cgit/make.git",
+                "commit": "f" * 40, "version": "4.3", "role": "noncopying-external-execution",
+                "executable": {"name": "make", "version": "4.3", "sha256": sha(b"fixture tool")},
+                "licence": {"spdx": "GPL-3.0-or-later", "category": "gpl-only",
+                            "evidence": [{"path": "COPYING", "sha256": sha(b"fixture legal"),
+                                          "finding": "Synthetic full original tool legal observation only."}],
+                            "scope": "Noncopying external tool; no copied-source/output permission."}}
+
+    def test_actual_binary_mutation_changes_reviewed_tool_observation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "make"
+            binary.write_bytes(b"fixture tool")
+            expected = [self.tool()]
+            observed = copy.deepcopy(expected)
+            observed[0]["executable"]["sha256"] = sha(binary.read_bytes())
+            provenance.external_tools(observed, expected)
+            binary.write_bytes(b"foreign tool")
+            observed[0]["executable"]["sha256"] = sha(binary.read_bytes())
+            with self.assertRaisesRegex(ValueError, "observation differs"):
+                provenance.external_tools(observed, expected)
+
+    def test_wrong_version_name_category_and_missing_original_legal_refuse(self):
+        for position, key, value in [("executable", "name", "foreign"), ("executable", "version", "4.4"),
+                                     ("executable", "sha256", ""), ("licence", "category", "permissive"),
+                                     ("licence", "evidence", []), ("licence", "spdx", "MIT")]:
+            with self.subTest(position=position, key=key):
+                changed = self.tool()
+                changed[position][key] = value
+                with self.assertRaises(ValueError):
+                    provenance.external_tools([changed])
+        changed = self.tool()
+        changed["version"] = changed["executable"]["version"] = "4.4"
+        with self.assertRaisesRegex(ValueError, "external tool version"):
+            provenance.external_tools([changed], [self.tool()])
+
+    def test_noncopying_tools_never_admit_generator_input_or_output(self):
+        for role in ("copied-generator", "generation-input", "generated-output", "linked-runtime", "template"):
+            changed = self.tool()
+            changed["role"] = role
+            with self.assertRaisesRegex(ValueError, "copied material"):
+                provenance.external_tools([changed])
+        for expression in provenance.EXTERNAL_TOOL_LICENCES.values():
+            source = {"repository": "https://example.org/tool", "commit": "f" * 40,
+                      "paths": ["src/tool.c"], "spdx": expression,
+                      "evidence": self.tool()["licence"]["evidence"]}
+            for boundary in ("AGPL", "Apache"):
+                with self.assertRaisesRegex(ValueError, "Incompatible generator/input"):
+                    provenance.source(source, boundary)
+
+    def test_unknown_duplicate_and_extra_tool_fields_refuse(self):
+        with self.assertRaises(ValueError):
+            provenance.external_tools([self.tool(), self.tool()])
+        for mutation in ({"id": "foreign"}, {"targets": ["runtime/tool"]}, {"generation": {}}):
+            changed = {**self.tool(), **mutation}
+            with self.assertRaises(ValueError):
+                provenance.external_tools([changed])
+
+    def test_optional_tool_inventory_preserves_record_source_and_output_refusal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(Path(temporary))
+            record = copy.deepcopy(fixture.value)
+            record["externalTools"] = [self.tool()]
+            provenance.record(record, "Apache")
+            for expression in provenance.EXTERNAL_TOOL_LICENCES.values():
+                copied = copy.deepcopy(record)
+                copied["licence"]["spdx"] = expression
+                copied["licence"]["category"] = "gpl-only"
+                with self.assertRaisesRegex(ValueError, "Prohibited implementation"):
+                    provenance.record(copied, "AGPL")
+                generated = copy.deepcopy(record)
+                generated["kind"] = "generated"
+                source = {"repository": record["sourceRepository"], "commit": record["sourceCommit"],
+                          "paths": record["sourcePaths"], "spdx": "MIT", "evidence": record["licence"]["evidence"]}
+                generated["generation"] = {"generators": [source], "inputs": [copy.deepcopy(source)],
+                                           "command": "Synthetic permitted generator", "outputSpdx": expression}
+                with self.assertRaisesRegex(ValueError, "Generated output crosses"):
+                    provenance.record(generated, "AGPL")
+
+
 class Fixture:
     def __init__(self, root):
         self.root = root

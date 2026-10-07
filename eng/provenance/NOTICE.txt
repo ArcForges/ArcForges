@@ -60,6 +60,21 @@ Original copyright and full applicable terms are retained in licenses/fmt-x64-wi
 Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 Original copyright and full applicable terms are retained in licenses/fmt-x64-windows-static-md.txt. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.
 
+native-image-linux-external-tools-r1
+Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
+Material licence: MIT
+Notice scope: packages
+Noncopying make4.3, Perl5.38.2 and original Text-Template1.56 utility are separately inventoried. Full original GPL3, Perl GPL1-or-later OR Artistic1-Perl, and Text-Template GPL1-or-later OR Artistic1 legal texts are retained in licenses/provenance. Actual host executable hashes and invocation/configuration evidence exist only in real build handoff, not planning observations. Their implementations are not bundled, linked or admitted generation inputs.
+Noncopying make4.3, Perl5.38.2 and original Text-Template1.56 utility are separately inventoried. Full original GPL3, Perl GPL1-or-later OR Artistic1-Perl, and Text-Template GPL1-or-later OR Artistic1 legal texts are retained in licenses/provenance. Actual host executable hashes and invocation/configuration evidence exist only in real build handoff, not planning observations. Their implementations are not bundled, linked or admitted generation inputs.
+
+native-image-openssl-r1
+Source: https://github.com/openssl/openssl @ e5c234b0c471a676ae6141d2f157df61eb293477
+Material licence: Apache-2.0
+Notice scope: packages
+Linux-only actual minizip wzaes/openssl prerequisite. Individually selected runtime/header/Configure/templates Apache2; noncopying external utilities are distinct. Complete original source/legal/recipe retained.
+Original full licence, complete immutable corresponding source archive when applicable, and exact authored MIT vcpkg recipe notices are retained. Whole OpenSSL archive separately preserves original Text-Template dual-licence attribution without runtime/source reuse permission.
+Linux-only actual minizip wzaes/openssl prerequisite. Individually selected runtime/header/Configure/templates Apache2; noncopying external utilities are distinct. Complete original source/legal/recipe retained. Original full licence, complete immutable corresponding source archive when applicable, and exact authored MIT vcpkg recipe notices are retained. Whole OpenSSL archive separately preserves original Text-Template dual-licence attribution without runtime/source reuse permission.
+
 native-image-portable-bzip2-r1
 Source: https://sourceware.org/git/bzip2.git @ 6a8690fc8d26c815e798c588f796eabe9d684cf0
 Material licence: bzip2-1.0.6
@@ -242,6 +257,14 @@ Notice scope: packages
 Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt.
 Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence.
 Copyright (c) 2015-2026 SSE2NEON Contributors. Complete original MIT licence and selected header notice are retained in the corresponding source archive and licenses/sse2neon-<actual-triplet>.txt. Authored pinned vcpkg recipes retain the Microsoft Corporation MIT notice and full vcpkg licence.
+
+native-image-vcpkg-cmake-get-vars-r1
+Source: https://github.com/microsoft/vcpkg @ 36677bbd0b3bf11da7376e62e14bffcc54d2eaeb
+Material licence: MIT
+Notice scope: packages
+Actual Linux OpenSSL host-only compiler-variable helper. Complete six pinned MIT recipe files including nested CMakeLists retained; not linked runtime.
+Original full licence, complete immutable corresponding source archive when applicable, and exact authored MIT vcpkg recipe notices are retained. Whole OpenSSL archive separately preserves original Text-Template dual-licence attribution without runtime/source reuse permission.
+Actual Linux OpenSSL host-only compiler-variable helper. Complete six pinned MIT recipe files including nested CMakeLists retained; not linked runtime. Original full licence, complete immutable corresponding source archive when applicable, and exact authored MIT vcpkg recipe notices are retained. Whole OpenSSL archive separately preserves original Text-Template dual-licence attribution without runtime/source reuse permission.
 
 native-imath-r4
 Source: https://github.com/AcademySoftwareFoundation/Imath @ 1e480d11cb98b032a2dece9b9a8730512effc7f6

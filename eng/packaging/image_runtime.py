@@ -261,6 +261,8 @@ def acquire_legal_inputs(downloads, rid, root=ROOT, cancelled=None, opener=None)
     value, material = profile(root)
     base, _ = _selection(rid, value, material)
     rows = [row for component in base["components"].values() for row in component["extras"]]
+    if rid.startswith("linux-"):
+        rows += [row for tool in value["externalToolDefinitions"].values() for row in tool["legal"]]
     if rid.startswith("win-"):
         rows += base["platformRuntime"]["legal"]
     downloads = Path(downloads).absolute()
@@ -335,7 +337,157 @@ def _selection(rid, value, material):
             require(name not in base["components"], "Colliding Image prerequisite input.")
             base["components"][name] = copy.deepcopy(row["component"])
             features[name] = row["features"]
+    overrides = value.get("featureOverrides", {})
+    require(set(overrides).issubset({"linux-x64", "linux-arm64"}) and
+            all(set(rows) == {"minizip-ng"} for rows in overrides.values()),
+            "Unreviewed Image feature override.")
+    for name, selected in overrides.get(rid, {}).items():
+        require(selected == sorted(features[name] + ["openssl"]) and "openssl" in base["components"],
+                "Unreviewed Image Linux OpenSSL feature closure.")
+        features[name] = selected
     return base, features
+
+
+def _external_definitions(value):
+    definitions = value["externalToolDefinitions"]
+    require(set(definitions) == {"make", "perl", "text-template"}, "External Image tool catalogue is not closed.")
+    for ident, definition in definitions.items():
+        check_provenance.fields(definition, "repository commit version legal" +
+                                (" member sha256" if ident == "text-template" else ""))
+        check_provenance.repository(definition["repository"])
+        check_provenance.digest(definition["commit"], (40,))
+        require(definition["version"] == {"make": "4.3", "perl": "5.38.2", "text-template": "1.56"}[ident],
+                "Unreviewed external Image tool version.")
+        require(bool(definition["legal"]), "Missing external Image tool legal originals.")
+        for legal in definition["legal"]:
+            native_provenance.asset(legal)
+        if ident == "text-template":
+            require(definition["member"] == "external/perl/Text-Template-1.56/lib/Text/Template.pm",
+                    "Unreviewed original external Image utility member.")
+            check_provenance.digest(definition["sha256"])
+    return definitions
+
+
+def _external_row(ident, definition, executable):
+    return {"id": ident, "repository": definition["repository"], "commit": definition["commit"],
+            "version": definition["version"], "role": "noncopying-external-execution", "executable": executable,
+            "licence": {"spdx": check_provenance.EXTERNAL_TOOL_LICENCES[ident], "category": "gpl-only",
+                        "evidence": [{"path": row["output"], "sha256": row["sha256"],
+                                      "finding": "Full original external tool legal document; not copied implementation/source/input/output permission."}
+                                     for row in definition["legal"]],
+                        "scope": "Noncopying OpenSSL build execution only. Tool implementations are not bundled or linked into runtime."}}
+
+
+def _external_probe(program, arguments, cancelled=None):
+    """Bound output, time, cancellation and child lifetime for real host probes."""
+    _cancel(cancelled)
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("LD_", "DYLD_"))}
+    with tempfile.TemporaryFile() as output:
+        process = subprocess.Popen([str(program), *arguments], stdout=output, stderr=subprocess.STDOUT, env=environment)
+        deadline = time.monotonic() + 15
+        try:
+            while process.poll() is None:
+                _cancel(cancelled)
+                require(time.monotonic() < deadline and os.fstat(output.fileno()).st_size <= 4096,
+                        "Unbounded external Image tool probe.")
+                time.sleep(0.025)
+            _cancel(cancelled)
+            require(process.returncode == 0 and os.fstat(output.fileno()).st_size <= 4096,
+                    "External Image tool probe failed or exceeded output bound.")
+            output.seek(0)
+            return output.read(4097).decode("utf-8", errors="strict").strip()
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+
+
+def observe_external_tools(downloads, rid, root=ROOT, cancelled=None):
+    require(rid in ("linux-x64", "linux-arm64") and sys.platform.startswith("linux"),
+            "External Image host observations require the actual Linux producer.")
+    value, _ = profile(root)
+    definitions = _external_definitions(value)
+    tools, selectors = [], {}
+    for ident in ("make", "perl"):
+        selected = shutil.which(ident)
+        require(selected is not None, "Missing actual external Image executable: " + ident)
+        selector = Path(selected)
+        binary = _regular(selector.resolve(strict=True))
+        before = digest(binary, cancelled)
+        observed = _external_probe(binary, ["--version"] if ident == "make" else
+                                   ["-e", 'printf "%vd", $^V;'], cancelled)
+        expected = definitions[ident]["version"]
+        require((observed.splitlines()[0] == "GNU Make " + expected) if ident == "make" else observed == expected,
+                "Unreviewed actual external Image executable version.")
+        require(selector.resolve(strict=True) == binary and digest(binary, cancelled) == before,
+                "External Image executable changed during observation.")
+        if ident == "make":
+            gmake = shutil.which("gmake")
+            require(gmake is None or Path(gmake).resolve(strict=True) == binary,
+                    "OpenSSL configure/build select different make executables.")
+        selectors[ident] = str(binary)
+        tools.append(_external_row(ident, definitions[ident], {"name": ident, "version": expected, "sha256": before}))
+    definition = definitions["text-template"]
+    tools.append(_external_row("text-template", definition,
+                              {"name": "Template.pm", "version": definition["version"], "sha256": definition["sha256"]}))
+    for definition in definitions.values():
+        for legal in definition["legal"]:
+            _legal_bytes(legal, downloads, cancelled)
+    check_provenance.external_tools(tools)
+    identity = build_identity.build_identity(Path(root))
+    require(not identity["dirty"], "Commit reviewed Image source before observing producer tools.")
+    return {"schemaVersion": 1, "rid": rid, "build": identity, "selectors": selectors, "tools": tools}
+
+
+def _external_tool_handoff(inputs, rid, root, cancelled):
+    before = _document(root / "artifacts/image-external-tools" / (rid + ".json"))
+    actual = observe_external_tools(inputs.downloads, rid, root, cancelled)
+    require(before == actual, "External Image tool identity/version/hash/legal observation differs from build start.")
+    # The actual Release Configure output binds the interpreter selected by the pinned port.
+    triplet = "x64-linux" if rid == "linux-x64" else "arm64-linux"
+    makefile = _regular(inputs.vcpkg / "buildtrees/openssl" / (triplet + "-rel") / "Makefile")
+    require(makefile.stat().st_size <= 8_000_000, "Unbounded OpenSSL tool configuration.")
+    interpreters = re.findall(r"^PERL\s*=\s*(.+?)\s*$", makefile.read_text(encoding="utf-8"), re.MULTILINE)
+    require(len(interpreters) == 1 and Path(interpreters[0]).resolve(strict=True) == Path(actual["selectors"]["perl"]),
+            "Actual OpenSSL Configure interpreter differs from the observed external tool.")
+    source_root = inputs.vcpkg / "buildtrees/openssl/src"
+    candidates = list(source_root.glob("*/external/perl/Text-Template-1.56/lib/Text/Template.pm"))
+    require(0 < len(candidates) <= 64, "Missing or ambiguous actual OpenSSL external utility input.")
+    expected = next(row["executable"]["sha256"] for row in actual["tools"] if row["id"] == "text-template")
+    for candidate in candidates:
+        require(digest(_regular(candidate, source_root), cancelled) == expected,
+                "Actual OpenSSL external utility differs from original source.")
+    return {**actual, "releaseMakefileSha256": digest(makefile, cancelled)}
+
+
+def _verify_external_handoff(observation, value, rid, identity, read):
+    check_provenance.fields(observation, "schemaVersion rid build selectors tools releaseMakefileSha256")
+    require(observation["schemaVersion"] == 1 and observation["rid"] == rid and observation["build"] == identity,
+            "External Image tool producer/source/RID binding differs.")
+    check_provenance.digest(observation["releaseMakefileSha256"])
+    require(set(observation["selectors"]) == {"make", "perl"}, "External Image tool selectors differ.")
+    for path in observation["selectors"].values():
+        require(isinstance(path, str) and path.startswith("/") and len(path) <= 4096 and
+                not any(part in (".", "..") for part in path.split("/")) and "\n" not in path,
+                "Invalid actual external Image tool selector.")
+    check_provenance.external_tools(observation["tools"])
+    definitions = _external_definitions(value)
+    require([row["id"] for row in observation["tools"]] == ["make", "perl", "text-template"],
+            "External Image tool inventory differs from the reviewed recipe.")
+    for row in observation["tools"]:
+        definition = definitions[row["id"]]
+        require(row == _external_row(row["id"], definition, row["executable"]),
+                "External Image tool source/legal identity differs from the reviewed recipe.")
+        if row["id"] == "text-template":
+            require(row["executable"]["sha256"] == definition["sha256"], "External Image utility source differs.")
+        for legal in definition["legal"]:
+            require(hashlib.sha256(read(legal["output"])).hexdigest() == legal["sha256"],
+                    "External Image tool original legal bytes differ.")
 
 
 def _owned(info, recipe):
@@ -735,7 +887,7 @@ def _promote(staging, destination):
 
 def _cached_stage(destination, source_commit, rid, root, cancelled):
     try:
-        cached = verify_stage(destination, source_commit, root)
+        cached = verify_stage(destination, source_commit, root, cancelled=cancelled)
     except StageCancelled:
         raise
     except ValueError:
@@ -771,8 +923,21 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
             package = staging / recipe["package"]
             runtime = package / "runtimes" / rid / "native"
             tools = _tools(inputs, recipe, identity, root, cancelled)
+            if rid.startswith("linux-"):
+                tools["externalTools"] = _external_tool_handoff(inputs, rid, root, cancelled)
             source_profile, features = _selection(rid, value, material)
             upstream, compiled = _upstreams(package, inputs, rid, recipe, source_profile, features, root, cancelled)
+            if rid.startswith("linux-"):
+                for definition in _external_definitions(value).values():
+                    for legal in definition["legal"]:
+                        content = _legal_bytes(legal, inputs.downloads, cancelled)
+                        target = package / legal["output"]
+                        if target.exists():
+                            require(_regular(target, package).read_bytes() == content,
+                                    "Conflicting external Image original legal material.")
+                        else:
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            _write_bytes(target, content)
             triplet = value["triplets"][rid]
             for kind, directory in (("owned", root), ("upstream", inputs.vcpkg)):
                 if triplet[kind + "Path"] is not None:
@@ -863,7 +1028,7 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
             artifact = {"schemaVersion": 1, "sourceCommit": identity["sourceCommit"], "rid": rid, "build": identity,
                         "packages": [{"id": recipe["package"], "files": _inventory(package, cancelled)}]}
             _write(staging / "native-artifact.json", artifact)
-            verify_stage(staging, identity["sourceCommit"], root)
+            verify_stage(staging, identity["sourceCommit"], root, cancelled=cancelled)
             _cancel(cancelled)
             for directory in sorted((path for path in staging.rglob("*") if path.is_dir()), reverse=True):
                 _directory_sync(directory)
@@ -878,10 +1043,12 @@ def stage(destination, rid, inputs, root=ROOT, cancelled=None):
                 shutil.rmtree(staging)
 
 
-def verify_package(entry, read, names, source_commit, root=ROOT):
+def verify_package(entry, read, names, source_commit, root=ROOT, cancelled=None):
+    _cancel(cancelled)
     original_read = read
 
     def read(path):
+        _cancel(cancelled)
         _path(path)
         try:
             content = original_read(path)
@@ -889,6 +1056,7 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
             raise ValueError("Missing Image production material: " + path) from error
         require(isinstance(content, bytes) and len(content) <= MAX_MATERIAL,
                 "Unbounded Image package material.")
+        _cancel(cancelled)
         return content
 
     value, material = profile(root)
@@ -953,6 +1121,11 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
     sbom = _json(read("sbom.json"))
     require(sbom.get("sourceCommit") == source_commit and sbom.get("binaryFiles") == manifest["files"], "Image SBOM differs.")
     require(sbom.get("buildTools") == receipt["producer"], "Image compiler/tool receipt differs.")
+    if rid.startswith("linux-"):
+        require("externalTools" in receipt["producer"], "Missing actual external Image tool handoff.")
+        _verify_external_handoff(receipt["producer"]["externalTools"], value, rid, receipt["build"], read)
+    else:
+        require("externalTools" not in receipt["producer"], "Foreign external Image tool handoff.")
     base, features = _selection(rid, value, material)
     require({row["name"] for row in sbom["buildDependencies"]} == set(base["components"]),
             "Image SBOM omits the reviewed dependency closure.")
@@ -1004,9 +1177,10 @@ def verify_package(entry, read, names, source_commit, root=ROOT):
     return receipt
 
 
-def verify_stage(destination, source_commit, root=ROOT):
+def verify_stage(destination, source_commit, root=ROOT, cancelled=None):
+    _cancel(cancelled)
     destination = Path(destination)
-    actual = _inventory(destination)
+    actual = _inventory(destination, cancelled)
     artifact = _document(destination / "native-artifact.json")
     require(artifact.get("schemaVersion") == 1 and artifact.get("sourceCommit") == source_commit and
             artifact.get("rid") in native_binary.RIDS and len(artifact.get("packages", ())) == 1, "Image artifact identity differs.")
@@ -1015,18 +1189,19 @@ def verify_stage(destination, source_commit, root=ROOT):
     expected = "ArcForges.Native.Image.Runtime." + artifact["rid"]
     require(package["id"] == expected, "Image artifact package/RID differs.")
     directory = destination / expected
-    require(package["files"] == _inventory(directory), "Image artifact copied-byte inventory differs.")
+    require(package["files"] == _inventory(directory, cancelled), "Image artifact copied-byte inventory differs.")
     require({row["path"] for row in actual} == {"native-artifact.json"} |
             {expected + "/" + row["path"] for row in package["files"]}, "Unbound Image artifact files.")
     verify_package({"id": expected, "rid": artifact["rid"], "library": "ArcImageNative"},
                    lambda name: _regular(directory / str(_path(name)), directory).read_bytes(),
-                   {row["path"] for row in package["files"]}, source_commit, root)
+                   {row["path"] for row in package["files"]}, source_commit, root, cancelled=cancelled)
+    _cancel(cancelled)
     return artifact
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("stage", "verify", "acquire-legal"))
+    parser.add_argument("command", choices=("stage", "verify", "acquire-legal", "observe-tools"))
     parser.add_argument("--rid", choices=tuple(native_binary.RIDS), required=True)
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--vcpkg-root", type=Path)
@@ -1037,6 +1212,13 @@ def main():
     if args.command == "acquire-legal":
         require(args.downloads is not None, "Image legal acquisition requires an explicit cache.")
         return acquire_legal_inputs(args.downloads, args.rid)
+    if args.command == "observe-tools":
+        require(args.downloads is not None, "External Image tool observation requires an explicit original cache.")
+        result = observe_external_tools(args.downloads, args.rid)
+        output = ROOT / "artifacts/image-external-tools" / (args.rid + ".json")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _write(output, result)
+        return result
     require(args.directory is not None, "Image stage/verify requires an explicit directory.")
     if args.command == "verify":
         artifact = verify_stage(args.directory, args.commit or build_identity.git(ROOT, "rev-parse", "HEAD"))

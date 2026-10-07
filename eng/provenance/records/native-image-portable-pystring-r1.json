@@ -32,35 +32,35 @@
       "package": "ArcForges.Native.Image.Runtime.win-arm64",
       "kind": "native-component-pystring",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     },
     {
       "project": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
       "package": "ArcForges.Native.Image.Runtime.linux-x64",
       "kind": "native-component-pystring",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     },
     {
       "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
       "package": "ArcForges.Native.Image.Runtime.linux-arm64",
       "kind": "native-component-pystring",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     },
     {
       "project": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
       "package": "ArcForges.Native.Image.Runtime.osx-x64",
       "kind": "native-component-pystring",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     },
     {
       "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
       "package": "ArcForges.Native.Image.Runtime.osx-arm64",
       "kind": "native-component-pystring",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "3121586c07aa4f0c7d61a857a5b9c32b41889546c29aa2bc784715a1fa38b077"
+      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     }
   ],
   "disposition": "Copy",
@@ -168,7 +168,7 @@
     "reviewer": "NAT22 maintainer source/legal assessment; independent final source/admission review remains mandatory and is not asserted here.",
     "reviewedOn": "2026-10-06",
     "decision": "approved",
-    "rationale": "Register five new portable Image artifact intents using unchanged original r4 source, legal, feature and recipe identities; keep the Winx64 r4 active record and immutable profile/history intact. Per-RID changes fail closed and require separately admitted exact prerequisites. Actual artifact production/publication and full OS acceptance remain separate.",
+    "rationale": "Register five portable Image artifact intents retaining unchanged original r4 source/legal/recipe identities. Existing Winx64 r4 and immutable accepted history remain intact. The reviewed Linux-only minizip openssl feature and two exact Linux prerequisite rows are a separately bound portable producer profile, alongside the admitted ARM SSE prerequisite; Windows/macOS feature closure remains unchanged. Every real per-RID artifact/tool/legal/publication gate and full OS acceptance remains mandatory.",
     "baselineCommit": "71b6df2db828bc859cca6934ed66aac9b525b5c7",
     "reconciliation": false
   },

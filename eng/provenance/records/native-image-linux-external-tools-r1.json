@@ -1,64 +1,41 @@
 {
   "schemaVersion": 1,
-  "id": "native-image-portable-openexr-r1",
+  "id": "native-image-linux-external-tools-r1",
   "kind": "generated",
-  "sourceRepository": "https://github.com/AcademySoftwareFoundation/openexr",
-  "sourceCommit": "777d231a179de1711d2a942810d9559216ab3f4c",
+  "sourceRepository": "https://github.com/microsoft/vcpkg",
+  "sourceCommit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
   "sourcePaths": [
-    "LICENSE.md",
-    "CMakeLists.txt"
+    "ports/openssl/unix/portfile.cmake"
   ],
   "licence": {
-    "spdx": "BSD-3-Clause",
+    "spdx": "MIT",
     "category": "permissive",
     "evidence": [
       {
-        "path": "LICENSE.md",
-        "sha256": "84853c91d4c2e0310741d4773469d98bb93e61029608e0ba0882a3fffdf330bd",
-        "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+        "path": "LICENSE.txt",
+        "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+        "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
       }
     ],
-    "scope": "Selected OpenEXR libraries under BSD-3-Clause; OpenJPH and libdeflate resolve to separately recorded installed packages (verified current CMake cache). Internal fallback sources, tools, examples, tests and website are not the selected compiled input.",
+    "scope": "Authored MIT external-tool selection recipe and metadata only; no copied host implementation/source/template/input or linked runtime permission.",
     "copyingPermission": null
   },
   "attribution": [
-    "Original copyright and full applicable terms are retained in each actual licenses/openexr-<actual-triplet>.txt, together with original corresponding source and exact recipes.",
-    "Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt."
+    "Noncopying make4.3, Perl5.38.2 and original Text-Template1.56 utility are separately inventoried. Full original GPL3, Perl GPL1-or-later OR Artistic1-Perl, and Text-Template GPL1-or-later OR Artistic1 legal texts are retained in licenses/provenance. Actual host executable hashes and invocation/configuration evidence exist only in real build handoff, not planning observations. Their implementations are not bundled, linked or admitted generation inputs."
   ],
   "targets": [],
   "artifactTargets": [
     {
-      "project": "src/Native/ArcForges.Native.Image.Runtime.win-arm64/ArcForges.Native.Image.Runtime.win-arm64.csproj",
-      "package": "ArcForges.Native.Image.Runtime.win-arm64",
-      "kind": "native-component-openexr",
-      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
-    },
-    {
       "project": "src/Native/ArcForges.Native.Image.Runtime.linux-x64/ArcForges.Native.Image.Runtime.linux-x64.csproj",
       "package": "ArcForges.Native.Image.Runtime.linux-x64",
-      "kind": "native-component-openexr",
+      "kind": "native-external-tool-inventory",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
       "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     },
     {
       "project": "src/Native/ArcForges.Native.Image.Runtime.linux-arm64/ArcForges.Native.Image.Runtime.linux-arm64.csproj",
       "package": "ArcForges.Native.Image.Runtime.linux-arm64",
-      "kind": "native-component-openexr",
-      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
-    },
-    {
-      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-x64/ArcForges.Native.Image.Runtime.osx-x64.csproj",
-      "package": "ArcForges.Native.Image.Runtime.osx-x64",
-      "kind": "native-component-openexr",
-      "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
-      "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
-    },
-    {
-      "project": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64/ArcForges.Native.Image.Runtime.osx-arm64.csproj",
-      "package": "ArcForges.Native.Image.Runtime.osx-arm64",
-      "kind": "native-component-openexr",
+      "kind": "native-external-tool-inventory",
       "profile": "eng/provenance/artifact-profiles/image-runtime-producer-v1.json",
       "sha256": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf"
     }
@@ -72,7 +49,7 @@
   },
   "notice": {
     "required": true,
-    "text": "Original copyright and full applicable terms are retained in each actual licenses/openexr-<actual-triplet>.txt, together with original corresponding source and exact recipes. Standard vcpkg triplet definitions retain Microsoft Corporation copyright and the full MIT permission in licenses/provenance/vcpkg-LICENSE.txt.",
+    "text": "Noncopying make4.3, Perl5.38.2 and original Text-Template1.56 utility are separately inventoried. Full original GPL3, Perl GPL1-or-later OR Artistic1-Perl, and Text-Template GPL1-or-later OR Artistic1 legal texts are retained in licenses/provenance. Actual host executable hashes and invocation/configuration evidence exist only in real build handoff, not planning observations. Their implementations are not bundled, linked or admitted generation inputs.",
     "files": [
       "eng/provenance/NOTICE.txt"
     ],
@@ -122,9 +99,12 @@
         "repository": "https://github.com/microsoft/vcpkg",
         "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
         "paths": [
-          "ports/openexr/portfile.cmake",
-          "ports/openexr/usage",
-          "ports/openexr/vcpkg.json",
+          "ports/vcpkg-cmake/portfile.cmake",
+          "ports/vcpkg-cmake/vcpkg-port-config.cmake",
+          "ports/vcpkg-cmake/vcpkg.json",
+          "ports/vcpkg-cmake/vcpkg_cmake_build.cmake",
+          "ports/vcpkg-cmake/vcpkg_cmake_configure.cmake",
+          "ports/vcpkg-cmake/vcpkg_cmake_install.cmake",
           "scripts/vcpkg-tools.json",
           "triplets/arm64-linux.cmake",
           "triplets/arm64-osx.cmake",
@@ -144,33 +124,58 @@
     ],
     "inputs": [
       {
-        "repository": "https://github.com/AcademySoftwareFoundation/openexr",
-        "commit": "777d231a179de1711d2a942810d9559216ab3f4c",
+        "repository": "https://github.com/microsoft/vcpkg",
+        "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
         "paths": [
-          "LICENSE.md",
-          "CMakeLists.txt"
+          "ports/openssl/unix/portfile.cmake"
         ],
-        "spdx": "BSD-3-Clause",
+        "spdx": "MIT",
         "evidence": [
           {
-            "path": "LICENSE.md",
-            "sha256": "84853c91d4c2e0310741d4773469d98bb93e61029608e0ba0882a3fffdf330bd",
-            "finding": "Reviewed original legal text for the exact selected scope; other licences in excluded source/test subtrees are not selected."
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+            "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
           }
         ]
       }
     ],
     "command": "The closed per-RID Image producer recipe uses actual CMake4.3.3/Ninja1.13.1 owning-root output and pinned vcpkg366 dependency recipes with actual CMake4.4.0 ABI evidence. Complete original source/legal/recipe bytes are matched at staging; host generator implementations are not bundled. Compiler, dependency imports, runtime/OS floors and signed publisher admission are distinct exact artifact handoffs.",
-    "outputSpdx": "BSD-3-Clause"
+    "outputSpdx": "MIT"
   },
   "review": {
     "owner": "Licensing and Provenance Owner",
     "reviewer": "NAT22 maintainer source/legal assessment; independent final source/admission review remains mandatory and is not asserted here.",
-    "reviewedOn": "2026-10-06",
+    "reviewedOn": "2026-10-07",
     "decision": "approved",
-    "rationale": "Register five portable Image artifact intents retaining unchanged original r4 source/legal/recipe identities. Existing Winx64 r4 and immutable accepted history remain intact. The reviewed Linux-only minizip openssl feature and two exact Linux prerequisite rows are a separately bound portable producer profile, alongside the admitted ARM SSE prerequisite; Windows/macOS feature closure remains unchanged. Every real per-RID artifact/tool/legal/publication gate and full OS acceptance remains mandatory.",
-    "baselineCommit": "71b6df2db828bc859cca6934ed66aac9b525b5c7",
+    "rationale": "Distinct noncopying utility inventory under merged minimum native production support; conservative original tool legal expressions never authorize copied source/output.",
+    "baselineCommit": "53b550d04ac1200955464224823fab752ea7ff0e",
     "reconciliation": false
   },
-  "supersedes": null
+  "supersedes": null,
+  "externalTools": [
+    {
+      "id": "text-template",
+      "repository": "https://github.com/openssl/openssl",
+      "commit": "e5c234b0c471a676ae6141d2f157df61eb293477",
+      "version": "1.56",
+      "role": "noncopying-external-execution",
+      "executable": {
+        "name": "Template.pm",
+        "version": "1.56",
+        "sha256": "41815a23764f0ec4cb610718c0b2b012d9f0c91db75a6784d409b30a7c1a4b98"
+      },
+      "licence": {
+        "spdx": "GPL-1.0-or-later OR Artistic-1.0",
+        "category": "gpl-only",
+        "evidence": [
+          {
+            "path": "external/perl/Text-Template-1.56/LICENSE",
+            "sha256": "9837f05336ef3cbacb6a96e1672a0426d81ad01191f214b8d48e22ca62338181",
+            "finding": "Exact complete original legal document inside unchanged OpenSSL archive; original utility SHA is observed source identity, not executed-host evidence."
+          }
+        ],
+        "scope": "Original external utility identity and intended noncopying recipe role only. Actual execution/tool host observations remain separately required; no source/template/input/output permission."
+      }
+    }
+  ]
 }

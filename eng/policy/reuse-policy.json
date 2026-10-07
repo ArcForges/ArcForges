@@ -58,6 +58,9 @@
     "libtiff AND LicenseRef-Berkeley-LZW-Rescinded": "permissive",
     "LicenseRef-pkgconf-Permissive": "permissive",
     "LGPL-2.1-or-later": "agpl-compatible",
+    "GPL-3.0-or-later": "gpl-only",
+    "GPL-1.0-or-later OR Artistic-1.0-Perl": "gpl-only",
+    "GPL-1.0-or-later OR Artistic-1.0": "gpl-only",
     "BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND FTL AND Unicode-3.0 AND LicenseRef-AGG-2.3 AND libpng-2.0 AND Zlib AND IJG": "permissive"
   }
 }

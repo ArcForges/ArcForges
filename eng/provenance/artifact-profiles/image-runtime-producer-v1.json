@@ -342,6 +342,261 @@
         "correspondingSource": null,
         "scope": "Required ARM-only SIMD translation header selected by the actual pinned Image dependency graph. Complete source archive, original MIT licence/header notice and exact vcpkg recipe are retained per actual runtime candidate."
       }
+    },
+    "openssl": {
+      "rids": [
+        "linux-x64",
+        "linux-arm64"
+      ],
+      "features": [],
+      "component": {
+        "record": "native-image-openssl-r1",
+        "version": "3.6.3",
+        "role": "runtime-input",
+        "source": {
+          "repository": "https://github.com/openssl/openssl",
+          "commit": "e5c234b0c471a676ae6141d2f157df61eb293477",
+          "paths": [
+            "LICENSE.txt",
+            "Configure",
+            "Configurations",
+            "crypto",
+            "include",
+            "providers",
+            "ssl",
+            "engines",
+            "util/perl/OpenSSL"
+          ],
+          "spdx": "Apache-2.0",
+          "evidence": [
+            {
+              "path": "LICENSE.txt",
+              "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+              "finding": "Original full Apache2 licence for individually selected runtime/header/Configure/templates. Whole original archive separately retains dual-licensed Text-Template utility; no aggregate Apache claim."
+            }
+          ]
+        },
+        "recipe": {
+          "repository": "https://github.com/microsoft/vcpkg",
+          "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+          "files": {
+            "cmake-config.patch": "9b4cd414b2f7ea82e9bc46507312ad6046ba62403834869b1cc7badc13597a27",
+            "command-line-length.patch": "f901c068c91456b0405c726d2808ff53fb7b60775fc8a5cb22f2bd8feecf44eb",
+            "install-pc-files.cmake": "001f4b55b3da7b4faa0910b906f9c587055abaa99edac9cfb3669a06b5387d44",
+            "openssl.pc.in": "add49223f08228831ced1bc35fc2c56a4ab0fe9741e1fb2bdc86c6d3da4b326a",
+            "portfile.cmake": "7b088628f6644239d24955c51c5b85ed5285df5c701c945509eccc47bc353af6",
+            "script-prefix.patch": "caa28374650ac6510fa5190a7645a91c86a7fd3570eb357e7fa0927b97e8f13e",
+            "unix/android-cc.patch": "a3cde12ca3c7c7894e73d300e0ccf728de28b87afde13776e7d7267979c3ead2",
+            "unix/configure": "96ef16490c8a7c240a0c96de7e641c93843d0b78400b4de7dc2c7d2e500f3480",
+            "unix/move-openssldir.patch": "9e62ad861f8421e5b732bf488b7199131ac17a57f295f50c697d2591f5845e0e",
+            "unix/no-empty-dirs.patch": "a03d46642c903c9eb09184eabc553ce1467e000c28a9e7d7e92d995970004a62",
+            "unix/no-static-libs-for-shared.patch": "dc51d597ad7477fc56c2a394c84493c87a4de2b84898497dda2754dd0fd8cb53",
+            "unix/portfile.cmake": "b85a8af9f0df4d80e8632800d37ab17f45d3a8787621e537a35cae1df8527540",
+            "unix/remove-deps.cmake": "15610ffa298dd97a75bc32afa892cbf037916d6cd44c06ca62060b68ab2e8a69",
+            "usage": "b2970da02f66c5df503b31f1a7d9da61a882f7a907dcc31aa1c758ae2885120c",
+            "vcpkg-cmake-wrapper.cmake.in": "b29a6ba88f6f26f03a70cf57c31beb6de58ba0306ce8f3028f52fef4b86aec13",
+            "vcpkg.json": "61ee8b0da1b861ce5e19c06a4e9628eba8d2faaebea8e581d04d30b0f6b2c4f8",
+            "windows/install-layout.patch": "2e99d1714ecfe7224889c0df8c6b572d3ffca3927b640014c3f5cc4c144e72f6",
+            "windows/install-pdbs.patch": "e913fdc775b5e7be3eb71bfc223d51c3d8fd7e933410493efdbc53c5a1e1f3b7",
+            "windows/install-programs.diff": "09b91267b364fb10e101b432d86e761247bafbfd42cb7688b5d7748ea6175e2a",
+            "windows/portfile.cmake": "dfb863e8b3de32517fd9f28ba77f196fe2325ee5c217cbe45825bb2af83f7488"
+          },
+          "licenceScope": "Authored MIT vcpkg recipes retain original notices; selected OpenSSL source retains individually reviewed Apache2 terms."
+        },
+        "resources": [
+          {
+            "url": "git+https://github.com/openssl/openssl@openssl-3.6.3",
+            "sha512": "a89c08101fa1d7e3c09b14f4a90d450bcf336a4f6a3e6e4ea990e4deddcd9ce250472f9114438fd134ff4b47fe93dd47232308567088b2b1c0b2eb50e3b56bdf",
+            "downloadUrl": "https://github.com/openssl/openssl/archive/openssl-3.6.3.tar.gz",
+            "cacheName": "openssl-openssl-openssl-3.6.3.tar.gz"
+          }
+        ],
+        "legal": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+          }
+        ],
+        "extras": [
+          {
+            "output": "licenses/provenance/openssl-text-template-LICENSE.txt",
+            "url": "https://github.com/openssl/openssl/archive/openssl-3.6.3.tar.gz",
+            "cacheName": "openssl-openssl-openssl-3.6.3.tar.gz",
+            "sourceSha256": null,
+            "sourceSha512": "a89c08101fa1d7e3c09b14f4a90d450bcf336a4f6a3e6e4ea990e4deddcd9ce250472f9114438fd134ff4b47fe93dd47232308567088b2b1c0b2eb50e3b56bdf",
+            "member": "external/perl/Text-Template-1.56/LICENSE",
+            "memberSha256": "9837f05336ef3cbacb6a96e1672a0426d81ad01191f214b8d48e22ca62338181",
+            "encoding": "utf-8",
+            "start": 0,
+            "end": 18412,
+            "sha256": "9837f05336ef3cbacb6a96e1672a0426d81ad01191f214b8d48e22ca62338181",
+            "description": "Complete original legal document retained as attribution. No licence grant to copy/link external tool implementation, generator source/template/input or generated output."
+          }
+        ],
+        "correspondingSource": {
+          "path": "sources/openssl-openssl-openssl-3.6.3.tar.gz",
+          "url": "https://github.com/openssl/openssl/archive/openssl-3.6.3.tar.gz",
+          "sha512": "a89c08101fa1d7e3c09b14f4a90d450bcf336a4f6a3e6e4ea990e4deddcd9ce250472f9114438fd134ff4b47fe93dd47232308567088b2b1c0b2eb50e3b56bdf",
+          "scope": "Complete original archive retained unchanged, including original dual GPL1-or-later OR Artistic1 Text-Template1.56 utility/legal context. This aggregate is not relicensed Apache; selected runtime/templates are separately assessed."
+        },
+        "scope": "Linux-only actual minizip wzaes/openssl prerequisite. Individually selected runtime/header/Configure/templates Apache2; noncopying external utilities are distinct. Complete original source/legal/recipe retained."
+      }
+    },
+    "vcpkg-cmake-get-vars": {
+      "rids": [
+        "linux-x64",
+        "linux-arm64"
+      ],
+      "features": [],
+      "component": {
+        "record": "native-image-vcpkg-cmake-get-vars-r1",
+        "version": "2025-05-29",
+        "role": "build-only",
+        "source": {
+          "repository": "https://github.com/microsoft/vcpkg",
+          "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+          "paths": [
+            "ports/vcpkg-cmake-get-vars/portfile.cmake",
+            "ports/vcpkg-cmake-get-vars/cmake_get_vars/CMakeLists.txt"
+          ],
+          "spdx": "MIT",
+          "evidence": [
+            {
+              "path": "LICENSE.txt",
+              "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460",
+              "finding": "MIT applies to authored vcpkg recipes; upstream patch contexts retain the separately reviewed component licence."
+            }
+          ]
+        },
+        "recipe": {
+          "repository": "https://github.com/microsoft/vcpkg",
+          "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
+          "files": {
+            "cmake-get-vars.cmake.in": "2c9f7cdefba85c7a6df2e881888681e85fb4ab7593f1647ea9897d5c1df3ce66",
+            "cmake_get_vars/CMakeLists.txt": "e2800013c97b687d0841820ce9c69971a5c8c044c9444499dbe15d193bfc6b1f",
+            "portfile.cmake": "0a6c61926f6d1af5ed6e02b8df4dd8df81d3988a263c2849a38cef364e290e81",
+            "vcpkg-port-config.cmake": "4fd4c2e909bbdf069eb3c59b4b847b0b386cdb41840714e12b34b7eff41f9e22",
+            "vcpkg.json": "c63654032f0c0f79ffc9932cfade8a13d68fc607e823d3ea17cc4d24b4e76bac",
+            "vcpkg_cmake_get_vars.cmake": "f80132758a6a7d0930697814c0fd2b719a06ee092bf60fab96d3d9cfef0e4c2b"
+          },
+          "licenceScope": "Authored port/build helpers: MIT; patch context retains MIT. Full component legal terms and the vcpkg MIT notice are retained; this does not relicense upstream code."
+        },
+        "resources": [],
+        "legal": [
+          {
+            "path": "LICENSE.txt",
+            "sha256": "1ee376fc340e0aa6ad6a3581c94126e741468705096ac92263048a21daa86460"
+          }
+        ],
+        "extras": [],
+        "correspondingSource": null,
+        "scope": "Actual Linux OpenSSL host-only compiler-variable helper. Complete six pinned MIT recipe files including nested CMakeLists retained; not linked runtime."
+      }
+    }
+  },
+  "featureOverrides": {
+    "linux-x64": {
+      "minizip-ng": [
+        "bzip2",
+        "lzma",
+        "openssl",
+        "pkcrypt",
+        "wzaes",
+        "zlib",
+        "zstd"
+      ]
+    },
+    "linux-arm64": {
+      "minizip-ng": [
+        "bzip2",
+        "lzma",
+        "openssl",
+        "pkcrypt",
+        "wzaes",
+        "zlib",
+        "zstd"
+      ]
+    }
+  },
+  "externalToolDefinitions": {
+    "make": {
+      "repository": "https://git.savannah.gnu.org/cgit/make.git",
+      "commit": "f430a65ccb5e85eb465f6a64afcbdd09f9c708ed",
+      "version": "4.3",
+      "legal": [
+        {
+          "output": "licenses/provenance/make-COPYING.txt",
+          "url": "https://raw.githubusercontent.com/mirror/make/f430a65ccb5e85eb465f6a64afcbdd09f9c708ed/COPYING",
+          "cacheName": "make-4.3-COPYING",
+          "sourceSha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "sourceSha512": null,
+          "member": null,
+          "memberSha256": null,
+          "encoding": "raw",
+          "start": 0,
+          "end": 35147,
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "description": "Complete original legal document retained as attribution. No licence grant to copy/link external tool implementation, generator source/template/input or generated output."
+        }
+      ]
+    },
+    "perl": {
+      "repository": "https://github.com/Perl/perl5",
+      "commit": "55dd2f792ffc8cefe614350a411f785374281b24",
+      "version": "5.38.2",
+      "legal": [
+        {
+          "output": "licenses/provenance/perl-Copying.txt",
+          "url": "https://www.cpan.org/src/5.0/perl-5.38.2.tar.xz",
+          "cacheName": "perl-5.38.2.tar.xz",
+          "sourceSha256": "d91115e90b896520e83d4de6b52f8254ef2b70a8d545ffab33200ea9f1cf29e8",
+          "sourceSha512": null,
+          "member": "Copying",
+          "memberSha256": "d77d235e41d54594865151f4751e835c5a82322b0e87ace266567c3391a4b912",
+          "encoding": "raw",
+          "start": 0,
+          "end": 12632,
+          "sha256": "d77d235e41d54594865151f4751e835c5a82322b0e87ace266567c3391a4b912",
+          "description": "Complete original legal document retained as attribution. No licence grant to copy/link external tool implementation, generator source/template/input or generated output."
+        },
+        {
+          "output": "licenses/provenance/perl-Artistic.txt",
+          "url": "https://www.cpan.org/src/5.0/perl-5.38.2.tar.xz",
+          "cacheName": "perl-5.38.2.tar.xz",
+          "sourceSha256": "d91115e90b896520e83d4de6b52f8254ef2b70a8d545ffab33200ea9f1cf29e8",
+          "sourceSha512": null,
+          "member": "Artistic",
+          "memberSha256": "dd90d4f42e4dcadf5a7c09eea0189d93c7b37ae560c91f0f6d5233ed3b9292a2",
+          "encoding": "raw",
+          "start": 0,
+          "end": 6321,
+          "sha256": "dd90d4f42e4dcadf5a7c09eea0189d93c7b37ae560c91f0f6d5233ed3b9292a2",
+          "description": "Complete original legal document retained as attribution. No licence grant to copy/link external tool implementation, generator source/template/input or generated output."
+        }
+      ]
+    },
+    "text-template": {
+      "repository": "https://github.com/openssl/openssl",
+      "commit": "e5c234b0c471a676ae6141d2f157df61eb293477",
+      "version": "1.56",
+      "member": "external/perl/Text-Template-1.56/lib/Text/Template.pm",
+      "sha256": "41815a23764f0ec4cb610718c0b2b012d9f0c91db75a6784d409b30a7c1a4b98",
+      "legal": [
+        {
+          "output": "licenses/provenance/openssl-text-template-LICENSE.txt",
+          "url": "https://github.com/openssl/openssl/archive/openssl-3.6.3.tar.gz",
+          "cacheName": "openssl-openssl-openssl-3.6.3.tar.gz",
+          "sourceSha256": null,
+          "sourceSha512": "a89c08101fa1d7e3c09b14f4a90d450bcf336a4f6a3e6e4ea990e4deddcd9ce250472f9114438fd134ff4b47fe93dd47232308567088b2b1c0b2eb50e3b56bdf",
+          "member": "external/perl/Text-Template-1.56/LICENSE",
+          "memberSha256": "9837f05336ef3cbacb6a96e1672a0426d81ad01191f214b8d48e22ca62338181",
+          "encoding": "utf-8",
+          "start": 0,
+          "end": 18412,
+          "sha256": "9837f05336ef3cbacb6a96e1672a0426d81ad01191f214b8d48e22ca62338181",
+          "description": "Complete original legal document retained as attribution. No licence grant to copy/link external tool implementation, generator source/template/input or generated output."
+        }
+      ]
     }
   }
 }

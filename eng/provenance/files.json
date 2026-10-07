@@ -1102,7 +1102,10 @@
     "src/Native/ArcForges.Native.Image.Runtime.win-arm64/README.md",
     "src/Native/ArcForges.Native.Image.Runtime.win-arm64/packages.lock.json",
     "tests/tooling/test_image_runtime.py",
-    "tests/tooling/test_native_binary.py"
+    "tests/tooling/test_native_binary.py",
+    "eng/provenance/records/native-image-openssl-r1.json",
+    "eng/provenance/records/native-image-vcpkg-cmake-get-vars-r1.json",
+    "eng/provenance/records/native-image-linux-external-tools-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
@@ -1174,6 +1177,9 @@
     "native-image-portable-yaml-cpp-r1",
     "native-image-portable-zlib-r1",
     "native-image-portable-zstd-r1",
-    "native-image-sse2neon-r1"
+    "native-image-sse2neon-r1",
+    "native-image-openssl-r1",
+    "native-image-vcpkg-cmake-get-vars-r1",
+    "native-image-linux-external-tools-r1"
   ]
 }

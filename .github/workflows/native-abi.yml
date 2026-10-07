@@ -82,6 +82,15 @@ jobs:
       - name: Install the actual Image dependency closure
         shell: pwsh
         run: |
+          if ($IsLinux) {
+            python eng/packaging/image_runtime.py acquire-legal --rid $env:IMAGE_RID --downloads $env:VCPKG_DOWNLOADS
+            if ($LASTEXITCODE) { throw 'Original Linux external-tool legal acquisition failed.' }
+            python eng/packaging/image_runtime.py observe-tools --rid $env:IMAGE_RID --downloads $env:VCPKG_DOWNLOADS
+            if ($LASTEXITCODE) { throw 'Actual Linux external-tool observation failed.' }
+            # Preserve real Configure/tool evidence; an unrelated cached binary
+            # cannot establish which external utilities produced this input.
+            $env:VCPKG_BINARY_SOURCES = 'clear'
+          }
           $installedRelative = if ($env:IMAGE_RID -eq 'win-x64') { 'artifacts/vcpkg-installed' } else { "artifacts/vcpkg-installed/$env:IMAGE_RID" }
           $installed = Join-Path $env:GITHUB_WORKSPACE $installedRelative
           $arguments = @('install', "opencolorio[core]:$env:IMAGE_TRIPLET", "openimageio[core]:$env:IMAGE_TRIPLET", "openexr[core]:$env:IMAGE_TRIPLET", "imath[core]:$env:IMAGE_TRIPLET", "--x-install-root=$installed", "--overlay-triplets=$env:GITHUB_WORKSPACE/eng/native/vcpkg/triplets")
