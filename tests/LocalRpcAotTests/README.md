@@ -7,6 +7,30 @@ This executable is a dedicated process-to-process proof for the generated
 does not claim the restricted launcher, inherited descriptor, or production
 lease guarantees owned by later platform work.
 
+The default run also composes the actual shared LocalRpcParentBootstrapHost
+and generated LocalRpcBootstrapService with its own Native AOT child. The
+production composition uses the real private Named Pipe/UDS transport, actual
+launch-bound process liveness, one-use private stdin bootstrap resource,
+challenge/HMAC confirmation and registered credentials. It checks strict
+malformed and unauthenticated refusal, precancelled calls, eight concurrent
+retries of one renewal command returning the same lease expiry (bounded backoff
+only for the actual typed zero-dispatch control-busy refusal), actual channel
+disconnect while the child is still alive, superseded credentials and a fresh
+relaunch grant, and rejected-proof revocation/server shutdown.
+
+To run only this changed composition locally, invoke the published executable
+with --production-bootstrap-only. Its children use the internal
+--production-bootstrap-worker mode; no secret is placed in argv, environment,
+disk or output. Binary stdin framing and evidence output are bounded, all probe
+operations have a deadline, and exceptional cleanup terminates only the probe's
+owned children and joins the production host's shutdown.
+
+The historical bidirectional peer-PID/lease-fence fixture remains intact and
+continues to run by default. Its private fixture lease semantics are separate
+from the shared production registration. This new composition does not prove a
+restricted child, a second OS account, installed-package acceptance or an
+unavailable OS. Each recorded runtime result names the actual OS/RID.
+
 Publish and run locally on each available OS (the run is intentionally opt-in;
 CI only restores and publishes the binary and never executes it):
 

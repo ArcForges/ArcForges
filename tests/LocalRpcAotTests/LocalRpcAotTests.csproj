@@ -12,6 +12,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj" />
     <PackageReference Include="ArcForges.Contracts.LocalRpc.Platform" />
     <PackageReference Include="Grpc.AspNetCore.Server" />
     <PackageReference Include="Grpc.Net.Client" />
