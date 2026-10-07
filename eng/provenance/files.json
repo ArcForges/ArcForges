@@ -1042,7 +1042,19 @@
     "eng/policy/dependency-reviews/plt-11-r1.json",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcBootstrapService.cs",
     "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcParentBootstrapHost.cs",
-    "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ProductionBootstrapTests.cs"
+    "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ProductionBootstrapTests.cs",
+    "eng/native/vcpkg/pdfium-build.linux-arm64.v1.json",
+    "eng/native/vcpkg/pdfium-build.linux-x64.v1.json",
+    "eng/native/vcpkg/pdfium-build.osx-arm64.v1.json",
+    "eng/native/vcpkg/pdfium-build.osx-x64.v1.json",
+    "eng/native/vcpkg/pdfium-build.win-arm64.v1.json",
+    "eng/native/vcpkg/pdfium-sbom.linux-arm64.v1.json",
+    "eng/native/vcpkg/pdfium-sbom.linux-x64.v1.json",
+    "eng/native/vcpkg/pdfium-sbom.osx-arm64.v1.json",
+    "eng/native/vcpkg/pdfium-sbom.osx-x64.v1.json",
+    "eng/native/vcpkg/pdfium-sbom.win-arm64.v1.json",
+    "eng/policy/dependency-reviews/nat-25-dispatch-r1.json",
+    "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

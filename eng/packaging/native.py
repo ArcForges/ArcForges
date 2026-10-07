@@ -2,20 +2,26 @@
 """Stage and audit the real Windows ABI binary and upstream dependency closure."""
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import struct
+import stat
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "eng"))
 import native_provenance
 import build_identity
 VCPKG_COMMIT = "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb"
+RIDS = frozenset(("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64"))
 
 
 def require(condition, message):
@@ -277,7 +283,8 @@ def stage(directory, vcpkg, installed_root):
     signatures = {}
     available = {path.name.lower(): path for path in (binary_root / "native").glob("*.dll")}
     available.update({path.name.lower(): path for path in crt.glob("*.dll")})
-    entries = [p for p in json.loads((ROOT / "eng/packaging/packages.json").read_text())["packages"] if p["kind"] == "native"]
+    entries = [p for p in json.loads((ROOT / "eng/packaging/packages.json").read_text())["packages"]
+               if p["kind"] == "native" and p["id"] in profile["packages"]]
     identity = build_identity.build_identity(ROOT)
     artifact = {"schemaVersion": 1, "sourceCommit": commit, "rid": "win-x64", "packages": [], "build": identity}
     for entry in entries:
@@ -354,40 +361,490 @@ def stage(directory, vcpkg, installed_root):
     verify_stage(directory, commit)
 
 
-def verify_stage(directory, commit):
+def _read_document(path, maximum=16 * 1024 * 1024):
+    path = Path(path)
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= maximum,
+            "Missing, linked or unbounded native document.")
+    collected = io.BytesIO()
+    _bounded_file(path.absolute(), _progress(), collected, maximum=maximum)
+    content = collected.getvalue()
+    require(len(content) <= maximum, "Native document grew beyond its bound.")
+
+    def unique(items):
+        result = {}
+        for key, value in items:
+            require(key not in result, "Duplicate native document field.")
+            result[key] = value
+        return result
+    result = json.loads(content, object_pairs_hook=unique)
+    require(isinstance(result, dict), "Native document must be an object.")
+    return result
+
+
+def _relative(value):
+    require(isinstance(value, str) and value and len(value) <= 1024 and "\\" not in value
+            and ":" not in value and not value.startswith("/")
+            and all(part not in ("", ".", "..") for part in value.split("/")),
+            "Unsafe native artifact path.")
+    return value
+
+
+def _linked(path):
+    return path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
+
+
+def _progress(cancelled=None, deadline=None):
+    deadline = min(time.monotonic() + 180, deadline) if deadline is not None else time.monotonic() + 180
+    def check():
+        if cancelled is not None and cancelled(): raise InterruptedError("Native composition cancelled.")
+        if time.monotonic() >= deadline: raise TimeoutError("Native composition deadline exceeded.")
+    return check
+
+
+def _regular_stream(path, writable=False):
+    require(not _linked(path) and all(not _linked(parent) for parent in path.parents),
+            "Linked native copy source.")
+    descriptor = os.open(path, (os.O_RDWR if writable else os.O_RDONLY) | getattr(os, "O_BINARY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        info = os.fstat(descriptor)
+        require(stat.S_ISREG(info.st_mode) and info.st_size <= 512 * 1024 * 1024,
+                "Nonregular or unbounded native copy source.")
+        stream = os.fdopen(descriptor, "r+b" if writable else "rb")
+        descriptor = None
+        return stream, info
+    finally:
+        if descriptor is not None: os.close(descriptor)
+
+
+def _bounded_file(path, check, outgoing=None, maximum=512 * 1024 * 1024):
+    check()
+    incoming, before = _regular_stream(path)
+    if before.st_size > maximum:
+        incoming.close()
+        raise ValueError("Native file exceeds its bound.")
+    checksum, size = hashlib.sha256(), 0
+    with incoming:
+        while True:
+            check()
+            chunk = incoming.read(65536)
+            if not chunk: break
+            size += len(chunk)
+            require(size <= before.st_size and size <= maximum,
+                    "Native copy source grew during read.")
+            checksum.update(chunk)
+            if outgoing is not None: outgoing.write(chunk)
+        after = os.fstat(incoming.fileno())
+    current = path.stat(follow_symlinks=False)
+    require(not _linked(path) and all(not _linked(parent) for parent in path.parents)
+            and (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            == (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+            and size == before.st_size, "Native copy source changed during read.")
+    return checksum.hexdigest(), size
+
+
+def _copy_inventory(source, destination, expected, check=None):
+    """Copy only admitted regular bytes, with bounded progress and fresh create-only paths."""
+    source, destination = Path(source).absolute(), Path(destination).absolute()
+    check = check or _progress()
+    require(0 < len(expected) <= 200000 and not destination.exists(), "Invalid native copy inventory/destination.")
+    destination.mkdir(parents=True)
+    total = 0
+    for name, checksum in sorted(expected.items()):
+        check()
+        name = _relative(name)
+        require(len(name.split("/")) <= 65, "Native copy depth exceeds its bound.")
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        require(all(not _linked(parent) for parent in (target.parent, *target.parent.parents)),
+                "Linked native copy destination.")
+        with target.open("xb") as outgoing:
+            actual, size = _bounded_file(source / name, check, outgoing, maximum=4 * 1024 * 1024 * 1024 - total)
+        total += size
+        require(total <= 4 * 1024 * 1024 * 1024 and actual == checksum,
+                "Native copy inventory bytes/aggregate differ.")
+    require(_inventory(source, check=check) == expected and _inventory(destination, check=check) == expected,
+            "Native source inventory changed during copy.")
+
+
+def _inventory(directory, cancelled=None, check=None):
+    check = check or _progress(cancelled)
+    directory = Path(directory).absolute()
+    require(directory.is_dir() and not _linked(directory), "Missing or linked native artifact directory.")
+    result, aliases, pending, count, total = {}, set(), [(directory, 0)], 0, 0
+    while pending:
+        check()
+        parent, depth = pending.pop()
+        require(depth <= 64 and not _linked(parent), "Unsafe native artifact directory.")
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                check()
+                count += 1
+                require(count <= 200000, "Native file inventory exceeds its bound.")
+                path = Path(entry.path)
+                require(not _linked(path), "Linked native artifact material.")
+                name = _relative(path.relative_to(directory).as_posix())
+                require(name.casefold() not in aliases, "Colliding native artifact paths.")
+                aliases.add(name.casefold())
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append((path, depth + 1))
+                else:
+                    require(entry.is_file(follow_symlinks=False) and entry.stat().st_size <= 512 * 1024 * 1024,
+                            "Nonregular or unbounded native artifact material.")
+                    result[name], size = _bounded_file(path, check)
+                    total += size
+                    require(total <= 4 * 1024 * 1024 * 1024, "Native inventory aggregate exceeds its bound.")
+    return result
+
+
+@contextmanager
+def _exclusive_stage(destination, cancelled=None, check=None):
+    check = check or _progress(cancelled)
+    # Persistent lockfile + kernel ownership recovers process death without a stale-marker waiver.
+    path = destination.parent / ("." + destination.name + ".native-lock")
+    check()
+    require(not _linked(path) and all(not _linked(parent) for parent in path.parents), "Linked native staging lock.")
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise ValueError("Nonregular native staging lock.")
+    with os.fdopen(descriptor, "r+b") as stream:
+        if stream.seek(0, os.SEEK_END) == 0:
+            stream.write(b"0")
+            stream.flush()
+        for attempt in range(40):
+            check()
+            stream.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as error:
+                import errno
+                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK) or attempt == 39:
+                    raise ValueError("The native staging destination is owned by another writer.") from error
+                time.sleep(0.05)
+        yield
+
+
+def _coordinate(family, rid):
+    require(family in ("Image", "Pdf") and rid in RIDS, "Unadmitted native family/RID coordinate.")
+
+
+def _flush_directory(directory):
+    # Windows explicitly flushes every owned regular file below. Python does not
+    # provide a portable directory FlushFileBuffers contract; do not infer power-loss proof.
+    if os.name == "nt": return
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try: os.fsync(descriptor)
+    finally: os.close(descriptor)
+
+
+def _flush_tree(directory, check=None):
+    """Persist complete verified copied material before acknowledging its promotion."""
+    check = check or _progress()
+    directory = Path(directory).absolute()
+    folders = {directory}
+    for name in _inventory(directory, check=check):
+        path = directory / name
+        # _commit/FlushFileBuffers on Windows needs the owned writable handle.
+        check()
+        stream, _ = _regular_stream(path, writable=os.name == "nt")
+        with stream: os.fsync(stream.fileno())
+        parent = path.parent
+        while parent.is_relative_to(directory):
+            folders.add(parent)
+            if parent == directory: break
+            parent = parent.parent
+    for folder in sorted(folders, key=lambda path: len(path.parts), reverse=True):
+        check()
+        _flush_directory(folder)
+
+
+def verify_family_stage(directory, commit, family, rid, cancelled=None):
+    check = _progress(cancelled)
+    check()
+    _coordinate(family, rid)
+    artifact = _read_document(Path(directory) / "native-artifact.json")
+    require(artifact.get("rid") == rid and artifact.get("sourceCommit") == commit,
+            "Native family stage source/RID mismatch.")
+    expected = "ArcForges.Native." + family + ".Runtime." + rid
+    require(len(artifact.get("packages", [])) == 1 and artifact["packages"][0].get("id") == expected,
+            "Native family stage contains a mixed or unexpected package set.")
+    if family == "Image":
+        package = Path(directory) / expected
+        if (package / "image-production-input.json").is_file():
+            import image_runtime
+            return image_runtime.verify_stage(Path(directory), commit, ROOT, cancelled=lambda: (check(), False)[1])
+        require(rid == "win-x64", "Only the historical win-x64 Image stage has a legacy receipt.")
+        return _verify_legacy_stage(Path(directory), commit, cancelled=lambda: (check(), False)[1])
+    return native_provenance.verify_pdf_runtime_stage(Path(directory), commit, ROOT, cancelled=lambda: (check(), False)[1])
+
+
+def combine(directory, inputs, commit, cancelled=None):
+    """Compose verified complete stages. This binds bytes; publisher signing is a separate handoff."""
+    check = _progress(cancelled)
+    check()
+    directory = Path(directory).absolute()
+    require(0 < len(inputs) <= 12 and len({Path(path).resolve() for path in inputs}) == len(inputs),
+            "Native composition needs distinct bounded producer stages.")
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    require(all(not _linked(part) for part in (directory.parent, *directory.parent.parents)),
+            "Linked native composition parent.")
+    with _exclusive_stage(directory, check=check):
+        require(not directory.exists(), "Native candidate already exists; never overwrite tested bytes.")
+        with tempfile.TemporaryDirectory(prefix=".native-compose-", dir=directory.parent) as temporary:
+            staging = Path(temporary) / "candidate"
+            staging.mkdir()
+            rows, packages, ids, coordinates = [], [], set(), set()
+            build = None
+            for original in inputs:
+                check()
+                original = Path(original).absolute()
+                artifact = _read_document(original / "native-artifact.json")
+                require(len(artifact.get("packages", [])) == 1, "A family input must contain exactly one package.")
+                identifier = artifact["packages"][0].get("id", "")
+                match = re.fullmatch(r"ArcForges\.Native\.(Image|Pdf)\.Runtime\.(.+)", identifier)
+                require(match is not None, "Unrecognized native family input.")
+                family, rid = match.groups()
+                _coordinate(family, rid)
+                require(identifier not in ids and (family, rid) not in coordinates, "Duplicate native producer coordinate.")
+                ids.add(identifier)
+                coordinates.add((family, rid))
+                verify_family_stage(original, commit, family, rid, cancelled=lambda: (check(), False)[1])
+                if build is None:
+                    build = artifact["build"]
+                require(artifact["build"] == build, "Native families have different source/build publication cohorts.")
+                before = _inventory(original, check=check)
+                retained = staging / ".native-inputs" / (family + "-" + rid)
+                _copy_inventory(original, retained, before, check)
+                require(_inventory(retained, check=check) == before, "Producer bytes changed during composition.")
+                verify_family_stage(retained, commit, family, rid, cancelled=lambda: (check(), False)[1])
+                destination = staging / identifier
+                _copy_inventory(retained / identifier, destination, _inventory(retained / identifier, check=check), check)
+                require(_inventory(destination, check=check) == _inventory(retained / identifier, check=check), "Native payload changed during handoff.")
+                packages.append(artifact["packages"][0])
+                rows.append({"family": family, "rid": rid, "directory": retained.relative_to(staging).as_posix(),
+                             "artifactSha256": digest(retained / "native-artifact.json")})
+            index = {"schemaVersion": 1, "sourceCommit": commit, "inputs": sorted(rows, key=lambda row: (row["family"], row["rid"]))}
+            write_json(staging / "native-family-index.json", index)
+            artifact = {"schemaVersion": 2, "sourceCommit": commit, "rid": "multi", "build": build,
+                        "familyIndexSha256": digest(staging / "native-family-index.json"),
+                        "packages": sorted(packages, key=lambda row: row["id"])}
+            write_json(staging / "native-artifact.json", artifact)
+            verify_stage(staging, commit, cancelled=lambda: (check(), False)[1])
+            check()
+            _flush_tree(staging, check=check)
+            check()
+            staging.replace(directory)
+            _flush_directory(directory.parent)
+    return artifact
+
+
+def verify_stage(directory, commit, cancelled=None):
+    check = _progress(cancelled)
+    check()
+    directory = Path(directory)
+    artifact = _read_document(directory / "native-artifact.json")
+    if artifact.get("schemaVersion") != 2:
+        packages = artifact.get("packages", [])
+        if len(packages) == 1 and packages[0].get("id", "").startswith("ArcForges.Native.Pdf.Runtime."):
+            return native_provenance.verify_pdf_runtime_stage(directory, commit, ROOT, cancelled=lambda: (check(), False)[1])
+        if len(packages) == 1 and (directory / packages[0]["id"] / "image-production-input.json").is_file():
+            import image_runtime
+            return image_runtime.verify_stage(directory, commit, ROOT, cancelled=lambda: (check(), False)[1])
+        return _verify_legacy_stage(directory, commit, cancelled=lambda: (check(), False)[1])
+    verify_identity(artifact, commit)
+    require(digest(directory / "native-family-index.json") == artifact["familyIndexSha256"],
+            "Native family index differs from its bound artifact.")
+    index = _read_document(directory / "native-family-index.json")
+    require(set(index) == {"schemaVersion", "sourceCommit", "inputs"} and index["schemaVersion"] == 1
+            and index["sourceCommit"] == commit and 0 < len(index["inputs"]) <= 12, "Invalid native family index.")
+    expected = {"native-artifact.json": digest(directory / "native-artifact.json"),
+                "native-family-index.json": digest(directory / "native-family-index.json")}
+    verified, coordinates = {}, set()
+    for row in index["inputs"]:
+        check()
+        require(set(row) == {"family", "rid", "directory", "artifactSha256"}, "Unknown native input-index fields.")
+        _coordinate(row["family"], row["rid"])
+        relative = ".native-inputs/" + row["family"] + "-" + row["rid"]
+        require(row["directory"] == relative and relative not in coordinates, "Escaped or repeated native family input.")
+        coordinates.add(relative)
+        retained = directory / relative
+        require(digest(retained / "native-artifact.json") == row["artifactSha256"], "Retained native input artifact changed.")
+        source = verify_family_stage(retained, commit, row["family"], row["rid"], cancelled=lambda: (check(), False)[1])
+        for name, checksum in _inventory(retained, check=check).items():
+            expected[relative + "/" + name] = checksum
+        for package in source["packages"]:
+            require(package["id"] not in verified, "Repeated composed native package.")
+            verified[package["id"]] = package
+            require(_inventory(directory / package["id"], check=check) == _inventory(retained / package["id"], check=check),
+                    "Composed native payload differs from its verified producer.")
+            for name, checksum in _inventory(directory / package["id"], check=check).items():
+                expected[package["id"] + "/" + name] = checksum
+    require(sorted(verified.values(), key=lambda row: row["id"]) == artifact["packages"], "Composed package records differ.")
+    require(_inventory(directory, check=check) == expected, "Unexpected, missing or changed composed native material.")
+    return artifact
+
+
+
+def retain_package_handoff(source, destination, commit):
+    """Retain source-bound family receipts without duplicating native binaries already in NuGet."""
+    source, destination = Path(source), Path(destination)
+    artifact = verify_stage(source, commit)
+    if artifact["schemaVersion"] != 2:
+        return
+    index = _read_document(source / "native-family-index.json")
+    require(not (destination / ".native-inputs").exists()
+            and not (destination / "native-family-index.json").exists(), "Publication handoff already exists.")
+    targets = ["native-family-index.json"] + [row["directory"] + "/native-artifact.json" for row in index["inputs"]]
+    for name in targets:
+        _relative(name)
+        original = source / name
+        expected = digest(original)
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        require(all(not _linked(parent) for parent in (target.parent, *target.parent.parents)),
+                "Linked publication handoff path.")
+        require(original.is_file() and not _linked(original), "Linked publication producer receipt.")
+        with original.open("rb") as incoming:
+            content = incoming.read(16 * 1024 * 1024 + 1)
+        require(len(content) <= 16 * 1024 * 1024, "Unbounded publication producer receipt.")
+        with target.open("xb") as outgoing:
+            outgoing.write(content)
+        require(digest(target) == expected, "Publication receipt changed during handoff.")
+    verify_package_handoff(destination, artifact, commit)
+
+
+def verify_package_handoff(directory, artifact, commit):
+    """Verify retained producer records; packed native bytes are checked against these exact records."""
+    if artifact["schemaVersion"] != 2:
+        return
+    directory = Path(directory)
+    require(digest(directory / "native-family-index.json") == artifact["familyIndexSha256"],
+            "Published native family index hash mismatch.")
+    index = _read_document(directory / "native-family-index.json")
+    require(set(index) == {"schemaVersion", "sourceCommit", "inputs"}
+            and type(index["schemaVersion"]) is int and index["schemaVersion"] == 1
+            and index["sourceCommit"] == commit and isinstance(index["inputs"], list)
+            and 0 < len(index["inputs"]) <= 12, "Invalid published native family index.")
+    expected, packages, coordinates = {}, {}, set()
+    for row in index["inputs"]:
+        require(isinstance(row, dict) and set(row) == {"family", "rid", "directory", "artifactSha256"},
+                "Invalid published family coordinate fields.")
+        _coordinate(row["family"], row["rid"])
+        name = ".native-inputs/" + row["family"] + "-" + row["rid"]
+        require(row["directory"] == name and name not in coordinates, "Escaped or duplicate published family coordinate.")
+        coordinates.add(name)
+        path = directory / name / "native-artifact.json"
+        require(digest(path) == row["artifactSha256"], "Published native producer receipt hash mismatch.")
+        producer = _read_document(path)
+        require(set(producer) == {"schemaVersion", "sourceCommit", "rid", "packages", "build"}
+                and type(producer["schemaVersion"]) is int and producer["schemaVersion"] == 1
+                and producer["sourceCommit"] == commit and producer["rid"] == row["rid"]
+                and producer["build"] == artifact["build"] and isinstance(producer["packages"], list)
+                and len(producer["packages"]) == 1, "Published producer source/build cohort mismatch.")
+        package = producer["packages"][0]
+        identifier = "ArcForges.Native." + row["family"] + ".Runtime." + row["rid"]
+        require(isinstance(package, dict) and package.get("id") == identifier and identifier not in packages,
+                "Published producer package coordinate mismatch.")
+        packages[identifier] = package
+        expected[name.removeprefix(".native-inputs/") + "/native-artifact.json"] = row["artifactSha256"]
+    require(sorted(packages.values(), key=lambda row: row["id"]) == artifact["packages"],
+            "Published family records differ from packed producer inventory.")
+    require(_inventory(directory / ".native-inputs") == expected,
+            "Unexpected, missing or changed published producer receipt.")
+    return index
+
+
+def _verify_legacy_stage(directory, commit, cancelled=None):
+    check = _progress(cancelled)
+    check()
+    before = _inventory(directory, check=check)
     artifact = json.loads((directory / "native-artifact.json").read_text())
     verify_identity(artifact, commit)
     for package in artifact["packages"]:
+        check()
         base = directory / package["id"]
         native_provenance.verify(package["id"], lambda path: native_provenance.provenance.read(base, path),
                                  {p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()})
         require({str(p.relative_to(base)).replace("\\", "/") for p in base.rglob("*") if p.is_file()}
                 == {p["path"] for p in package["files"]}, "Unexpected/missing native artifact file.")
         for row in package["files"]:
+            check()
             path = (base / row["path"]).resolve()
-            require(path.is_relative_to(base.resolve()) and digest(path) == row["sha256"], "Native artifact hash/path mismatch.")
+            require(path.is_relative_to(base.resolve()) and _bounded_file(path, check)[0] == row["sha256"], "Native artifact hash/path mismatch.")
+    require(_inventory(directory, check=check) == before, "Legacy native stage changed during verification.")
     print("Native artifact source, package set and file hashes verified.", flush=True)
     return artifact
 
 
 def verify_identity(artifact, commit):
-    require(artifact["schemaVersion"] == 1 and artifact["sourceCommit"] == commit and artifact["rid"] == "win-x64",
+    if artifact.get("schemaVersion") == 2:
+        require(set(artifact) == {"schemaVersion", "sourceCommit", "rid", "packages", "build", "familyIndexSha256"}
+                and artifact["sourceCommit"] == commit and artifact["rid"] == "multi", "Composed native identity mismatch.")
+        require(isinstance(artifact["familyIndexSha256"], str) and re.fullmatch("[a-f0-9]{64}", artifact["familyIndexSha256"]),
+                "Invalid native family-index digest.")
+        expected = {p["id"] for p in json.loads((ROOT / "eng/packaging/packages.json").read_text())["packages"] if p["kind"] == "native"}
+    else:
+        require(artifact["schemaVersion"] == 1 and artifact["sourceCommit"] == commit and artifact["rid"] == "win-x64",
             "Native artifact source/RID mismatch.")
+        expected = set(native_provenance.profile()["packages"])
     build_identity.verify_source_build(ROOT, artifact['build'])
-    expected = {p["id"] for p in json.loads((ROOT / "eng/packaging/packages.json").read_text())["packages"] if p["kind"] == "native"}
-    require(len(artifact["packages"]) == len(expected) and {p["id"] for p in artifact["packages"]} == expected,
+    require(isinstance(artifact["packages"], list) and artifact["packages"]
+            and all(isinstance(row, dict) and isinstance(row.get("id"), str) for row in artifact["packages"]),
+            "Invalid native artifact package inventory.")
+    actual = {row["id"] for row in artifact["packages"]}
+    require(len(actual) == len(artifact["packages"])
+            and (actual.issubset(expected) if artifact.get("schemaVersion") == 2 else actual == expected),
             "Native artifact package set mismatch.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["stage", "verify"])
+    parser.add_argument("command", choices=["stage", "verify", "combine"])
     parser.add_argument("--directory", type=Path, default=ROOT / "artifacts/native-packages")
     parser.add_argument("--vcpkg-root", type=Path, default=os.environ.get("VCPKG_ROOT", "C:/vcpkg"))
     parser.add_argument("--installed-root", type=Path, default=ROOT / "artifacts/vcpkg-installed")
     parser.add_argument("--commit")
+    parser.add_argument("--family", choices=["Image", "Pdf"])
+    parser.add_argument("--rid", choices=sorted(RIDS))
+    parser.add_argument("--producer-prefix", type=Path)
+    parser.add_argument("--producer-build-directory", type=Path)
+    parser.add_argument("--downloads", type=Path)
+    parser.add_argument("--compiler-runtime", type=Path)
+    parser.add_argument("--sealed-input", type=Path)
+    parser.add_argument("--input-directory", type=Path, action="append", default=[])
     args = parser.parse_args()
     if args.command == "stage":
-        stage(args.directory.resolve(), Path(args.vcpkg_root).resolve(), args.installed_root.resolve())
+        if args.family is None:
+            require(args.rid is None and args.sealed_input is None and args.producer_prefix is None,
+                    "Explicit native inputs require a closed family/RID coordinate.")
+            stage(args.directory.resolve(), Path(args.vcpkg_root).resolve(), args.installed_root.resolve())
+        else:
+            _coordinate(args.family, args.rid)
+            if args.family == "Image":
+                require(args.producer_prefix is not None and args.producer_build_directory is not None
+                        and args.downloads is not None and args.sealed_input is None,
+                        "Image staging requires explicit producer/build/download inputs.")
+                import image_runtime
+                image_runtime.stage(args.directory.absolute(), args.rid,
+                    image_runtime.ProducerInputs(args.producer_prefix.resolve(), args.producer_build_directory.resolve(),
+                        args.installed_root.resolve(), Path(args.vcpkg_root).resolve(), args.downloads.resolve(),
+                        args.compiler_runtime.resolve() if args.compiler_runtime else None), root=ROOT)
+            else:
+                require(args.sealed_input is not None and args.producer_prefix is None,
+                        "PDF package staging consumes the actual verified sealed-input producer.")
+                native_provenance.stage_pdf_runtime(args.directory.absolute(), args.rid, args.sealed_input.resolve(), ROOT)
+    elif args.command == "combine":
+        require(args.family is None and args.rid is None, "Composition derives exact coordinates from verified inputs.")
+        combine(args.directory.absolute(), args.input_directory, args.commit or subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())
     else:
         verify_stage(args.directory.resolve(), args.commit or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())

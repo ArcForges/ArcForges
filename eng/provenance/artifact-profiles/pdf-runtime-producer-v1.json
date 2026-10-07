@@ -1,0 +1,243 @@
+{
+  "schemaVersion": 1,
+  "id": "pdf-runtime-producer-v1",
+  "family": "arc_pdf",
+  "abi": {
+    "major": 1,
+    "minor": 1
+  },
+  "exports": [
+    "arc_pdf_close",
+    "arc_pdf_get_abi_version",
+    "arc_pdf_get_build_info",
+    "arc_pdf_get_last_error",
+    "arc_pdf_open",
+    "arc_pdf_page_info",
+    "arc_pdf_render",
+    "arc_pdf_text"
+  ],
+  "systemPolicy": "eng/native/vcpkg/system-dependencies.v2.json",
+  "rids": {
+    "win-x64": {
+      "package": "ArcForges.Native.Pdf.Runtime.win-x64",
+      "architecture": "x86_64",
+      "triplet": "x64-windows-static-md",
+      "library": "ArcPdfNative.dll",
+      "libraryIdentity": "ArcPdfNative.dll",
+      "configuration": "Release",
+      "nativeProfile": "shim-static",
+      "nativeFamilies": "Pdf",
+      "pdfium": "chromium/8044",
+      "compiler": {
+        "family": "MSVC",
+        "target": "x86_64",
+        "reviewedRuntimeProfileRequired": true,
+        "toolset": "14.51.36231",
+        "environment": "vcvarsall.bat x64 -vcvars_ver=14.51.36231"
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "sdkProfilePath": "eng/native/vcpkg/pdfium-build.v1.json",
+      "runtimePolicy": "Existing exact historical win-x64 CRT admission; separately reviewed exact native ARM64 runtime closure, never ARM64EC relabeling."
+    },
+    "win-arm64": {
+      "package": "ArcForges.Native.Pdf.Runtime.win-arm64",
+      "architecture": "aarch64",
+      "triplet": "arm64-windows-static-md",
+      "library": "ArcPdfNative.dll",
+      "libraryIdentity": "ArcPdfNative.dll",
+      "configuration": "Release",
+      "nativeProfile": "shim-static",
+      "nativeFamilies": "Pdf",
+      "pdfium": "chromium/8044",
+      "compiler": {
+        "family": "MSVC",
+        "target": "aarch64",
+        "reviewedRuntimeProfileRequired": true,
+        "toolset": "14.51.36231",
+        "environment": "vcvarsall.bat x64_arm64 -vcvars_ver=14.51.36231"
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "sdkProfilePath": "eng/native/vcpkg/pdfium-build.win-arm64.v1.json",
+      "runtimePolicy": "Existing exact historical win-x64 CRT admission; separately reviewed exact native ARM64 runtime closure, never ARM64EC relabeling."
+    },
+    "linux-x64": {
+      "package": "ArcForges.Native.Pdf.Runtime.linux-x64",
+      "architecture": "x86_64",
+      "triplet": "x64-linux",
+      "library": "libArcPdfNative.so",
+      "libraryIdentity": "libArcPdfNative.so",
+      "configuration": "Release",
+      "nativeProfile": "shim-static",
+      "nativeFamilies": "Pdf",
+      "pdfium": "chromium/8044",
+      "compiler": {
+        "family": "Clang",
+        "target": "x86_64",
+        "reviewedRuntimeProfileRequired": true
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "sdkProfilePath": "eng/native/vcpkg/pdfium-build.linux-x64.v1.json",
+      "runtimePolicy": "Actual inspected system ABI floors and closed NAT22 OS/import policy; no guessed compiler runtime files."
+    },
+    "linux-arm64": {
+      "package": "ArcForges.Native.Pdf.Runtime.linux-arm64",
+      "architecture": "aarch64",
+      "triplet": "arm64-linux",
+      "library": "libArcPdfNative.so",
+      "libraryIdentity": "libArcPdfNative.so",
+      "configuration": "Release",
+      "nativeProfile": "shim-static",
+      "nativeFamilies": "Pdf",
+      "pdfium": "chromium/8044",
+      "compiler": {
+        "family": "Clang",
+        "target": "aarch64",
+        "reviewedRuntimeProfileRequired": true,
+        "environment": "Native ARM64 Linux host or separately reviewed actual ARM64 sysroot/toolchain; target name alone is insufficient."
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "sdkProfilePath": "eng/native/vcpkg/pdfium-build.linux-arm64.v1.json",
+      "runtimePolicy": "Actual inspected system ABI floors and closed NAT22 OS/import policy; no guessed compiler runtime files."
+    },
+    "osx-x64": {
+      "package": "ArcForges.Native.Pdf.Runtime.osx-x64",
+      "architecture": "x86_64",
+      "triplet": "x64-osx",
+      "library": "libArcPdfNative.dylib",
+      "libraryIdentity": "@rpath/libArcPdfNative.dylib",
+      "configuration": "Release",
+      "nativeProfile": "shim-static",
+      "nativeFamilies": "Pdf",
+      "pdfium": "chromium/8044",
+      "compiler": {
+        "family": "AppleClang",
+        "target": "x86_64",
+        "reviewedRuntimeProfileRequired": true
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "sdkProfilePath": "eng/native/vcpkg/pdfium-build.osx-x64.v1.json",
+      "runtimePolicy": "Actual inspected system ABI floors and closed NAT22 OS/import policy; no guessed compiler runtime files."
+    },
+    "osx-arm64": {
+      "package": "ArcForges.Native.Pdf.Runtime.osx-arm64",
+      "architecture": "aarch64",
+      "triplet": "arm64-osx",
+      "library": "libArcPdfNative.dylib",
+      "libraryIdentity": "@rpath/libArcPdfNative.dylib",
+      "configuration": "Release",
+      "nativeProfile": "shim-static",
+      "nativeFamilies": "Pdf",
+      "pdfium": "chromium/8044",
+      "compiler": {
+        "family": "AppleClang",
+        "target": "aarch64",
+        "reviewedRuntimeProfileRequired": true
+      },
+      "buildTools": {
+        "cmake": "4.3.3",
+        "ninja": "1.13.1"
+      },
+      "sdkProfilePath": "eng/native/vcpkg/pdfium-build.osx-arm64.v1.json",
+      "runtimePolicy": "Actual inspected system ABI floors and closed NAT22 OS/import policy; no guessed compiler runtime files."
+    }
+  },
+  "compilerRuntime": {
+    "win-x64": {
+      "sourceProfileRuntimeId": "microsoft-vc14-runtime-14-51-36247-r1",
+      "directoryVersion": "14.51.36231",
+      "files": {
+        "msvcp140.dll": {
+          "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Windows Software Compatibility Publisher"
+        },
+        "vcruntime140.dll": {
+          "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Windows Software Compatibility Publisher"
+        },
+        "vcruntime140_1.dll": {
+          "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Windows Software Compatibility Publisher"
+        }
+      }
+    },
+    "win-arm64": {
+      "sourceProfileRuntimeId": "microsoft-vc14-runtime-14-51-36247-r1",
+      "directoryVersion": "14.51.36231",
+      "files": {
+        "msvcp140.dll": {
+          "sha256": "167ceac85c2d726c4cd9e39b8881fafdc6de1520c0e67c4f6b271235f9d2a6c5",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Corporation"
+        },
+        "vcruntime140.dll": {
+          "sha256": "3c56f4167e2b3d8e6338497731e6aae8cd7ec46bd6789f9423a8d9cf9a630310",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Corporation"
+        }
+      },
+      "excludedFiles": [
+        {
+          "name": "vcruntime140_1.dll",
+          "sha256": "60c70e34e2e156f8bd214b92c2125c252e17d86ac8a25799ea1a4ecabde1d97c",
+          "productVersion": "14.51.36247.0",
+          "fileVersion": "14.51.36247.0",
+          "publisher": "Microsoft Corporation",
+          "reason": "Actual physical PE machine8664 with an ARM64EC hybrid view; not admitted as native ARM64 PDF payload. A directory name or valid Microsoft signature does not prove target compatibility."
+        }
+      ]
+    }
+  },
+  "runtimeLegal": [
+    {
+      "output": "licenses/provenance/microsoft-community-2026.docx",
+      "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual_Studio_2026-License-Community_ENU.docx",
+      "sourceSha256": "02ac07637f4a513a807cd3721c7620433fc483bc049d25784b0c10c54b05e1fb",
+      "sourceSha512": null,
+      "cacheName": "vs2026-community-licence.docx",
+      "member": null,
+      "memberSha256": null,
+      "start": 0,
+      "end": 69066,
+      "encoding": "raw",
+      "sha256": "02ac07637f4a513a807cd3721c7620433fc483bc049d25784b0c10c54b05e1fb",
+      "description": "Original formatted redistribution-grant terms, including automatic clause numbering."
+    },
+    {
+      "output": "licenses/provenance/microsoft-vc14-runtime.docx",
+      "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+      "sourceSha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+      "sourceSha512": null,
+      "cacheName": "vc14-runtime-licence.docx",
+      "member": null,
+      "memberSha256": null,
+      "start": 0,
+      "end": 39553,
+      "encoding": "raw",
+      "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+      "description": "Original separate runtime end-user terms; not treated as a redistribution grant."
+    }
+  ]
+}

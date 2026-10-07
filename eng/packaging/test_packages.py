@@ -381,5 +381,107 @@ class PackageGuards(unittest.TestCase):
             packages.verify(target, manifest['version'], manifest['sourceCommit'])
 
 
+
+class NativeActiveSubsetGuards(unittest.TestCase):
+    def fixture(self):
+        build = packages.build_identity.build_identity(packages.ROOT)
+        return {'schemaVersion': 2, 'sourceCommit': build['sourceCommit'], 'rid': 'multi', 'build': build,
+                'familyIndexSha256': 'a'*64,
+                'packages': [{'id': 'ArcForges.Native.Image.Runtime.win-x64'}]}
+
+    def test_all_managed_and_only_actual_native_coordinates_are_selected(self):
+        artifact = self.fixture()
+        selected = packages.publication_entries(artifact, artifact['sourceCommit'])
+        catalogue = packages.catalogue()
+        self.assertEqual({entry['id'] for entry in catalogue if entry['kind'] != 'native'},
+                         {entry['id'] for entry in selected if entry['kind'] != 'native'})
+        self.assertEqual({'ArcForges.Native.Image.Runtime.win-x64'},
+                         {entry['id'] for entry in selected if entry['kind'] == 'native'})
+        self.assertNotIn('ArcForges.Native.Pdf.Runtime.osx-arm64', {entry['id'] for entry in selected})
+
+    def test_empty_duplicate_unregistered_foreign_source_and_index_refuse(self):
+        for mode in ('empty', 'duplicate', 'unregistered', 'foreign-source', 'index'):
+            artifact = self.fixture(); commit = artifact['sourceCommit']
+            if mode == 'empty': artifact['packages'] = []
+            elif mode == 'duplicate': artifact['packages'] *= 2
+            elif mode == 'unregistered': artifact['packages'] = [{'id': 'Caller.Native.Runtime.win-x64'}]
+            elif mode == 'foreign-source': artifact['sourceCommit'] = 'b'*40
+            else: artifact['familyIndexSha256'] = 'invalid'
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                packages.publication_entries(artifact, commit)
+
+    def test_catalogue_cannot_activate_a_managed_producer_with_an_absent_native_dependency(self):
+        artifact = self.fixture()
+        entries = json.loads(json.dumps(packages.catalogue()))
+        next(entry for entry in entries if entry['id'] == 'ArcForges.Native.Image')['dependencies'].append(
+            'ArcForges.Native.Pdf.Runtime.osx-arm64')
+        with patch.object(packages, 'catalogue', return_value=entries), self.assertRaisesRegex(ValueError, 'mandatory owned dependency'):
+            packages.publication_entries(artifact, artifact['sourceCommit'])
+
+
+class NativePublicationHandoffGuards(unittest.TestCase):
+    """Real filesystem receipt binding; synthetic records never claim native deployment."""
+    def prepare(self, root):
+        native = packages.native
+        commit, build = "a" * 40, {"component-test-cohort": "not-a-deployment"}
+        rows, entries = [], []
+        for family in ("Image", "Pdf"):
+            identifier = "ArcForges.Native." + family + ".Runtime.win-x64"
+            package = {"id": identifier, "files": [{"path": "native-manifest.json", "sha256": "b" * 64}]}
+            relative = ".native-inputs/" + family + "-win-x64"
+            receipt = {"schemaVersion": 1, "sourceCommit": commit, "rid": "win-x64", "build": build, "packages": [package]}
+            native.write_json(root / relative / "native-artifact.json", receipt)
+            rows.append({"family": family, "rid": "win-x64", "directory": relative,
+                         "artifactSha256": native.digest(root / relative / "native-artifact.json")})
+            entries.append(package)
+        index = {"schemaVersion": 1, "sourceCommit": commit, "inputs": rows}
+        native.write_json(root / "native-family-index.json", index)
+        artifact = {"schemaVersion": 2, "sourceCommit": commit, "rid": "multi", "build": build, "packages": entries,
+                    "familyIndexSha256": native.digest(root / "native-family-index.json")}
+        return artifact, index, commit
+
+    def test_exact_records_and_package_inventory_are_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact, index, commit = self.prepare(root)
+            self.assertEqual(index, packages.native.verify_package_handoff(root, artifact, commit))
+            artifact["packages"][0]["files"][0]["sha256"] = "c" * 64
+            with self.assertRaisesRegex(ValueError, "inventory"):
+                packages.native.verify_package_handoff(root, artifact, commit)
+
+    def test_index_tamper_and_rehashed_escaped_duplicate_coordinates_refuse(self):
+        for mode in ("tamper", "escape", "duplicate", "source", "extra-field"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                artifact, index, commit = self.prepare(root)
+                if mode == "escape": index["inputs"][0]["directory"] = "../foreign"
+                elif mode == "duplicate": index["inputs"][1] = index["inputs"][0]
+                elif mode == "source": index["sourceCommit"] = "d" * 40
+                elif mode == "extra-field": index["publisher"] = "fake"
+                else: index["inputs"][0]["artifactSha256"] = "e" * 64
+                packages.native.write_json(root / "native-family-index.json", index)
+                if mode != "tamper": artifact["familyIndexSha256"] = packages.native.digest(root / "native-family-index.json")
+                with self.assertRaises(ValueError): packages.native.verify_package_handoff(root, artifact, commit)
+
+    def test_receipt_changes_foreign_cohort_and_extra_material_refuse(self):
+        for mode in ("bytes", "cohort", "coordinate", "extra"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                artifact, index, commit = self.prepare(root)
+                path = root / index["inputs"][0]["directory"] / "native-artifact.json"
+                if mode == "extra": (path.parent / "unexpected.json").write_text("{}", encoding="utf-8")
+                else:
+                    receipt = json.loads(path.read_text(encoding="utf-8"))
+                    if mode == "cohort": receipt["build"] = {"foreign": "cohort"}
+                    elif mode == "coordinate": receipt["packages"][0]["id"] = "ArcForges.Native.Pdf.Runtime.win-x64"
+                    else: receipt["sourceCommit"] = "d" * 40
+                    packages.native.write_json(path, receipt)
+                    if mode != "bytes":
+                        index["inputs"][0]["artifactSha256"] = packages.native.digest(path)
+                        packages.native.write_json(root / "native-family-index.json", index)
+                        artifact["familyIndexSha256"] = packages.native.digest(root / "native-family-index.json")
+                with self.assertRaises(ValueError): packages.native.verify_package_handoff(root, artifact, commit)
+
+
 if __name__ == "__main__":
     unittest.main()
