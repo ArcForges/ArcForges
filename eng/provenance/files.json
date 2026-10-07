@@ -1094,7 +1094,13 @@
     "tests/NativeAbiTests/NativeReleaseCommandTests.cs",
     "tests/NativeAbiTests/NativeRuntimeTrustTests.cs",
     "eng/policy/dependency-reviews/nat-25-runtime-r1.json",
-    "tests/NativeAbiTests/HelperAuthenticodeTransformationTests.cs"
+    "tests/NativeAbiTests/HelperAuthenticodeTransformationTests.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/FirstPartyImageFixtures.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ProductionContainmentHarness.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ProductionContainmentHarnessTests.cs",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/RealProductionImageContainmentTests.cs",
+    "docs/production-parser-containment.md",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/InvocationCancellationAdmissionTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
