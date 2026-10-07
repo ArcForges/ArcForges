@@ -114,6 +114,10 @@ public sealed class RepositoryPolicyTests
             ["Kernel32.dll:MapViewOfFile"] = (helper, false, true),
             ["Kernel32.dll:UnmapViewOfFile"] = (helper, false, true),
             ["libc:getppid"] = (helper, false, false),
+            ["libdl.so.2:dlopen"] = (helper, false, false),
+            ["libdl.so.2:dlsym"] = (helper, false, false),
+            ["libdl.so.2:dlclose"] = (helper, false, false),
+            ["libdl.so.2:dlerror"] = (helper, false, false),
             ["libc:prctl"] = (helper, false, true),
             ["libc:setrlimit"] = (helper, false, true),
             ["libc:syscall"] = (helper, false, true),
@@ -127,14 +131,15 @@ public sealed class RepositoryPolicyTests
             int declarations = System.Text.RegularExpressions.Regex.Count(source, @"\bLibraryImport\s*\(");
             int matched = 0;
             foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
-                source, """LibraryImport\("([^"]+)", EntryPoint = "([^"]+)"(, StringMarshalling = StringMarshalling\.Utf16)?(, SetLastError = true)?\)"""))
+                source, """LibraryImport\("([^"]+)", EntryPoint = "([^"]+)"(, StringMarshalling = StringMarshalling\.(Utf16|Utf8))?(, SetLastError = true)?\)"""))
             {
                 matched++;
                 string key = match.Groups[1].Value + ":" + match.Groups[2].Value;
                 Xunit.Assert.True(expected.TryGetValue(key, out var allowed), key);
                 Xunit.Assert.Equal(allowed.Owner, Path.GetDirectoryName(file));
-                Xunit.Assert.Equal(allowed.Utf16, match.Groups[3].Success);
-                Xunit.Assert.Equal(allowed.LastError, match.Groups[4].Success);
+                Xunit.Assert.Equal(allowed.Utf16, match.Groups[4].Value == "Utf16");
+                Xunit.Assert.Equal(key is "libdl.so.2:dlopen" or "libdl.so.2:dlsym", match.Groups[4].Value == "Utf8");
+                Xunit.Assert.Equal(allowed.LastError, match.Groups[5].Success);
                 Xunit.Assert.True(exports.Add(key), "Duplicate production binding: " + match.Value);
             }
 

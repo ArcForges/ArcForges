@@ -10,11 +10,14 @@ namespace ArcForges.ContentSandbox.Host;
 
 /// <summary>A canonical signed native-root locator remains pinned independently of /proc/self/exe or AppContext.BaseDirectory.</summary>
 [SupportedOSPlatform("linux")]
-internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoadPlatform, IDisposable
+internal sealed unsafe partial class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoadPlatform, IDisposable
 {
     private readonly SafeFileHandle _directory;
     private readonly string _locator;
     private readonly object _gate = new();
+    private readonly Dictionary<nint, int> _loadedHandles = [];
+    private readonly Dictionary<string, SealedFile> _sealedFiles = new(StringComparer.Ordinal);
+    private long _sealedBytes;
     private readonly bool _arm;
     private bool _disposed;
 
@@ -75,6 +78,7 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
+            if (_sealedFiles.Count >= 128) { throw new InvalidDataException("The retained native file inventory exceeds its production bound."); }
             if (directory != _locator || string.IsNullOrEmpty(name) || name != Path.GetFileName(name) || name.Contains('\\', StringComparison.Ordinal) || name.Contains(':', StringComparison.Ordinal))
             {
                 throw new InvalidDataException("The sealed native filename is invalid.");
@@ -91,6 +95,7 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
             using var sourceHandle = new SafeFileHandle(sourceDescriptor, ownsHandle: true);
             using var input = new FileStream(sourceHandle, FileAccess.Read);
             if (input.Length is 0 or > 256L * 1024 * 1024) { throw new InvalidDataException("The native member exceeds its production bound."); }
+            if (input.Length > 512L * 1024 * 1024 - _sealedBytes) { throw new InvalidDataException("The retained native closure exceeds its production byte bound."); }
             nint sealedDescriptor;
             fixed (byte* label = nameBytes)
             {
@@ -112,7 +117,10 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     total = checked(total + count);
-                    if (total > 256L * 1024 * 1024) { throw new InvalidDataException("The native source grew beyond its production bound."); }
+                    if (total > 256L * 1024 * 1024 || total > 512L * 1024 * 1024 - _sealedBytes)
+                    {
+                        throw new InvalidDataException("The native source grew beyond its production bound.");
+                    }
                     output.Write(buffer.AsSpan(0, count));
                 }
 
@@ -124,7 +132,9 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
 
                 cancellationToken.ThrowIfCancellationRequested();
                 output.Position = 0;
-                var lease = new SealedFile(output, "/proc/self/fd/" + (int)sealedDescriptor);
+                var lease = new SealedFile(this, output, "/proc/self/fd/" + (int)sealedDescriptor, total);
+                _sealedFiles.Add(lease.LoaderPath, lease);
+                _sealedBytes += total;
                 output = null; // Complete immutable-file lifetime transfers to the returned lease.
                 return lease;
             }
@@ -136,24 +146,120 @@ internal sealed unsafe class LinuxNativeRuntimeLoadPlatform : INativeRuntimeLoad
         }
     }
 
-    public nint Load(string loaderPath) => NativeLibrary.Load(loaderPath);
-    public bool HasExport(nint handle, string name) => NativeLibrary.TryGetExport(handle, name, out _);
-    public void Free(nint handle) => NativeLibrary.Free(handle);
+    public nint Load(string loaderPath)
+    {
+        const string prefix = "/proc/self/fd/";
+        if (!loaderPath.StartsWith(prefix, StringComparison.Ordinal) || loaderPath.Length > 64
+            || !int.TryParse(loaderPath.AsSpan(prefix.Length), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var descriptor) || descriptor <= 0)
+        {
+            throw new InvalidDataException("Linux native loading requires its retained sealed-file locator.");
+        }
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_sealedFiles.ContainsKey(loaderPath)) { throw new InvalidDataException("Foreign or released native sealed-file locator."); }
+            if (_loadedHandles.Values.Sum() >= 128) { throw new InvalidDataException("The retained native module inventory exceeds its production bound."); }
+            _ = DlError();
+            // NOW refuses unresolved symbols before an apparently successful handle
+            // can escape. LOCAL avoids introducing symbols into the global namespace.
+            var handle = DlOpen(loaderPath, 2);
+            if (handle == 0) { throw new DllNotFoundException("Immediate native linkage refused the verified closure."); }
+            _loadedHandles.TryGetValue(handle, out var references);
+            _loadedHandles[handle] = checked(references + 1);
+            return handle;
+        }
+    }
+
+    public bool HasExport(nint handle, string name)
+    {
+        if (handle == 0 || string.IsNullOrEmpty(name) || name.Length > 128
+            || name.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '_'))
+        {
+            throw new ArgumentException("Invalid owned native export lookup.");
+        }
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_loadedHandles.ContainsKey(handle)) { throw new InvalidOperationException("Foreign or released native closure handle."); }
+            _ = DlError();
+            var address = DlSym(handle, name);
+            return DlError() == 0 && address != 0;
+        }
+    }
+
+    public void Free(nint handle)
+    {
+        if (handle == 0) { return; }
+        lock (_gate)
+        {
+            if (!_loadedHandles.TryGetValue(handle, out var references)) { throw new InvalidOperationException("Foreign or released native closure handle."); }
+            if (DlClose(handle) != 0) { throw new InvalidOperationException("Native closure handle release failed."); }
+            if (references == 1) { _loadedHandles.Remove(handle); }
+            else { _loadedHandles[handle] = references - 1; }
+        }
+    }
+
+    [LibraryImport("libdl.so.2", EntryPoint = "dlopen", StringMarshalling = StringMarshalling.Utf8)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial nint DlOpen(string path, int flags);
+    [LibraryImport("libdl.so.2", EntryPoint = "dlsym", StringMarshalling = StringMarshalling.Utf8)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial nint DlSym(nint handle, string name);
+    [LibraryImport("libdl.so.2", EntryPoint = "dlclose")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial int DlClose(nint handle);
+    [LibraryImport("libdl.so.2", EntryPoint = "dlerror")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial nint DlError();
     public void Dispose()
     {
         lock (_gate)
         {
             if (_disposed) { return; }
             _disposed = true;
+            var failures = new List<Exception>();
+            foreach (var pair in _loadedHandles)
+            {
+                for (var index = 0; index < pair.Value; index++)
+                {
+                    if (DlClose(pair.Key) != 0) { failures.Add(new InvalidOperationException("Native module disposal failed.")); }
+                }
+            }
+
+            _loadedHandles.Clear();
+            foreach (var lease in _sealedFiles.Values.ToArray())
+            {
+                try { lease.Dispose(); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException) { failures.Add(error); }
+            }
+
             _directory.Dispose();
+            if (failures.Count != 0) { throw new AggregateException("Native platform disposal failed.", failures); }
         }
     }
 
     private static byte[] Utf8(string value) => new UTF8Encoding(false, true).GetBytes(value + "\0");
-    internal sealed class SealedFile(FileStream bytes, string loaderPath) : INativeRuntimeFileLease
+    internal sealed class SealedFile(LinuxNativeRuntimeLoadPlatform owner, FileStream bytes, string loaderPath, long length) : INativeRuntimeFileLease
     {
+        private bool _disposed;
         public Stream Bytes => bytes;
         public string LoaderPath => loaderPath;
-        public void Dispose() => bytes.Dispose();
+        public void Dispose()
+        {
+            lock (owner._gate)
+            {
+                if (_disposed) { return; }
+                _disposed = true;
+                try { bytes.Dispose(); }
+                finally
+                {
+                    owner._sealedFiles.Remove(loaderPath);
+                    owner._sealedBytes -= length;
+                }
+            }
+        }
     }
 }

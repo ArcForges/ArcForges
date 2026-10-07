@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Runtime.Versioning;
+using System.Runtime.InteropServices;
 using ArcForges.ContentSandbox.Host;
 using Xunit;
 
@@ -8,6 +9,69 @@ namespace ArcForges.ContentSandbox.Tests;
 /// <summary>Actual Linux descriptor and memfd behavior; these ordinary component checks do not certify helper isolation.</summary>
 public sealed class LinuxNativeRuntimeLoadPlatformTests
 {
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void ActualImmediateLinkageExportReferenceCountsAndOwnedPlatformCleanup()
+    {
+        if (!OperatingSystem.IsLinux()) { Assert.Skip("Actual Linux kernel component is required."); return; }
+        var fixtures = Environment.GetEnvironmentVariable("ARCFORGES_LINUX_LOADER_FIXTURES");
+        if (string.IsNullOrEmpty(fixtures)) { Assert.Skip("Actual compiled loader component fixtures are required."); return; }
+        using var files = new Fixture();
+        File.Copy(Path.Combine(fixtures, "valid.so"), Path.Combine(files.Root, "valid.so"));
+        File.Copy(Path.Combine(fixtures, "unresolved.so"), Path.Combine(files.Root, "unresolved.so"));
+        using var platform = new LinuxNativeRuntimeLoadPlatform(files.Root);
+        using var invalid = platform.OpenSnapshot(files.Root, "unresolved.so", TestContext.Current.CancellationToken);
+        Assert.Throws<DllNotFoundException>(() => platform.Load(invalid.LoaderPath));
+        using var valid = platform.OpenSnapshot(files.Root, "valid.so", TestContext.Current.CancellationToken);
+        var first = platform.Load(valid.LoaderPath);
+        var second = platform.Load(valid.LoaderPath);
+        Assert.Equal(first, second);
+        Assert.True(platform.HasExport(first, "arc_loader_answer"));
+        Assert.False(platform.HasExport(first, "arc_loader_absent"));
+        Assert.Equal(42, Marshal.GetDelegateForFunctionPointer<Answer>(NativeLibrary.GetExport(first, "arc_loader_answer"))());
+        platform.Free(first);
+        Assert.True(platform.HasExport(second, "arc_loader_answer"));
+        platform.Free(second);
+        Assert.Throws<InvalidOperationException>(() => platform.HasExport(first, "arc_loader_answer"));
+        _ = platform.Load(valid.LoaderPath);
+        platform.Dispose(); // Retains and closes the actual outstanding module reference and every sealed-file owner.
+        platform.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => platform.Load(valid.LoaderPath));
+        Assert.Throws<ObjectDisposedException>(() => valid.Bytes.ReadByte());
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int Answer();
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void ImmediateLoaderRefusesMalformedSealedBytesAndForeignHandles()
+    {
+        if (!OperatingSystem.IsLinux()) { Assert.Skip("Actual Linux kernel component is required."); return; }
+        using var files = new Fixture();
+        File.WriteAllBytes(Path.Combine(files.Root, "invalid.so"), "actual malformed ELF fixture"u8.ToArray());
+        using var platform = new LinuxNativeRuntimeLoadPlatform(files.Root);
+        using var lease = platform.OpenSnapshot(files.Root, "invalid.so", TestContext.Current.CancellationToken);
+        for (var index = 0; index < 16; index++)
+        {
+            Assert.Throws<DllNotFoundException>(() => platform.Load(lease.LoaderPath));
+        }
+
+        Assert.Throws<InvalidDataException>(() => platform.Load("./invalid.so"));
+        Assert.Throws<InvalidDataException>(() => platform.Load("/proc/self/fd/0"));
+        Assert.Throws<InvalidOperationException>(() => platform.HasExport(1, "foreign"));
+        Assert.Throws<InvalidOperationException>(() => platform.Free(1));
+        platform.Free(0);
+        using (var foreign = new FileStream(Path.Combine(files.Root, "invalid.so"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.Throws<InvalidDataException>(() => platform.Load("/proc/self/fd/" + foreign.SafeFileHandle.DangerousGetHandle()));
+        }
+
+        var released = lease.LoaderPath;
+        lease.Dispose();
+        Assert.Throws<InvalidDataException>(() => platform.Load(released));
+    }
+
     [Fact]
     [SupportedOSPlatform("linux")]
     public void PinnedDirectoryAndSealedBytesSurviveInstalledPathReplacement()

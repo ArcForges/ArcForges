@@ -12,6 +12,7 @@
     <!-- This suite is exercised after native staging, outside the managed taxonomy. -->
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\eng\packaging\ArcForges.Native.ReleaseSigner\ArcForges.Native.ReleaseSigner.csproj" />
     <ProjectReference Include="..\..\src\Native\ArcForges.Native.Abstractions\ArcForges.Native.Abstractions.csproj" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

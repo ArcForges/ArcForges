@@ -1107,6 +1107,8 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
     import build_identity
     import native as producer
     import native_binary
+    check = producer._progress(cancelled)
+    check()
     require(rid in PORTABLE_PDFIUM_ARCHIVES, "Historical Windows x64 input uses its preserved producer")
     sdk = portable_pdfium_profile(rid, root)
     pdfium_directory, native_prefix = Path(pdfium_directory), Path(native_prefix)
@@ -1116,7 +1118,7 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
     require(not audit["dirty"], "PDF producer requires clean admitted source")
     identity = build_identity.build_identity(root)
     recipe = _pdf_portable_recipe(build_directory, native_prefix, pdfium_directory / "pdfium", rid,
-                                  identity, root, cancelled)
+                                  identity, root, lambda: (check(), False)[1])
     own_profile = provenance.document(provenance.read(root, "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json"))
     policy, _ = _pdf_system_policy(rid, root)
     owned_name = own_profile["rids"][rid]["library"]
@@ -1139,7 +1141,7 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
     available = {(name.casefold() if rid.startswith("win-") else name): path for name, path in originals.items()}
     allowed = {name.casefold() if rid.startswith("win-") else name for name in policy["systemImports"]}
     while pending:
-        if cancelled and cancelled(): raise InterruptedError("PDF runtime sealing cancelled")
+        check()
         name = pending.pop(); key = name.casefold() if rid.startswith("win-") else name
         if key in chosen: continue
         require(key in available, "Missing owned/transitive PDF runtime input: " + name)
@@ -1162,24 +1164,17 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
     require(engine_name.casefold() in chosen if rid.startswith("win-") else engine_name in chosen,
             "The actual PDF engine is missing from the produced closure")
     destination = Path(directory).absolute(); destination.parent.mkdir(parents=True, exist_ok=True)
-    with producer._exclusive_stage(destination):
+    with producer._exclusive_stage(destination, check=check):
         require(not destination.exists(), "PDF sealed input exists; never overwrite candidate bytes")
         with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".portable-pdf-") as temporary:
             staging = Path(temporary) / "input"; runtime = staging / f"runtimes/{rid}/native"; runtime.mkdir(parents=True)
             def copy(original, name, expected=None):
-                if cancelled and cancelled(): raise InterruptedError("PDF copied-byte sealing cancelled")
+                check()
                 original = Path(original); require(original.is_file() and not original.is_symlink(), "Missing/linked PDF producer material")
                 target = staging / name; target.parent.mkdir(parents=True, exist_ok=True)
-                size, checksum = 0, hashlib.sha256()
-                with original.open("rb") as stream, target.open("xb") as output:
-                    while True:
-                        if cancelled and cancelled(): raise InterruptedError("PDF copied-byte sealing cancelled")
-                        content = stream.read(65536)
-                        if not content: break
-                        size += len(content)
-                        require(size <= 256 * 1024 * 1024, "PDF producer material exceeded its bound")
-                        checksum.update(content); output.write(content)
-                require(expected is None or checksum.hexdigest() == expected, "PDF producer material changed")
+                with target.open("xb") as output:
+                    checksum, size = producer._bounded_file(original, check, output)
+                require(size <= 256 * 1024 * 1024 and (expected is None or checksum == expected), "PDF producer material changed/exceeded its bound")
             for row in rows: copy(chosen[row["name"].casefold() if rid.startswith("win-") else row["name"]],
                                   f"runtimes/{rid}/native/" + row["name"], row["sha256"])
             manifest = {"schemaVersion": 1, "sourceCommit": audit["sourceCommit"], "rid": rid, "library": "ArcPdfNative",
@@ -1193,7 +1188,7 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
                     (pdfium_directory / "pdfium-build-receipt.json", "provenance/pdfium-build-receipt.json", sha(canonical(admission))),
                     (pdfium_directory / "pdfium-attestation.json", "provenance/pdfium-attestation.json", sdk["attestation"]["sha256"])]:
                 copy(original, name, expected)
-            for name, expected in sdk["legalFiles"].items(): copy(root / name, "licenses/pdfium/" + Path(name).name, expected)
+            for original, name, expected in _pdf_sdk_legal_sources(pdfium_directory, sdk): copy(original, name, expected)
             if runtime_admission:
                 for legal in own_profile["runtimeLegal"]:
                     copy(Path(legal_cache) / legal["cacheName"], legal["output"], legal["sourceSha256"])
@@ -1204,18 +1199,22 @@ def stage_portable_pdfium_input(directory, pdfium_directory, native_prefix, buil
                       "kind": "pdfium-production-composition-input", "profile": sdk["id"], "build": identity,
                       "admission": admission, "ownedProducerRecipe": recipe, "compilerRuntimeAdmission": runtime_admission,
                       "compilerRuntimeSignatures": signatures, "files": [{"path": name, "sha256": checksum}
-                          for name, checksum in sorted(producer._inventory(staging).items())]}
+                          for name, checksum in sorted(producer._inventory(staging, check=check).items())]}
             (staging / "pdfium-production-input.json").write_bytes(canonical(result))
-            verify_pdf_runtime_input(staging, audit["sourceCommit"], root)
-            if cancelled and cancelled(): raise InterruptedError("PDF promotion cancelled")
+            verify_pdf_runtime_input(staging, audit["sourceCommit"], root, cancelled=lambda: (check(), False)[1])
+            check()
+            producer._flush_tree(staging, check=check)
             staging.replace(destination)
+            producer._flush_directory(destination.parent)
     return result
 
 
-def verify_pdf_runtime_input(directory: Path, source_commit: str, root: Path = ROOT) -> dict:
+def verify_pdf_runtime_input(directory: Path, source_commit: str, root: Path = ROOT, cancelled=None) -> dict:
     """Revalidate the complete sealed PDF handoff. This receipt is not publisher authentication."""
     sys.path.insert(0, str(root / "eng/packaging"))
     import native as producer
+    check = producer._progress(cancelled)
+    check()
     import native_binary
     import build_identity
 
@@ -1238,13 +1237,14 @@ def verify_pdf_runtime_input(directory: Path, source_commit: str, root: Path = R
     require(isinstance(value["files"], list) and 0 < len(value["files"]) <= 512, "Unbounded PDF input inventory")
     files, aliases = {}, set()
     for row in value["files"]:
+        check()
         require(set(row) == {"path", "sha256"}, "Unknown PDF inventory fields")
         name = producer._relative(row["path"])
         provenance.digest(row["sha256"])
         require(name.casefold() not in aliases and name != "pdfium-production-input.json", "Duplicate PDF input path")
         aliases.add(name.casefold())
         files[name] = row["sha256"]
-    actual = producer._inventory(directory)
+    actual = producer._inventory(directory, check=check)
     actual.pop("pdfium-production-input.json")
     require(actual == files, "Changed, missing or unexpected sealed PDF input bytes")
     for field, expected in (("pdfium-attestation.json", sdk["attestation"]["sha256"]),
@@ -1272,6 +1272,7 @@ def verify_pdf_runtime_input(directory: Path, source_commit: str, root: Path = R
     owned_name = "ArcPdfNative.dll" if rid.startswith("win-") else "libArcPdfNative" + (".so" if rid.startswith("linux-") else ".dylib")
     engine_name = "pdfium.dll" if rid.startswith("win-") else "libpdfium" + (".so" if rid.startswith("linux-") else ".dylib")
     for row in manifest["files"]:
+        check()
         name = producer._relative(row["name"])
         require("/" not in name and name.casefold() not in names, "Unsafe or repeated PDF binary filename")
         names.add(name.casefold())
@@ -1412,70 +1413,78 @@ def _pdf_closed_imports(rows, rid, policy):
     return sorted(concrete)
 
 
-def stage_pdf_runtime(destination: Path, rid: str, sealed_input: Path, root: Path = ROOT) -> dict:
+def stage_pdf_runtime(destination: Path, rid: str, sealed_input: Path, root: Path = ROOT, cancelled=None) -> dict:
     """Package a verified actual sealed input. No binary is built, invented, signed or downloaded here."""
     sys.path.insert(0, str(root / "eng/packaging"))
     import native as producer
+    check = producer._progress(cancelled)
+    check()
     destination = Path(destination).absolute()
     require(rid in producer.RIDS, "Unadmitted PDF runtime RID")
     require(not destination.exists(), "PDF package candidate exists; preserve tested bytes")
     source = producer._read_document(sealed_input / "pdfium-production-input.json")["sourceCommit"]
-    handoff = verify_pdf_runtime_input(sealed_input, source, root)
+    handoff = verify_pdf_runtime_input(sealed_input, source, root, cancelled=lambda: (check(), False)[1])
     require(handoff["rid"] == rid, "PDF input has a different RID")
     import build_identity
     require(source == build_identity.git(root, "rev-parse", "HEAD"), "PDF input must match the actual packaging source cohort")
     policy, system_hash = _pdf_system_policy(rid, root)
     imports = _pdf_closed_imports(handoff["inspectedBinaries"], rid, policy)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with producer._exclusive_stage(destination):
+    with producer._exclusive_stage(destination, check=check):
         require(not destination.exists(), "PDF destination was concurrently published")
         with tempfile.TemporaryDirectory(prefix=".pdf-runtime-", dir=destination.parent) as temporary:
             staging = Path(temporary) / "stage"
             identifier = "ArcForges.Native.Pdf.Runtime." + rid
             package = staging / identifier
-            before = producer._inventory(sealed_input)
-            shutil.copytree(sealed_input, package)
-            require(producer._inventory(package) == before, "PDF sealed bytes changed during package handoff")
-            copied = verify_pdf_runtime_input(package, source, root)
+            before = producer._inventory(sealed_input, check=check)
+            producer._copy_inventory(sealed_input, package, before, check)
+            require(producer._inventory(package, check=check) == before, "PDF sealed bytes changed during package handoff")
+            copied = verify_pdf_runtime_input(package, source, root, cancelled=lambda: (check(), False)[1])
             require(copied["inspectedBinaries"] == handoff["inspectedBinaries"], "PDF copied metadata changed")
-            runtime = package / f"runtimes/{rid}/native"
-            manifest = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "library": "ArcPdfNative",
-                        "abi": {"major": 1, "minor": 1}, "files": handoff["inspectedBinaries"]}
-            # Keep the original sealed manifest/evidence unchanged; deployed metadata is separately cross-bound.
-            original = runtime / "ArcPdfNative.manifest.json"
-            shutil.copyfile(original, package / "provenance/sealed-runtime-manifest.json")
-            original.write_bytes(canonical(manifest))
-            (package / "native-manifest.json").write_bytes(canonical(manifest))
-            runtime_profile = {"schemaVersion": 1, "library": "ArcPdfNative", "rid": rid,
-                               "producerProfileSha256": sha(canonical(portable_pdfium_profile(rid, root)), "lf"),
-                               "systemPolicySha256": system_hash, "systemImports": imports}
-            (runtime / "ArcPdfNative.profile.json").write_bytes(canonical(runtime_profile))
-            sbom = {"schemaVersion": 1, "sourceCommit": source, "binaryFiles": manifest["files"],
-                    "buildDependencies": [{"name": "pdfium", "triplet": rid, "version": handoff["admission"]["version"],
-                                           "license": "licenses/pdfium/pdfium.txt", "sbom": "provenance/pdfium-sbom.v1.json"}],
-                    "ownedProducerRecipe": handoff["ownedProducerRecipe"], "upstreamAdmission": handoff["admission"]}
-            (package / "sbom.json").write_bytes(canonical(sbom))
-            (package / "NOTICE.md").write_bytes((package / "NOTICE.txt").read_bytes())
-            target = package / "buildTransitive" / (identifier + ".targets")
-            target.parent.mkdir()
-            target.write_text('<Project>\n  <!-- SPDX-License-Identifier: AGPL-3.0-only -->\n'
-                f'  <Target Name="Require_arc_pdf_Rid" BeforeTargets="PrepareForBuild">\n'
-                f'    <Error Condition="\'$(RuntimeIdentifier)\' != \'{rid}\'" Text="{identifier} requires the exact admitted RID and matching managed package version." />\n'
-                '  </Target>\n</Project>\n', encoding="utf-8")
-            receipt = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "library": "ArcPdfNative",
-                       "sealedInputSha256": digest_file(package / "pdfium-production-input.json"),
-                       "sourceManifestSha256": digest_file(package / "provenance/sealed-runtime-manifest.json"),
-                       "deployedManifestSha256": digest_file(package / "native-manifest.json"),
-                       "runtimeProfileSha256": digest_file(runtime / "ArcPdfNative.profile.json"),
-                       "systemPolicySha256": system_hash}
-            (package / "pdf-runtime-production.json").write_bytes(canonical(receipt))
+            _prepare_pdf_runtime(package, rid, source, handoff, imports, system_hash, root)
             artifact = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "build": handoff["build"],
                         "packages": [{"id": identifier, "files": [{"path": path, "sha256": checksum}
-                                     for path, checksum in sorted(producer._inventory(package).items())]}]}
+                                     for path, checksum in sorted(producer._inventory(package, check=check).items())]}]}
             (staging / "native-artifact.json").write_bytes(canonical(artifact))
-            verify_pdf_runtime_stage(staging, source, root)
+            verify_pdf_runtime_stage(staging, source, root, cancelled=lambda: (check(), False)[1])
+            check()
+            producer._flush_tree(staging, check=check)
+            check()
             staging.replace(destination)
+            producer._flush_directory(destination.parent)
     return artifact
+
+
+def _prepare_pdf_runtime(package, rid, source, handoff, imports, system_hash, root):
+    identifier = "ArcForges.Native.Pdf.Runtime." + rid
+    runtime = package / f"runtimes/{rid}/native"
+    manifest = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "library": "ArcPdfNative",
+                "abi": {"major": 1, "minor": 1}, "files": handoff["inspectedBinaries"]}
+    # Keep the original sealed manifest/evidence unchanged; deployed metadata is separately cross-bound.
+    original = runtime / "ArcPdfNative.manifest.json"
+    shutil.copyfile(original, package / "provenance/sealed-runtime-manifest.json")
+    original.write_bytes(canonical(manifest))
+    (package / "native-manifest.json").write_bytes(canonical(manifest))
+    runtime_profile = {"schemaVersion": 1, "library": "ArcPdfNative", "rid": rid,
+                       "producerProfileSha256": sha(canonical(portable_pdfium_profile(rid, root)), "lf"),
+                       "systemPolicySha256": system_hash, "systemImports": imports}
+    (runtime / "ArcPdfNative.profile.json").write_bytes(canonical(runtime_profile))
+    sbom = {"schemaVersion": 1, "sourceCommit": source, "binaryFiles": manifest["files"],
+            "buildDependencies": [{"name": "pdfium", "triplet": rid, "version": handoff["admission"]["version"],
+                                   "license": "licenses/pdfium/pdfium.txt", "sbom": "provenance/pdfium-sbom.v1.json"}],
+            "ownedProducerRecipe": handoff["ownedProducerRecipe"], "upstreamAdmission": handoff["admission"]}
+    (package / "sbom.json").write_bytes(canonical(sbom))
+    (package / "NOTICE.md").write_bytes((package / "NOTICE.txt").read_bytes())
+    target = package / "buildTransitive" / (identifier + ".targets")
+    target.parent.mkdir()
+    target.write_bytes(_pdf_runtime_targets(identifier, rid))
+    receipt = {"schemaVersion": 1, "sourceCommit": source, "rid": rid, "library": "ArcPdfNative",
+               "sealedInputSha256": digest_file(package / "pdfium-production-input.json"),
+               "sourceManifestSha256": digest_file(package / "provenance/sealed-runtime-manifest.json"),
+               "deployedManifestSha256": digest_file(package / "native-manifest.json"),
+               "runtimeProfileSha256": digest_file(runtime / "ArcPdfNative.profile.json"),
+               "systemPolicySha256": system_hash}
+    (package / "pdf-runtime-production.json").write_bytes(canonical(receipt))
 
 
 def digest_file(path):
@@ -1483,9 +1492,11 @@ def digest_file(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def verify_pdf_runtime_stage(directory: Path, source_commit: str, root: Path = ROOT) -> dict:
+def verify_pdf_runtime_stage(directory: Path, source_commit: str, root: Path = ROOT, cancelled=None) -> dict:
     sys.path.insert(0, str(root / "eng/packaging"))
     import native as producer
+    check = producer._progress(cancelled)
+    check()
     import build_identity
     artifact = producer._read_document(directory / "native-artifact.json")
     require(set(artifact) == {"schemaVersion", "sourceCommit", "rid", "build", "packages"}
@@ -1500,23 +1511,26 @@ def verify_pdf_runtime_stage(directory: Path, source_commit: str, root: Path = R
     require(isinstance(rows, list) and 0 < len(rows) <= 1024, "PDF package file bound exceeded")
     expected = {}
     for row in rows:
+        check()
         require(set(row) == {"path", "sha256"}, "PDF package file metadata differs")
         name = producer._relative(row["path"])
         provenance.digest(row["sha256"])
         require(name.casefold() not in {key.casefold() for key in expected}, "Repeated PDF package file")
         expected[name] = row["sha256"]
-    require(producer._inventory(package) == expected, "PDF package file bytes/closure differ")
+    require(producer._inventory(package, check=check) == expected, "PDF package file bytes/closure differ")
     verify_pdf_package({"id": identifier, "rid": artifact["rid"], "library": "ArcPdfNative"},
-                       lambda name: provenance.read(package, name), set(expected), source_commit, root)
-    require(producer._inventory(directory) == {"native-artifact.json": digest_file(directory / "native-artifact.json"),
+                       lambda name: provenance.read(package, name), set(expected), source_commit, root, cancelled=lambda: (check(), False)[1])
+    require(producer._inventory(directory, check=check) == {"native-artifact.json": digest_file(directory / "native-artifact.json"),
             **{identifier + "/" + name: checksum for name, checksum in expected.items()}}, "Unexpected PDF artifact material")
     return artifact
 
 
-def verify_pdf_package(entry: dict, read, names: set[str], source_commit: str, root: Path = ROOT) -> dict:
+def verify_pdf_package(entry: dict, read, names: set[str], source_commit: str, root: Path = ROOT, cancelled=None) -> dict:
     """Validate packed copied bytes by reconstructing the original bounded producer handoff."""
     sys.path.insert(0, str(root / "eng/packaging"))
     import native as producer
+    check = producer._progress(cancelled)
+    check()
     rid = entry["rid"]
     require(rid in producer.RIDS and entry["library"] == "ArcPdfNative"
             and entry["id"] == "ArcForges.Native.Pdf.Runtime." + rid, "PDF package coordinate mismatch")
@@ -1524,10 +1538,16 @@ def verify_pdf_package(entry: dict, read, names: set[str], source_commit: str, r
     # deployed manifest changes are validated separately, never silently substituted.
     value = provenance.document(read("pdfium-production-input.json"))
     require(len(value.get("files", [])) <= 512, "Unbounded original PDF package receipt")
+    additions = {"provenance/sealed-runtime-manifest.json", "native-manifest.json", "sbom.json", "NOTICE.md",
+                 f"runtimes/{rid}/native/ArcPdfNative.profile.json", "pdf-runtime-production.json",
+                 f"buildTransitive/{entry['id']}.targets"}
+    require(names == {"pdfium-production-input.json", *additions, *[producer._relative(row["path"]) for row in value["files"]]},
+            "Unexpected/missing PDF package material")
     with tempfile.TemporaryDirectory(prefix="arc-pdf-verify-") as temporary:
         handoff = Path(temporary)
         (handoff / "pdfium-production-input.json").write_bytes(read("pdfium-production-input.json"))
         for row in value["files"]:
+            check()
             name = producer._relative(row["path"])
             require(name in names, "Missing original PDF producer material")
             content = read("provenance/sealed-runtime-manifest.json" if name == f"runtimes/{rid}/native/ArcPdfNative.manifest.json" else name)
@@ -1536,7 +1556,8 @@ def verify_pdf_package(entry: dict, read, names: set[str], source_commit: str, r
             path.parent.mkdir(parents=True, exist_ok=True)
             require(not path.exists(), "Repeated reconstructed PDF producer material")
             path.write_bytes(content)
-        inspected = verify_pdf_runtime_input(handoff, source_commit, root)
+        inspected = verify_pdf_runtime_input(handoff, source_commit, root, cancelled=lambda: (check(), False)[1])
+        check()
     require(read("native-manifest.json") == read(f"runtimes/{rid}/native/ArcPdfNative.manifest.json"), "PDF deployed manifest differs")
     manifest = provenance.document(read("native-manifest.json"))
     expected_manifest = {"schemaVersion": 1, "sourceCommit": source_commit, "rid": rid, "library": "ArcPdfNative",
@@ -1556,7 +1577,35 @@ def verify_pdf_package(entry: dict, read, names: set[str], source_commit: str, r
                        "deployedManifestSha256": sha(read("native-manifest.json")),
                        "runtimeProfileSha256": sha(profile_bytes), "systemPolicySha256": system_hash},
             "PDF runtime production cross-binding differs")
+    expected_sbom = {"schemaVersion": 1, "sourceCommit": source_commit, "binaryFiles": manifest["files"],
+                    "buildDependencies": [{"name": "pdfium", "triplet": rid, "version": inspected["admission"]["version"],
+                                           "license": "licenses/pdfium/pdfium.txt", "sbom": "provenance/pdfium-sbom.v1.json"}],
+                    "ownedProducerRecipe": inspected["ownedProducerRecipe"], "upstreamAdmission": inspected["admission"]}
+    require(read("sbom.json") == canonical(expected_sbom) and read("NOTICE.md") == read("NOTICE.txt"),
+            "PDF generated SBOM/notice differs from verified producer")
+    require(read(f"buildTransitive/{entry['id']}.targets") == _pdf_runtime_targets(entry['id'], rid),
+            "PDF generated build target differs from owned recipe")
     return manifest
+
+
+def _pdf_sdk_legal_sources(pdfium_directory, sdk):
+    # SDK member paths are rooted in the authenticated acquired SDK, never repo legal files.
+    import native as producer
+    result, names = [], set()
+    for name, expected in sdk["legalFiles"].items():
+        name = producer._relative(name)
+        output = "licenses/pdfium/" + Path(name).name
+        require(output not in names, "Colliding PDF SDK legal members")
+        names.add(output)
+        result.append((Path(pdfium_directory) / "pdfium" / name, output, expected))
+    return result
+
+
+def _pdf_runtime_targets(identifier, rid):
+    return ('<Project>\n  <!-- SPDX-License-Identifier: AGPL-3.0-only -->\n'
+            '  <Target Name="Require_arc_pdf_Rid" BeforeTargets="PrepareForBuild">\n'
+            f'    <Error Condition="\'$(RuntimeIdentifier)\' != \'{rid}\'" Text="{identifier} requires the exact admitted RID and matching managed package version." />\n'
+            '  </Target>\n</Project>\n').encode("utf-8")
 
 
 if __name__ == "__main__":

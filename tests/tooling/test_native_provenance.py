@@ -13,8 +13,11 @@ import sys
 import tarfile
 import shutil
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
+import zipfile
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -22,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eng"))
 import native_provenance as native
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eng/packaging"))
 import native as producer
+import packages as publication
 
 
 @unittest.skipUnless(os.environ.get("ARCFORGES_PDF_SEALED_TEST_INPUT"), "Actual source-bound PDF producer input is required; no mocked native proof.")
@@ -34,6 +38,30 @@ class PdfSealedCompositionTests(unittest.TestCase):
         result = native.verify_pdf_runtime_input(self.original, self.source)
         self.assertEqual("ArcPdfNative.dll", next(row["name"] for row in result["inspectedBinaries"] if row["name"] == "ArcPdfNative.dll"))
         self.assertEqual(15, len(native.pdfium_profile()["legalFiles"]))
+
+    def test_actual_pdf_package_closes_foreign_runtime_targets_and_generated_bytes(self):
+        # Genuine admitted SDK/native bytes and production package generator/verifier;
+        # this does not execute native code or claim signing/deployment.
+        inspected=native.verify_pdf_runtime_input(self.original,self.source)
+        policy,system_hash=native._pdf_system_policy('win-x64',native.ROOT)
+        imports=native._pdf_closed_imports(inspected['inspectedBinaries'],'win-x64',policy)
+        entry={'id':'ArcForges.Native.Pdf.Runtime.win-x64','rid':'win-x64','library':'ArcPdfNative'}
+        with tempfile.TemporaryDirectory() as temporary:
+            package=Path(temporary)/'package'; producer._copy_inventory(self.original,package,producer._inventory(self.original))
+            native._prepare_pdf_runtime(package,'win-x64',self.source,inspected,imports,system_hash,native.ROOT)
+            read=lambda name:(package/name).read_bytes()
+            native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+            for extra in ('runtimes/win-x64/native/foreign.dll','buildTransitive/foreign.targets'):
+                path=package/extra; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(b'foreign unadmitted executable')
+                with self.subTest(extra=extra),self.assertRaisesRegex(ValueError,'Unexpected/missing'):
+                    native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+                path.unlink()
+            for name in ('sbom.json','NOTICE.md','buildTransitive/'+entry['id']+'.targets'):
+                path=package/name; original=path.read_bytes(); path.write_bytes(original+b'changed')
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'generated'):
+                    native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+                path.write_bytes(original)
+            native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
 
     def test_changed_dependency_legal_attestation_and_header_refuse_even_when_inventory_is_rewritten(self):
         for path in ["provenance/pdfium-attestation.json", "licenses/pdfium/pdfium.txt", "include/arc/arc_pdf_abi.h",
@@ -74,6 +102,175 @@ class PdfSealedCompositionTests(unittest.TestCase):
             path.write_bytes(path.read_bytes().replace(b'"schemaVersion": 1,', b'"schemaVersion": 1,"schemaVersion": 1,', 1))
             with self.assertRaisesRegex(ValueError, "Duplicate"):
                 native.verify_pdf_runtime_input(candidate, self.source)
+
+
+@unittest.skipUnless(all(os.environ.get(name) for name in ("ARCFORGES_PDF_SEALED_TEST_INPUT",
+    "ARCFORGES_NATIVE_RELEASE_TEST_SIGNER_DLL", "ARCFORGES_NATIVE_RELEASE_TEST_HOST",
+    "ARCFORGES_NATIVE_RELEASE_TEST_PEM", "ARCFORGES_NATIVE_RELEASE_TEST_SPKI")),
+    "Actual admitted PDF bytes and actual compiled signer/test-key references are required.")
+class ActualNativeReleaseCompositionTests(unittest.TestCase):
+    """Real cached producer/FS/CLI/crypto; only unavailable current CI checkout identity is substituted.
+
+    Test key references are explicit component fixtures, never production enrollment.
+    No parser execution, real signing account, package publication or OS isolation is claimed.
+    """
+    def setUp(self):
+        self.original = Path(os.environ["ARCFORGES_PDF_SEALED_TEST_INPUT"])
+        self.receipt = producer._read_document(self.original / "pdfium-production-input.json")
+        self.source = self.receipt["sourceCommit"]
+        self.version, self.key_id = "1.0.0-component.1", "explicit-component-fixture-only"
+        self.pem = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_PEM"])
+        self.spki = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_SPKI"])
+        host = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_HOST"])
+        assembly = Path(os.environ["ARCFORGES_NATIVE_RELEASE_TEST_SIGNER_DLL"])
+        pins = [(str(host), producer.digest(host))]
+        pins.extend((str(path), producer.digest(path)) for path in assembly.parent.iterdir() if path.is_file())
+        self.signer = producer.OfflineReleaseSigner((str(host), str(assembly)), tuple(pins))
+
+    def prepare(self, directory):
+        family = directory / "family"
+        identifier = "ArcForges.Native.Pdf.Runtime.win-x64"
+        package = family / identifier
+        producer._copy_inventory(self.original, package, producer._inventory(self.original))
+        inspected = native.verify_pdf_runtime_input(self.original, self.source)
+        policy, system_hash = native._pdf_system_policy("win-x64", native.ROOT)
+        imports = native._pdf_closed_imports(inspected["inspectedBinaries"], "win-x64", policy)
+        native._prepare_pdf_runtime(package, "win-x64", self.source, inspected, imports, system_hash, native.ROOT)
+        metadata = {"schemaVersion": 1, "sourceCommit": self.source, "rid": "win-x64", "build": self.receipt["build"],
+                    "packages": [{"id": identifier, "files": [{"path": name, "sha256": checksum}
+                        for name, checksum in sorted(producer._inventory(package).items())]}]}
+        producer.write_json(family / "native-artifact.json", metadata)
+        composed = directory / "unsigned"
+        producer.combine(composed, [family], self.source)
+        return composed, identifier
+
+    def current_ci_identity(self, root, identity):
+        # Actual producer receipt still validates; this old accepted producer's
+        # checkout is unavailable to the new mutable implementation worktree.
+        producer.build_identity.validate_identity(identity, self.source)
+        self.assertEqual(self.receipt["build"], identity)
+
+    def test_actual_unsigned_producer_whole_receipt_signature_and_closed_payload(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(producer.build_identity,
+                "verify_source_build", side_effect=self.current_ci_identity):
+            directory = Path(temporary)
+            source, identifier = self.prepare(directory)
+            before = producer._inventory(source)
+            signed = directory / "signed"
+            producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                         self.signer, pem=self.pem)
+            producer.verify_signed_release(signed, self.source, self.version, self.spki, self.key_id, self.signer)
+            self.assertEqual(before, producer._inventory(source))
+            package = signed / identifier
+            mutations = [package / "pdf-runtime-production.json", package / "runtimes/win-x64/native/pdfium.dll",
+                         package / "runtimes/win-x64/native/ArcPdfNative.profile.json",
+                         package / "runtimes/win-x64/native/ArcPdfNative.signature.json"]
+            for path in mutations:
+                original = path.read_bytes()
+                path.write_bytes(original + b"tampered")
+                with self.subTest(path=path.name), self.assertRaises((ValueError, OSError)):
+                    producer.verify_signed_release(signed, self.source, self.version, self.spki, self.key_id, self.signer)
+                path.write_bytes(original)
+            extra = package / "runtimes/win-x64/native/foreign.dll"
+            extra.write_bytes(b"undeclared foreign executable")
+            with self.assertRaisesRegex(ValueError, "Unexpected"):
+                producer.verify_signed_release(signed, self.source, self.version, self.spki, self.key_id, self.signer)
+            extra.unlink()
+            producer.verify_signed_release(signed, self.source, self.version, self.spki, self.key_id, self.signer)
+            with self.assertRaisesRegex(ValueError, "Preserve"):
+                producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                             self.signer, pem=self.pem)
+
+    def test_actual_signer_pin_cancellation_missing_key_cleanup_and_recovery(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(producer.build_identity,
+                "verify_source_build", side_effect=self.current_ci_identity):
+            directory = Path(temporary)
+            source, _ = self.prepare(directory)
+            signed = directory / "signed"
+            with self.assertRaises(InterruptedError):
+                producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                             self.signer, pem=self.pem, cancelled=lambda: True)
+            with self.assertRaisesRegex(ValueError, "refused"):
+                producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                             self.signer, pem=directory / "unavailable.pem")
+            wrong = producer.OfflineReleaseSigner(self.signer.command,
+                    tuple((name, "0" * 64) for name, _ in self.signer.pins))
+            with self.assertRaisesRegex(ValueError, "approved producer"):
+                producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                             wrong, pem=self.pem)
+            # The executable alone is insufficient: real managed dependencies and
+            # loader-side configuration must match the separately admitted tool.
+            payload = directory / "tool"
+            shutil.copytree(Path(self.signer.command[-1]).parent, payload)
+            original_payload = Path(self.signer.command[-1]).parent
+            copied_pins = tuple((str(payload / Path(name).relative_to(original_payload)), digest)
+                    if Path(name).is_relative_to(original_payload) else (name, digest)
+                    for name, digest in self.signer.pins)
+            substituted = producer.OfflineReleaseSigner((self.signer.command[0], str(payload / Path(self.signer.command[-1]).name)), copied_pins)
+            (payload / "foreign.runtimeconfig.json").write_bytes(b"unadmitted executable configuration")
+            with self.assertRaisesRegex(ValueError, "complete admitted signer payload"):
+                producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                             substituted, pem=self.pem)
+            self.assertFalse(signed.exists())
+            self.assertFalse(list(directory.glob(".native-sign-*")))
+            producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                         self.signer, pem=self.pem)
+            producer.verify_signed_release(signed, self.source, self.version, self.spki, self.key_id, self.signer)
+
+    def test_actual_authenticated_handoff_and_closed_archive_projection(self):
+        # The archive framing is constructed here to exercise inspection, not to
+        # claim an SDK pack/deployment. Its payload and signatures are real above.
+        with tempfile.TemporaryDirectory() as temporary, patch.object(producer.build_identity,
+                "verify_source_build", side_effect=self.current_ci_identity):
+            directory = Path(temporary)
+            source, identifier = self.prepare(directory)
+            signed = directory / "signed"
+            producer.sign_native_release(signed, source, self.source, self.version, self.spki, self.key_id,
+                                         self.signer, pem=self.pem)
+            authority = publication.ReleaseAuthority(self.spki, self.key_id, self.signer)
+            with self.assertRaisesRegex(ValueError, "separately approved"):
+                publication.native_stage(signed, self.source, self.version)
+            with self.assertRaisesRegex(ValueError, "downgrade"):
+                publication.native_stage(source, self.source, self.version, authority)
+            authenticated = publication.native_stage(signed, self.source, self.version, authority)
+            handoff = directory / "publication"
+            handoff.mkdir()
+            producer.retain_signed_package_handoff(signed, handoff, self.source, self.version,
+                                                  self.spki, self.key_id, self.signer)
+            self.assertEqual(producer._inventory(signed), producer._inventory(handoff / ".native-release"))
+            with self.assertRaisesRegex(ValueError, "Preserve"):
+                producer.retain_signed_package_handoff(signed, handoff, self.source, self.version,
+                                                      self.spki, self.key_id, self.signer)
+            entry = next(row for row in publication.catalogue() if row["id"] == identifier)
+            metadata = ET.Element("package")
+            specification = ET.SubElement(metadata, "metadata")
+            for name, value in [("id", identifier), ("version", self.version), ("readme", "README.md")]:
+                ET.SubElement(specification, name).text = value
+            ET.SubElement(specification, "repository", url=publication.REPOSITORY, commit=self.source)
+            ET.SubElement(specification, "license", type="expression").text = "AGPL-3.0-only"
+            dependency_group = ET.SubElement(ET.SubElement(specification, "dependencies"), "group", targetFramework="net10.0")
+            for dependency, pin in publication.dependency_versions(entry, self.version).items():
+                ET.SubElement(dependency_group, "dependency", id=dependency, version=f"[{pin}]")
+            files = {row["path"]: row["sha256"] for row in authenticated["packages"][0]["files"]}
+            archive_path = directory / "authenticated-component.nupkg"
+            for mutation in [None, "extra-runtime", "extra-target", "changed-profile"]:
+                with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    archive.writestr(identifier + ".nuspec", ET.tostring(metadata))
+                    archive.writestr("LICENSE", (publication.ROOT / "LICENSE").read_bytes())
+                    archive.writestr("README.md", (publication.ROOT / entry["project"]).parent.joinpath("README.md").read_bytes())
+                    archive.writestr("build-identity.json", b'{"componentFramingOnly":true}')
+                    for name in files:
+                        payload = (signed / identifier / name).read_bytes()
+                        if mutation == "changed-profile" and name.endswith(".profile.json"): payload += b" "
+                        archive.writestr(name, payload)
+                    if mutation == "extra-runtime": archive.writestr("runtimes/win-x64/native/foreign.dll", b"foreign")
+                    if mutation == "extra-target": archive.writestr("buildTransitive/foreign.targets", b"foreign")
+                with self.subTest(mutation=mutation):
+                    if mutation is None:
+                        self.assertEqual(64, len(publication.inspect(archive_path, entry, self.version, self.source, files)))
+                    else:
+                        with self.assertRaisesRegex(ValueError, "authenticated release"):
+                            publication.inspect(archive_path, entry, self.version, self.source, files)
 
 
 class NativeClosureTests(unittest.TestCase):
@@ -895,6 +1092,152 @@ class PortablePdfiumProfileTests(unittest.TestCase):
                 profile['configuration'] = {'target_cpu': cpu, 'target_os': os}
                 with self.subTest(cpu=cpu, os=os), self.assertRaisesRegex(ValueError, 'features or RID changed'):
                     native.verify_pdfium_prefix(prefix, profile)
+
+
+class NativeFamilyFilesystemTests(unittest.TestCase):
+    def test_outer_real_deadline_survives_nested_unavailable_adapter_verification(self):
+        # The Image adapter has not been admitted into this partial producer.
+        # Only that unavailable dependency is faked; the real monotonic budget
+        # and central callback handoff execute without a fake clock.
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); identifier='ArcForges.Native.Image.Runtime.win-x64'
+            (root/identifier).mkdir(); (root/identifier/'image-production-input.json').write_bytes(b'{}')
+            producer.write_json(root/'native-artifact.json',{'sourceCommit':'a'*40,'rid':'win-x64','packages':[{'id':identifier}]})
+            def unavailable_verify(directory,source,repo,cancelled=None):
+                time.sleep(.03)
+                cancelled()
+                self.fail('Nested adapter escaped original deadline')
+            guard=producer._progress(deadline=time.monotonic()+.015)
+            with patch.dict(sys.modules,{'image_runtime':SimpleNamespace(verify_stage=unavailable_verify)}):
+                with self.assertRaises(TimeoutError):
+                    producer.verify_family_stage(root,'a'*40,'Image','win-x64',cancelled=lambda:(guard(),False)[1])
+
+    def test_real_copy_refuses_growth_replacement_extra_material_and_cancellation(self):
+        for fault in ('grow', 'replace', 'extra', 'cancel'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary); source=root/'source'; source.mkdir()
+                original=source/'payload'; original.write_bytes(b'x'*200000)
+                expected=producer._inventory(source); count=0
+                def check():
+                    nonlocal count
+                    count += 1
+                    if count == 3:
+                        if fault == 'grow':
+                            with original.open('ab') as output: output.write(b'changed')
+                        elif fault == 'replace': original.unlink(); original.mkdir()
+                        elif fault == 'extra': (source/'extra').write_bytes(b'not admitted')
+                        else: raise InterruptedError('actual copy cancellation')
+                with self.assertRaises((ValueError, OSError)):
+                    producer._copy_inventory(source, root/'destination', expected, check)
+
+    def test_deadline_and_cancel_refuse_real_lock_and_inventory_without_waiting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); (root/'payload').write_bytes(b'actual')
+            with self.assertRaises(InterruptedError): producer._inventory(root, cancelled=lambda:True)
+            with self.assertRaises(InterruptedError):
+                with producer._exclusive_stage(root/'candidate', cancelled=lambda:True): self.fail('entered cancelled lock')
+            with self.assertRaises(TimeoutError): producer._progress(deadline=time.monotonic()-1)()
+            self.assertFalse((root/'.candidate.native-lock').exists())
+
+    def test_sdk_legal_members_use_actual_acquired_prefix_not_repository_license(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); acquired=root/'cache'; sdk=acquired/'pdfium'; sdk.mkdir(parents=True)
+            (root/'LICENSE').write_bytes(b'foreign repository AGPL legal text')
+            (sdk/'LICENSE').write_bytes(b'original SDK BSD legal text')
+            (sdk/'licenses').mkdir(); (sdk/'licenses/component').write_bytes(b'full original component terms')
+            profile={'legalFiles':{name:native.sha((sdk/name).read_bytes()) for name in ('LICENSE','licenses/component')}}
+            rows=native._pdf_sdk_legal_sources(acquired,profile)
+            destination=root/'retained'; destination.mkdir()
+            for original,name,expected in rows:
+                target=destination/name; target.parent.mkdir(parents=True,exist_ok=True)
+                with target.open('xb') as output: actual,_=producer._bounded_file(original,producer._progress(),output)
+                self.assertEqual(expected,actual)
+            self.assertEqual(b'original SDK BSD legal text',(destination/'licenses/pdfium/LICENSE').read_bytes())
+            self.assertEqual(b'full original component terms',(destination/'licenses/pdfium/component').read_bytes())
+            self.assertNotEqual((root/'LICENSE').read_bytes(),(destination/'licenses/pdfium/LICENSE').read_bytes())
+
+    def test_document_duplicate_array_oversize_and_escaping_paths_refuse(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'document.json'
+            for content in (b'{"field":1,"field":2}', b'[]', b'x'*129):
+                path.write_bytes(content)
+                with self.subTest(content=content[:32]), self.assertRaises(ValueError):
+                    producer._read_document(path, 128)
+            for relative in ('../escape', '/absolute', 'C:/drive', 'a\\b', 'a//b', 'a/./b', ''):
+                with self.subTest(path=relative), self.assertRaises(ValueError): producer._relative(relative)
+
+    def test_actual_inventory_binds_bytes_and_refuses_deep_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); (root/'file.bin').write_bytes(b'actual input')
+            self.assertEqual({'file.bin':native.sha(b'actual input')}, producer._inventory(root))
+            path = root
+            for _ in range(65): path = path/'d'; path.mkdir()
+            with self.assertRaisesRegex(ValueError,'Unsafe native artifact directory'): producer._inventory(root)
+
+    def test_complete_copied_files_are_actually_flushed_and_flush_failures_propagate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); (root/'nested').mkdir()
+            (root/'nested/payload.bin').write_bytes(b'actual copied bytes')
+            (root/'receipt.json').write_bytes(b'{"actual":"receipt"}')
+            observed=[]; actual=os.fsync
+            def sync(descriptor):
+                observed.append(descriptor); return actual(descriptor)
+            with patch.object(producer.os,'fsync',side_effect=sync): producer._flush_tree(root)
+            self.assertGreaterEqual(len(observed),2 if os.name=='nt' else 4)
+            self.assertEqual(b'actual copied bytes',(root/'nested/payload.bin').read_bytes())
+            with patch.object(producer.os,'fsync',side_effect=OSError('injected unavailable durable storage')):
+                with self.assertRaisesRegex(OSError,'durable storage'): producer._flush_tree(root)
+
+    def test_flush_error_does_not_acknowledge_or_promote_a_candidate(self):
+        # Only the unavailable upstream adapter is faked. Actual copied filesystem,
+        # source records, lock, flush ordering and cleanup execute in the composition.
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); original=root/'input'; original.mkdir()
+            identifier='ArcForges.Native.Image.Runtime.win-x64'; payload=original/identifier; payload.mkdir()
+            (payload/'native-manifest.json').write_bytes(b'component-only actual copied material')
+            artifact={'schemaVersion':1,'sourceCommit':'a'*40,'rid':'win-x64','build':{'test-only':'unavailable-adapter'},
+                'packages':[{'id':identifier,'files':[{'path':'native-manifest.json','sha256':producer.digest(payload/'native-manifest.json')}]}]}
+            producer.write_json(original/'native-artifact.json',artifact)
+            candidate=root/'candidate'
+            with patch.object(producer,'verify_family_stage',return_value=artifact), patch.object(producer,'verify_stage',return_value=artifact), \
+                 patch.object(producer.os,'fsync',side_effect=OSError('injected flush failure')):
+                with self.assertRaisesRegex(OSError,'flush failure'): producer.combine(candidate,[original],'a'*40)
+            self.assertFalse(candidate.exists())
+            self.assertFalse(list(root.glob('.native-compose-*')))
+            self.assertEqual(b'component-only actual copied material',(payload/'native-manifest.json').read_bytes())
+
+    def test_real_kernel_staging_lock_refuses_competing_owner_and_recovers_process_death(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); destination = root/'candidate'; ready = root/'ready'
+            module = str(Path(producer.__file__).parent)
+            code = ('import sys,time;from pathlib import Path;sys.path.insert(0,sys.argv[1]);import native;'
+                'destination=Path(sys.argv[2]);ready=Path(sys.argv[3]);'
+                '\nwith native._exclusive_stage(destination):\n ready.write_text("owned");time.sleep(60)\n')
+            child = subprocess.Popen([sys.executable,'-c',code,module,str(destination),str(ready)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            try:
+                deadline=time.monotonic()+5
+                while not ready.exists() and child.poll() is None and time.monotonic()<deadline: time.sleep(.02)
+                self.assertTrue(ready.exists(), 'Actual owner never acquired the lock')
+                with self.assertRaisesRegex(ValueError,'another writer'):
+                    with producer._exclusive_stage(destination): self.fail('Competing owner acquired live lock')
+            finally:
+                if child.poll() is None: child.kill()
+                child.wait(timeout=5)
+                if child.stderr: child.stderr.close()
+            with producer._exclusive_stage(destination):
+                destination.mkdir()
+            self.assertTrue(destination.is_dir())
+
+    def test_unknown_family_rid_and_duplicate_input_refuse_without_loading_an_adapter(self):
+        for family,rid in (('Foreign','win-x64'),('Image','win-x86'),('Pdf','linux-musl-x64'),('', '')):
+            with self.subTest(family=family,rid=rid), self.assertRaises(ValueError): producer._coordinate(family,rid)
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            for inputs in ([],[root]*2,[root/str(i) for i in range(13)]):
+                with self.subTest(count=len(inputs)), self.assertRaisesRegex(ValueError,'distinct bounded'):
+                    producer.combine(root/'output',inputs,'a'*40)
+            self.assertFalse((root/'output').exists())
 
 
 class PortableOwnedAdmissionTests(unittest.TestCase):

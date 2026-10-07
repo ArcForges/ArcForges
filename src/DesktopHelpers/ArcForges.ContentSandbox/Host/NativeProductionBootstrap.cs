@@ -83,30 +83,7 @@ internal sealed class NativeProductionBootstrap : IDisposable
                 var manifest = Read(platform, directory, identity.Library + ".manifest.json", 1024 * 1024, cancellationToken);
                 var envelope = Read(platform, directory, identity.Library + ".signature.json", 8192, cancellationToken);
                 var profile = Read(platform, directory, identity.Library + ".profile.json", 1024 * 1024, cancellationToken);
-                if (Convert.ToHexStringLower(SHA256.HashData(profile)) != identity.ProfileSha256) { throw new InvalidDataException("The native runtime policy differs from its signed immutable profile."); }
-                using var policy = JsonDocument.Parse(profile, new JsonDocumentOptions { MaxDepth = 8 });
-                var value = policy.RootElement;
-                Closed(value, ["library", "producerProfileSha256", "rid", "schemaVersion", "systemImports", "systemPolicySha256"]);
-                if (value.GetProperty("schemaVersion").GetInt32() != 1 || Text(value, "library", 32) != identity.Library || Text(value, "rid", 32) != identity.Rid)
-                {
-                    throw new InvalidDataException("The authenticated native runtime profile has a different identity.");
-                }
-
-                foreach (var field in new[] { "producerProfileSha256", "systemPolicySha256" })
-                {
-                    var hash = Text(value, field, 64);
-                    if (hash.Length != 64 || hash.Any(c => c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))) { throw new InvalidDataException("The native runtime policy is not bound to its admitted producer/system profile."); }
-                }
-
-                var imports = value.GetProperty("systemImports");
-                if (imports.ValueKind != JsonValueKind.Array || imports.GetArrayLength() > 256) { throw new InvalidDataException("The exact system import inventory exceeds its bound."); }
-                var allowed = new HashSet<string>(image.Rid.StartsWith("win-", StringComparison.Ordinal) ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-                foreach (var import in imports.EnumerateArray())
-                {
-                    if (import.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(import.GetString()) || import.GetString()!.Length > 512
-                        || import.GetString()!.Contains('*', StringComparison.Ordinal) || !allowed.Add(import.GetString()!)) { throw new InvalidDataException("The system import policy is not a closed exact identity inventory."); }
-                }
-
+                var allowed = ReadProfile(profile, identity.Rid, identity.Library, identity.ProfileSha256);
                 var runtime = NativeVerifiedRuntime.Open(directory, manifest, envelope, identity, trust, allowed, platform, cancellationToken);
                 lifetime._runtimes.Add(runtime);
                 runtimes.Add(identity.Library, runtime);
@@ -121,6 +98,50 @@ internal sealed class NativeProductionBootstrap : IDisposable
             catch (AggregateException cleanup) { throw new AggregateException("Native bootstrap admission and cleanup failed.", primary, cleanup); }
             throw;
         }
+    }
+
+    internal static HashSet<string> ReadProfile(byte[] profile, string rid, string library, string expectedSha256)
+    {
+        if (rid is not ("win-x64" or "win-arm64" or "linux-x64" or "linux-arm64" or "osx-x64" or "osx-arm64")
+            || library is not ("ArcImageNative" or "ArcPdfNative") || expectedSha256.Length != 64
+            || expectedSha256.Any(c => c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+        {
+            throw new InvalidDataException("The expected native profile identity is invalid.");
+        }
+        if (profile.Length is 0 or > 1024 * 1024) { throw new InvalidDataException("Native profile exceeds its bound."); }
+        if (Convert.ToHexStringLower(SHA256.HashData(profile)) != expectedSha256) { throw new InvalidDataException("The native runtime policy differs from its signed immutable profile."); }
+        using var policy = JsonDocument.Parse(profile, new JsonDocumentOptions { MaxDepth = 8 });
+        var value = policy.RootElement;
+        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("schemaVersion", out var schema)
+            || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out var profileSchema))
+        {
+            throw new InvalidDataException("The authenticated native profile has an invalid schema.");
+        }
+        var hashFields = profileSchema == 2
+            ? new[] { "producerProfileSha256", "systemPolicySha256", "producerReceiptSha256", "familyIndexSha256" }
+            : ["producerProfileSha256", "systemPolicySha256"];
+        Closed(value, ["library", "rid", "schemaVersion", "systemImports", .. hashFields]);
+        if (profileSchema is not (1 or 2) || Text(value, "library", 32) != library || Text(value, "rid", 32) != rid)
+        {
+            throw new InvalidDataException("The authenticated native runtime profile has a different identity.");
+        }
+
+        foreach (var field in hashFields)
+        {
+            var hash = Text(value, field, 64);
+            if (hash.Length != 64 || hash.Any(c => c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))) { throw new InvalidDataException("The native runtime policy is not bound to its admitted producer/system profile."); }
+        }
+
+        var imports = value.GetProperty("systemImports");
+        if (imports.ValueKind != JsonValueKind.Array || imports.GetArrayLength() > 256) { throw new InvalidDataException("The exact system import inventory exceeds its bound."); }
+        var allowed = new HashSet<string>(rid.StartsWith("win-", StringComparison.Ordinal) ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (var import in imports.EnumerateArray())
+        {
+            if (import.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(import.GetString()) || import.GetString()!.Length > 512
+                || import.GetString()!.Contains('*', StringComparison.Ordinal) || !allowed.Add(import.GetString()!)) { throw new InvalidDataException("The system import policy is not a closed exact identity inventory."); }
+        }
+
+        return allowed;
     }
 
     private static byte[] Read(INativeRuntimeLoadPlatform platform, string directory, string name, int maximum, CancellationToken cancellationToken)

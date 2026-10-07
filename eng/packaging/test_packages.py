@@ -413,7 +413,7 @@ class NativeActiveSubsetGuards(unittest.TestCase):
     def test_catalogue_cannot_activate_a_managed_producer_with_an_absent_native_dependency(self):
         artifact = self.fixture()
         entries = json.loads(json.dumps(packages.catalogue()))
-        next(entry for entry in entries if entry['id'] == 'ArcForges.Native.Pdf')['dependencies'].append(
+        next(entry for entry in entries if entry['id'] == 'ArcForges.Native.Image')['dependencies'].append(
             'ArcForges.Native.Pdf.Runtime.osx-arm64')
         with patch.object(packages, 'catalogue', return_value=entries), self.assertRaisesRegex(ValueError, 'mandatory owned dependency'):
             packages.publication_entries(artifact, artifact['sourceCommit'])
