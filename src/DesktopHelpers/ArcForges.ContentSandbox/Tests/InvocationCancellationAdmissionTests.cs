@@ -31,7 +31,7 @@ public sealed class InvocationCancellationAdmissionTests
             // CancelSession may already have shut down the physical pair. Cancelled is
             // the withdrawal phase; Closed is its legitimate terminal successor.
             Assert.Contains(invocation.BrokerSession!.State,
-                [LocalRpcBrokerSessionState.Cancelled, LocalRpcBrokerSessionState.Closed]);
+                new[] { LocalRpcBrokerSessionState.Cancelled, LocalRpcBrokerSessionState.Closed });
             Assert.False((await invocation.GetImageInfoAsync(image.Value, Ct)).IsSuccess);
         }
         finally { _ = await invocation.CancelAsync(); }
@@ -59,7 +59,7 @@ public sealed class InvocationCancellationAdmissionTests
                 await queued.WaitAsync(TimeSpan.FromSeconds(8), Ct));
             Assert.Equal(caller.Token, error.CancellationToken);
             Assert.Contains(invocation.BrokerSession!.State,
-                [LocalRpcBrokerSessionState.Cancelled, LocalRpcBrokerSessionState.Closed]);
+                new[] { LocalRpcBrokerSessionState.Cancelled, LocalRpcBrokerSessionState.Closed });
             // A closed transport alone is insufficient: prove that the actual borrowed
             // parser observed its invocation cancellation through the reserved control.
             await profile.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
