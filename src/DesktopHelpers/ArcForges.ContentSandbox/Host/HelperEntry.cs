@@ -66,6 +66,22 @@ internal static class HelperEntry
 
                 await using (resources.ConfigureAwait(false))
                 {
+                    // Release trust and the native directory lifetime come only from the inherited parent-owned frame.
+                    NativeProductionBootstrap? native = null;
+                    try
+                    {
+                        if (frame.ParserProfile == ProductionParserProfile.ProfileId)
+                        {
+                            native = NativeProductionBootstrap.Load(frame.NativeBootstrap, CancellationToken.None);
+                        }
+                    }
+                    catch (Exception exception) when (exception is not OutOfMemoryException)
+                    {
+                        await Console.Error.WriteLineAsync("native release: " + exception.GetType().Name).ConfigureAwait(false);
+                        return ContentSandboxContract.ExitInternalFailure;
+                    }
+
+                    using var nativeLifetime = native;
                     // Native parser libraries are loaded now, while the process can still open them; the profile that follows cannot.
                     try
                     {

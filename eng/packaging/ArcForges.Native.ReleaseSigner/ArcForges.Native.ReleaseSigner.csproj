@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ArcForges.Native.ReleaseSigner</AssemblyName>
+    <RootNamespace>ArcForges.Native.ReleaseSigner</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <LicenceBoundary>AGPL</LicenceBoundary>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
+    <InternalsVisibleTo Include="ArcForges.Tests.NativeAbiTests" />
+  </ItemGroup>
+</Project>

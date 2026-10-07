@@ -15,7 +15,8 @@ internal sealed record HelperStartRequest(
     IReadOnlyList<long> SlotCapacities,
     ContentSandboxLimits Limits,
     Action<LocalRpcProcessIdentity> OnProcessCreated,
-    Func<IReadOnlyList<ContentSandboxHandleEntry>, byte[]> EncodeFrame);
+    Func<IReadOnlyList<ContentSandboxHandleEntry>, byte[]> EncodeFrame,
+    bool RequirePlatformSignature = true);
 
 /// <summary>
 /// A helper process that was started in its restricted profile with its closed resource inventory, together with the parent's ends of

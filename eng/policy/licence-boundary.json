@@ -255,6 +255,34 @@
     {
       "path": "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj",
       "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-arm64/ArcForges.Native.Pdf.Runtime.linux-arm64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-x64/ArcForges.Native.Pdf.Runtime.linux-x64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-arm64/ArcForges.Native.Pdf.Runtime.osx-arm64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-x64/ArcForges.Native.Pdf.Runtime.osx-x64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.win-arm64/ArcForges.Native.Pdf.Runtime.win-arm64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "src/Native/ArcForges.Native.Pdf.Runtime.win-x64/ArcForges.Native.Pdf.Runtime.win-x64.csproj",
+      "kind": "msbuild"
+    },
+    {
+      "path": "eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj",
+      "kind": "msbuild"
     }
   ]
 }

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Build, inspect and independently consume the explicitly admitted NuGet packages."""
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -128,7 +129,25 @@ def publication_entries(native_artifact, commit):
     return result
 
 
-def inspect(path, entry, expected_version, commit):
+@dataclass(frozen=True)
+class ReleaseAuthority:
+    """Operator-supplied authorization, never keys or tools selected by an artifact."""
+    approved_spki: Path
+    key_id: str
+    signer: native.OfflineReleaseSigner
+
+
+def native_stage(directory, commit, package_version, authority=None):
+    document = native._read_document(Path(directory) / "native-artifact.json")
+    if document.get("schemaVersion") == 3:
+        require(isinstance(authority, ReleaseAuthority), "Signed native publication requires separately approved release authority.")
+        return native.verify_signed_release(directory, commit, package_version, authority.approved_spki,
+                                            authority.key_id, authority.signer)
+    require(authority is None, "Release authorization cannot silently downgrade to unsigned producer material.")
+    return native.verify_stage(directory, commit)
+
+
+def inspect(path, entry, expected_version, commit, authenticated_files=None):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         require(len(names) <= 200000 and all(info.file_size <= 512 * 1024 * 1024 for info in archive.infolist())
@@ -161,6 +180,20 @@ def inspect(path, entry, expected_version, commit):
             require(not any(name.startswith("runtimes/") for name in names), "Managed bindings must not bundle native assets.")
         else:
             require(not any(name.startswith(("lib/", "ref/")) for name in names), "RID package must not contain managed assemblies.")
+            if authenticated_files is not None:
+                # Complete producer/source evidence and every ES256 envelope have already
+                # been verified independently. Reconstruct the exact packed payload,
+                # allowing only these ordinary NuGet framing/owned legal files.
+                standard = {"_rels/.rels", "[Content_Types].xml", specs[0], ".signature.p7s", "build-identity.json", "README.md", "LICENSE"}
+                standard.update(name for name in names if re.fullmatch(r"package/services/metadata/core-properties/[a-f0-9]{32}\.psmdcp", name))
+                require(archive.read("LICENSE") == (ROOT / "LICENSE").read_bytes()
+                        and archive.read("README.md") == (ROOT / entry["project"]).parent.joinpath("README.md").read_bytes(),
+                        "Signed native owned legal/readme material differs.")
+                require(set(names) - standard == set(authenticated_files), "Signed native package payload closure differs from its authenticated release.")
+                for name, checksum in authenticated_files.items():
+                    require(hashlib.sha256(archive.read(name)).hexdigest() == checksum,
+                            "Signed native package bytes differ from its authenticated release.")
+                return native.digest(path)
             if entry["library"] == "ArcPdfNative":
                 require("pdfium-production-input.json" in names, "PDF runtime requires its real sealed producer receipt.")
                 standard = {"_rels/.rels", "[Content_Types].xml", specs[0], ".signature.p7s", "build-identity.json", "README.md", "LICENSE"}
@@ -200,7 +233,7 @@ def inspect(path, entry, expected_version, commit):
     return native.digest(path)
 
 
-def pack(directory, package_version, native_directory=ROOT / "artifacts/native-packages"):
+def pack(directory, package_version, native_directory=ROOT / "artifacts/native-packages", authority=None):
     directory.mkdir(parents=True, exist_ok=True)
     require(not list(directory.glob("*.nupkg")) and not (directory / "manifest.json").exists(),
             "Output already contains a candidate; choose a new empty --directory, never overwrite tested bytes.")
@@ -209,7 +242,7 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
         base=os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_REF", "").startswith("refs/tags/") else None)
     require(not audit["dirty"], "Commit reviewed changes before producing source-bound NuGet candidates.")
     commit = source_commit()
-    native_artifact_document = native.verify_stage(native_directory, commit)
+    native_artifact_document = native_stage(native_directory, commit, package_version, authority)
     identity = build_identity.build_identity(ROOT)
     axes = build_identity.resolve_axes(ROOT, json.loads((ROOT / 'eng/version-sources.json').read_text(encoding='utf-8')),
                                       packages=build_identity.dependency_versions(ROOT, native_directory))
@@ -258,15 +291,19 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
         packages.append({"id": entry["id"], "version": package_version, "file": name, "sha256": digest})
     native_artifact = (native_directory / "native-artifact.json").read_bytes()
     (directory / "native-artifact.json").write_bytes(native_artifact)
-    native.retain_package_handoff(native_directory, directory, commit)
+    if native_artifact_document["schemaVersion"] == 3:
+        native.retain_signed_package_handoff(native_directory, directory, commit, package_version,
+            authority.approved_spki, authority.key_id, authority.signer)
+    else:
+        native.retain_package_handoff(native_directory, directory, commit)
     manifest = {"schemaVersion": 1, "repository": REPOSITORY, "sourceCommit": commit,
                 "version": package_version, "packages": packages,
                 "nativeArtifactSha256": hashlib.sha256(native_artifact).hexdigest(), "build": identity}
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    verify(directory, package_version, commit)
+    verify(directory, package_version, commit, authority)
 
 
-def verify(directory, package_version, commit=None):
+def verify(directory, package_version, commit=None, authority=None):
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     commit = commit or source_commit()
     require(manifest["schemaVersion"] == 1 and manifest["repository"] == REPOSITORY, "Unexpected manifest identity.")
@@ -275,7 +312,16 @@ def verify(directory, package_version, commit=None):
     require(hashlib.sha256(native_bytes).hexdigest() == manifest["nativeArtifactSha256"], "Native artifact record hash mismatch.")
     native_artifact = json.loads(native_bytes)
     native.verify_identity(native_artifact, commit)
-    native.verify_package_handoff(directory, native_artifact, commit)
+    signed = native_artifact.get("schemaVersion") == 3
+    if signed:
+        retained = directory / ".native-release"
+        authenticated = native_stage(retained, commit, package_version, authority)
+        require(native._release_digest(retained / "native-artifact.json", native._progress(None))
+                == hashlib.sha256(native_bytes).hexdigest() and authenticated == native_artifact,
+                "Publication artifact differs from its authenticated retained release.")
+    else:
+        require(authority is None, "Release authorization cannot silently downgrade to unsigned publication.")
+        native.verify_package_handoff(directory, native_artifact, commit)
     entries = publication_entries(native_artifact, commit)
     build_identity.verify_source_build(ROOT, manifest['build'])
     documents = []
@@ -295,7 +341,9 @@ def verify(directory, package_version, commit=None):
         row = next(row for row in rows if row["id"] == entry["id"])
         name = f"{entry['id']}.{package_version}.nupkg"
         require(row["file"] == name and row["version"] == package_version, "Manifest package name/version mismatch.")
-        digest = inspect(directory / name, entry, package_version, commit)
+        producer = next((p for p in native_artifact["packages"] if p["id"] == entry["id"]), None)
+        authenticated_files = {row["path"]: row["sha256"] for row in producer["files"]} if signed and producer else None
+        digest = inspect(directory / name, entry, package_version, commit, authenticated_files)
         require(digest == row["sha256"], f"Package hash mismatch: {name}")
         with zipfile.ZipFile(directory / name) as archive:
             report = json.loads(archive.read('build-identity.json'))
@@ -312,10 +360,10 @@ def verify(directory, package_version, commit=None):
     return manifest
 
 
-def smoke(directory, package_version, commit=None):
+def smoke(directory, package_version, commit=None, authority=None):
     require(not os.environ.get("GITHUB_ACTIONS") and os.environ.get("CI", "").lower() != "true",
             "Package consumers are explicit local diagnostics only; CI execution is prohibited.")
-    verify(directory, package_version, commit)
+    verify(directory, package_version, commit, authority)
     smoke_policy(directory, package_version)
 
 
@@ -394,15 +442,22 @@ def main():
     parser.add_argument("--directory", type=Path, default=ROOT / "artifacts/packages")
     parser.add_argument("--commit")
     parser.add_argument("--native-directory", type=Path, default=ROOT / "artifacts/native-packages")
+    parser.add_argument("--approved-spki", type=Path)
+    parser.add_argument("--key-id")
+    parser.add_argument("--signer-tool-profile", type=Path)
     args = parser.parse_args()
     package_version = version(args.version)
     directory = args.directory.resolve()
+    options = [args.approved_spki, args.key_id, args.signer_tool_profile]
+    require(all(options) or not any(options), "Release authority requires all three separately approved SPKI/key/tool inputs.")
+    authority = ReleaseAuthority(args.approved_spki.absolute(), args.key_id,
+        native.release_signer_tool(args.signer_tool_profile)) if all(options) else None
     if args.command == "pack":
-        pack(directory, package_version, args.native_directory.resolve())
+        pack(directory, package_version, args.native_directory.resolve(), authority)
     elif args.command == "verify":
-        verify(directory, package_version, args.commit)
+        verify(directory, package_version, args.commit, authority)
     elif args.command == "smoke":
-        smoke(directory, package_version, args.commit)
+        smoke(directory, package_version, args.commit, authority)
     else:
         print(package_version)
 

@@ -9,6 +9,7 @@
     <Description>Shared ArcForges native ABI status, version, error values and verified app-local loading.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.Native.ReleaseSigner" />
     <None Include="README.md" Pack="true" PackagePath="/" />
     <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
     <None Include="../../../NOTICE.md" Pack="true" PackagePath="/" />
