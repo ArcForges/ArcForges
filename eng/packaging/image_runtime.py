@@ -378,10 +378,10 @@ def _external_row(ident, definition, executable):
                         "scope": "Noncopying OpenSSL build execution only. Tool implementations are not bundled or linked into runtime."}}
 
 
-def _external_probe(program, arguments, cancelled=None):
+def _external_probe(program, arguments, cancelled=None, environment=None):
     """Bound output, time, cancellation and child lifetime for real host probes."""
     _cancel(cancelled)
-    environment = {key: value for key, value in os.environ.items()
+    environment = {key: value for key, value in (os.environ if environment is None else environment).items()
                    if not key.startswith(("LD_", "DYLD_"))}
     with tempfile.TemporaryFile() as output:
         process = subprocess.Popen([str(program), *arguments], stdout=output, stderr=subprocess.STDOUT, env=environment)
@@ -407,11 +407,63 @@ def _external_probe(program, arguments, cancelled=None):
                     process.wait(timeout=2)
 
 
+def _external_module(downloads, definition, root, cancelled):
+    # This is an original utility used only for external execution, never copied
+    # into the runtime or used as implementation/generation source permission.
+    asset = {**definition["legal"][0], "member": definition["member"],
+             "memberSha256": definition["sha256"], "sha256": definition["sha256"],
+             "start": 0, "end": 67982, "encoding": "raw"}
+    content = _legal_bytes(asset, downloads, cancelled)
+    target = root / "artifacts/image-external-tools/module/Text/Template.pm"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    require(all(not _link(parent) for parent in target.parents), "Linked external Image utility input directory.")
+    with _stage_lock(target, cancelled):
+        if target.exists():
+            require(digest(_regular(target), cancelled) == definition["sha256"],
+                    "Existing external Image module differs from its original source.")
+        else:
+            _write_bytes(target, content)
+            _directory_sync(target.parent)
+    return _regular(target).resolve(strict=True)
+
+
+def _perl_environment(module):
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("PERL5LIB", "PERL5OPT") and not key.startswith(("LD_", "DYLD_"))}
+    environment["PERL5LIB"] = str(module.parent.parent)
+    return environment
+
+
+def _observe_loaded_module(perl, module, definition, cancelled=None, configure_source=None):
+    environment = _perl_environment(module)
+    if configure_source is None:
+        setup = "use Text::Template 1.56;"
+        arguments = []
+    else:
+        # Match Configure's original fallback ordering with the exact built
+        # source context, while retaining the same closed pre-build PERL5LIB.
+        setup = ('BEGIN { require lib; lib->import($ARGV[0].q{/util/perl}); '
+                 'require OpenSSL::fallback; OpenSSL::fallback->import($ARGV[0].q{/external/perl/MODULES.txt}); } '
+                 'use Text::Template 1.46;')
+        arguments = [str(configure_source)]
+    code = setup + ' use Cwd (); printf "%s\\t%s", $Text::Template::VERSION, Cwd::abs_path($INC{"Text/Template.pm"});'
+    observed = _external_probe(perl, ["-e", code, *arguments], cancelled, environment)
+    parts = observed.split("\t")
+    require(len(parts) == 2 and parts[0] == definition["version"] and
+            Path(parts[1]).resolve(strict=True) == module and
+            digest(_regular(module), cancelled) == definition["sha256"],
+            "Actual loaded external Image module differs from the admitted original.")
+    return {"version": parts[0], "path": str(module), "sha256": definition["sha256"],
+            "perl5lib": environment["PERL5LIB"], "perl5opt": None}
+
+
 def observe_external_tools(downloads, rid, root=ROOT, cancelled=None):
     require(rid in ("linux-x64", "linux-arm64") and sys.platform.startswith("linux"),
             "External Image host observations require the actual Linux producer.")
     value, _ = profile(root)
     definitions = _external_definitions(value)
+    module = _external_module(downloads, definitions["text-template"], Path(root), cancelled)
+    environment = _perl_environment(module)
     tools, selectors = [], {}
     for ident in ("make", "perl"):
         selected = shutil.which(ident)
@@ -420,7 +472,7 @@ def observe_external_tools(downloads, rid, root=ROOT, cancelled=None):
         binary = _regular(selector.resolve(strict=True))
         before = digest(binary, cancelled)
         observed = _external_probe(binary, ["--version"] if ident == "make" else
-                                   ["-e", 'printf "%vd", $^V;'], cancelled)
+                                   ["-e", 'printf "%vd", $^V;'], cancelled, environment)
         expected = definitions[ident]["version"]
         require((observed.splitlines()[0] == "GNU Make " + expected) if ident == "make" else observed == expected,
                 "Unreviewed actual external Image executable version.")
@@ -433,6 +485,7 @@ def observe_external_tools(downloads, rid, root=ROOT, cancelled=None):
         selectors[ident] = str(binary)
         tools.append(_external_row(ident, definitions[ident], {"name": ident, "version": expected, "sha256": before}))
     definition = definitions["text-template"]
+    loaded = _observe_loaded_module(Path(selectors["perl"]), module, definition, cancelled)
     tools.append(_external_row("text-template", definition,
                               {"name": "Template.pm", "version": definition["version"], "sha256": definition["sha256"]}))
     for definition in definitions.values():
@@ -441,13 +494,16 @@ def observe_external_tools(downloads, rid, root=ROOT, cancelled=None):
     check_provenance.external_tools(tools)
     identity = build_identity.build_identity(Path(root))
     require(not identity["dirty"], "Commit reviewed Image source before observing producer tools.")
-    return {"schemaVersion": 1, "rid": rid, "build": identity, "selectors": selectors, "tools": tools}
+    return {"schemaVersion": 1, "rid": rid, "build": identity, "selectors": selectors, "tools": tools,
+            "loadedModule": loaded}
 
 
 def _external_tool_handoff(inputs, rid, root, cancelled):
     before = _document(root / "artifacts/image-external-tools" / (rid + ".json"))
     actual = observe_external_tools(inputs.downloads, rid, root, cancelled)
     require(before == actual, "External Image tool identity/version/hash/legal observation differs from build start.")
+    require(os.environ.get("PERL5LIB") == actual["loadedModule"]["perl5lib"] and not os.environ.get("PERL5OPT"),
+            "Actual OpenSSL build environment differs from its closed external-module observation.")
     # The actual Release Configure output binds the interpreter selected by the pinned port.
     triplet = "x64-linux" if rid == "linux-x64" else "arm64-linux"
     makefile = _regular(inputs.vcpkg / "buildtrees/openssl" / (triplet + "-rel") / "Makefile")
@@ -459,14 +515,23 @@ def _external_tool_handoff(inputs, rid, root, cancelled):
     candidates = list(source_root.glob("*/external/perl/Text-Template-1.56/lib/Text/Template.pm"))
     require(0 < len(candidates) <= 64, "Missing or ambiguous actual OpenSSL external utility input.")
     expected = next(row["executable"]["sha256"] for row in actual["tools"] if row["id"] == "text-template")
+    contexts = []
     for candidate in candidates:
         require(digest(_regular(candidate, source_root), cancelled) == expected,
                 "Actual OpenSSL external utility differs from original source.")
-    return {**actual, "releaseMakefileSha256": digest(makefile, cancelled)}
+        configured = candidate.parents[5]
+        require(_regular(configured / "Configure", source_root).is_file(), "Missing actual Configure source context.")
+        require(_observe_loaded_module(Path(actual["selectors"]["perl"]), Path(actual["loadedModule"]["path"]),
+                _external_definitions(profile(root)[0])["text-template"], cancelled,
+                configured) == actual["loadedModule"], "Actual Configure module context differs from the pre-build observation.")
+        contexts.append({"sourceDirectory": str(configured.resolve(strict=True)),
+                         **{name: digest(_regular(configured / name, source_root), cancelled)
+                            for name in ("Configure", "util/perl/OpenSSL/fallback.pm", "external/perl/MODULES.txt")}})
+    return {**actual, "releaseMakefileSha256": digest(makefile, cancelled), "configureContexts": contexts}
 
 
 def _verify_external_handoff(observation, value, rid, identity, read):
-    check_provenance.fields(observation, "schemaVersion rid build selectors tools releaseMakefileSha256")
+    check_provenance.fields(observation, "schemaVersion rid build selectors tools loadedModule releaseMakefileSha256 configureContexts")
     require(observation["schemaVersion"] == 1 and observation["rid"] == rid and observation["build"] == identity,
             "External Image tool producer/source/RID binding differs.")
     check_provenance.digest(observation["releaseMakefileSha256"])
@@ -477,6 +542,26 @@ def _verify_external_handoff(observation, value, rid, identity, read):
                 "Invalid actual external Image tool selector.")
     check_provenance.external_tools(observation["tools"])
     definitions = _external_definitions(value)
+    loaded = observation["loadedModule"]
+    check_provenance.fields(loaded, "version path sha256 perl5lib perl5opt")
+    require(loaded["version"] == definitions["text-template"]["version"] and
+            loaded["sha256"] == definitions["text-template"]["sha256"] and loaded["perl5opt"] is None and
+            isinstance(loaded["path"], str) and loaded["path"].startswith("/") and
+            len(loaded["path"]) <= 4096 and not any(part in (".", "..") for part in loaded["path"].split("/")) and
+            "\n" not in loaded["path"] and PurePosixPath(loaded["path"]).name == "Template.pm" and
+            loaded["perl5lib"] == str(PurePosixPath(loaded["path"]).parent.parent),
+            "Loaded external Image module/profile/environment binding differs.")
+    require(isinstance(observation["configureContexts"], list) and 0 < len(observation["configureContexts"]) <= 64,
+            "Missing/unbounded actual Configure context.")
+    seen = set()
+    for context in observation["configureContexts"]:
+        require(set(context) == {"sourceDirectory", "Configure", "util/perl/OpenSSL/fallback.pm", "external/perl/MODULES.txt"}
+                and isinstance(context["sourceDirectory"], str) and context["sourceDirectory"].startswith("/")
+                and context["sourceDirectory"] not in seen and len(context["sourceDirectory"]) <= 4096,
+                "Invalid/repeated actual Configure context.")
+        seen.add(context["sourceDirectory"])
+        for name, checksum in context.items():
+            if name != "sourceDirectory": check_provenance.digest(checksum)
     require([row["id"] for row in observation["tools"]] == ["make", "perl", "text-template"],
             "External Image tool inventory differs from the reviewed recipe.")
     for row in observation["tools"]:

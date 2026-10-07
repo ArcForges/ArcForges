@@ -43,8 +43,8 @@
   "disposition": "Copy",
   "verification": {
     "kind": "regeneration",
-    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
-    "expected": "New portable Image target registration reuses the unchanged reviewed r4 source/legal/recipe identities. Actual per-RID compiled libraries, source archives, complete original legal bytes, applied triplets and generator receipts must pass production staging. No unbuilt RID activation, OS runtime, signing or deployment success is inferred from these records.",
+    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-linux-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
+    "expected": "Actual original full make/Perl/TextTemplate legal texts, closed noncopying execution classifications, actual make4.3/Perl5.38.2 executable hashes and actual loaded TextTemplate1.56 path/hash/version with closed Perl environment and Configure context. No utility implementation is bundled into runtime or admitted as generated-source input/output.",
     "artifacts": []
   },
   "notice": {
@@ -139,7 +139,7 @@
         ]
       }
     ],
-    "command": "The closed per-RID Image producer recipe uses actual CMake4.3.3/Ninja1.13.1 owning-root output and pinned vcpkg366 dependency recipes with actual CMake4.4.0 ABI evidence. Complete original source/legal/recipe bytes are matched at staging; host generator implementations are not bundled. Compiler, dependency imports, runtime/OS floors and signed publisher admission are distinct exact artifact handoffs.",
+    "command": "Only MIT pinned vcpkg external-tool selection metadata is generated here. make/Perl/TextTemplate implementations remain separately inventoried external execution utilities: original archive/legal scope, actual loaded-module identity, interpreter and Configure context must match before/build/after. This is not permission to copy GPL/Artistic implementation into the product or generated source.",
     "outputSpdx": "MIT"
   },
   "review": {

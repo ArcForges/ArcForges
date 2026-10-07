@@ -87,6 +87,11 @@ jobs:
             if ($LASTEXITCODE) { throw 'Original Linux external-tool legal acquisition failed.' }
             python eng/packaging/image_runtime.py observe-tools --rid $env:IMAGE_RID --downloads $env:VCPKG_DOWNLOADS
             if ($LASTEXITCODE) { throw 'Actual Linux external-tool observation failed.' }
+            $observation = Get-Content "artifacts/image-external-tools/$env:IMAGE_RID.json" -Raw | ConvertFrom-Json
+            Remove-Item Env:PERL5OPT -ErrorAction SilentlyContinue
+            $env:PERL5LIB = $observation.loadedModule.perl5lib
+            "PERL5LIB=$env:PERL5LIB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            'PERL5OPT=' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             # Preserve real Configure/tool evidence; an unrelated cached binary
             # cannot establish which external utilities produced this input.
             $env:VCPKG_BINARY_SOURCES = 'clear'

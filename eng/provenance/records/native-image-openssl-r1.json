@@ -52,8 +52,8 @@
   "disposition": "Copy",
   "verification": {
     "kind": "regeneration",
-    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-arm-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
-    "expected": "Actual pinned source SHA512 and original full MIT legal/header hashes, exact two-file vcpkg recipe, actual installed ARM dependency/feature/SBOM/CMake receipts and copied-byte production closure; no x64 activation or fabricated ARM execution proof.",
+    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-linux-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
+    "expected": "Actual pinned OpenSSL3.6.3 complete original archive SHA512, individually selected Apache runtime/header/Configure/template legal scope, complete20-file pinned vcpkg recipe and Linux23/24dependency closure. External make/Perl/TextTemplate loaded-module/context evidence remains separately closed; no unbuilt activation or Linux execution proof.",
     "artifacts": []
   },
   "notice": {
@@ -108,14 +108,29 @@
         "repository": "https://github.com/microsoft/vcpkg",
         "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
         "paths": [
-          "ports/sse2neon/portfile.cmake",
-          "ports/sse2neon/vcpkg.json",
+          "ports/openssl/cmake-config.patch",
+          "ports/openssl/command-line-length.patch",
+          "ports/openssl/install-pc-files.cmake",
+          "ports/openssl/openssl.pc.in",
+          "ports/openssl/portfile.cmake",
+          "ports/openssl/script-prefix.patch",
+          "ports/openssl/unix/android-cc.patch",
+          "ports/openssl/unix/configure",
+          "ports/openssl/unix/move-openssldir.patch",
+          "ports/openssl/unix/no-empty-dirs.patch",
+          "ports/openssl/unix/no-static-libs-for-shared.patch",
+          "ports/openssl/unix/portfile.cmake",
+          "ports/openssl/unix/remove-deps.cmake",
+          "ports/openssl/usage",
+          "ports/openssl/vcpkg-cmake-wrapper.cmake.in",
+          "ports/openssl/vcpkg.json",
+          "ports/openssl/windows/install-layout.patch",
+          "ports/openssl/windows/install-pdbs.patch",
+          "ports/openssl/windows/install-programs.diff",
+          "ports/openssl/windows/portfile.cmake",
           "scripts/vcpkg-tools.json",
-          "triplets/arm64-linux.cmake",
-          "triplets/arm64-osx.cmake",
-          "triplets/community/x64-osx.cmake",
           "triplets/x64-linux.cmake",
-          "triplets/x64-windows-static-md.cmake"
+          "triplets/arm64-linux.cmake"
         ],
         "spdx": "MIT",
         "evidence": [
@@ -152,7 +167,7 @@
         ]
       }
     ],
-    "command": "The selected sse2neon.h is compiled into required ARM Image dependency inputs using actual admitted per-RID compiler/recipe/tool identities. Header-only upstream source archive, complete MIT copyright/permission/warranty notice and authored vcpkg recipe are retained; no upstream executable or excluded test suite is shipped.",
+    "command": "The selected OpenSSL runtime/header/Configure/templates are built only for Linuxx64/ARM64 Image prerequisites using admitted compiler/recipe inputs. Entire original archive and dual-licensed utility/legal context are retained unchanged; noncopying execution does not grant copying or generated-source permission.",
     "outputSpdx": "Apache-2.0"
   },
   "review": {

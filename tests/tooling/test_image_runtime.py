@@ -50,6 +50,13 @@ class ImageRuntimeTests(unittest.TestCase):
         cache = Path(os.environ["ARCFORGES_IMAGE_LINUX_LEGAL_COMPONENT"])
         value, _ = image.profile(ROOT)
         definitions = image._external_definitions(value)
+        with tempfile.TemporaryDirectory() as temporary:
+            module = image._external_module(cache, definitions["text-template"], Path(temporary), None)
+            self.assertEqual(definitions["text-template"]["sha256"], image.digest(module))
+            self.assertEqual(67982, module.stat().st_size)
+            module.write_bytes(b"foreign utility")
+            with self.assertRaisesRegex(ValueError, "differs"):
+                image._external_module(cache, definitions["text-template"], Path(temporary), None)
         legal_bytes = {legal["output"]: image._legal_bytes(legal, cache)
                        for definition in definitions.values() for legal in definition["legal"]}
         identity = {"component-only": "not Linux execution or deployment"}
@@ -61,7 +68,11 @@ class ImageRuntimeTests(unittest.TestCase):
                 for ident in ("make", "perl", "text-template")]
         observation = {"schemaVersion": 1, "rid": "linux-x64", "build": identity,
                        "selectors": {"make": "/usr/bin/make", "perl": "/usr/bin/perl"},
-                       "tools": rows, "releaseMakefileSha256": "e" * 64}
+                       "tools": rows, "releaseMakefileSha256": "e" * 64,
+                       "loadedModule": {"version": "1.56", "path": "/owned/module/Text/Template.pm",
+                                        "sha256": definitions["text-template"]["sha256"], "perl5lib": "/owned/module", "perl5opt": None},
+                       "configureContexts": [{"sourceDirectory": "/actual/openssl-source", "Configure": "a" * 64,
+                                              "util/perl/OpenSSL/fallback.pm": "b" * 64, "external/perl/MODULES.txt": "c" * 64}]}
         image._verify_external_handoff(observation, value, "linux-x64", identity, legal_bytes.__getitem__)
         for mutation in ("legal", "version", "module", "role", "source", "missing"):
             altered = copy.deepcopy(observation)
@@ -77,6 +88,34 @@ class ImageRuntimeTests(unittest.TestCase):
             else: altered["tools"].pop()
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 image._verify_external_handoff(altered, value, "linux-x64", identity, content.__getitem__)
+
+    def test_unavailable_linux_module_loader_binds_actual_path_version_hash_and_closed_environment(self):
+        # Only the unavailable Linux Perl loader transport is a fixture. Actual
+        # source bytes/hash, context arguments and environment refusal execute.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); module = root / "module/Text/Template.pm"
+            module.parent.mkdir(parents=True); module.write_bytes(b"original external utility fixture")
+            definition = {"version": "1.56", "sha256": image.digest(module)}
+            foreign = root / "installed/Text/Template.pm"
+            foreign.parent.mkdir(parents=True); foreign.write_bytes(b"foreign installed newer module")
+            source = root / "actual Configure source"
+            def transport(program, arguments, cancelled, environment):
+                self.assertEqual(str(module.parent.parent), environment["PERL5LIB"])
+                self.assertNotIn("PERL5OPT", environment)
+                self.assertNotIn("LD_PRELOAD", environment)
+                self.assertIn('OpenSSL::fallback', arguments[1])
+                self.assertEqual(str(source), arguments[-1])
+                return "1.56\t" + str(module.resolve())
+            with patch.dict(os.environ, {"PERL5OPT": "-MForeign", "PERL5LIB": str(foreign.parent.parent), "LD_PRELOAD": "foreign.so"}), \
+                    patch.object(image, "_external_probe", side_effect=transport):
+                result = image._observe_loaded_module(Path("unavailable-linux-perl"), module, definition, configure_source=source)
+                self.assertEqual(str(module), result["path"])
+            for response in ("1.99\t" + str(module), "1.56\t" + str(foreign), "1.56\tmissing"):
+                with self.subTest(response=response), patch.object(image, "_external_probe", return_value=response), self.assertRaises((ValueError, OSError)):
+                    image._observe_loaded_module(Path("unavailable-linux-perl"), module, definition)
+            module.write_bytes(b"changed actual loaded utility")
+            with patch.object(image, "_external_probe", return_value="1.56\t" + str(module)), self.assertRaisesRegex(ValueError, "loaded"):
+                image._observe_loaded_module(Path("unavailable-linux-perl"), module, definition)
 
     def test_actual_tool_process_output_errors_and_cancellation_drain_owned_child(self):
         self.assertEqual("component", image._external_probe(sys.executable, ["-c", "print('component')"]))

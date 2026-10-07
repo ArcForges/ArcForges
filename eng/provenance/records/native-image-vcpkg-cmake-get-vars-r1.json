@@ -45,8 +45,8 @@
   "disposition": "Copy",
   "verification": {
     "kind": "regeneration",
-    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-arm-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
-    "expected": "Actual pinned source SHA512 and original full MIT legal/header hashes, exact two-file vcpkg recipe, actual installed ARM dependency/feature/SBOM/CMake receipts and copied-byte production closure; no x64 activation or fabricated ARM execution proof.",
+    "command": "python eng/packaging/image_runtime.py stage --rid <admitted-linux-rid> --directory <owned-output> --vcpkg-root <pinned-source> --downloads <actual-cache>",
+    "expected": "Actual pinned MIT host-only vcpkg-cmake-get-vars2025-05-29 complete six-file recipe, original metadata/source identity, Linux-only feature/dependency selection and real compiled-input handoff. No runtime bundling or fabricated target execution.",
     "artifacts": []
   },
   "notice": {
@@ -101,14 +101,15 @@
         "repository": "https://github.com/microsoft/vcpkg",
         "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
         "paths": [
-          "ports/sse2neon/portfile.cmake",
-          "ports/sse2neon/vcpkg.json",
+          "ports/vcpkg-cmake-get-vars/cmake-get-vars.cmake.in",
+          "ports/vcpkg-cmake-get-vars/cmake_get_vars/CMakeLists.txt",
+          "ports/vcpkg-cmake-get-vars/portfile.cmake",
+          "ports/vcpkg-cmake-get-vars/vcpkg-port-config.cmake",
+          "ports/vcpkg-cmake-get-vars/vcpkg.json",
+          "ports/vcpkg-cmake-get-vars/vcpkg_cmake_get_vars.cmake",
           "scripts/vcpkg-tools.json",
-          "triplets/arm64-linux.cmake",
-          "triplets/arm64-osx.cmake",
-          "triplets/community/x64-osx.cmake",
           "triplets/x64-linux.cmake",
-          "triplets/x64-windows-static-md.cmake"
+          "triplets/arm64-linux.cmake"
         ],
         "spdx": "MIT",
         "evidence": [
@@ -125,8 +126,15 @@
         "repository": "https://github.com/microsoft/vcpkg",
         "commit": "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb",
         "paths": [
+          "ports/vcpkg-cmake-get-vars/cmake-get-vars.cmake.in",
+          "ports/vcpkg-cmake-get-vars/cmake_get_vars/CMakeLists.txt",
           "ports/vcpkg-cmake-get-vars/portfile.cmake",
-          "ports/vcpkg-cmake-get-vars/cmake_get_vars/CMakeLists.txt"
+          "ports/vcpkg-cmake-get-vars/vcpkg-port-config.cmake",
+          "ports/vcpkg-cmake-get-vars/vcpkg.json",
+          "ports/vcpkg-cmake-get-vars/vcpkg_cmake_get_vars.cmake",
+          "scripts/vcpkg-tools.json",
+          "triplets/x64-linux.cmake",
+          "triplets/arm64-linux.cmake"
         ],
         "spdx": "MIT",
         "evidence": [
@@ -138,7 +146,7 @@
         ]
       }
     ],
-    "command": "The selected sse2neon.h is compiled into required ARM Image dependency inputs using actual admitted per-RID compiler/recipe/tool identities. Header-only upstream source archive, complete MIT copyright/permission/warranty notice and authored vcpkg recipe are retained; no upstream executable or excluded test suite is shipped.",
+    "command": "The six-file MIT host helper recipe supplies actual Linux compiler-variable detection only. It is a build dependency, not a runtime capability; original source/recipe/legal identity is retained.",
     "outputSpdx": "MIT"
   },
   "review": {
