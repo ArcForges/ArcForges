@@ -1155,7 +1155,8 @@
     "eng/provenance/records/contracts-provenance-tools-r4.json",
     "eng/policy/dependency-reviews/nat-22-r1.json",
     "eng/policy/dependency-reviews/nat-22-r2.json",
-    "eng/policy/dependency-reviews/nat-22-r3.json"
+    "eng/policy/dependency-reviews/nat-22-r3.json",
+    "eng/policy/dependency-reviews/nat-22-r4.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

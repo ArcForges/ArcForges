@@ -37,7 +37,7 @@
     "eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj": "03b1e65100dea44836c3d160f9d8a2093e8b934b715132ff1675dd21a3849005",
     "eng/packaging/ArcForges.Native.ReleaseSigner/packages.lock.json": "bc3a8405df26fd8cf550ec594f948d3b10ef92806fcfc6405c25aefbdbb5cf43",
     "eng/packaging/packages.json": "c1c886e1eeaab4a1180da6af4b566585851e0d2eee0b170631236ccb9b14cceb",
-    "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
+    "eng/policy/naming-package.json": "6c2f10940264eb7ffaa02a093567dfe5462d947f397880b1e1780d98b67331d8",
     "eng/provenance/artifact-profiles/image-runtime-producer-v1.json": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf",
     "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -888,8 +888,8 @@
     "owner": "w-codex-20261006-image",
     "reviewer": "Independent exact-head source/admission approval and applicable CI required before merge.",
     "reviewedOn": "2026-10-07",
-    "baselineCommit": "9469efeb78c2ef8b2981c54e0be65253f5f193d8",
-    "maintenanceAssessment": "NAT.22 admits complete six-RID Image producer/inspection/staging/consumer contracts and payload-gated runtime containers. Normal publication selects only four actually compiled Windows/Linux source-bound producer inputs; macOS containers remain inactive without actual artifacts. Preserve legacy win-x64 r4, all accepted history and all managed/Python coordinates. ARM-only sse2neon1.9.1 and Linux-only OpenSSL3.6.3/core plus vcpkg-cmake-get-vars2025-05-29 are minimum real prerequisites. Entire original source/legal/recipe bytes and mixed utility contexts are retained. External make4.3/Perl5.38.2/TextTemplate1.56 are separate noncopying execution tools with actual hashes, closed loaded-module/Configure/environment binding, full original terms and cancellation/lifecycle limits; no copied GPL/Artistic implementation or generated-source permission. Unaccepted candidate rechain after archiving original raw/Git bytes: accepted NAT25 runtime source9469 and its immutable receipt are preserved; original own candidate input snapshot retained as history, current complete actual union is sealed in nat22r3. Active current union successor binds all actual evaluated owned Image additions on accepted9469, retaining its signed-authority-before-family dispatch, sixPDF containers, all managed producers and exact prior NuGet/Python closures. Earlier ownr2 remains immutable historical diagnostic evidence; no earlier source artifact is relabeled as this source cohort. Actual CON35 naming publication remains a separate pending exact input admission.",
+    "baselineCommit": "6e7b92097228c2b73c6156625b156fa240a2c81b",
+    "maintenanceAssessment": "NAT.22 admits complete six-RID Image producer/inspection/staging/consumer contracts and payload-gated runtime containers. Normal publication selects only four actually compiled Windows/Linux source-bound producer inputs; macOS containers remain inactive without actual artifacts. Preserve legacy win-x64 r4, all accepted history and all managed/Python coordinates. ARM-only sse2neon1.9.1 and Linux-only OpenSSL3.6.3/core plus vcpkg-cmake-get-vars2025-05-29 are minimum real prerequisites. Entire original source/legal/recipe bytes and mixed utility contexts are retained. External make4.3/Perl5.38.2/TextTemplate1.56 are separate noncopying execution tools with actual hashes, closed loaded-module/Configure/environment binding, full original terms and cancellation/lifecycle limits; no copied GPL/Artistic implementation or generated-source permission. Unaccepted candidate rechain after archiving original raw/Git bytes: accepted NAT25 runtime source9469 and its immutable receipt are preserved; original own candidate input snapshot retained as history, current complete actual union is sealed in nat22r3. Active current union successor binds all actual evaluated owned Image additions on accepted9469, retaining its signed-authority-before-family dispatch, sixPDF containers, all managed producers and exact prior NuGet/Python closures. Earlier ownr2 remains immutable historical diagnostic evidence; no earlier source artifact is relabeled as this source cohort. Actual CON35 naming publication remains a separate pending exact input admission. Actual CON35 normally published350.1/source74c298 is now admitted as the existing naming asset only. Exact raw signed ZIP transport hash bDX and both reviewed9554 tool bytes were verified once at this real handoff; SDK400 NuGet verification succeeded with Microsoft repository signature and separately observed normalized hash MR8. No NuGet/Python closure coordinate change. All earlier own candidate and accepted receipts remain immutable. Current source-cohort Windows/Linux producers, applicable CI and actual publication remain mandatory.",
     "upgradeChecks": {
       "compilation": "Actual earlier available win-x64 and cross-win-arm64 production component compiles/stages passed at retained source checkpoints. Final source-cohort Windows/Linux producer compile and package gates are mandatory on applicable current CI; no unbuilt macOS or ARM execution claim.",
       "aot-trim": "Retained managed bindings stay internal/helper-friend gated and use the reviewed C ABI1.1; no AOT/trim suppression or native consumer execution in CI. Existing exact-head AOT compile gates remain mandatory; native runtime diagnostics are explicit local only.",
@@ -935,7 +935,7 @@
       "eng/packaging/ArcForges.Native.ReleaseSigner/ArcForges.Native.ReleaseSigner.csproj": "03b1e65100dea44836c3d160f9d8a2093e8b934b715132ff1675dd21a3849005",
       "eng/packaging/ArcForges.Native.ReleaseSigner/packages.lock.json": "bc3a8405df26fd8cf550ec594f948d3b10ef92806fcfc6405c25aefbdbb5cf43",
       "eng/packaging/packages.json": "c1c886e1eeaab4a1180da6af4b566585851e0d2eee0b170631236ccb9b14cceb",
-      "eng/policy/naming-package.json": "5324d0cc765a48a8b3cee0ab83242156a5ed3e6d34bd6df7e29011f269f7f727",
+      "eng/policy/naming-package.json": "6c2f10940264eb7ffaa02a093567dfe5462d947f397880b1e1780d98b67331d8",
       "eng/provenance/artifact-profiles/image-runtime-producer-v1.json": "53ec43f58704c49961a21463d13499449158c39141f7acfefb686e58e0f8bbbf",
       "eng/provenance/artifact-profiles/native-win-x64-r1.json": "1c708739c47c84c6684665696c0411e4b9055898294ef52bd0798e7fba9b3032",
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
@@ -1258,18 +1258,25 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-22-r2.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-22-r3.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
-      "version": "1.0.0-ci.205.1",
-      "contentHash": "OWvMF30zpN6ms2KlQCtax5P7TACrgK50Vb0drN5zy4iXgk2TZd+5UU+LDGaA2ioowA1EQIZx8ZUyRoayZaHadA==",
-      "sourceCommit": "696242d16034262ce8b7268e8d157cd0e5bee544",
+      "version": "1.0.0-ci.350.1",
+      "contentHash": "bDXmfTSnq/siReJ0FQxgEthVi5DgFv6YkBnVSWwiJ9IwZopMikdMajOBadZkBY2h+7xbPjy4lWvqMzswb4NM0A==",
+      "sourceCommit": "74c298c90ba56cd9f9e6932c006259c7d0376989",
       "licence": "Apache-2.0",
-      "metadata": "https://api.nuget.org/v3/catalog0/data/2026.09.27.22.53.05/arcforges.contracts.validation.1.0.0-ci.205.1.json",
-      "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
+      "metadata": "https://api.nuget.org/v3-flatcontainer/arcforges.contracts.validation/1.0.0-ci.350.1/arcforges.contracts.validation.1.0.0-ci.350.1.nupkg",
+      "publication": "https://github.com/ArcForges/Contracts/actions/runs/37597754997",
+      "hashMethod": "Existing naming_package contract: SHA512 of raw signed ZIP transport.",
+      "nugetNormalizedContentHash": "MR8tmcWRXw/FWPdxkdqdl2eTTLuumrA6+ZBcW/Xv4dS+1sio87YFNf+T1rs8454eaDY00sQwzZEvpM7huw6/yQ==",
+      "sdkSignatureVerification": "SDK10.0.400 dotnet nuget verify --all exit0; NuGet.org Microsoft repository signature.",
+      "toolHashes": {
+        "tools/naming/eng/check_naming.py": "b346f046b70107ca716effe30e5c734fdbee6cbfb270f05b85a0312bfe1aef89",
+        "tools/naming/eng/policy/product-names.json": "f5d596298ec50e3b116abc6df1b34efef93045ed52f6235b0a2aaaf97a1f4df5"
+      }
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-22-r3.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-22-r4.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
