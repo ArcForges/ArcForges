@@ -226,7 +226,7 @@ def pack(directory, package_version, native_directory=ROOT / "artifacts/native-p
             args.append(f"-p:NativePayloadRoot={native_directory / entry['id']}")
             if entry["library"] == "ArcImageNative" and (
                     entry["rid"] != "win-x64" or (native_directory / entry["id"] / image_runtime.RECEIPT).is_file()):
-                # The preceding native stage handoff authenticated this real payload.
+                # The preceding native stage handoff verified this real payload.
                 # This property activates only the individually admitted producer project.
                 args.append("-p:ArcForgesVerifiedImageRuntime=true")
         run(*args)
