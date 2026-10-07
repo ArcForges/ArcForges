@@ -174,8 +174,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   image-family-publication:
-    # Compose four actual Image outputs and the already-compiled PDF win-x64 output.
-    # admitted six-RID catalogue never activates an unbuilt macOS container.
+    # Verify all five actual Image/Pdf inputs as one source/build cohort, then publish
+    # only the four Image packages. Unsigned PDF evidence is retained separately;
+    # its Runtime package still requires the genuine authenticated NAT25 release.
     needs: [image-portable-inputs, native-win-x64]
     runs-on: ubuntu-latest
     outputs:
@@ -205,11 +206,23 @@ jobs:
           $names += "native-pdf-stage-win-x64-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $actual = @(Get-ChildItem artifacts/image-family-inputs -Directory | ForEach-Object { $_.Name })
           if (@(Compare-Object ($names | Sort-Object) ($actual | Sort-Object)).Count) { throw 'Unexpected/missing actual Image/Pdf producer artifact.' }
-          $arguments = @('eng/packaging/native.py', 'combine', '--directory', 'artifacts/native-image-publication')
+          $arguments = @('eng/packaging/native.py', 'combine', '--directory', 'artifacts/native-source-cohort')
           foreach ($name in $names) { $arguments += @('--input-directory', "artifacts/image-family-inputs/$name") }
           python @arguments
           if ($LASTEXITCODE) { throw 'Actual Image/Pdf family/source/build/index/copy verification failed.' }
+          $arguments = @('eng/packaging/native.py', 'combine', '--directory', 'artifacts/native-image-publication')
+          foreach ($rid in $rids) { $arguments += @('--input-directory', "artifacts/image-family-inputs/image-production-input-$rid-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT") }
+          python @arguments
+          if ($LASTEXITCODE) { throw 'Actual Image publication subset/index/copy verification failed.' }
           "name=native-image-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-source-cohort-index-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/native-source-cohort/native-family-index.json
+            artifacts/native-source-cohort/native-artifact.json
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.image-artifact.outputs.name }}
