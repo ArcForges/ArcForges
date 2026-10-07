@@ -1106,7 +1106,8 @@
     "eng/provenance/records/native-image-openssl-r1.json",
     "eng/provenance/records/native-image-vcpkg-cmake-get-vars-r1.json",
     "eng/provenance/records/native-image-linux-external-tools-r1.json",
-    "eng/provenance/records/contracts-provenance-tools-r4.json"
+    "eng/provenance/records/contracts-provenance-tools-r4.json",
+    "eng/policy/dependency-reviews/nat-22-r1.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
