@@ -1054,7 +1054,9 @@
     "eng/native/vcpkg/pdfium-sbom.osx-x64.v1.json",
     "eng/native/vcpkg/pdfium-sbom.win-arm64.v1.json",
     "eng/policy/dependency-reviews/nat-25-dispatch-r1.json",
-    "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json"
+    "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json",
+    "eng/policy/dependency-reviews/prf-04-r2.json",
+    "tests/LocalRpcAotTests/ProductionBootstrapProbe.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",

@@ -192,7 +192,7 @@
     },
     {
       "path": "tests/LocalRpcAotTests/LocalRpcAotTests.csproj",
-      "blob": "b4e4c919be86f1bb758d89ee1f867bb34160cdcd"
+      "blob": "7555737a3d4d95e954b40e42bb8f4c753795fb00"
     },
     {
       "path": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
