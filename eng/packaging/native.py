@@ -581,10 +581,10 @@ def verify_family_stage(directory, commit, family, rid, cancelled=None):
         package = Path(directory) / expected
         if (package / "image-production-input.json").is_file():
             import image_runtime
-            return image_runtime.verify_stage(Path(directory), commit, ROOT, cancelled=cancelled)
+            return image_runtime.verify_stage(Path(directory), commit, ROOT, cancelled=lambda: (check(), False)[1])
         require(rid == "win-x64", "Only the historical win-x64 Image stage has a legacy receipt.")
-        return _verify_legacy_stage(Path(directory), commit, cancelled=cancelled)
-    return native_provenance.verify_pdf_runtime_stage(Path(directory), commit, ROOT, cancelled=cancelled)
+        return _verify_legacy_stage(Path(directory), commit, cancelled=lambda: (check(), False)[1])
+    return native_provenance.verify_pdf_runtime_stage(Path(directory), commit, ROOT, cancelled=lambda: (check(), False)[1])
 
 
 def combine(directory, inputs, commit, cancelled=None):
@@ -655,11 +655,11 @@ def verify_stage(directory, commit, cancelled=None):
     if artifact.get("schemaVersion") != 2:
         packages = artifact.get("packages", [])
         if len(packages) == 1 and packages[0].get("id", "").startswith("ArcForges.Native.Pdf.Runtime."):
-            return native_provenance.verify_pdf_runtime_stage(directory, commit, ROOT, cancelled=cancelled)
+            return native_provenance.verify_pdf_runtime_stage(directory, commit, ROOT, cancelled=lambda: (check(), False)[1])
         if len(packages) == 1 and (directory / packages[0]["id"] / "image-production-input.json").is_file():
             import image_runtime
-            return image_runtime.verify_stage(directory, commit, ROOT, cancelled=cancelled)
-        return _verify_legacy_stage(directory, commit, cancelled=cancelled)
+            return image_runtime.verify_stage(directory, commit, ROOT, cancelled=lambda: (check(), False)[1])
+        return _verify_legacy_stage(directory, commit, cancelled=lambda: (check(), False)[1])
     verify_identity(artifact, commit)
     require(digest(directory / "native-family-index.json") == artifact["familyIndexSha256"],
             "Native family index differs from its bound artifact.")
@@ -678,7 +678,7 @@ def verify_stage(directory, commit, cancelled=None):
         coordinates.add(relative)
         retained = directory / relative
         require(digest(retained / "native-artifact.json") == row["artifactSha256"], "Retained native input artifact changed.")
-        source = verify_family_stage(retained, commit, row["family"], row["rid"], cancelled=cancelled)
+        source = verify_family_stage(retained, commit, row["family"], row["rid"], cancelled=lambda: (check(), False)[1])
         for name, checksum in _inventory(retained, check=check).items():
             expected[relative + "/" + name] = checksum
         for package in source["packages"]:
