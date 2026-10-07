@@ -163,7 +163,12 @@ def inspect(path, entry, expected_version, commit):
             require(not any(name.startswith(("lib/", "ref/")) for name in names), "RID package must not contain managed assemblies.")
             if entry["library"] == "ArcPdfNative":
                 require("pdfium-production-input.json" in names, "PDF runtime requires its real sealed producer receipt.")
-                native.native_provenance.verify_pdf_package(entry, archive.read, set(names), commit, ROOT)
+                standard = {"_rels/.rels", "[Content_Types].xml", specs[0], ".signature.p7s", "build-identity.json", "README.md", "LICENSE"}
+                standard.update(name for name in names if re.fullmatch(r"package/services/metadata/core-properties/[a-f0-9]{32}\.psmdcp", name))
+                require(archive.read("LICENSE") == (ROOT / "LICENSE").read_bytes()
+                        and archive.read("README.md") == (ROOT / entry["project"]).parent.joinpath("README.md").read_bytes(),
+                        "PDF owned package legal/readme material differs")
+                native.native_provenance.verify_pdf_package(entry, archive.read, set(names) - standard, commit, ROOT)
                 return native.digest(path)
             document = json.loads(archive.read("native-manifest.json"))
             require(document["sourceCommit"] == commit and document["rid"] == entry["rid"]

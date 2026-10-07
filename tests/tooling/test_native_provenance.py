@@ -36,6 +36,30 @@ class PdfSealedCompositionTests(unittest.TestCase):
         self.assertEqual("ArcPdfNative.dll", next(row["name"] for row in result["inspectedBinaries"] if row["name"] == "ArcPdfNative.dll"))
         self.assertEqual(15, len(native.pdfium_profile()["legalFiles"]))
 
+    def test_actual_pdf_package_closes_foreign_runtime_targets_and_generated_bytes(self):
+        # Genuine admitted SDK/native bytes and production package generator/verifier;
+        # this does not execute native code or claim signing/deployment.
+        inspected=native.verify_pdf_runtime_input(self.original,self.source)
+        policy,system_hash=native._pdf_system_policy('win-x64',native.ROOT)
+        imports=native._pdf_closed_imports(inspected['inspectedBinaries'],'win-x64',policy)
+        entry={'id':'ArcForges.Native.Pdf.Runtime.win-x64','rid':'win-x64','library':'ArcPdfNative'}
+        with tempfile.TemporaryDirectory() as temporary:
+            package=Path(temporary)/'package'; producer._copy_inventory(self.original,package,producer._inventory(self.original))
+            native._prepare_pdf_runtime(package,'win-x64',self.source,inspected,imports,system_hash,native.ROOT)
+            read=lambda name:(package/name).read_bytes()
+            native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+            for extra in ('runtimes/win-x64/native/foreign.dll','buildTransitive/foreign.targets'):
+                path=package/extra; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(b'foreign unadmitted executable')
+                with self.subTest(extra=extra),self.assertRaisesRegex(ValueError,'Unexpected/missing'):
+                    native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+                path.unlink()
+            for name in ('sbom.json','NOTICE.md','buildTransitive/'+entry['id']+'.targets'):
+                path=package/name; original=path.read_bytes(); path.write_bytes(original+b'changed')
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'generated'):
+                    native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+                path.write_bytes(original)
+            native.verify_pdf_package(entry,read,set(producer._inventory(package)),self.source)
+
     def test_changed_dependency_legal_attestation_and_header_refuse_even_when_inventory_is_rewritten(self):
         for path in ["provenance/pdfium-attestation.json", "licenses/pdfium/pdfium.txt", "include/arc/arc_pdf_abi.h",
                      "runtimes/win-x64/native/pdfium.dll", "runtimes/win-x64/native/msvcp140.dll"]:
@@ -899,6 +923,50 @@ class PortablePdfiumProfileTests(unittest.TestCase):
 
 
 class NativeFamilyFilesystemTests(unittest.TestCase):
+    def test_real_copy_refuses_growth_replacement_extra_material_and_cancellation(self):
+        for fault in ('grow', 'replace', 'extra', 'cancel'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary); source=root/'source'; source.mkdir()
+                original=source/'payload'; original.write_bytes(b'x'*200000)
+                expected=producer._inventory(source); count=0
+                def check():
+                    nonlocal count
+                    count += 1
+                    if count == 3:
+                        if fault == 'grow':
+                            with original.open('ab') as output: output.write(b'changed')
+                        elif fault == 'replace': original.unlink(); original.mkdir()
+                        elif fault == 'extra': (source/'extra').write_bytes(b'not admitted')
+                        else: raise InterruptedError('actual copy cancellation')
+                with self.assertRaises((ValueError, OSError)):
+                    producer._copy_inventory(source, root/'destination', expected, check)
+
+    def test_deadline_and_cancel_refuse_real_lock_and_inventory_without_waiting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); (root/'payload').write_bytes(b'actual')
+            with self.assertRaises(InterruptedError): producer._inventory(root, cancelled=lambda:True)
+            with self.assertRaises(InterruptedError):
+                with producer._exclusive_stage(root/'candidate', cancelled=lambda:True): self.fail('entered cancelled lock')
+            with self.assertRaises(TimeoutError): producer._progress(deadline=time.monotonic()-1)()
+            self.assertFalse((root/'.candidate.native-lock').exists())
+
+    def test_sdk_legal_members_use_actual_acquired_prefix_not_repository_license(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); acquired=root/'cache'; sdk=acquired/'pdfium'; sdk.mkdir(parents=True)
+            (root/'LICENSE').write_bytes(b'foreign repository AGPL legal text')
+            (sdk/'LICENSE').write_bytes(b'original SDK BSD legal text')
+            (sdk/'licenses').mkdir(); (sdk/'licenses/component').write_bytes(b'full original component terms')
+            profile={'legalFiles':{name:native.sha((sdk/name).read_bytes()) for name in ('LICENSE','licenses/component')}}
+            rows=native._pdf_sdk_legal_sources(acquired,profile)
+            destination=root/'retained'; destination.mkdir()
+            for original,name,expected in rows:
+                target=destination/name; target.parent.mkdir(parents=True,exist_ok=True)
+                with target.open('xb') as output: actual,_=producer._bounded_file(original,producer._progress(),output)
+                self.assertEqual(expected,actual)
+            self.assertEqual(b'original SDK BSD legal text',(destination/'licenses/pdfium/LICENSE').read_bytes())
+            self.assertEqual(b'full original component terms',(destination/'licenses/pdfium/component').read_bytes())
+            self.assertNotEqual((root/'LICENSE').read_bytes(),(destination/'licenses/pdfium/LICENSE').read_bytes())
+
     def test_document_duplicate_array_oversize_and_escaping_paths_refuse(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)/'document.json'
