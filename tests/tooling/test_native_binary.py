@@ -314,6 +314,198 @@ class NativeBinaryTests(unittest.TestCase):
                 binary.inspect(Path(temporary), "win-x64")
 
 
+class NativeExecutableTests(unittest.TestCase):
+    """Structural executable fixtures are file-format checks, never runtime or AOT proof."""
+
+    @staticmethod
+    def inspect(data, rid):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture"
+            path.write_bytes(data)
+            return binary.inspect_executable(path, rid)
+
+    @staticmethod
+    def pe_executable(machine=0x8664):
+        data = pe(machine)
+        put(data, 0x84 + 18, "<H", 2)
+        put(data, 0x98 + 16, "<I", 0x1400)
+        return data
+
+    @staticmethod
+    def elf_executable(machine=62, pie=True):
+        data = elf(machine)
+        put(data, 16, "<H", 3 if pie else 2)
+        put(data, 24, "<Q", 0x600)
+        put(data, 56, "<H", 3)
+        interpreter = (b"/lib64/ld-linux-x86-64.so.2" if machine == 62 else b"/lib/ld-linux-aarch64.so.1") + b"\0"
+        data[0x700:0x700 + len(interpreter)] = interpreter
+        put(data, 176, "<IIQQQQQQ", 3, 4, 0x700, 0x700, 0, len(interpreter), len(interpreter), 1)
+        if pie:
+            put(data, 0x270, "<qQ", 0x6ffffffb, 0x08000000)
+            put(data, 0x280, "<qQ", 0, 0)
+            put(data, 120 + 32, "<QQ", 144, 144)
+        return data
+
+    @staticmethod
+    def mach_executable(cpu=0x01000007, thread=False):
+        data = mach(cpu)
+        count = struct.unpack_from("<I", data, 16)[0]
+        cursor, commands = 32, []
+        for _ in range(count):
+            tag, size = struct.unpack_from("<II", data, cursor)
+            if tag != 0xd:
+                commands.append(bytes(data[cursor:cursor + size]))
+            cursor += size
+        if thread:
+            flavor, words, pc_offset = (4, 42, 128) if cpu == 0x01000007 else (6, 68, 256)
+            entry = bytearray(16 + words * 4)
+            put(entry, 0, "<IIII", 5, len(entry), flavor, words)
+            put(entry, 16 + pc_offset, "<Q", 0x800)
+        else:
+            entry = struct.pack("<IIQQ", 0x80000028, 24, 0x800, 0)
+        commands.append(entry)
+        put(data, 12, "<III", 2, len(commands), sum(map(len, commands)))
+        cursor = 32
+        for command in commands:
+            data[cursor:cursor + len(command)] = command
+            cursor += len(command)
+        return data
+
+    def test_six_native_executable_architectures_and_legacy_shared_compatibility(self):
+        cases = (("win-x64", self.pe_executable()), ("win-arm64", self.pe_executable(0xaa64)),
+                 ("linux-x64", self.elf_executable()), ("linux-arm64", self.elf_executable(183)),
+                 ("osx-x64", self.mach_executable()), ("osx-arm64", self.mach_executable(0x0100000c)))
+        for rid, data in cases:
+            with self.subTest(rid=rid):
+                info = self.inspect(data, rid)
+                self.assertEqual("executable", info.kind)
+                self.assertGreater(info.entrypoint, 0)
+                self.assertEqual(info.entrypoint, info.as_manifest()["entryPoint"])
+                self.assertEqual(("fn",), info.exports)
+                if rid.startswith("linux"):
+                    # Historical shared inspection accepts ET_DYN; preserve its byte contract exactly.
+                    # Only inspect_executable establishes the additional interpreter/PIE/entrypoint checks.
+                    self.assertNotIn("entryPoint", binary.inspect_bytes(bytes(data), rid).as_manifest())
+                    with self.assertRaises(ValueError):
+                        binary.inspect_bytes(bytes(self.elf_executable(183 if rid.endswith("arm64") else 62, pie=False)), rid)
+                else:
+                    with self.assertRaises(ValueError):
+                        binary.inspect_bytes(bytes(data), rid)
+                wrong = rid.replace("arm64", "x64") if rid.endswith("arm64") else rid.replace("x64", "arm64")
+                with self.assertRaisesRegex(ValueError, "architecture"):
+                    self.inspect(data, wrong)
+                with self.assertRaises(ValueError):
+                    self.inspect(data, "unreviewed-rid")
+
+    def test_shared_serialization_does_not_gain_executable_metadata(self):
+        for rid, data in (("win-x64", pe()), ("linux-x64", elf()), ("osx-x64", mach())):
+            info = binary.inspect_bytes(bytes(data), rid)
+            self.assertEqual("shared-library", info.kind)
+            self.assertIsNone(info.entrypoint)
+            self.assertNotIn("kind", info.as_manifest())
+            self.assertNotIn("entryPoint", info.as_manifest())
+            with self.assertRaises(ValueError):
+                self.inspect(data, rid)
+
+    def test_pe_clr_entrypoint_kind_and_code_bounds_refuse(self):
+        mutations = ((0x98 + 112 + 14 * 8, "<II", (0x1700, 72)),
+                     (0x98 + 16, "<I", (0,)), (0x98 + 16, "<I", (0x1f00,)),
+                     (0x98 + 16, "<I", (0x100,)), (0x188 + 36, "<I", (0x40000040,)),
+                     (0x84 + 18, "<H", (0x2002,)), (0x84 + 18, "<H", (0,)))
+        for offset, fmt, values in mutations:
+            data = self.pe_executable()
+            put(data, offset, fmt, *values)
+            with self.subTest(offset=offset, values=values), self.assertRaises(ValueError):
+                self.inspect(data, "win-x64")
+
+    def test_elf_exec_and_pie_are_distinct_and_closed_interpreter_is_mapped(self):
+        self.assertEqual(0x600, self.inspect(self.elf_executable(pie=False), "linux-x64").entrypoint)
+        mutations = ((0x270 + 8, "<Q", 0), (56, "<H", 2), (24, "<Q", 0),
+                     (24, "<Q", 0x1100), (64 + 4, "<I", 4), (176 + 16, "<Q", 0x710),
+                     (176 + 32, "<Q", 4097))
+        for offset, fmt, value in mutations:
+            data = self.elf_executable()
+            put(data, offset, fmt, value)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                self.inspect(data, "linux-x64")
+        data = self.elf_executable()
+        data[0x700:0x706] = b"/evil/"
+        with self.assertRaisesRegex(ValueError, "interpreter"):
+            self.inspect(data, "linux-x64")
+        data = self.elf_executable()
+        put(data, 56, "<H", 4)
+        data[232:288] = data[176:232]
+        with self.assertRaisesRegex(ValueError, "one closed"):
+            self.inspect(data, "linux-x64")
+
+    def test_mach_main_and_architecture_bound_thread_states_require_executable_bytes(self):
+        for cpu, rid in ((0x01000007, "osx-x64"), (0x0100000c, "osx-arm64")):
+            self.assertEqual(0x800, self.inspect(self.mach_executable(cpu, thread=True), rid).entrypoint)
+        data = self.mach_executable(thread=True)
+        end = 32 + struct.unpack_from("<I", data, 20)[0]
+        put(data, end - 184 + 8, "<I", 6)
+        with self.assertRaisesRegex(ValueError, "thread state"):
+            self.inspect(data, "osx-x64")
+        data = self.mach_executable()
+        end = 32 + struct.unpack_from("<I", data, 20)[0]
+        for entry in (0, 0x700, 0x810, 0x1100):
+            mutated = bytearray(data)
+            put(mutated, end - 24 + 8, "<Q", entry)
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                self.inspect(mutated, "osx-x64")
+        duplicated = bytearray(data)
+        duplicated[end:end + 24] = data[end - 24:end]
+        put(duplicated, 16, "<II", struct.unpack_from("<I", data, 16)[0] + 1, end - 32 + 24)
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            self.inspect(duplicated, "osx-x64")
+        data = self.mach_executable()
+        put(data, 32 + 104 + 16, "<I", 0x900)
+        with self.assertRaisesRegex(ValueError, "mapping"):
+            self.inspect(data, "osx-x64")
+
+    def test_executable_zero_fill_and_raw_segment_overlays_refuse_ambiguous_loader_mapping(self):
+        data = self.elf_executable()
+        put(data, 56, "<H", 4)
+        put(data, 232, "<IIQQQQQQ", 1, 4, 0, 0x600, 0, 0, 32, 1)
+        with self.assertRaisesRegex(ValueError, "Overlapping"):
+            self.inspect(data, "linux-x64")
+        for thread in (False, True):
+            data = self.mach_executable(thread=thread)
+            end = 32 + struct.unpack_from("<I", data, 20)[0]
+            command = bytearray(72)
+            put(command, 0, "<II", 0x19, 72)
+            put(command, 24, "<QQQQIIII", 0x800, 16, 0, 0, 1, 1, 0, 0)
+            data[end:end + 72] = command
+            put(data, 16, "<II", struct.unpack_from("<I", data, 16)[0] + 1, end - 32 + 72)
+            with self.subTest(thread=thread), self.assertRaisesRegex(ValueError, "Overlapping"):
+                self.inspect(data, "osx-x64")
+
+    def test_native_executable_input_is_bounded_regular_and_immutable(self):
+        for data in (b"", b"MZ", bytes(self.pe_executable()[:127])):
+            with self.assertRaises(ValueError):
+                self.inspect(data, "win-x64")
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(ValueError):
+                binary.inspect_executable(Path(temporary), "win-x64")
+        info = self.inspect(self.pe_executable(), "win-x64")
+        with self.assertRaises(AttributeError):
+            info.entrypoint = 0
+
+
+@unittest.skipUnless(os.environ.get("ARCFORGES_NATIVE_EXECUTABLE_ROOT"), "Actual AOT executable bytes require explicit local input.")
+class ActualNativeExecutableTests(unittest.TestCase):
+    def test_owned_actual_win_x64_aot_helper_is_native_code_metadata_only(self):
+        path = Path(os.environ["ARCFORGES_NATIVE_EXECUTABLE_ROOT"]) / "ArcForges.ContentSandbox.exe"
+        self.assertEqual("827489c6cf37c6ccfba863965f0069ddc50cb315929baf4fda31b419e783bd89", hashlib.sha256(path.read_bytes()).hexdigest())
+        info = binary.inspect_executable(path, "win-x64")
+        self.assertEqual(("PE32+", "x86_64", "executable", 0x654280), (info.format, info.machine, info.kind, info.entrypoint))
+        self.assertIn("KERNEL32.dll", info.imports)
+        self.assertIn("CRYPT32.dll", info.imports)
+        self.assertNotIn("mscoree.dll", tuple(name.lower() for name in info.imports))
+        with self.assertRaises(ValueError):
+            binary.inspect(path, "win-x64")
+
+
 @unittest.skipUnless(os.environ.get("ARCFORGES_NATIVE_INSPECTION_ROOT"), "Actual upstream bytes require explicit local input.")
 class ActualUpstreamBinaryTests(unittest.TestCase):
     def test_five_real_signed_archive_members_match_format_linkage_and_callable_exports(self):

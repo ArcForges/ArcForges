@@ -39,9 +39,11 @@ class BinaryInfo:
     absolute_exports: tuple[str, ...] = ()
     version_requirements: tuple[str, ...] = ()
     minimum_os: str | None = None
+    kind: str = "shared-library"
+    entrypoint: int | None = None
 
     def as_manifest(self):
-        return {
+        result = {
             "format": self.format, "machine": self.machine,
             "exports": list(self.exports), "imports": list(self.imports),
             "identity": self.identity, "runpaths": list(self.runpaths),
@@ -50,6 +52,9 @@ class BinaryInfo:
             "absoluteExports": list(self.absolute_exports),
             "versionRequirements": list(self.version_requirements), "minimumOs": self.minimum_os,
         }
+        if self.kind == "executable":
+            result.update(kind=self.kind, entryPoint=self.entrypoint)
+        return result
 
 
 class Reader:
@@ -116,26 +121,45 @@ def inspect(path, rid):
     return inspect_bytes(data, rid)
 
 
+def inspect_executable(path, rid):
+    """Describe a native executable, never compiler provenance, authorization or OS execution.
+
+    EntryPoint is the PE RVA or ELF/Mach virtual address declared by the input.
+    The existing shared-library entry points and manifests remain unchanged.
+    """
+    path = Path(path)
+    require(not path.is_symlink() and path.is_file(), "Native input must be a regular, non-link file.")
+    with path.open("rb") as stream:
+        data = stream.read(MAX_FILE + 1)
+    return _inspect_bytes(data, rid, executable=True)
+
+
 def inspect_bytes(data, rid):
+    return _inspect_bytes(data, rid, executable=False)
+
+
+def _inspect_bytes(data, rid, executable):
     require(rid in RIDS, "Native RID is not admitted.")
     reader = Reader(data)
     if data[:2] == b"MZ":
-        result = _pe(reader)
+        result = _pe(reader, executable)
     elif data[:4] == b"\x7fELF":
-        result = _elf(reader)
+        result = _elf(reader, executable)
     elif data[:4] == b"\xcf\xfa\xed\xfe":
-        result = _mach(reader)
+        result = _mach(reader, executable)
     else:
         raise ValueError("Native file is not admitted PE32+, ELF64 or thin little-endian Mach-O64.")
     require((result.format, result.machine) == RIDS[rid], "Native format/architecture differs from RID.")
     return result
 
 
-def _pe(r):
+def _pe(r, executable=False):
     header = r.unpack("<I", 0x3c)[0]
     require(header >= 0x40 and r.span(header, 4) == b"PE\0\0", "Invalid PE signature.")
     machine, count, _, _, _, optional_size, characteristics = r.unpack("<HHIIIHH", header + 4)
-    require(machine in (0x8664, 0xaa64) and 0 < count <= 96 and characteristics & 0x2000,
+    require(machine in (0x8664, 0xaa64) and 0 < count <= 96 and
+            (bool(characteristics & 2) and not characteristics & 0x2000 if executable else characteristics & 0x2000),
+            "PE input must be an admitted native executable." if executable else
             "PE input must be an admitted shared library.")
     optional = header + 24
     require(optional_size >= 112 and r.unpack("<H", optional)[0] == 0x20b, "Native PE is not PE32+.")
@@ -190,6 +214,13 @@ def _pe(r):
         if address:
             mapped(address, size)
         return address, size
+
+    entrypoint = None
+    if executable:
+        require(directory(14) == (0, 0), "Managed CLR executable is not an admitted native helper.")
+        entrypoint = r.unpack("<I", optional + 16)[0]
+        require(entrypoint > 0 and mapped(entrypoint)[2] & 0x20000000,
+                "PE executable entrypoint lacks file-backed executable code.")
 
     imports = []
     for number, stride, name_offset in ((1, 20, 12), (13, 32, 4)):
@@ -247,31 +278,41 @@ def _pe(r):
         unnamed = sum(r.unpack("<I", fbegin + index * 4)[0] != 0 and index not in used for index in range(functions))
     return BinaryInfo("PE32+", "x86_64" if machine == 0x8664 else "aarch64", _sorted(exports),
                       _sorted(imports), identity, forwarded_exports=_sorted(forwarded),
-                      data_exports=_sorted(data), unnamed_exports=unnamed)
+                      data_exports=_sorted(data), unnamed_exports=unnamed,
+                      kind="executable" if executable else "shared-library", entrypoint=entrypoint)
 
 
-def _elf(r):
+def _elf(r, executable=False):
     require(r.span(0, 7) == b"\x7fELF\x02\x01\x01", "Native ELF must be 64-bit little-endian version1.")
     kind, machine, version = r.unpack("<HHI", 16)
-    require(kind == 3 and machine in (62, 183) and version == 1, "ELF input is not an admitted shared library.")
+    require((kind in (2, 3) if executable else kind == 3) and machine in (62, 183) and version == 1,
+            "ELF input is not an admitted native executable." if executable else
+            "ELF input is not an admitted shared library.")
     program, sections = r.unpack("<QQ", 32)
     header_size, program_size, program_count, section_size, section_count, _ = r.unpack("<HHHHHH", 52)
     require(header_size == 64 and program_size == 56 and 0 < program_count <= 8192 and
             section_size == 64 and 0 < section_count <= 8192, "Invalid or unbounded ELF tables.")
     r.span(program, program_count * program_size)
     r.span(sections, section_count * section_size)
-    loads, dynamic = [], []
+    loads, dynamic, interpreters, memory_loads = [], [], [], []
     for index in range(program_count):
         tag, flags, offset, address, _, file_size, memory_size, _ = r.unpack("<IIQQQQQQ", program + index * 56)
         require(file_size <= memory_size, "Invalid ELF segment size.")
         r.span(offset, file_size)
         if tag == 1:
+            if executable and memory_size:
+                memory_loads.append((address, memory_size))
             if file_size:
                 loads.append((address, file_size, offset, flags))
         elif tag == 2:
             dynamic.append((offset, address, file_size))
+        elif tag == 3 and executable:
+            require(0 < file_size <= MAX_NAME, "Unbounded ELF interpreter.")
+            interpreters.append((offset, address, file_size))
     require(loads and len(dynamic) == 1, "ELF shared library has no unique dynamic table.")
     load_index = AddressIndex(loads)
+    if executable:
+        AddressIndex(memory_loads)  # A zero-fill remapping cannot shadow the declared file-backed code.
 
     def mapped(address, size=1):
         row = load_index.find(address, size)
@@ -296,6 +337,21 @@ def _elf(r):
         values = tags.get(tag, [])
         require(len(values) <= 1, "Duplicate singleton ELF dynamic tag.")
         return values[0] if values else default
+
+    entrypoint = None
+    if executable:
+        require(len(interpreters) == 1, "ELF executable needs one closed dynamic interpreter.")
+        offset, address, size = interpreters[0]
+        interpreter = r.string(offset, offset + size)
+        require(len(interpreter) + 1 == size and mapped(address, size)[0] == offset,
+                "ELF interpreter virtual/file mapping differs.")
+        require(interpreter == ({62: "/lib64/ld-linux-x86-64.so.2", 183: "/lib/ld-linux-aarch64.so.1"}[machine]),
+                "ELF executable interpreter is not admitted.")
+        flags1 = single(0x6ffffffb, 0)
+        require(bool(flags1 & 0x08000000) == (kind == 3), "ELF ET_DYN executable lacks genuine PIE identity.")
+        entrypoint = r.unpack("<Q", 24)[0]
+        require(entrypoint > 0 and mapped(entrypoint)[1] & 1,
+                "ELF executable entrypoint lacks file-backed executable code.")
 
     strings, string_size = single(5), single(10)
     require(strings is not None and string_size and string_size <= MAX_FILE, "Missing ELF dynamic strings.")
@@ -370,18 +426,20 @@ def _elf(r):
         need_address += next_need
     return BinaryInfo("ELF64", "x86_64" if machine == 62 else "aarch64", _sorted(exports),
                       _sorted(imports), identity, tuple(paths), forwarded_exports=_sorted(forwarded), data_exports=_sorted(data),
-                      absolute_exports=_sorted(absolute), version_requirements=_sorted(requirements))
+                      absolute_exports=_sorted(absolute), version_requirements=_sorted(requirements),
+                      kind="executable" if executable else "shared-library", entrypoint=entrypoint)
 
 
-def _mach(r):
+def _mach(r, executable=False):
     _, cpu, _, kind, count, command_size, _, _ = r.unpack("<IIIIIIII", 0)
-    require(cpu in (0x01000007, 0x0100000c) and kind == 6 and 0 < count <= 8192,
+    require(cpu in (0x01000007, 0x0100000c) and kind == (2 if executable else 6) and 0 < count <= 8192,
+            "Mach-O input is not an admitted native executable." if executable else
             "Mach-O input is not an admitted thin shared library.")
     r.span(32, command_size)
-    cursor, imports, paths, executable = 32, [], [], []
+    cursor, imports, paths, executable_ranges = 32, [], [], []
     identity = minimum_os = None
     symbol_table = trie = None
-    bases = []
+    bases, file_loads, memory_loads, entries = [], [], [], []
     total_sections = 0
     for _ in range(count):
         command, length = r.unpack("<II", cursor)
@@ -408,6 +466,11 @@ def _mach(r):
             require(file_size <= memory_size and address + memory_size <= 1 << 64,
                     "Invalid Mach-O segment size.")
             r.span(offset, file_size)
+            if executable:
+                if file_size:
+                    file_loads.append((offset, file_size, address, protections))
+                if memory_size:
+                    memory_loads.append((address, memory_size))
             if file_size and offset == 0:
                 bases.append(address)
             require(section_count <= 8192 and length == 72 + section_count * 80, "Invalid Mach-O sections.")
@@ -431,7 +494,17 @@ def _mach(r):
                     require(not zero_fill and protections & 4,
                             "Invalid Mach-O executable section.")
                     if section_size:
-                        executable.append((section_address, section_size))
+                        executable_ranges.append((section_address, section_size))
+        elif command == 0x80000028 and executable:
+            require(length == 24 and not entries, "Invalid or duplicate Mach-O entrypoint.")
+            entries.append(("file", r.unpack("<Q", cursor + 8)[0]))
+        elif command in (4, 5) and executable:
+            require(length >= 16 and not entries, "Invalid or duplicate Mach-O thread entrypoint.")
+            flavor, words = r.unpack("<II", cursor + 8)
+            expected_flavor, expected_words, pc_offset = ((4, 42, 128) if cpu == 0x01000007 else (6, 68, 256))
+            require(flavor == expected_flavor and words == expected_words and length == 16 + words * 4,
+                    "Mach-O thread state is not admitted for this architecture.")
+            entries.append(("virtual", r.unpack("<Q", cursor + 16 + pc_offset)[0]))
         elif command == 2:
             require(length == 24 and symbol_table is None, "Invalid Mach-O symbol command.")
             symbol_table = r.unpack("<IIII", cursor + 8)
@@ -454,8 +527,22 @@ def _mach(r):
             minimum = r.unpack("<I", cursor + 8)[0]
             minimum_os = f"{minimum >> 16}.{(minimum >> 8) & 255}.{minimum & 255}"
         cursor += length
-    require(cursor == 32 + command_size and identity and len(bases) == 1, "Incomplete Mach-O shared library.")
-    executable_index = AddressIndex(executable)
+    require(cursor == 32 + command_size and len(bases) == 1 and
+            (identity is None if executable else bool(identity)),
+            "Incomplete Mach-O executable." if executable else "Incomplete Mach-O shared library.")
+    executable_index = AddressIndex(executable_ranges)
+    entrypoint = None
+    if executable:
+        AddressIndex(memory_loads)
+        file_index = AddressIndex(file_loads)
+        require(len(entries) == 1, "Mach-O executable has no unique entrypoint.")
+        entry_kind, entrypoint = entries[0]
+        if entry_kind == "file":
+            row = file_index.find(entrypoint)
+            require(row is not None and row[3] & 4, "Mach-O entrypoint lacks executable file mapping.")
+            entrypoint = row[2] + entrypoint - row[0]
+        require(entrypoint > 0 and executable_index.find(entrypoint) is not None,
+                "Mach-O executable entrypoint lacks file-backed executable code.")
     exports, forwarded, data, absolute = [], [], [], []
 
     def classify(name, address, flags=0):
@@ -547,4 +634,5 @@ def _mach(r):
     require(len(all_exports) == len(set(all_exports)), "Duplicate Mach-O linkage export.")
     return BinaryInfo("Mach-O64", "x86_64" if cpu == 0x01000007 else "aarch64", _sorted(exports),
                       _sorted(imports), identity, tuple(paths), _sorted(forwarded), _sorted(data),
-                      absolute_exports=_sorted(absolute), minimum_os=minimum_os)
+                      absolute_exports=_sorted(absolute), minimum_os=minimum_os,
+                      kind="executable" if executable else "shared-library", entrypoint=entrypoint)
