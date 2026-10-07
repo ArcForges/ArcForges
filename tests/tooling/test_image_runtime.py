@@ -511,6 +511,81 @@ class ImageRuntimeTests(unittest.TestCase):
                 self.assertFalse((cache / "source.tar.gz").exists())
                 self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
 
+    def test_original_source_eof_close_cancellation_and_deadline_never_publish(self):
+        content = b"Complete original source."
+        row = {"url": "git+https://example.invalid/source@fixed", "downloadUrl": "https://example.invalid/source.tar.gz",
+               "sha512": hashlib.sha512(content).hexdigest(), "cacheName": "source.tar.gz"}
+        for mode in ("eof", "close", "deadline"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                cache, cancelled = Path(temporary), [False]
+
+                class Response(io.BytesIO):
+                    def read1(self, size):
+                        result = super().read1(size)
+                        if not result:
+                            if mode == "eof":
+                                cancelled[0] = True
+                            if mode == "deadline":
+                                time.sleep(0.03)
+                        return result
+
+                    def close(self):
+                        if mode == "close":
+                            cancelled[0] = True
+                        super().close()
+
+                def opener(request, **kwargs):
+                    response = Response(content)
+                    response.url = request.full_url
+                    return response
+
+                deadline = time.monotonic() + (0.02 if mode == "deadline" else 10)
+                error = ValueError if mode == "deadline" else image.StageCancelled
+                self.assertRaises(error, image._acquire_source_asset, row, cache, deadline,
+                                  lambda: cancelled[0], opener, None)
+                self.assertFalse((cache / "source.tar.gz").exists())
+                self.assertFalse(any(path.name.startswith(".image-legal-") for path in cache.iterdir()))
+
+    def test_cached_original_source_post_hash_and_final_promotion_cancellation_never_acknowledge_success(self):
+        content = b"Original source cache."
+        row = {"url": "git+https://example.invalid/source@fixed", "downloadUrl": "https://example.invalid/source.tar.gz",
+               "sha512": hashlib.sha512(content).hexdigest(), "cacheName": "source.tar.gz"}
+        with tempfile.TemporaryDirectory() as temporary:
+            cache, cancelled = Path(temporary), [False]
+            target = cache / "source.tar.gz"
+            target.write_bytes(content)
+            original_digest = image.digest
+
+            def checked_digest(*args, **kwargs):
+                result = original_digest(*args, **kwargs)
+                cancelled[0] = True
+                return result
+
+            with patch.object(image, "digest", side_effect=checked_digest):
+                self.assertRaises(image.StageCancelled, image._acquire_source_asset, row, cache, time.monotonic() + 10,
+                                  lambda: cancelled[0], lambda *a, **k: self.fail("Cached source must not download."), None)
+            self.assertEqual(content, target.read_bytes())
+            target.unlink()
+            cancelled[0] = False
+
+            def opener(request, **kwargs):
+                response = io.BytesIO(content)
+                response.url = request.full_url
+                return response
+
+            actual_sync = image._directory_sync
+
+            def sync_and_cancel(directory):
+                actual_sync(directory)
+                cancelled[0] = True
+
+            with patch.object(image, "_directory_sync", side_effect=sync_and_cancel):
+                self.assertRaises(image.StageCancelled, image._acquire_source_asset, row, cache, time.monotonic() + 10,
+                                  lambda: cancelled[0], opener, None)
+            self.assertEqual(content, target.read_bytes())  # Complete published cache is preserved, never acknowledged as success.
+            image._acquire_source_asset(row, cache, time.monotonic() + 10, None,
+                                        lambda *a, **k: self.fail("Retry must reuse valid completed source."), None)
+
     def test_offline_legal_archive_requires_one_regular_pinned_member(self):
         content = b"Complete fixture legal document.\n"
         for mode in ("valid", "duplicate", "symlink"):

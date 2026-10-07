@@ -215,6 +215,7 @@ def _acquire_original_asset(cache_name, url, expected, algorithm, limit, downloa
             if target.exists():
                 require(digest(_regular(target, downloads), cancelled, algorithm) == expected,
                         "Cached Image legal source differs; existing bytes are preserved.")
+                _cancel(cancelled)
                 break
             descriptor, temporary_name = tempfile.mkstemp(prefix=".image-legal-", dir=downloads)
             temporary = Path(temporary_name)
@@ -238,12 +239,14 @@ def _acquire_original_asset(cache_name, url, expected, algorithm, limit, downloa
                     output.flush()
                     os.fsync(output.fileno())
                 require(checksum.hexdigest() == expected, "Downloaded Image legal source digest mismatch.")
+                _cancel(cancelled)
                 try:
                     os.link(temporary, target)  # Atomic no-overwrite cache publication.
                 except FileExistsError:
                     require(digest(_regular(target, downloads), cancelled, algorithm) == expected,
                             "Concurrent Image legal cache bytes differ.")
                 _directory_sync(downloads)
+                _cancel(cancelled)
                 break
             except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
                 if attempt == 2 or time.monotonic() >= deadline:
@@ -252,6 +255,7 @@ def _acquire_original_asset(cache_name, url, expected, algorithm, limit, downloa
                 time.sleep(delay)
             finally:
                 temporary.unlink(missing_ok=True)
+    _cancel(cancelled)
 
 
 def _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context):
@@ -303,6 +307,8 @@ def acquire_legal_inputs(downloads, rid, root=ROOT, cancelled=None, opener=None)
             continue
         _acquire_legal_asset(row, downloads, deadline, cancelled, opener, context)
         completed.add(target.name)
+    _cancel(cancelled)
+    require(time.monotonic() < deadline, "Image legal acquisition deadline expired.")
     return {"rid": rid, "verifiedLegalInputs": sorted(completed),
             "verifiedSourceInputs": sorted({row["cacheName"] for row in sources})}
 
