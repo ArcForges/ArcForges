@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "id": "contracts-provenance-tools-r4",
+  "kind": "source",
+  "sourceRepository": "https://github.com/ArcForges/Contracts",
+  "sourceCommit": "18a970c67c463f1971ca05773b80f31a1b1ba1a7",
+  "sourcePaths": [
+    "eng/check_provenance.py",
+    "tests/tooling/test_provenance.py"
+  ],
+  "licence": {
+    "spdx": "Apache-2.0",
+    "category": "permissive",
+    "evidence": [
+      {
+        "path": "eng/check_provenance.py",
+        "sha256": "c9e888d9845bd479c36439922c26038f29807214740ad7c467dfb3bb414a3024",
+        "finding": "The individual Python file declares SPDX-License-Identifier: Apache-2.0."
+      },
+      {
+        "path": "tests/tooling/test_provenance.py",
+        "sha256": "a9b7c9deb356133deed58adc0c7b9470fb89d7582d2d3a165cc33fb0c6705363",
+        "finding": "The individual Python file declares SPDX-License-Identifier: Apache-2.0."
+      }
+    ],
+    "scope": "Copy the independent Apache provenance checker and its failure tests into the AGPL owner. Preserve the Apache headers and full licence. No AGPL source flows into the public boundary.",
+    "copyingPermission": null
+  },
+  "attribution": [
+    "Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.",
+    "DesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.",
+    "DesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.",
+    "DesktopPlatform NAT.15 modifications: one exact reviewed permissive PDFium bundle expression; unknown, changed, GPL and NOASSERTION variants remain refused by matching negative tests. No general licence bypass.",
+    "DesktopPlatform NAT.22 modifications: closed noncopying external make/Perl/TextTemplate tool observations and three conservative GPL/Artistic classifications; copied implementation/generation source/input/output remain refused. Complete original utility/legal identity, actual module/interpreter/environment binding and bounded producer lifecycle are separate from runtime/publisher acceptance."
+  ],
+  "targets": [
+    {
+      "path": "eng/check_provenance.py",
+      "sha256": "aaa1d17df8f0f91d1756b2342e886ee9a0f6e244ee678595dd7eb32d96b23cde",
+      "normalization": "lf"
+    },
+    {
+      "path": "tests/tooling/test_provenance.py",
+      "sha256": "87f43692317419988e81622dd33b46be30a44cbbc1700ba7432abc3b26903127",
+      "normalization": "lf"
+    }
+  ],
+  "artifactTargets": [],
+  "disposition": "Improve",
+  "verification": {
+    "kind": "transformation",
+    "command": "python eng/check_provenance.py --owner DesktopPlatform",
+    "expected": "Copy the independent Apache provenance checker and its failure tests into the AGPL owner. Preserve the Apache headers and full licence. No AGPL source flows into the public boundary. Exact reviewed target digests and immutable history must match.",
+    "artifacts": []
+  },
+  "notice": {
+    "required": true,
+    "text": "Copyright ArcForges contributors. Apache-2.0. Full text: third-party/contracts/LICENSE.txt.\nDesktopPlatform modifications: additional audited native expressions and Python 3.11 path-check compatibility.\nDesktopPlatform GOV.17 modifications: exact authorized native retirement receipts and fail-closed tests; retained repository owner set.\nDesktopPlatform NAT.15 modifications: one exact reviewed permissive PDFium bundle expression; unknown, changed, GPL and NOASSERTION variants remain refused by matching negative tests. No general licence bypass.\nDesktopPlatform NAT.22 modifications: closed noncopying external make/Perl/TextTemplate tool observations and three conservative GPL/Artistic classifications; copied implementation/generation source/input/output remain refused. Complete original utility/legal identity, actual module/interpreter/environment binding and bounded producer lifecycle are separate from runtime/publisher acceptance.",
+    "files": [
+      "eng/provenance/NOTICE.txt",
+      "third-party/contracts/LICENSE.txt"
+    ],
+    "distribution": "source",
+    "reason": "Source provenance summary supplements the retained original full legal text."
+  },
+  "lifetime": {
+    "status": "permanent",
+    "owner": "DesktopPlatform Licensing and Provenance Owner",
+    "removalTrigger": null
+  },
+  "generation": null,
+  "review": {
+    "owner": "Licensing and Provenance Owner",
+    "reviewer": "Independent NAT.22 source and complete sealed-admission review required before merge.",
+    "reviewedOn": "2026-10-07",
+    "decision": "approved",
+    "rationale": "Copy the independent Apache provenance checker and its failure tests into the AGPL owner. Preserve the Apache headers and full licence. No AGPL source flows into the public boundary. New successor for P2-019/GOV.17 explicit native target retirement only; all original Apache source identity/licence evidence retained. Removed ArcNotes/ArcSlate owner entries follow current retained repository set. DesktopPlatform NAT.15 modifications: one exact reviewed permissive PDFium bundle expression; unknown, changed, GPL and NOASSERTION variants remain refused by matching negative tests. No general licence bypass. DesktopPlatform NAT.22 modifications: closed noncopying external make/Perl/TextTemplate tool observations and three conservative GPL/Artistic classifications; copied implementation/generation source/input/output remain refused. Complete original utility/legal identity, actual module/interpreter/environment binding and bounded producer lifecycle are separate from runtime/publisher acceptance.",
+    "baselineCommit": "53b550d04ac1200955464224823fab752ea7ff0e",
+    "reconciliation": false
+  },
+  "supersedes": "contracts-provenance-tools-r3"
+}

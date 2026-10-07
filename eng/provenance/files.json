@@ -1105,15 +1105,16 @@
     "tests/tooling/test_native_binary.py",
     "eng/provenance/records/native-image-openssl-r1.json",
     "eng/provenance/records/native-image-vcpkg-cmake-get-vars-r1.json",
-    "eng/provenance/records/native-image-linux-external-tools-r1.json"
+    "eng/provenance/records/native-image-linux-external-tools-r1.json",
+    "eng/provenance/records/contracts-provenance-tools-r4.json"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
-    "eng/check_provenance.py": "contracts-provenance-tools-r3",
+    "eng/check_provenance.py": "contracts-provenance-tools-r4",
     "eng/policy/design-source.json": "design-policy-export-r4",
     "eng/policy/glossary-terms.json": "design-policy-export-r4",
     "eng/policy/invariants.json": "design-policy-export-r4",
-    "tests/tooling/test_provenance.py": "contracts-provenance-tools-r3",
+    "tests/tooling/test_provenance.py": "contracts-provenance-tools-r4",
     "third-party/contracts/LICENSE.txt": "contracts-apache-legal-r1",
     "third-party/opentimelineio/LICENSE.txt": "otio-legal-r1",
     "third-party/opentimelineio/NOTICE.txt": "otio-legal-r1",
