@@ -160,7 +160,8 @@ def _abi_tools(path, base):
     rows = _regular(path).read_text(encoding="utf-8").splitlines()
     cmake = [line.split()[1:] for line in rows if line.startswith("cmake ")]
     require(cmake == [[base["buildTools"]["vcpkgCMake"]]],
-            "Image installed dependency used an unreviewed vcpkg CMake version.")
+            "Image installed dependency used an unreviewed vcpkg CMake version: " +
+            path.parent.name + "; observed=" + repr(cmake))
 
 
 def _legal_bytes(row, cache, cancelled=None):
@@ -801,6 +802,8 @@ def _upstreams(staging, inputs, rid, recipe, base, expected_features, root, canc
         require(digest(share / "copyright", cancelled, lf=True) in expected_legal,
                 "Image dependency legal material differs from reviewed originals: " + name)
         for relative, expected in _compiled_inventory(sbom, triplet, compiled):
+            require(not _link(inputs.installed_directory / triplet / relative),
+                    "Linked compiled Image dependency material: " + name + "/" + relative)
             require(digest(_regular(inputs.installed_directory / triplet / relative,
                     inputs.installed_directory / triplet), cancelled) == expected,
                     "Actual compiled/header Image dependency differs from its SBOM: " + name + "/" + relative)
