@@ -3348,5 +3348,35 @@
     "apiSymbol": "ArcForges.Desktop.Shell.Accessibility.ShellAccessibilityAudit.Evaluate(ArcForges.Desktop.Shell.Localization.ShellResourceScope, System.Collections.Generic.IEnumerable<ArcForges.Desktop.Shell.Accessibility.ShellSurface>, System.Globalization.CultureInfo?)",
     "testProject": "src/DesignSystem/ArcForges.Desktop.Shell/Tests/ArcForges.Desktop.Shell.Tests.csproj",
     "testMethod": "ArcForges.Desktop.Shell.Tests.Localization.ResourceScopeTests.ResourceBoundAuditUsesActualModuleNamesAndRefusesEveryLookupFailure()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcRegistration.Create(ArcForges.LocalRpc.LocalRpcLaunch, System.Guid)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.ExplicitParentInstanceIsRequiredAndMisboundActualProcessManifestFailsClosed()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBootstrapService.Challenge(ArcForges.Contracts.LocalRpc.Platform.V1.LocalBootstrapServiceChallengeRequest, Grpc.Core.ServerCallContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.MalformedOrForgedChallengesAreUniformlyRefusedBeforeGrant(int)"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBootstrapService.Confirm(ArcForges.Contracts.LocalRpc.Platform.V1.LocalBootstrapServiceConfirmRequest, Grpc.Core.ServerCallContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.RejectedProofRevokesTheLaunchAndStopsTheActualParentServer()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcBootstrapService.Renew(ArcForges.Contracts.LocalRpc.Platform.V1.LocalBootstrapServiceRenewRequest, Grpc.Core.ServerCallContext)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.ActualSharedServiceAuthenticatesRenewsAndReturnsTheFrozenParentManifest()"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcParentBootstrapHost.StartAsync(ArcForges.LocalRpc.LocalRpcLaunch, ArcForges.Contracts.LocalRpc.Platform.V1.EndpointManifest, ArcForges.LocalRpc.LocalRpcServerBuilder, System.Threading.CancellationToken)",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.InvalidManifestOrFailedRealServerStartupRevokesTheLaunch(bool)"
+  },
+  {
+    "apiSymbol": "ArcForges.LocalRpc.LocalRpcParentBootstrapHost.DisposeAsync()",
+    "testProject": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",
+    "testMethod": "ArcForges.LocalRpc.Tests.ProductionBootstrapTests.ActualSharedServiceAuthenticatesRenewsAndReturnsTheFrozenParentManifest()"
   }
 ]

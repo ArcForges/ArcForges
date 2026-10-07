@@ -93,6 +93,7 @@
       "arcforges.localrpc": {
         "type": "Project",
         "dependencies": {
+          "ArcForges.Contracts.LocalRpc.Platform": "[1.0.0-ci.324.1, )",
           "Grpc.AspNetCore.Server": "[2.83.0, )",
           "Grpc.Net.Client": "[2.84.0, )"
         }

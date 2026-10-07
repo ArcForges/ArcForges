@@ -96,7 +96,7 @@
     },
     {
       "path": "src/BuildingBlocks/ArcForges.LocalRpc/ArcForges.LocalRpc.csproj",
-      "blob": "d3fa2c1644fed529df04997868e49b666646a9b3"
+      "blob": "eb9765252312d1496968d662046d5d8815fbdd01"
     },
     {
       "path": "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ArcForges.LocalRpc.Tests.csproj",

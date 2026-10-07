@@ -170,13 +170,13 @@ public sealed class LocalRpcRegistration : IAsyncDisposable
     private int _bound;
     private int _disposed;
 
-    private LocalRpcRegistration(LocalRpcLaunch launch, RegistrationTimings timings)
+    private LocalRpcRegistration(LocalRpcLaunch launch, RegistrationTimings timings, Guid? parentInstanceId = null)
     {
         _launch = launch;
         _clock = launch.Clock;
         _timings = timings;
         _endedToken = _ended.Token;
-        ParentInstanceId = Guid.NewGuid();
+        ParentInstanceId = parentInstanceId ?? Guid.NewGuid();
         _launchRevocation = launch.Revoked.Register(static state => ((LocalRpcRegistration)state!).End(LocalRpcRegistrationEnd.LaunchEnded), this);
     }
 
@@ -218,6 +218,14 @@ public sealed class LocalRpcRegistration : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(launch);
         return new LocalRpcRegistration(launch, new RegistrationTimings());
+    }
+
+    /// <summary>Creates a registration bound to the owning parent's actual runtime instance. A relaunch still requires fresh launch grants.</summary>
+    public static LocalRpcRegistration Create(LocalRpcLaunch launch, Guid parentInstanceId)
+    {
+        ArgumentNullException.ThrowIfNull(launch);
+        if (parentInstanceId == Guid.Empty) throw new ArgumentException("The owning parent runtime instance is required.", nameof(parentInstanceId));
+        return new LocalRpcRegistration(launch, new RegistrationTimings(), parentInstanceId);
     }
 
     internal static LocalRpcRegistration Create(LocalRpcLaunch launch, RegistrationTimings timings) => new(launch, timings);

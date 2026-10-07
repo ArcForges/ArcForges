@@ -1038,7 +1038,11 @@
     "tests/tooling/test_native_abi_inventory.py",
     "src/BuildingBlocks/ArcForges.Security/Tests/CapabilityApprovalBindingTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox.Broker/HelperResourceLifetime.cs",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/WindowsLifetimeTests.cs"
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/WindowsLifetimeTests.cs",
+    "eng/policy/dependency-reviews/plt-11-r1.json",
+    "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcBootstrapService.cs",
+    "src/BuildingBlocks/ArcForges.LocalRpc/LocalRpcParentBootstrapHost.cs",
+    "src/BuildingBlocks/ArcForges.LocalRpc/Tests/ProductionBootstrapTests.cs"
   ],
   "reused": {
     "LICENSE": "canonical-agpl-legal-r1",
