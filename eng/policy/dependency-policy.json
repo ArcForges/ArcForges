@@ -16,8 +16,18 @@
     "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
     "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
     "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+    "eng/native/vcpkg/pdfium-build.linux-arm64.v1.json": "798b0a7625b67f4ec4a0b46ce0ec9c6ba9a942910498931df92458810660cc20",
+    "eng/native/vcpkg/pdfium-build.linux-x64.v1.json": "8139d7e6b36f4fc24d2c581c7df8fb7842fab6f90db7abcc4c7338094bb47d94",
+    "eng/native/vcpkg/pdfium-build.osx-arm64.v1.json": "883bc3c5edf17330e906725b8b19b32e94db4a01a71edf42348edf8af526dbca",
+    "eng/native/vcpkg/pdfium-build.osx-x64.v1.json": "5afde1885e9d5080b2e13ccb63476f3e1eb33332eb1cb4e7a8347f4d32bb1f51",
     "eng/native/vcpkg/pdfium-build.v1.json": "c71137dffec1f831122cfdbdf411b1522509b47e0083b72ff702b6a951d17637",
+    "eng/native/vcpkg/pdfium-build.win-arm64.v1.json": "25f9e3d50ded6e2759eb816adf5216fba981d82c0136880f5e4e6ed202a1cf98",
+    "eng/native/vcpkg/pdfium-sbom.linux-arm64.v1.json": "5ff86c6e7c79474ce7a4d6f011a8adb80d910a95ffca2b80cadb9b786613f5e6",
+    "eng/native/vcpkg/pdfium-sbom.linux-x64.v1.json": "50d8c7ffaa42eb40ee28291304896d07d608d54254317b1a5b437a8d705a9b02",
+    "eng/native/vcpkg/pdfium-sbom.osx-arm64.v1.json": "245a214ac12a6ea34650973aef9f262c8a7eb326099aa88374afc79dadcaac0a",
+    "eng/native/vcpkg/pdfium-sbom.osx-x64.v1.json": "0b595065f3d7a61dd1f1921f04a02565fbee69b20d523a03174afa265eb7813f",
     "eng/native/vcpkg/pdfium-sbom.v1.json": "ea5628646c7f89caf495e68cd75d17be0004a2fac339e889c7ea57d57f435ee9",
+    "eng/native/vcpkg/pdfium-sbom.win-arm64.v1.json": "82f8ed72e73651d21b029b8e932e5b5c133e757db6416a3960777ab648790388",
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
@@ -27,6 +37,7 @@
     "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
     "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
     "eng/provenance/artifact-profiles/native-win-x64-r4.json": "1cf40d8075ae94ca095607fb60cb5ea2cb9ed42f9008c92a6e643660c1756589",
+    "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json": "1b0e8c560e6146d13414eccab6247f47bb68d0c6ad5ec2da6b80ab64bde6ffab",
     "eng/provenance/records/canonical-agpl-legal-r1.json": "876a4d67f4f1cdba5e43a2431f73a242d3e34fa81b45620b8d45a76781d23dd9",
     "eng/provenance/records/contracts-apache-legal-r1.json": "d436592a4d2f88a0de71a04bcf1c7f52cdf313049ef1b713e525a3ef57025b59",
     "eng/provenance/records/contracts-provenance-tools-r1.json": "734af233a171876f4f246e0d7f99c7bc5366be65da9801acbd2a1f5a7588bfce",
@@ -820,19 +831,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-codex-20261006-observability",
-    "reviewer": "Independent exact-head source and dependency-admission review by w-codex-20261006-native-image is required before merge.",
+    "owner": "w-codex-20261006-security",
+    "reviewer": "Independent native-image session: full source15374522 approved6028166068; exact accepted-parent metadata successor approval required before integration.",
     "reviewedOn": "2026-10-07",
-    "baselineCommit": "6d77c09cbe59c22eb34f8871a8251ea8cc7b5cd9",
-    "maintenanceAssessment": "PLT.11 preserves all independently approved 736e4cb LocalRpc functional sources, nine actual SDK400 lock closures and accepted PLT62 parent policies/provenance/immutable receipts. The reviewed Design269/Plan381 repair adds only the already admitted Platform324 external dependency to the existing Security.LocalRpcBoundary catalogue row, matching the actual SDK400 generated nuspec. No coordinate/version/hash, source, lock, package identity or validation algorithm changes. Only this unaccepted own candidate r1 and active input hash are resealed after retaining its prior bytes outside the source tree.",
+    "baselineCommit": "b1a599eb8cb61d62ef58d0ca00ba7b6bc0130e7a",
+    "maintenanceAssessment": "Minimum second partial NAT25 producer: preserve exact immutable historical r4 package subset, add closed family/RID dispatch and source-bound actual-subset/index handoff. Include complete actual PDF sealed-input adapter rather than missing-function hook, with five actual hash/member/attestation/GN/SBOM/legal-pinned upstream SDK input profiles and distinct owned compiler recipe. All62 NuGet and10 Python coordinate/content/licence rows unchanged; original PDF legal closure and Chromium8044 noV8/noXFA are unchanged. Source/compiler/CRT admission is distinct from approved publisher signing and target OS execution. No catalogue/project/package/RID activation in this partial delivery. Final narrow accepted-parent rechain consumes actual PLT11 mergeb1a599 and its Boundary Platform324 pin without any owned functional/profile/test byte change; all incoming immutable receipts/policies/catalogue/project/lock/import identities remain preserved.",
     "upgradeChecks": {
-      "compilation": "Exact 736e4cb hosted37548805211 passed full locked Release build, complete ordinary component tests, full formatting, native and all eight AOT checks. Strict managed pack alone rejected the missing Platform324 catalogue dependency in the actual generated Security.LocalRpcBoundary nuspec. Retained SDK400 metadata diagnostic proves the exact six-dependency set but ended NU5128 without a successful package; it is never publication evidence. Existing missing/extra/repin guard tests and strict real nuspec comparison apply unchanged. Current successor complete hosted pack/CI and ordinary main publication are mandatory. Retained d590 real896 LocalRpc/28 explicitOSskips +21 bootstrap cases + genuine Windows composed AOT evidence remain, no unchanged source build repeated.",
-      "aot-trim": "Actual SDK10.0.400 composed win-x64 Native AOT parent/child consumer at d5903fb published with zero warnings/errors and executed genuine private Windows pipe generated Challenge/Confirm/HMAC/Renew/refusal/disconnect/cleanup with dynamicCode=false. This is real component composition, not package-publication, wrong-user, signed/installed or all-OS isolation acceptance. Current exact-head retained AOT compile gates remain required.",
-      "compatibility": "Legacy Bootstrap.Create is retained. Genuine generated full-shape validation, actual stable parent process identity/UTC, application/runtime/launch IDs, proof consumption, lease and failed-start/shared shutdown contracts are exercised. Normal owned package publication after merge is required, distinct from acceptance.",
-      "licence-provenance": "The actual accepted PLT59 Apache-2.0 Contracts324 publication/source330e46bd and exact signed-content NuGet SHA512 closures are reused without mutation; first-party source ownership is appended only for the three actual new files, all existing legal/provenance/NOTICE records preserved.",
-      "security-sbom": "Accepted parent PLT60 source/provenance/native helper and immutable historical policy are preserved byte-for-byte per record. Full accepted 62 NuGet/10 Python closure is unchanged. Existing exact metadata Platform324 consumer edges are admitted and normally generated; no wrong-user, OS isolation, mock deployment, live collector or installed acceptance inferred.",
-      "runtime-performance-migration": "Real private stream transport fixtures and actual Windows AOT composed consumer exercise bounded leases, cancellation and lifecycle. No persistent data migration; unavailable all-OS/second-account acceptance remains owned by PLT09/10/46 and PRF04 follow-ups.",
-      "framework-runtime-posture": "Pinned SDK10.0.400, C#14/net10, existing AOT/trim/analyzers and all framework/native/Android posture remain unchanged; no warning or gate suppression."
+      "compilation": "Python portable production modules compile. Actual available file-lock/process-death/flush/error and upstream admission contract tests pass; projects/locks/native compiled source are unchanged, retained applicable hosted checks required on the reviewed head.",
+      "aot-trim": "No managed/native ABI or compilation input changes. Retained applicable native and existing nine AOT compile gates remain required; no new hosted consumer or OS acceptance execution.",
+      "compatibility": "Historical r4 native coordinates remain exact under schema1; schema2 selects only registered actual verified family/RID inputs with same source/build identity. All managed packages remain mandatory. Distinct complete producer receipts survive publication handoff; missing/extra/foreign/duplicate/cohort changes refuse.",
+      "licence-provenance": "Five actual upstream archives and GitHub Sigstore bundles were cryptographically admitted at existing full NAT25 component handoff, exact GN architecture/OS and all44/45 members observed, all15 original PDF legal files and SPDX aggregates retained. Existing matching PDFium licence expression unchanged. New owned producer profile separately closes actual compiler/tool/hash/cache/CRT/grant facts; ARM64EC_1 remains excluded. No invented foreign-OS compiled payload or signing proof.",
+      "security-sbom": "Bounded JSON/member/hash inventories, closed upstream receipts, source/cache copy races, kernel writer lock and crash recovery, file persistence/error-before-promotion and exact publication handoff tests. Copied bytes and index are checked at every real handoff; unsigned schema1/schema2 receipts are not publisher authentication.",
+      "runtime-performance-migration": "No performance/database migration/target-OS isolation claim. Actual foreign upstream binaries inspected without execution; ordinary fake-unavailable adapter tests do not certify deployment. Windows copied-file fsync is observed, not directory/physical power-loss proof; POSIX directories are flushed before/after promotion.",
+      "framework-runtime-posture": "SDK10.0.400/net10 and all current contracts, NuGet/Python/native ABI/dependency identities unchanged; no toolchain install or Android/Kotlin/ART/R8 change."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -849,8 +860,18 @@
       "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
       "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
       "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+      "eng/native/vcpkg/pdfium-build.linux-arm64.v1.json": "798b0a7625b67f4ec4a0b46ce0ec9c6ba9a942910498931df92458810660cc20",
+      "eng/native/vcpkg/pdfium-build.linux-x64.v1.json": "8139d7e6b36f4fc24d2c581c7df8fb7842fab6f90db7abcc4c7338094bb47d94",
+      "eng/native/vcpkg/pdfium-build.osx-arm64.v1.json": "883bc3c5edf17330e906725b8b19b32e94db4a01a71edf42348edf8af526dbca",
+      "eng/native/vcpkg/pdfium-build.osx-x64.v1.json": "5afde1885e9d5080b2e13ccb63476f3e1eb33332eb1cb4e7a8347f4d32bb1f51",
       "eng/native/vcpkg/pdfium-build.v1.json": "c71137dffec1f831122cfdbdf411b1522509b47e0083b72ff702b6a951d17637",
+      "eng/native/vcpkg/pdfium-build.win-arm64.v1.json": "25f9e3d50ded6e2759eb816adf5216fba981d82c0136880f5e4e6ed202a1cf98",
+      "eng/native/vcpkg/pdfium-sbom.linux-arm64.v1.json": "5ff86c6e7c79474ce7a4d6f011a8adb80d910a95ffca2b80cadb9b786613f5e6",
+      "eng/native/vcpkg/pdfium-sbom.linux-x64.v1.json": "50d8c7ffaa42eb40ee28291304896d07d608d54254317b1a5b437a8d705a9b02",
+      "eng/native/vcpkg/pdfium-sbom.osx-arm64.v1.json": "245a214ac12a6ea34650973aef9f262c8a7eb326099aa88374afc79dadcaac0a",
+      "eng/native/vcpkg/pdfium-sbom.osx-x64.v1.json": "0b595065f3d7a61dd1f1921f04a02565fbee69b20d523a03174afa265eb7813f",
       "eng/native/vcpkg/pdfium-sbom.v1.json": "ea5628646c7f89caf495e68cd75d17be0004a2fac339e889c7ea57d57f435ee9",
+      "eng/native/vcpkg/pdfium-sbom.win-arm64.v1.json": "82f8ed72e73651d21b029b8e932e5b5c133e757db6416a3960777ab648790388",
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
@@ -860,6 +881,7 @@
       "eng/provenance/artifact-profiles/native-win-x64-r2.json": "2469bb7ff266028a7c072522d12beb97f6fe11d44a109b1c31932a541657e10d",
       "eng/provenance/artifact-profiles/native-win-x64-r3.json": "4663b812996a60f91c5620c1cd58675203a870bdf28001f60cef7a67ae585775",
       "eng/provenance/artifact-profiles/native-win-x64-r4.json": "1cf40d8075ae94ca095607fb60cb5ea2cb9ed42f9008c92a6e643660c1756589",
+      "eng/provenance/artifact-profiles/pdf-runtime-producer-v1.json": "1b0e8c560e6146d13414eccab6247f47bb68d0c6ad5ec2da6b80ab64bde6ffab",
       "eng/provenance/records/canonical-agpl-legal-r1.json": "876a4d67f4f1cdba5e43a2431f73a242d3e34fa81b45620b8d45a76781d23dd9",
       "eng/provenance/records/contracts-apache-legal-r1.json": "d436592a4d2f88a0de71a04bcf1c7f52cdf313049ef1b713e525a3ef57025b59",
       "eng/provenance/records/contracts-provenance-tools-r1.json": "734af233a171876f4f246e0d7f99c7bc5366be65da9801acbd2a1f5a7588bfce",
@@ -1128,7 +1150,7 @@
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/plt-62-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/plt-11-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1139,7 +1161,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/plt-11-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/nat-25-dispatch-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [
