@@ -5,6 +5,7 @@ Runs without SDK, network or build output. Only the files GOV.30 writes are scan
 host detection, immutable dependency-review, provenance and patch records are history or shared code and are not
 owned here. The only exempt occurrences are the two current.json candidate rows pinned to the Design receipt.
 """
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -86,6 +87,53 @@ class DesktopRidResidueTests(unittest.TestCase):
                     exempt.add((row['repository'], run['rid']))
         self.assertEqual(exempt, HISTORY_EXEMPT)
         self.assertEqual(len(OSX.findall(text)), len(HISTORY_EXEMPT))
+
+
+def load_directory_generator():
+    spec = importlib.util.spec_from_file_location('create_gov30_reconciliation', ROOT / 'eng/verification/create_gov30_reconciliation.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class PinnedDirectoryRemovalTests(unittest.TestCase):
+    """The reconciliation generator removes the pinned osx rows; NAT.32 may already have retired some of them."""
+
+    def setUp(self):
+        self.generator = load_directory_generator()
+        self.pinned = list(self.generator.REMOVED)
+
+    @staticmethod
+    def row(path, owner='DesktopPlatform', present=False):
+        return {'owner': owner, 'path': path, 'present': present}
+
+    def test_all_sixteen_pinned_rows_are_removed_and_others_are_kept(self):
+        other = self.row('src/Native/ArcForges.Native.Colour', present=True)
+        foreign = self.row('src/Other.Runtime.osx-x64', owner='Other')
+        kept, removed = self.generator.remove_pinned_rows([self.row(p) for p in self.pinned] + [other, foreign])
+        self.assertEqual(removed, 16)
+        self.assertEqual(kept, [other, foreign])
+
+    def test_rebase_onto_nat32_finds_fourteen_pinned_rows_and_still_removes_them(self):
+        other = self.row('src/Native/ArcForges.Native.Colour', present=True)
+        present = [p for p in self.pinned if 'Native.Pdf' not in p]
+        kept, removed = self.generator.remove_pinned_rows([self.row(p) for p in present] + [other])
+        self.assertEqual(removed, 14)
+        self.assertEqual(kept, [other])
+
+    def test_rerun_after_removal_is_identity(self):
+        rows = [self.row('src/Native/ArcForges.Native.Colour', present=True)]
+        kept, removed = self.generator.remove_pinned_rows(rows)
+        self.assertEqual((kept, removed), (rows, 0))
+
+    def test_stray_desktop_osx_runtime_row_is_refused(self):
+        rows = [self.row(self.pinned[0]), self.row('src/Native/ArcForges.Native.Foo.Runtime.osx-x64')]
+        with self.assertRaises(SystemExit):
+            self.generator.remove_pinned_rows(rows)
+
+    def test_pinned_row_that_is_present_on_disk_is_refused(self):
+        with self.assertRaises(SystemExit):
+            self.generator.remove_pinned_rows([self.row(self.pinned[0], present=True)])
 
 
 if __name__ == '__main__':
