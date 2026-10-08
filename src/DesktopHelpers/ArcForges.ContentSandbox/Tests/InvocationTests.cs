@@ -120,60 +120,122 @@ public sealed class InvocationTests
     }
 
     [Fact]
-    public async Task APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()
+    public async Task OpenPdfIsRetiredAndAnswersItsClosedRefusalWithoutAParser()
     {
-        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 first page of the document", "longpage 90000"));
+        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 first page of the document"));
         await using var _l = launcher;
         await using var _i = invocation;
-        var document = await invocation.OpenPdfAsync(Ct);
-        Assert.True(document.IsSuccess, document.Failure?.Code);
-        var first = await invocation.GetPdfPageAsync(document.Value, 0, Ct);
-        Assert.Equal((612d, 792d), (first.Value!.WidthPoints, first.Value.HeightPoints));
-        Assert.Equal("state.not_found", (await invocation.GetPdfPageAsync(document.Value, 2, Ct)).Failure!.Code);
-
-        var small = await invocation.ExtractPdfTextAsync(document.Value, 0, 0, Ct);
-        Assert.Equal("first page of the document", small.Value!.Text);
-        Assert.False(small.Value.HasNext);
-        Assert.Equal(5, small.Value.Boxes.Count);
-
-        var total = 0;
-        uint start = 0;
-        while (true)
-        {
-            var chunk = (await invocation.ExtractPdfTextAsync(document.Value, 1, start, Ct)).Value!;
-            Assert.NotNull(chunk);
-            total += chunk.Text.Length;
-            if (!chunk.HasNext)
+        var refused = await invocation.RawClient.OpenPdfAsync(
+            new ContentSandboxServiceOpenPdfRequest
             {
-                break;
-            }
-
-            start = chunk.Next;
-        }
-
-        Assert.Equal(90000, total);
-        Assert.Equal("validation.invalid_offset", (await invocation.ExtractPdfTextAsync(document.Value, 1, 7, Ct)).Failure!.Code);
-
-        using var tile = (await invocation.RenderPdfTileAsync(document.Value, first.Value, 600, 780, 8, 8, 32, 16, Ct)).Value!;
-        Assert.Equal((32u, 16u), (tile.Width, tile.Height));
-        AssertPattern(tile);
-        Assert.True((await invocation.ClosePdfAsync(document.Value, Ct)).IsSuccess);
-        Assert.Equal("state.not_found", (await invocation.ClosePdfAsync(document.Value, Ct)).Failure!.Code);
+                Meta = Meta(),
+                SessionId = SandboxRecords.ToWireId(invocation.SessionId),
+                DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()),
+            },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal(ContentSandboxServiceOpenPdfResponse.OutcomeOneofCase.Error, refused.OutcomeCase);
+        Assert.Equal("resource.parser_failed", refused.Error.Code);
+        var malformed = await invocation.RawClient.OpenPdfAsync(
+            new ContentSandboxServiceOpenPdfRequest { Meta = Meta(), DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()) },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("validation.invalid_request", malformed.Error.Code);
+        Assert.False(invocation.IsEnded);
     }
 
     [Fact]
-    public async Task APdfRenderMustUseTheGeometryThePageCallReturned()
+    public async Task GetPdfPageIsRetiredAndAnswersItsClosedRefusalWithoutAParser()
     {
-        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 hello"));
+        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 first page of the document"));
         await using var _l = launcher;
         await using var _i = invocation;
-        var document = (await invocation.OpenPdfAsync(Ct)).Value;
-        var page = (await invocation.GetPdfPageAsync(document, 0, Ct)).Value!;
-        var scaled = page.Clone();
-        scaled.WidthPoints = 100;
-        var refused = await invocation.RenderPdfTileAsync(document, scaled, 600, 780, 0, 0, 8, 8, Ct);
-        Assert.False(refused.IsSuccess);
-        Assert.Equal("validation.invalid_request", refused.Failure!.Code);
+        var refused = await invocation.RawClient.GetPdfPageAsync(
+            new ContentSandboxServiceGetPdfPageRequest
+            {
+                Meta = Meta(),
+                SessionId = SandboxRecords.ToWireId(invocation.SessionId),
+                DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()),
+                PageIndex = 0,
+            },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("state.not_found", refused.Error.Code);
+        var malformed = await invocation.RawClient.GetPdfPageAsync(
+            new ContentSandboxServiceGetPdfPageRequest { Meta = Meta(), DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()) },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("validation.invalid_request", malformed.Error.Code);
+        Assert.False(invocation.IsEnded);
+    }
+
+    [Fact]
+    public async Task ExtractPdfTextIsRetiredAndAnswersItsClosedRefusalWithoutAParser()
+    {
+        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 first page of the document"));
+        await using var _l = launcher;
+        await using var _i = invocation;
+        var refused = await invocation.RawClient.ExtractPdfTextAsync(
+            new ContentSandboxServiceExtractPdfTextRequest
+            {
+                Meta = Meta(),
+                SessionId = SandboxRecords.ToWireId(invocation.SessionId),
+                DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()),
+                PageIndex = 0,
+                Start = 0,
+            },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("state.not_found", refused.Error.Code);
+        var malformed = await invocation.RawClient.ExtractPdfTextAsync(
+            new ContentSandboxServiceExtractPdfTextRequest { Meta = Meta(), DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()) },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("validation.invalid_request", malformed.Error.Code);
+        Assert.False(invocation.IsEnded);
+    }
+
+    [Fact]
+    public async Task RenderPdfTileIsRetiredAndAnswersItsClosedRefusalWithoutAParser()
+    {
+        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 first page of the document"));
+        await using var _l = launcher;
+        await using var _i = invocation;
+        var refused = await invocation.RawClient.RenderPdfTileAsync(
+            new ContentSandboxServiceRenderPdfTileRequest
+            {
+                Meta = Meta(),
+                SessionId = SandboxRecords.ToWireId(invocation.SessionId),
+                DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()),
+                Page = new SandboxPdfPage { PageIndex = 0, Rotation = 0, WidthPoints = 612, HeightPoints = 792 },
+                Region = new SandboxRegion { X = 0, Y = 0, Width = 8, Height = 8, FirstSample = 0, SampleCount = 0, RowStride = 32 },
+                Grant = new SandboxSlotGrant { SlotId = 0, Sequence = 1, Capacity = 4096 },
+                FullWidth = 600,
+                FullHeight = 780,
+            },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("state.not_found", refused.Error.Code);
+        var malformed = await invocation.RawClient.RenderPdfTileAsync(
+            new ContentSandboxServiceRenderPdfTileRequest { Meta = Meta(), DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()) },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("validation.invalid_request", malformed.Error.Code);
+        Assert.False(invocation.IsEnded);
+    }
+
+    [Fact]
+    public async Task ClosePdfIsRetiredAndReturnsItsIdempotentReceiptWithoutAParser()
+    {
+        var (launcher, _, invocation) = await Fixtures.LaunchAsync(Fixtures.Script("page 612 792 first page of the document"));
+        await using var _l = launcher;
+        await using var _i = invocation;
+        var closed = await invocation.RawClient.ClosePdfAsync(
+            new ContentSandboxServiceClosePdfRequest
+            {
+                Meta = Meta(),
+                SessionId = SandboxRecords.ToWireId(invocation.SessionId),
+                DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()),
+            },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal(ContentSandboxServiceClosePdfResponse.OutcomeOneofCase.Value, closed.OutcomeCase);
+        var malformed = await invocation.RawClient.ClosePdfAsync(
+            new ContentSandboxServiceClosePdfRequest { Meta = Meta(), DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()) },
+            new CallOptions(cancellationToken: Ct));
+        Assert.Equal("validation.invalid_request", malformed.Error.Code);
+        Assert.False(invocation.IsEnded);
     }
 
     [Fact]
@@ -214,12 +276,15 @@ public sealed class InvocationTests
         await using var _i = invocation;
 
         // 80 calls that the helper holds: 16 run (one in the parser, the rest waiting for it) and 64 queue. The data lane is full.
-        var held = Enumerable.Range(0, 80).Select(_ => invocation.RawClient.OpenPdfAsync(
-            new ContentSandboxServiceOpenPdfRequest
+        var held = Enumerable.Range(0, 80).Select(_ => invocation.RawClient.OpenImageAsync(
+            new ContentSandboxServiceOpenImageRequest
             {
                 Meta = Meta(),
                 SessionId = SandboxRecords.ToWireId(invocation.SessionId),
-                DocumentId = SandboxRecords.ToWireId(Guid.NewGuid()),
+                ImageId = SandboxRecords.ToWireId(Guid.NewGuid()),
+                Subimage = 0,
+                Mip = 0,
+                OutputFormat = 1,
             },
             new CallOptions(deadline: DateTime.UtcNow + TimeSpan.FromSeconds(28), cancellationToken: Ct)).ResponseAsync).ToArray();
         await Task.Delay(TimeSpan.FromSeconds(1), Ct);

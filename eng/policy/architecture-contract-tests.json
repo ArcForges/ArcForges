@@ -2825,31 +2825,6 @@
     "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.ATileTravelsThroughAGrantedSlotAndIsVerifiedOnThePrivateCopy()"
   },
   {
-    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.OpenPdfAsync(System.Threading.CancellationToken)",
-    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
-    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
-  },
-  {
-    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.GetPdfPageAsync(System.Guid, uint, System.Threading.CancellationToken)",
-    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
-    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
-  },
-  {
-    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.ExtractPdfTextAsync(System.Guid, uint, uint, System.Threading.CancellationToken)",
-    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
-    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
-  },
-  {
-    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.RenderPdfTileAsync(System.Guid, ArcForges.Contracts.LocalRpc.Sandbox.V1.SandboxPdfPage, uint, uint, uint, uint, uint, uint, System.Threading.CancellationToken)",
-    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
-    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
-  },
-  {
-    "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.ClosePdfAsync(System.Guid, System.Threading.CancellationToken)",
-    "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
-    "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.APdfIsOpenedPagedAndExtractedInBoundedChunksAndRendered()"
-  },
-  {
     "apiSymbol": "ArcForges.ContentSandbox.Broker.ContentSandboxInvocation.CancelAsync()",
     "testProject": "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj",
     "testMethod": "ArcForges.ContentSandbox.Tests.InvocationTests.CancellationReachesTheHelperThroughTheControlSlotWhileTheDataLaneIsFull()"

@@ -29,10 +29,6 @@
       "kind": "cmake"
     },
     {
-      "path": "native/arcpdf-abi/CMakeLists.txt",
-      "kind": "cmake"
-    },
-    {
       "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
       "kind": "msbuild"
     },
@@ -174,10 +170,6 @@
     },
     {
       "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-      "kind": "msbuild"
-    },
-    {
-      "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
       "kind": "msbuild"
     },
     {

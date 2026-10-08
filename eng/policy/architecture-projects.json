@@ -328,14 +328,6 @@
     "aot": true
   },
   {
-    "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
-    "role": "NativeAdapter",
-    "owner": "DesktopPlatform",
-    "module": "",
-    "production": true,
-    "aot": true
-  },
-  {
     "path": "tests/ArchitectureTests/ArcForges.Tests.ArchitectureTests.csproj",
     "role": "Test",
     "owner": "DesktopPlatform",

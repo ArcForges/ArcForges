@@ -19,15 +19,6 @@ typedef arc_status_t(ARC_ABI_CALL* arc_image_open_signature_t)(const arc_io_v1*,
 typedef arc_status_t(ARC_ABI_CALL* arc_image_read_signature_t)(arc_handle_t, const arc_region_v1*, arc_mut_buffer_t*,
                                                                const arc_cancel_token_t*);
 typedef arc_status_t(ARC_ABI_CALL* arc_image_close_signature_t)(arc_handle_t);
-typedef arc_status_t(ARC_ABI_CALL* arc_pdf_open_signature_t)(const arc_io_v1*, arc_string_view_t, const arc_limits_v1*,
-                                                             arc_handle_t*, uint32_t*, const arc_cancel_token_t*);
-typedef arc_status_t(ARC_ABI_CALL* arc_pdf_page_info_signature_t)(arc_handle_t, uint32_t, arc_pdf_page_v1*);
-typedef arc_status_t(ARC_ABI_CALL* arc_pdf_render_signature_t)(arc_handle_t, const arc_pdf_page_v1*,
-                                                               const arc_region_v1*, uint32_t, uint32_t,
-                                                               arc_mut_buffer_t*, const arc_cancel_token_t*);
-typedef arc_status_t(ARC_ABI_CALL* arc_pdf_text_signature_t)(arc_handle_t, uint32_t, uint32_t, uint32_t,
-                                                             arc_mut_buffer_t*, const arc_cancel_token_t*);
-typedef arc_status_t(ARC_ABI_CALL* arc_pdf_close_signature_t)(arc_handle_t);
 
 #define ARC_ABI_REQUIRE_SIGNATURE(function_name, signature_type)                                                       \
     _Static_assert(_Generic(&(function_name), signature_type: 1, default: 0), #function_name " signature mismatch")
@@ -41,11 +32,6 @@ ARC_ABI_REQUIRE_SIGNATURE(arc_instruments_close, arc_instruments_close_signature
 ARC_ABI_REQUIRE_SIGNATURE(arc_image_open, arc_image_open_signature_t);
 ARC_ABI_REQUIRE_SIGNATURE(arc_image_read, arc_image_read_signature_t);
 ARC_ABI_REQUIRE_SIGNATURE(arc_image_close, arc_image_close_signature_t);
-ARC_ABI_REQUIRE_SIGNATURE(arc_pdf_open, arc_pdf_open_signature_t);
-ARC_ABI_REQUIRE_SIGNATURE(arc_pdf_page_info, arc_pdf_page_info_signature_t);
-ARC_ABI_REQUIRE_SIGNATURE(arc_pdf_render, arc_pdf_render_signature_t);
-ARC_ABI_REQUIRE_SIGNATURE(arc_pdf_text, arc_pdf_text_signature_t);
-ARC_ABI_REQUIRE_SIGNATURE(arc_pdf_close, arc_pdf_close_signature_t);
 
 #undef ARC_ABI_REQUIRE_SIGNATURE
 
