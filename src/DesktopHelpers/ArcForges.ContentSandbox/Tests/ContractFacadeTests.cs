@@ -307,8 +307,9 @@ public sealed class ContractFacadeTests
         var status = ContentSandboxLauncher.ProbeProfile();
         Assert.Equal(OperatingSystem.IsWindows(), status.Profile == ContentSandboxProfile.WindowsAppContainerJob);
         Assert.Equal(OperatingSystem.IsLinux(), status.Profile == ContentSandboxProfile.LinuxLandlockSeccomp);
-        if (OperatingSystem.IsMacOS())
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
         {
+            // macOS, and any other operating system: a typed refusal, never an available profile.
             Assert.False(status.IsAvailable);
             Assert.NotEmpty(status.Reason);
         }

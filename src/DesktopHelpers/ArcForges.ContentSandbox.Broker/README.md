@@ -17,7 +17,7 @@ var image = await invocation.OpenImageAsync(0, 0, 1);
 using var tile = (await invocation.ReadImageTileAsync(image.Value, 0, 0, 256, 256)).Value!;   // bytes verified on a private copy
 ```
 
-- **No fallback.** A platform without a verified profile (macOS here, an unknown OS, a failed AppContainer or self-check) fails with
+- **No fallback.** A platform without a verified profile (macOS, which is not a supported platform, an unknown OS, a failed AppContainer or self-check) fails with
   `security.isolation_unavailable`, starts nothing, and never parses in process.
 - **Windows (`Windows/`).** The helper is opened with writers refused and its SHA-256 compared with the pin; an AppContainer identity is leased from
   a pool of eight (a lock file per identity, released by the OS if the owner ends); the process is created suspended with a handle list naming
