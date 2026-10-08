@@ -14,7 +14,10 @@ internal enum ContentSandboxProfileKind : byte
     /// <summary>Linux Landlock, seccomp and no_new_privs.</summary>
     LinuxLandlockSeccomp = 2,
 
-    /// <summary>macOS App Sandbox with an XPC descriptor handoff (not implemented here; a launch for it is refused).</summary>
+    /// <summary>
+    /// Reserved and wire-stable; macOS is not a supported platform. No profile of this family exists, it is never selected, and a frame carrying
+    /// it is refused by the helper with the isolation-unavailable exit on every operating system.
+    /// </summary>
     MacOsAppSandboxXpc = 3,
 }
 
