@@ -93,38 +93,6 @@
       }
     },
     {
-      "name": "osx-x64-shim-static",
-      "displayName": "macOS x64 / static shim dependencies",
-      "inherits": "shim-static",
-      "binaryDir": "${sourceDir}/artifacts/cmake/osx-x64/shim-static",
-      "cacheVariables": {
-        "CMAKE_OSX_ARCHITECTURES": "x86_64",
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/osx-x64",
-        "VCPKG_TARGET_TRIPLET": "x64-osx"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
-      "name": "osx-arm64-shim-static",
-      "displayName": "macOS arm64 / static shim dependencies",
-      "inherits": "shim-static",
-      "binaryDir": "${sourceDir}/artifacts/cmake/osx-arm64/shim-static",
-      "cacheVariables": {
-        "CMAKE_OSX_ARCHITECTURES": "arm64",
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/artifacts/stage/native/osx-arm64",
-        "VCPKG_TARGET_TRIPLET": "arm64-osx"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
       "name": "linux-x64-shim-static-asan",
       "displayName": "Linux x64 / static / ASan+UBSan",
       "inherits": "linux-x64-shim-static",
@@ -148,14 +116,6 @@
       "configurePreset": "linux-x64-shim-static"
     },
     {
-      "name": "osx-x64-shim-static",
-      "configurePreset": "osx-x64-shim-static"
-    },
-    {
-      "name": "osx-arm64-shim-static",
-      "configurePreset": "osx-arm64-shim-static"
-    },
-    {
       "name": "linux-x64-shim-static-asan",
       "configurePreset": "linux-x64-shim-static-asan"
     }
@@ -171,20 +131,6 @@
     {
       "name": "linux-x64-shim-static",
       "configurePreset": "linux-x64-shim-static",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "osx-x64-shim-static",
-      "configurePreset": "osx-x64-shim-static",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "osx-arm64-shim-static",
-      "configurePreset": "osx-arm64-shim-static",
       "output": {
         "outputOnFailure": true
       }

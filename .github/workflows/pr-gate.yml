@@ -138,6 +138,8 @@ jobs:
         run: |
           python eng/dependency_policy.py
           python -m unittest discover -s eng -p test_dependency_policy.py -v
+      - name: Reject macOS RID, lock section and admission residue in GOV.30-owned files
+        run: python -m unittest discover -s eng -p test_desktop_rids.py -v
       - name: Reject incomplete declarations and invalid reference graphs
         run: python -m unittest discover -s eng -p test_licence_boundary.py -v
       - name: Verify actual managed build declarations

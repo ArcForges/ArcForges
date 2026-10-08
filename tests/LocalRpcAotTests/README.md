@@ -20,13 +20,6 @@ dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r linu
 ./artifacts/prf-04/linux-x64/LocalRpcAotTests
 ```
 
-On a macOS host, publish and run either supported macOS RID the same way:
-
-```sh
-dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r osx-arm64 -o artifacts/prf-04/osx-arm64
-./artifacts/prf-04/osx-arm64/LocalRpcAotTests
-```
-
 The runtime peer-PID proof supports Windows Named Pipes, Linux Unix-domain
 sockets (`SO_PEERCRED`), and macOS Unix-domain sockets (`SOL_LOCAL` /
 `LOCAL_PEERPID`). Apple publishes those macOS socket-option values in its

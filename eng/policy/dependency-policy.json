@@ -15,7 +15,7 @@
     "eng/acceptance/foundation/package.json": "32361db70e2072b195385c9141b7bd5b003fd51f6a919b566fcb2c152da8b780",
     "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
     "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
-    "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+    "eng/build/desktop-rids.props": "6c238bf81f2ab3a89b033da2c2aaff9f0f30d916626700cc6a501c521bf849a9",
     "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
     "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
     "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
@@ -257,10 +257,10 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36",
     "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "c03396c8d83d259ce0ec1eb3e74b9992e1df662a8161ffa8f06abdd98f8d5c1d",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj": "c902b6c2d32ec042573459b66d6984cc92a6698e1ef7a5908a0bf98b843ce306",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "9b033b97704da1ed12f3b531bb19df97ce05c9382396081f43384be6b925e759",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj": "9d97cbef2c2c5585c3698a2c5f7ade78aed10ff806ebc513965a97cada38bc1b",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e",
+    "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "131658a4c474dbf89d9d86fdba9fc943a9c18b279fc829230723aa3540ce52b3",
     "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
     "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
     "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -273,16 +273,16 @@
     "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
     "tests/AssistantAbstractionsTests/packages.lock.json": "b242f814d6724e1c8c5d82e1a969b846f51cb907c9acfd4d426556059785d8c8",
     "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
-    "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
+    "tests/LocalRpcAotTests/packages.lock.json": "14db0500440e6499b5f5f6e448642420d65d5d2ef6e3cd52c2bb7631f5d53ea8",
     "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
     "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
     "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
     "tests/PersistenceTests/packages.lock.json": "c94488ff2560372433bf2ca0d6f04a69429d10cde23265edca24ea6f798b6778",
     "tests/ReleaseArtifactTests/GrpcWeb/Directory.Packages.props": "75389a85362198cb44500b21765fda9a7a83ce13a17e6fbeb5b5ec9d9f8b68c7",
     "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj": "51a16e4d5b8f0370359b0eaed5677866f656e6dab53f079138b3f5d9b3c68b04",
-    "tests/ReleaseArtifactTests/GrpcWeb/packages.lock.json": "fb32043eec1ecd8f2ec860466523722bd3f5ae68a60e38d4d8a62140448f68d8",
+    "tests/ReleaseArtifactTests/GrpcWeb/packages.lock.json": "5b968c7f0f2acbaebd14a3e5ababfe3a15fcd39f9e61b70b7d8f93180c092cde",
     "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj": "a99e35c36a3e4a19b446d2d2deebff6e60945ed68688c207d23fdfb691c7f2bb",
-    "tests/ReleaseArtifactTests/Realtime/packages.lock.json": "0dbb97585be8af174a773fe14e3a8a216e54f66a3694ab7c9de3870e50971525"
+    "tests/ReleaseArtifactTests/Realtime/packages.lock.json": "92536e4260ac2fc1239251a302042610671214d9945fadf3a03724ec7b9ea1ac"
   },
   "nugetClosure": {
     "arcforges.application.abstractions/1.0.0-ci.29.1": {
@@ -632,20 +632,6 @@
       "source": "https://api.nuget.org/v3-flatcontainer/runtime.linux-x64.microsoft.dotnet.ilcompiler/10.0.11/runtime.linux-x64.microsoft.dotnet.ilcompiler.nuspec",
       "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
     },
-    "runtime.osx-arm64.microsoft.dotnet.ilcompiler/10.0.11": {
-      "contentHash": "4cxybmyqJI3zZIKkNM1Ft0aq6Q4q6b4SJ11Np5j9lrHHurfheI66dUshpZD/UEMjMqAdg9O03AABAYLYSUzwyw==",
-      "licence": "MIT",
-      "nuspecSha256": "3c8c812ae7efd5e2f30b0de43fcd131582f26d1f4a72736f9922688286d44feb",
-      "source": "https://api.nuget.org/v3-flatcontainer/runtime.osx-arm64.microsoft.dotnet.ilcompiler/10.0.11/runtime.osx-arm64.microsoft.dotnet.ilcompiler.nuspec",
-      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
-    },
-    "runtime.osx-x64.microsoft.dotnet.ilcompiler/10.0.11": {
-      "contentHash": "Nf7MRJg0HZ4G7icNbW8T49O/9UU6x8XoUPffkk3Uh+r+mDAUFHkhIptUc0wDdIRrouJrLt0IJp0LiaQJUB7DbA==",
-      "licence": "MIT",
-      "nuspecSha256": "b350157b66441409caea6b98bba20e59277ac91c18af0772223781a18b2cdad4",
-      "source": "https://api.nuget.org/v3-flatcontainer/runtime.osx-x64.microsoft.dotnet.ilcompiler/10.0.11/runtime.osx-x64.microsoft.dotnet.ilcompiler.nuspec",
-      "classification": "build-test-tooling; runtime package closure remains packaging allowlist owned"
-    },
     "runtime.win-arm64.microsoft.dotnet.ilcompiler/10.0.11": {
       "contentHash": "vy/AJM7NafhIa+4EsJrh//5Ba3HW3purZh+KR0Bpt/R20w3s06ZrUsdwHywUs+5E7PfEtbXBcLlebKFusSLBkQ==",
       "licence": "MIT",
@@ -781,19 +767,19 @@
   "nativeGate": "eng/native_provenance.py",
   "sourceGate": "eng/check_provenance.py",
   "review": {
-    "owner": "w-deku-20261008-nat-32",
-    "reviewer": "w-deku-20261008-rev-nat-32 (independent reviewer session named in the NAT.32 review assignment)",
+    "owner": "w-deku-20261008-gov-30",
+    "reviewer": "w-deku-20261008-rev-gov-30",
     "reviewedOn": "2026-10-08",
-    "baselineCommit": "f833de3410183d8c59b17ec54229e06ad1370d98",
-    "maintenanceAssessment": "NAT.32 adds no third-party dependency. It retires the merged PDF engine (P2-022): it removes the first-party non-packable project ArcForges.Native.Pdf (a LibraryImport binding of the owned arc_pdf_* ABI), the first-party native source directory native/arcpdf-abi (backend=none: no PDF parser was linked), the ContentSandbox PDF parser path and the ProjectReference from the ContentSandbox helper, its Fixture and Tests to ArcForges.Native.Pdf. No PDFium source, binary, port, vcpkg change, NuGet coordinate or Python requirement is added or removed. The NuGet closure (60 coordinates, versions and content hashes) and the Python CI closure (10 hash-pinned coordinates) are unchanged. The only dependency-input edits are the three ContentSandbox packages.lock.json files (the project-type entry for ArcForges.Native.Pdf and its dependency edge removed, and the stale project-type entry for ArcForges.Native.Abstractions removed by an unlocked restore under the pinned SDK 10.0.400, because no project in those graphs references it after the retirement), the ContentSandbox project header comment and its ProjectReference; the Native.Pdf project and its lock are deleted. The receipt chains from nat-14-r1, the active receipt on origin/main; nat-14-r1 stays unmodified and immutable history.",
+    "baselineCommit": "e0f2e563bfb1a134a415b4b085dab121c66d00f9",
+    "maintenanceAssessment": "GOV.30 adds no dependency. It removes the two macOS-RID ILCompiler 10.0.11 runtime-pack admissions (MIT) and the macOS-RID net10.0 lock sections of the ContentSandbox, ContentSandbox Fixture, LocalRpcAotTests, ReleaseArtifactTests GrpcWeb and Realtime locks, because eng/build/desktop-rids.props no longer lists the two macOS RIDs (P2-023). The remaining desktop RID set is win-x64, win-arm64 and linux-x64; linux-arm64 is not added. Every other coordinate, version, content hash and source record is unchanged, and the locks equal their predecessors with only the macOS sections removed. This successor chains from the receipt active on the base branch and preserves all earlier receipts.",
     "upgradeChecks": {
-      "compilation": "Pinned SDK 10.0.400 in the local WSL2 Debian distribution, on a Linux-native copy: dotnet restore DesktopPlatform.slnx --locked-mode passed; dotnet build DesktopPlatform.slnx -c Release --no-restore with TreatWarningsAsErrors passed (0 warnings, 0 errors); the ContentSandbox Tests project passed (98 passed, 9 opt-in operating-system checks skipped). After the lock regeneration (commit 7f2dfa40) the three ContentSandbox projects were restored with --locked-mode, the Tests project built with 0 warnings and 0 errors, and its tests passed again (98 passed, 9 skipped) under SDK 10.0.400 in the same WSL2 copy. Windows: the whole solution built in Release with TreatWarningsAsErrors under SDK 10.0.401 through the workstation build slot (0 errors), using an uncommitted global.json adapter that was reverted before this receipt. clang compiled the C17 and C++20 native ABI layout tests with the edited header, with their static asserts. The native CMake and CTest build was not run locally: the pinned vcpkg tree is not available on this workstation.",
-      "aot-trim": "The ContentSandbox helper was published with Native AOT for linux-x64 under the pinned SDK 10.0.400 in the Linux-native copy and produced its native binary with no analyzer or AOT warnings. The helper, its Fixture and Tests compile with the repository analyzers under warnings-as-errors on Windows and Linux. No Windows Native AOT publish was run in this change; the hosted compile-only job remains the CI owner of the Windows publish.",
-      "compatibility": "No package identity, published public API or wire schema changes. The Contracts repository is not edited: sandbox.proto and the local-sandbox-1.0.0-ci.287.1 compatibility pin are unchanged, and the five PDF RPCs stay in the published schema with closed answers. The ContentSandbox helper, Fixture and Tests are non-packable. The common ABI loses only the unpublished arc_pdf_* block; the image and instrument ABI families are unchanged. The NativeAbiLayout managed tests (3) passed on Windows after the 16-entry update.",
-      "licence-provenance": "First-party AGPL-3.0-only files are removed together with their inventory rows; no upstream source, notice or binary is added or changed, and NOTICE.txt is unchanged (its PDF hit is an unrelated licence file). The new receipt is first-party and listed in the inventory. eng/check_provenance.py for DesktopPlatform passed against origin/main (974 files, 140 records). The retired-artifact registry is not extended by this change: its GOV.17 model admits only P2-019 native package targets with a provenance record, and the PDF material was never packaged.",
-      "security-sbom": "No dependency closure change: the 60 NuGet coordinates (versions and content hashes) and the 10 Python tool coordinates are identical to nat-14-r1, and an unlocked restore under the pinned SDK 10.0.400 in a Linux-native copy regenerated the three edited ContentSandbox locks. The only difference from the previous locks is removal of the stale arcforges.native.abstractions Project entry: no package entry, version or content hash changed, and the SDK-bundled ILLink and ILCompiler stay at 10.0.11. The regenerated locks then passed --locked-mode restore under the same SDK (commit 7f2dfa40). The earlier claim of byte-identical regeneration was not reproduced and is withdrawn. No new advisory input. The removed native input surface is the PDF adapter and engine, whose only backend was none; no surface is added.",
-      "runtime-performance-migration": "No migration and no change to any published package runtime behaviour. The five PDF RPCs answer their closed refusals without any parser: five closed-refusal tests pass on Windows and on Linux. No PDF parsing, rendering, preview or AI PDF reading is retained or claimed. No operating-system isolation check was re-run; the opt-in OS checks stay skipped.",
-      "framework-runtime-posture": "No framework, SDK, runtime or toolchain pin changes; global.json stays at 10.0.400 with rollForward disabled. The Windows 10.0.401 build used an uncommitted adapter only; that SDK bundles Microsoft.NET.ILLink.Tasks 10.0.12 against the 10.0.11 lock, so the Windows build is not evidence for the locks, which were verified under 10.0.400 on Linux."
+      "compilation": "With the pinned SDK 10.0.400 in the local WSL2 Debian distribution (Debian 13, kernel 6.18.40.1-microsoft-standard-WSL2) on a Linux-native copy: the five affected locks were regenerated by restore (--use-lock-file) and every affected project passes --locked-mode restore; a Release build of the five affected projects completes with 0 warnings and 0 errors; the ArcForges.ContentSandbox.Tests project restores locked and its test run passes. The regenerated locks differ from their predecessors only by the removed macOS-RID sections.",
+      "aot-trim": "No trim, AOT or analyzer setting changes; the win-x64 and linux-x64 Native AOT publish paths are unchanged. Affected Native AOT probes are not re-published by this successor.",
+      "compatibility": "No public API, wire schema or contract changes; the LocalRpcAotTests publish help text and README drop only the macOS RID lines.",
+      "licence-provenance": "Removes two MIT coordinates with their recorded nuspec evidence; no coordinate is added and no source or licence record changes.",
+      "security-sbom": "The remaining locked graph is unchanged and keeps its NuGet audit; removing an unused RID admission reduces the admitted closure. No claim of absent current advisories is made.",
+      "runtime-performance-migration": "No runtime, performance or migration change; no macOS runtime or CI obligation is created or claimed.",
+      "framework-runtime-posture": "No framework major, native ABI, Android or SDK change; global.json remains on .NET SDK 10.0.400."
     },
     "inputHashes": {
       ".python-version": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93",
@@ -809,7 +795,7 @@
       "eng/acceptance/foundation/package.json": "32361db70e2072b195385c9141b7bd5b003fd51f6a919b566fcb2c152da8b780",
       "eng/acceptance/foundation/packages.lock.json": "36a2e2d446d5bf69b04398db18abcaa73d7c08855b046107cc2136695e2de27c",
       "eng/build/desktop-aot.props": "eda4a383b69a800f73e7bb4572e0695d33012ff275c4f27436caea2b11d276ef",
-      "eng/build/desktop-rids.props": "83f9c4d73353858171cf959b773cfb833afe08f522ce44356dcd27f8aeb2e357",
+      "eng/build/desktop-rids.props": "6c238bf81f2ab3a89b033da2c2aaff9f0f30d916626700cc6a501c521bf849a9",
       "eng/native/vcpkg/system-dependencies.v1.json": "54049f3a631bd9388181675ffaaec55be4157dfa3f9288ebe037c068581baa31",
       "eng/native/vcpkg/triplets/x64-windows-static-md.cmake": "6935956ac45214d00f49e0eec2b33ef85495b9c2e91ec0f27d5e5225a904320f",
       "eng/native/vcpkg/triplets/x64-windows.cmake": "1f0d1876aafd0730d364461ff5e3d60398404c70a237e57d50f879e44208125a",
@@ -1051,10 +1037,10 @@
       "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/packages.lock.json": "fac7c3ce73f75023748acd57900b6fea97e1913991e28811f2c18ffe88c44e36",
       "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj": "c03396c8d83d259ce0ec1eb3e74b9992e1df662a8161ffa8f06abdd98f8d5c1d",
       "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/ArcForges.ContentSandbox.HostileFixture.csproj": "c902b6c2d32ec042573459b66d6984cc92a6698e1ef7a5908a0bf98b843ce306",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "60e75e863ef0bcdd1721a3e50d5b37e498f266e45a3adc8c9511791b3c15a673",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/Fixture/packages.lock.json": "9b033b97704da1ed12f3b531bb19df97ce05c9382396081f43384be6b925e759",
       "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/ArcForges.ContentSandbox.Tests.csproj": "9d97cbef2c2c5585c3698a2c5f7ade78aed10ff806ebc513965a97cada38bc1b",
       "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json": "b0995a525ab6ee3403c30f3857bed38332a518c5a00ef58ced76de21d08e0ac4",
-      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "1fba3ecd713e869f5f2394823a6121c3a65eff76035256782c4a9302e11b091e",
+      "src/DesktopHelpers/ArcForges.ContentSandbox/packages.lock.json": "131658a4c474dbf89d9d86fdba9fc943a9c18b279fc829230723aa3540ce52b3",
       "src/Directory.Build.props": "bf118d90b53ceb536479db4a803b370cd47fc15aa47d98a88902b8ab0dd54047",
       "src/Native/ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj": "874cb5b91a52e1a3f01adad7819f20c70bdbf8641d4f65c0bc44dcbe70337d0b",
       "src/Native/ArcForges.Native.Abstractions/packages.lock.json": "09f91faca7c23b7ef4c0a4a6a4afa1f5d4e17e2e3dcbd9aca08ff12aec384059",
@@ -1067,21 +1053,21 @@
       "tests/AssistantAbstractionsTests/AssistantAbstractionsTests.csproj": "674ea930fead5b76640b5013f9c0348ef175c03184fa8a1382437c7ccd3fa594",
       "tests/AssistantAbstractionsTests/packages.lock.json": "b242f814d6724e1c8c5d82e1a969b846f51cb907c9acfd4d426556059785d8c8",
       "tests/LocalRpcAotTests/LocalRpcAotTests.csproj": "28e7f64ff9d289bd4943a5e14e36302350ba3ff00d8a36756dae07da38b673f8",
-      "tests/LocalRpcAotTests/packages.lock.json": "b30ccc15ca94a45952cf840250a88b85d4b4be45d1906fce83234a8d29d0b0c3",
+      "tests/LocalRpcAotTests/packages.lock.json": "14db0500440e6499b5f5f6e448642420d65d5d2ef6e3cd52c2bb7631f5d53ea8",
       "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj": "def3becd3d047014df118bd686a671e55ef7db133c5b03495bd19945b6ebe6e0",
       "tests/NativeAbiTests/packages.lock.json": "062e863bfceb7a467a5f004424324c80bb0f3a6f885a9b7de89aa92b90fe6cf1",
       "tests/PersistenceTests/ArcForges.Tests.PersistenceTests.csproj": "5a947697cc93979c5e6c149b100fee204d706695e0e4d596af7bf95a674c3008",
       "tests/PersistenceTests/packages.lock.json": "c94488ff2560372433bf2ca0d6f04a69429d10cde23265edca24ea6f798b6778",
       "tests/ReleaseArtifactTests/GrpcWeb/Directory.Packages.props": "75389a85362198cb44500b21765fda9a7a83ce13a17e6fbeb5b5ec9d9f8b68c7",
       "tests/ReleaseArtifactTests/GrpcWeb/GrpcWebAotProbe.csproj": "51a16e4d5b8f0370359b0eaed5677866f656e6dab53f079138b3f5d9b3c68b04",
-      "tests/ReleaseArtifactTests/GrpcWeb/packages.lock.json": "fb32043eec1ecd8f2ec860466523722bd3f5ae68a60e38d4d8a62140448f68d8",
+      "tests/ReleaseArtifactTests/GrpcWeb/packages.lock.json": "5b968c7f0f2acbaebd14a3e5ababfe3a15fcd39f9e61b70b7d8f93180c092cde",
       "tests/ReleaseArtifactTests/Realtime/RealtimeAotProbe.csproj": "a99e35c36a3e4a19b446d2d2deebff6e60945ed68688c207d23fdfb691c7f2bb",
-      "tests/ReleaseArtifactTests/Realtime/packages.lock.json": "0dbb97585be8af174a773fe14e3a8a216e54f66a3694ab7c9de3870e50971525"
+      "tests/ReleaseArtifactTests/Realtime/packages.lock.json": "92536e4260ac2fc1239251a302042610671214d9945fadf3a03724ec7b9ea1ac"
     },
     "frameworkVersions": {
       "dotnetSdk": "10.0.400"
     },
-    "previousReceipt": "eng/policy/dependency-reviews/nat-14-r1.json",
+    "previousReceipt": "eng/policy/dependency-reviews/nat-32-r1.json",
     "namingToolCandidate": {
       "package": "ArcForges.Contracts.Validation",
       "version": "1.0.0-ci.205.1",
@@ -1092,7 +1078,7 @@
       "publication": "https://github.com/ArcForges/Contracts/actions/runs/36356146302"
     }
   },
-  "reviewReceipt": "eng/policy/dependency-reviews/nat-32-r1.json",
+  "reviewReceipt": "eng/policy/dependency-reviews/gov-30-r1.json",
   "pythonClosure": {
     "pre-commit/4.6.0": {
       "hashes": [

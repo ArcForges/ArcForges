@@ -56,7 +56,7 @@ internal static partial class Program
             if (RuntimeFeature.IsDynamicCodeSupported)
             {
                 throw new InvalidOperationException(
-                    "Run the published Native AOT executable: dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r <win-x64|linux-x64|osx-x64|osx-arm64>.");
+                    "Run the published Native AOT executable: dotnet publish tests/LocalRpcAotTests/LocalRpcAotTests.csproj -c Release -r <win-x64|linux-x64>.");
             }
 
             await RunProbeAsync().ConfigureAwait(false);
