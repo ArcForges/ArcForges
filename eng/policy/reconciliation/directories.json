@@ -1833,22 +1833,6 @@
   },
   {
     "owner": "DesktopPlatform",
-    "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP11",
-    "reason": "Helper runtime family; restricted fixture parser at WP11 and production composition at WP13."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Runtime.osx-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP11",
-    "reason": "Helper runtime family; restricted fixture parser at WP11 and production composition at WP13."
-  },
-  {
-    "owner": "DesktopPlatform",
     "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Runtime.win-arm64",
     "disposition": "Keep",
     "present": false,
@@ -1921,22 +1905,6 @@
   },
   {
     "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Colour.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Colour.Runtime.osx-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Colour.Runtime.win-arm64",
     "disposition": "Keep",
     "present": false,
@@ -1970,22 +1938,6 @@
   {
     "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Graphics.Runtime.linux-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Graphics.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Graphics.Runtime.osx-x64",
     "disposition": "Keep",
     "present": false,
     "producer": "WP13",
@@ -2033,22 +1985,6 @@
   },
   {
     "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Image.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Image.Runtime.osx-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Image.Runtime.win-arm64",
     "disposition": "Keep",
     "present": false,
@@ -2082,22 +2018,6 @@
   {
     "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Instruments.Runtime.linux-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Instruments.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Instruments.Runtime.osx-x64",
     "disposition": "Keep",
     "present": false,
     "producer": "WP13",
@@ -2145,22 +2065,6 @@
   },
   {
     "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Media.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Media.Runtime.osx-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Media.Runtime.win-arm64",
     "disposition": "Keep",
     "present": false,
@@ -2201,22 +2105,6 @@
   },
   {
     "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Otio.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Otio.Runtime.osx-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Otio.Runtime.win-arm64",
     "disposition": "Keep",
     "present": false,
@@ -2250,22 +2138,6 @@
   {
     "owner": "DesktopPlatform",
     "path": "src/Native/ArcForges.Native.Pdf.Runtime.linux-x64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-arm64",
-    "disposition": "Keep",
-    "present": false,
-    "producer": "WP13",
-    "reason": "Required owned directory; implement substantive behavior only in its scheduled producer."
-  },
-  {
-    "owner": "DesktopPlatform",
-    "path": "src/Native/ArcForges.Native.Pdf.Runtime.osx-x64",
     "disposition": "Keep",
     "present": false,
     "producer": "WP13",
