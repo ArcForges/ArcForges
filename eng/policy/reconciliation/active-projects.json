@@ -20,7 +20,7 @@
     },
     {
       "path": "native/CMakeLists.txt",
-      "blob": "9db191dd8e3ed8863e30ee847b180e8985cb3e0d"
+      "blob": "76b9e2fe6b1292ff48d16c56661704647dbd273f"
     },
     {
       "path": "native/arcimage-abi/CMakeLists.txt",
@@ -148,7 +148,7 @@
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox/ArcForges.ContentSandbox.csproj",
-      "blob": "daf4e45e7e188048e44acfef682015b48a812109"
+      "blob": "5f6d1f4c61cd0ae2d86afc63941f885c7f831cee"
     },
     {
       "path": "src/DesktopHelpers/ArcForges.ContentSandbox.Contracts/ArcForges.ContentSandbox.Contracts.csproj",
