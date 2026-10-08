@@ -956,7 +956,6 @@
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/MacProfileTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/OsIsolationTests.cs",
     "src/DesktopHelpers/ArcForges.ContentSandbox/Tests/packages.lock.json",
-    "src/DesktopHelpers/ArcForges.ContentSandbox/macos/ArcForges.ContentSandbox.entitlements",
     "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/ArcForges.Security.CapabilityEnforcement.csproj",
     "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/CapabilityEvidence.cs",
     "src/BuildingBlocks/ArcForges.Security/CapabilityEnforcement/CapabilityGate.cs",

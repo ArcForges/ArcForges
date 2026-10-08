@@ -17,7 +17,10 @@ public enum ContentSandboxProfile
     /// <summary>Linux Landlock, seccomp and no_new_privs.</summary>
     LinuxLandlockSeccomp = 2,
 
-    /// <summary>macOS App Sandbox with an XPC descriptor handoff. It is not implemented: a launch for it is refused.</summary>
+    /// <summary>
+    /// Reserved and wire-stable; macOS is not a supported platform. No profile of this family exists, it is never selected, and a launch or a
+    /// launch frame carrying it is refused fail-closed (security.isolation_unavailable).
+    /// </summary>
     MacOsAppSandboxXpc = 3,
 }
 

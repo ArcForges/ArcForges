@@ -16,11 +16,14 @@ namespace ArcForges.ContentSandbox.Host;
 /// </summary>
 internal static class ProfileEnforcement
 {
-    /// <summary>The profile family of the operating system this process runs on, or macOS/unsupported values the launch frame never matches.</summary>
-    internal static ContentSandboxProfileKind ThisPlatform =>
+    /// <summary>
+    /// The profile family of the operating system this process runs on. It is null where no restricted profile exists (macOS and every other
+    /// operating system), so no launch frame matches it and HelperEntry refuses the frame with the isolation-unavailable exit.
+    /// </summary>
+    internal static ContentSandboxProfileKind? ThisPlatform =>
         OperatingSystem.IsWindows() ? ContentSandboxProfileKind.WindowsAppContainerJob
         : OperatingSystem.IsLinux() ? ContentSandboxProfileKind.LinuxLandlockSeccomp
-        : ContentSandboxProfileKind.MacOsAppSandboxXpc;
+        : null;
 
     /// <summary>Applies and verifies the profile; false means the helper must not run a parser.</summary>
     [SuppressMessage("Design", "CA1031", Justification = "Any failure of enforcement or verification is a refusal to run.")]

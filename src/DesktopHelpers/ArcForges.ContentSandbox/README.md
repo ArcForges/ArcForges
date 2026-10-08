@@ -22,8 +22,8 @@ generated `ContentSandboxService` contract. This project is non-packable; packag
   filter to itself and checks them. Seccomp is synchronised to every thread (TSYNC). Landlock restricts only the calling thread unless its own
   TSYNC flag is given, so the helper passes that flag, refuses to run if the kernel rejects it (a kernel without multithread Landlock, which
   is recent), and its self-check observes the denial from the applying thread, from several thread-pool threads and from a new thread. Parent loss is detected by the helper polling its parent id (no parent-death signal: the kernel ties it to the spawning thread, which may retire while the parent lives) and the supervising parent kills the helper on every path. A wedged helper whose parent was killed is not ended by the kernel. No offline test observes the Landlock TSYNC flag or the shrink seal (a mutant that drops either survives offline); both need a Linux kernel. Not covered on Linux: tgkill to another same-user process (the runtime needs it), no PID/user/mount namespaces, and
-  the profile has never run on a Linux kernel here. macOS: no launcher exists; `macos/ArcForges.ContentSandbox.entitlements` is the declarative input of the
-  profile that a signed sandboxed bundle and an XPC descriptor handoff would need, and a launch there is refused.
+  the profile has never run on a Linux kernel here. macOS is not supported: there is no launcher, no profile and no entitlements file; the
+  reserved `MacOsAppSandboxXpc` value is never selected, and a launch or a frame carrying it is refused (security.isolation_unavailable).
 - **Fixture (`Fixture/`).** TEST ONLY: the same host with one deliberately hostile first-party test composition (the registered
   `SUB-hostile-test-parser`). It parses no real format. Its script attacks the boundary (reads a product file, connects to a real listener,
   sends datagrams, opens other processes, spawns, maps the read-only input writable) or crashes, hangs, exhausts memory or overruns its
@@ -51,7 +51,7 @@ Publishing needs the Visual Studio C++ tools on the path of the shell; on a mach
 ## What is not proven
 
 See the Plan ledger record of PLT.45. In short: the Linux profile and launcher are compiled in hosted CI and unit-tested only; they have not been run
-on Linux. macOS has no launcher. Windows signature (Authenticode) verification of the helper is not implemented: the launcher pins the
+on Linux. macOS is not supported and has no launcher. Windows signature (Authenticode) verification of the helper is not implemented: the launcher pins the
 SHA-256 of the installed helper from the signed inventory.
 
 ## Production composition
