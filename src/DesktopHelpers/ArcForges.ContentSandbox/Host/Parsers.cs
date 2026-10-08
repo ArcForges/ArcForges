@@ -57,11 +57,6 @@ internal sealed class ParserInput(ILocalRpcBufferMapping mapping, long length)
 /// <param name="Cancelled">Cancelled on session cancellation, expiry and parent loss.</param>
 internal sealed record ParserContext(ContentSandboxLimits Limits, CancellationToken Cancelled);
 
-/// <summary>The full text of one page with finite UTF-16 geometry boxes. The host paginates it into bounded chunks.</summary>
-/// <param name="Text">The page text.</param>
-/// <param name="Boxes">Boxes whose start and length are UTF-16 offsets into <paramref name="Text"/>.</param>
-internal sealed record PdfPageText(string Text, IReadOnlyList<SandboxTextBox> Boxes);
-
 /// <summary>An image parser that runs only inside the helper process under its restricted profile.</summary>
 internal interface IImageParser : IDisposable
 {
@@ -72,26 +67,10 @@ internal interface IImageParser : IDisposable
     int ReadTile(SandboxRegion region, uint format, Span<byte> destination, ParserContext context);
 }
 
-/// <summary>A PDF parser that runs only inside the helper process under its restricted profile. Scripts and actions stay disabled.</summary>
-internal interface IPdfParser : IDisposable
-{
-    /// <summary>Opens the input and returns the page count.</summary>
-    uint Open(ParserInput input, ParserContext context);
-
-    /// <summary>The geometry of one page.</summary>
-    SandboxPdfPage GetPage(uint pageIndex, ParserContext context);
-
-    /// <summary>The whole text of one page.</summary>
-    PdfPageText GetPageText(uint pageIndex, ParserContext context);
-
-    /// <summary>Renders the tile into <paramref name="destination"/> and returns the number of bytes written.</summary>
-    int RenderTile(SandboxPdfPage page, SandboxRegion region, uint fullWidth, uint fullHeight, Span<byte> destination, ParserContext context);
-}
-
 /// <summary>
 /// One approved parser composition, chosen by the identifier of the launch and never by a path or a function name. The production helper
-/// composes <see cref="ProductionParserProfile"/> (the PDF parser over the native library); the hostile test composition exists only in the
-/// test fixture. A composition that lacks a parser kind refuses that kind.
+/// composes <see cref="ProductionParserProfile"/>, which composes no parser until the still-image composition is delivered; the hostile test
+/// composition exists only in the test fixture. A composition that lacks a parser kind refuses that kind.
 /// </summary>
 internal interface IContentParserProfile
 {
@@ -100,9 +79,6 @@ internal interface IContentParserProfile
 
     /// <summary>A new image parser, or null when the composition has none.</summary>
     IImageParser? CreateImageParser();
-
-    /// <summary>A new PDF parser, or null when the composition has none.</summary>
-    IPdfParser? CreatePdfParser();
 
     /// <summary>
     /// Runs before the operating-system profile is applied: loads and verifies whatever native libraries the composition needs, because a

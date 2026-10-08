@@ -13,4 +13,4 @@ P2-019/P2-020 and GOV.17 retire the native families consumed only by products ou
 
 The retained image dependency closure still includes OpenColorIO through OpenImageIO. Removing the owned Colour wrapper does not permit stripping dependencies or notices required by Image. New profile/record revisions bind only retained artifacts; original provenance and published versions remain unchanged.
 
-Packaging guards reject tampered or missing Image/CRT DLLs, wrong RID, altered headers, incorrect package pairs and missing upstream notices. No native functionality beyond existing metadata/error probes is introduced. Instruments, functional image/PDF previews and sandbox composition remain their named delivery tasks.
+Packaging guards reject tampered or missing Image/CRT DLLs, wrong RID, altered headers, incorrect package pairs and missing upstream notices. No native functionality beyond existing metadata/error probes is introduced. Instruments, functional image previews and sandbox composition remain their named delivery tasks; the PDF engine and local PDF parsing are retired by NAT.32 under P2-022 (recorded as retired, not completed).

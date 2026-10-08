@@ -8,7 +8,6 @@ using System.Text;
 using System.Text.Json;
 
 [assembly: InternalsVisibleTo("ArcForges.Native.Image")]
-[assembly: InternalsVisibleTo("ArcForges.Native.Pdf")]
 
 namespace ArcForges.Native.Abstractions;
 
@@ -213,17 +212,6 @@ internal struct NativeImageOptionsV1
     internal NativeLimitsV1 Limits;
 }
 
-[StructLayout(LayoutKind.Sequential, Pack = 8)]
-internal struct NativePdfPageV1
-{
-    internal uint StructSize;
-    internal uint StructVersion;
-    internal uint PageIndex;
-    internal uint Rotation;
-    internal double WidthPoints;
-    internal double HeightPoints;
-}
-
 /// <summary>
 /// Owns one opaque, process-local native handle token. Implementations must release the token
 /// through their matching native close function; tokens are never domain identifiers or wire data.
@@ -267,7 +255,7 @@ public abstract class NativeSafeHandle : SafeHandle
     }
 }
 
-/// <summary>Closed numeric keys shared by the retained image, instrument and PDF ABI families.</summary>
+/// <summary>Closed numeric keys shared by the retained image and instrument ABI families.</summary>
 public static class NativeAbiKeys
 {
     public const uint IoRead = 1;

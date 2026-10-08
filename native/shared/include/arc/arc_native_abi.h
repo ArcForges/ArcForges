@@ -220,14 +220,6 @@ typedef struct arc_image_options_v1 {
     arc_limits_v1 limits;
 } arc_image_options_v1;
 
-typedef struct arc_pdf_page_v1 {
-    uint32_t struct_size;
-    uint32_t struct_version;
-    uint32_t page_index;
-    uint32_t rotation;
-    double width_points;
-    double height_points;
-} arc_pdf_page_v1;
 #pragma pack(pop)
 
 /* ABI 1.1 family declarations are shared here; family bodies/exports are delivered separately. */
@@ -248,19 +240,6 @@ ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, con
 ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_read(arc_handle_t image, const arc_region_v1* region,
                                                         arc_mut_buffer_t* pixels, const arc_cancel_token_t* cancel);
 ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_image_close(arc_handle_t image);
-ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_open(const arc_io_v1* io, arc_string_view_t password,
-                                                      const arc_limits_v1* limits, arc_handle_t* document,
-                                                      uint32_t* pages, const arc_cancel_token_t* cancel);
-ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_page_info(arc_handle_t document, uint32_t index,
-                                                           arc_pdf_page_v1* page);
-ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_render(arc_handle_t document, const arc_pdf_page_v1* page,
-                                                        const arc_region_v1* region, uint32_t full_width,
-                                                        uint32_t full_height, arc_mut_buffer_t* rgba8,
-                                                        const arc_cancel_token_t* cancel);
-ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_text(arc_handle_t document, uint32_t page, uint32_t start,
-                                                      uint32_t count, arc_mut_buffer_t* text_geometry,
-                                                      const arc_cancel_token_t* cancel);
-ARC_ABI_EXPORT arc_status_t ARC_ABI_CALL arc_pdf_close(arc_handle_t document);
 
 #ifdef __cplusplus
 }
@@ -400,13 +379,6 @@ ARC_ABI_LAYOUT_ASSERT(offsetof(arc_image_options_v1, mip) == 12);
 ARC_ABI_LAYOUT_ASSERT(offsetof(arc_image_options_v1, format) == 16);
 ARC_ABI_LAYOUT_ASSERT(offsetof(arc_image_options_v1, reserved) == 20);
 ARC_ABI_LAYOUT_ASSERT(offsetof(arc_image_options_v1, limits) == 24);
-ARC_ABI_LAYOUT_ASSERT(sizeof(arc_pdf_page_v1) == 32 && ARC_ABI_ALIGNOF(arc_pdf_page_v1) == 8);
-ARC_ABI_LAYOUT_ASSERT(offsetof(arc_pdf_page_v1, struct_size) == 0);
-ARC_ABI_LAYOUT_ASSERT(offsetof(arc_pdf_page_v1, struct_version) == 4);
-ARC_ABI_LAYOUT_ASSERT(offsetof(arc_pdf_page_v1, page_index) == 8);
-ARC_ABI_LAYOUT_ASSERT(offsetof(arc_pdf_page_v1, rotation) == 12);
-ARC_ABI_LAYOUT_ASSERT(offsetof(arc_pdf_page_v1, width_points) == 16);
-ARC_ABI_LAYOUT_ASSERT(offsetof(arc_pdf_page_v1, height_points) == 24);
 #endif
 #undef ARC_ABI_LAYOUT_ASSERT
 #undef ARC_ABI_ALIGNOF
