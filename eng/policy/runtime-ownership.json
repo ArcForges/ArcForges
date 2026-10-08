@@ -41,10 +41,6 @@
           "role": "native-build"
         },
         {
-          "path": "native/arcpdf-abi/CMakeLists.txt",
-          "role": "native-build"
-        },
-        {
           "path": "native/arcimage-abi/windows/arcslate_image_abi.vcxproj",
           "role": "native-build"
         },
@@ -190,10 +186,6 @@
         },
         {
           "path": "src/Native/ArcForges.Native.Image/ArcForges.Native.Image.csproj",
-          "role": "aot-library"
-        },
-        {
-          "path": "src/Native/ArcForges.Native.Pdf/ArcForges.Native.Pdf.csproj",
           "role": "aot-library"
         },
         {

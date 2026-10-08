@@ -22,7 +22,7 @@ import dependency_policy  # noqa: E402
 
 RECEIPT = "eng/policy/dependency-reviews/gov-30-r1.json"
 # The main commit the successor is reviewed against; update together with a rebase.
-BASELINE_COMMIT = "f833de3410183d8c59b17ec54229e06ad1370d98"
+BASELINE_COMMIT = "e0f2e563bfb1a134a415b4b085dab121c66d00f9"
 REMOVED_COORDINATES = (
     "runtime.osx-arm64.microsoft.dotnet.ilcompiler/10.0.11",
     "runtime.osx-x64.microsoft.dotnet.ilcompiler/10.0.11",
@@ -54,7 +54,7 @@ def main() -> None:
     policy["review"].update(
         {
             "owner": "w-deku-20261008-gov-30",
-            "reviewer": "Pending independent exact-head dependency-admission review before merge.",
+            "reviewer": "w-deku-20261008-rev-gov-30",
             "reviewedOn": "2026-10-08",
             "baselineCommit": BASELINE_COMMIT,
             "maintenanceAssessment": (

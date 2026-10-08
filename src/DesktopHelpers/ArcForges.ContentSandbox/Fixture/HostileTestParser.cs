@@ -31,9 +31,6 @@ internal sealed class HostileProfile : IContentParserProfile
 
     /// <inheritdoc />
     public IImageParser? CreateImageParser() => new HostileImageParser();
-
-    /// <inheritdoc />
-    public IPdfParser? CreatePdfParser() => new HostilePdfParser();
 }
 
 /// <summary>The script a hostile test document carries: line-oriented, first line the magic, the rest commands.</summary>
@@ -141,91 +138,6 @@ internal sealed class HostileImageParser : IImageParser
     /// <inheritdoc />
     public void Dispose()
     {
-    }
-}
-
-/// <summary>The PDF side of the hostile fixture: pages and text come from the script, never from a real document.</summary>
-internal sealed class HostilePdfParser : IPdfParser
-{
-    private readonly List<(double Width, double Height, string Text)> _pages = [];
-
-    /// <inheritdoc />
-    public uint Open(ParserInput input, ParserContext context)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        var script = HostileScript.Read(input);
-        foreach (var line in script.Lines)
-        {
-            if (line[0] == "page" && line.Length >= 3
-                && double.TryParse(line[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var width)
-                && double.TryParse(line[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var height))
-            {
-                _pages.Add((width, height, string.Join(' ', line.Skip(3))));
-            }
-            else if (line[0] == "longpage" && line.Length >= 2 && int.TryParse(line[1], NumberStyles.None, CultureInfo.InvariantCulture, out var chars))
-            {
-                _pages.Add((612, 792, LongText(chars)));
-            }
-        }
-
-        HostileBehaviors.OnOpen(script, context);
-        return (uint)_pages.Count;
-    }
-
-    /// <inheritdoc />
-    public SandboxPdfPage GetPage(uint pageIndex, ParserContext context)
-    {
-        var page = _pages[(int)pageIndex];
-        return new SandboxPdfPage { PageIndex = pageIndex, Rotation = 0, WidthPoints = page.Width, HeightPoints = page.Height };
-    }
-
-    /// <inheritdoc />
-    public PdfPageText GetPageText(uint pageIndex, ParserContext context)
-    {
-        var text = _pages[(int)pageIndex].Text;
-        var boxes = new List<SandboxTextBox>();
-        var start = 0;
-        while (start < text.Length)
-        {
-            var end = text.IndexOf(' ', start);
-            end = end < 0 ? text.Length : end;
-            if (end > start)
-            {
-                boxes.Add(new SandboxTextBox { Start = (uint)start, Length = (uint)(end - start), X = start, Y = 0, Width = end - start, Height = 10 });
-            }
-
-            start = end + 1;
-        }
-
-        return new PdfPageText(text, boxes);
-    }
-
-    /// <inheritdoc />
-    public int RenderTile(SandboxPdfPage page, SandboxRegion region, uint fullWidth, uint fullHeight, Span<byte> destination, ParserContext context) =>
-        TilePattern.Fill(region, 1, fullWidth, fullHeight, destination);
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-    }
-
-    private static string LongText(int chars)
-    {
-        var builder = new StringBuilder(chars);
-        var word = 0;
-        while (builder.Length < chars)
-        {
-            // Words of letters, a four-byte character (a surrogate pair) every few words, and spaces, so that a cut can land inside a pair.
-            builder.Append("word").Append(word.ToString(CultureInfo.InvariantCulture)).Append(' ');
-            if (word % 5 == 0)
-            {
-                builder.Append(char.ConvertFromUtf32(0x1F600)).Append(' ');
-            }
-
-            word++;
-        }
-
-        return builder.ToString(0, chars).TrimEnd(char.ConvertFromUtf32(0x1F600)[0]);
     }
 }
 

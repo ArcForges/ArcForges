@@ -23,7 +23,6 @@ namespace ArcForges.ContentSandbox.Host;
 internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxServiceBase, IDisposable
 {
     private const int MaxOpenObjects = 8;
-    private const int MaxPdfTextBytes = 60 * 1024;
     private const int RememberedRenewals = 16;
     private static readonly TimeSpan SessionLease = TimeSpan.FromSeconds(30);
 
@@ -423,279 +422,71 @@ internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxS
     }
 
     /// <inheritdoc />
-    public override async Task<ContentSandboxServiceOpenPdfResponse> OpenPdf(ContentSandboxServiceOpenPdfRequest request, ServerCallContext context)
+    /// <remarks>The local PDF path is retired (P2-022). Each PDF call is checked as before and answered with its closed refusal, or with its receipt, without any parser.</remarks>
+    public override Task<ContentSandboxServiceOpenPdfResponse> OpenPdf(ContentSandboxServiceOpenPdfRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new ContentSandboxServiceOpenPdfResponse { Meta = MetaOf(request.Meta) };
-        if (!Shape.IsValid(request) || !TryGetLiveSession(request.SessionId, out var session) || !SandboxRecords.TryReadId(request.DocumentId, out var documentId))
-        {
-            response.Error = Failure("validation.invalid_request");
-            return response;
-        }
-
-        PdfState? existing;
-        lock (_gate)
-        {
-            _ = session.Documents.TryGetValue(documentId, out existing);
-            if (existing is null && session.Documents.Count >= MaxOpenObjects)
-            {
-                response.Error = Failure("capacity.busy");
-                return response;
-            }
-        }
-
-        if (existing is not null)
-        {
-            response.Value = new ContentSandboxServiceOpenPdfValue { DocumentId = SandboxRecords.ToWireId(documentId), PageCount = existing.PageCount };
-            return response;
-        }
-
-        var parser = _profile?.CreatePdfParser();
-        if (parser is null)
-        {
-            response.Error = Failure("resource.unavailable");
-            return response;
-        }
-
-        var input = new ParserInput(_resources.Input, (long)_frame.InputLength);
-        var opened = await RunParserAsync(session, parserContext => parser.Open(input, parserContext), context.CancellationToken).ConfigureAwait(false);
-        if (opened.Failure is not null)
-        {
-            parser.Dispose();
-            response.Error = Failure(opened.Failure);
-            return response;
-        }
-
-        if (opened.Value > session.Limits.MaxItems)
-        {
-            parser.Dispose();
-            response.Error = Failure("resource.parser_failed");
-            return response;
-        }
-
-        lock (_gate)
-        {
-            session.Documents[documentId] = new PdfState(parser, opened.Value);
-        }
-
-        response.Value = new ContentSandboxServiceOpenPdfValue { DocumentId = SandboxRecords.ToWireId(documentId), PageCount = opened.Value };
-        return response;
+        response.Error = PdfCallIsLive(request.SessionId, request.DocumentId, Shape.IsValid(request))
+            ? Failure("resource.parser_failed")
+            : Failure("validation.invalid_request");
+        return Task.FromResult(response);
     }
 
     /// <inheritdoc />
-    public override async Task<ContentSandboxServiceGetPdfPageResponse> GetPdfPage(ContentSandboxServiceGetPdfPageRequest request, ServerCallContext context)
+    /// <remarks>Retired with the PDF path (P2-022): no document can be opened, so no page exists to return.</remarks>
+    public override Task<ContentSandboxServiceGetPdfPageResponse> GetPdfPage(ContentSandboxServiceGetPdfPageRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new ContentSandboxServiceGetPdfPageResponse { Meta = MetaOf(request.Meta) };
-        if (!Shape.IsValid(request) || !TryGetLiveSession(request.SessionId, out var session) || !SandboxRecords.TryReadId(request.DocumentId, out var documentId))
-        {
-            response.Error = Failure("validation.invalid_request");
-            return response;
-        }
-
-        PdfState? document;
-        lock (_gate)
-        {
-            _ = session.Documents.TryGetValue(documentId, out document);
-        }
-
-        if (document is null || request.PageIndex >= document.PageCount)
-        {
-            response.Error = Failure("state.not_found");
-            return response;
-        }
-
-        var result = await RunParserAsync(session, parserContext => document.Parser.GetPage(request.PageIndex, parserContext), context.CancellationToken).ConfigureAwait(false);
-        if (result.Failure is not null)
-        {
-            response.Error = Failure(result.Failure);
-            return response;
-        }
-
-        var page = result.Value!;
-        if (!SandboxProfileCheck.IsValid(page) || page.PageIndex != request.PageIndex)
-        {
-            response.Error = Failure("resource.parser_failed");
-            return response;
-        }
-
-        lock (_gate)
-        {
-            document.Pages[request.PageIndex] = page.Clone();
-        }
-
-        response.Value = new ContentSandboxServiceGetPdfPageValue { Page = page };
-        return response;
+        response.Error = PdfCallIsLive(request.SessionId, request.DocumentId, Shape.IsValid(request))
+            ? Failure("state.not_found")
+            : Failure("validation.invalid_request");
+        return Task.FromResult(response);
     }
 
     /// <inheritdoc />
-    public override async Task<ContentSandboxServiceExtractPdfTextResponse> ExtractPdfText(ContentSandboxServiceExtractPdfTextRequest request, ServerCallContext context)
+    /// <remarks>Retired with the PDF path (P2-022): no document can be opened, so no text exists to return.</remarks>
+    public override Task<ContentSandboxServiceExtractPdfTextResponse> ExtractPdfText(ContentSandboxServiceExtractPdfTextRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new ContentSandboxServiceExtractPdfTextResponse { Meta = MetaOf(request.Meta) };
-        if (!Shape.IsValid(request) || !TryGetLiveSession(request.SessionId, out var session) || !SandboxRecords.TryReadId(request.DocumentId, out var documentId))
-        {
-            response.Error = Failure("validation.invalid_request");
-            return response;
-        }
-
-        PdfState? document;
-        lock (_gate)
-        {
-            _ = session.Documents.TryGetValue(documentId, out document);
-        }
-
-        if (document is null || request.PageIndex >= document.PageCount)
-        {
-            response.Error = Failure("state.not_found");
-            return response;
-        }
-
-        PdfPageText? pageText;
-        lock (_gate)
-        {
-            _ = document.Texts.TryGetValue(request.PageIndex, out pageText);
-        }
-
-        if (pageText is null)
-        {
-            var result = await RunParserAsync(session, parserContext => document.Parser.GetPageText(request.PageIndex, parserContext), context.CancellationToken).ConfigureAwait(false);
-            if (result.Failure is not null)
-            {
-                response.Error = Failure(result.Failure);
-                return response;
-            }
-
-            pageText = result.Value!;
-            if (pageText.Text.Length > 16 * 1024 * 1024 || pageText.Boxes.Any(box => !IsFinite(box)))
-            {
-                response.Error = Failure("resource.parser_failed");
-                return response;
-            }
-
-            lock (_gate)
-            {
-                document.Texts[request.PageIndex] = pageText;
-            }
-        }
-
-        HashSet<uint> allowed;
-        lock (_gate)
-        {
-            if (!document.Starts.TryGetValue(request.PageIndex, out allowed!))
-            {
-                allowed = [0];
-                document.Starts[request.PageIndex] = allowed;
-            }
-        }
-
-        bool permitted;
-        lock (_gate)
-        {
-            permitted = allowed.Contains(request.Start);
-        }
-
-        if (!permitted)
-        {
-            response.Error = Failure("validation.invalid_offset");
-            return response;
-        }
-
-        var chunk = PdfTextPager.Cut(request.PageIndex, request.Start, pageText, session.Limits.MaxItems, MaxPdfTextBytes);
-        if (chunk is null)
-        {
-            response.Error = Failure("resource.parser_failed");
-            return response;
-        }
-
-        response.Value = new ContentSandboxServiceExtractPdfTextValue { Text = chunk };
-        if (!SandboxProfileCheck.IsValid(response))
-        {
-            response.Value = null;
-            response.Error = Failure("resource.parser_failed");
-            return response;
-        }
-
-        if (chunk.HasNext)
-        {
-            lock (_gate)
-            {
-                _ = allowed.Add(chunk.Next);
-            }
-        }
-
-        return response;
+        response.Error = PdfCallIsLive(request.SessionId, request.DocumentId, Shape.IsValid(request))
+            ? Failure("state.not_found")
+            : Failure("validation.invalid_request");
+        return Task.FromResult(response);
     }
 
     /// <inheritdoc />
-    public override async Task<ContentSandboxServiceRenderPdfTileResponse> RenderPdfTile(ContentSandboxServiceRenderPdfTileRequest request, ServerCallContext context)
+    /// <remarks>Retired with the PDF path (P2-022): no document can be opened, so no tile can be rendered.</remarks>
+    public override Task<ContentSandboxServiceRenderPdfTileResponse> RenderPdfTile(ContentSandboxServiceRenderPdfTileRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new ContentSandboxServiceRenderPdfTileResponse { Meta = MetaOf(request.Meta) };
-        if (!Shape.IsValid(request) || !TryGetLiveSession(request.SessionId, out var session) || !SandboxRecords.TryReadId(request.DocumentId, out var documentId)
-            || !SandboxProfileCheck.IsValid(request.Page) || !SandboxProfileCheck.IsValid(request.Region)
-            || request.FullWidth == 0 || request.FullHeight == 0)
-        {
-            response.Error = Failure("validation.invalid_request");
-            return response;
-        }
-
-        PdfState? document;
-        SandboxPdfPage? known = null;
-        lock (_gate)
-        {
-            _ = session.Documents.TryGetValue(documentId, out document);
-            _ = document?.Pages.TryGetValue(request.Page.PageIndex, out known);
-        }
-
-        // The page geometry must be the one GetPdfPage returned; scaling is never inferred from untrusted fields.
-        if (document is null || known is null || !known.Equals(request.Page))
-        {
-            response.Error = Failure(document is null ? "state.not_found" : "validation.invalid_request");
-            return response;
-        }
-
-        var tile = await RenderTileAsync(
-            session,
-            request.Region,
-            request.Grant,
-            1,
-            request.FullWidth,
-            request.FullHeight,
-            (region, span, parserContext) => document.Parser.RenderTile(request.Page, region, request.FullWidth, request.FullHeight, span, parserContext),
-            context.CancellationToken).ConfigureAwait(false);
-        if (tile.Error is not null)
-        {
-            response.Error = tile.Error;
-            return response;
-        }
-
-        response.Value = new ContentSandboxServiceRenderPdfTileValue { Buffer = tile.Descriptor };
-        return response;
+        var wellFormed = Shape.IsValid(request) && SandboxProfileCheck.IsValid(request.Page) && SandboxProfileCheck.IsValid(request.Region)
+            && request.FullWidth != 0 && request.FullHeight != 0;
+        response.Error = PdfCallIsLive(request.SessionId, request.DocumentId, wellFormed)
+            ? Failure("state.not_found")
+            : Failure("validation.invalid_request");
+        return Task.FromResult(response);
     }
 
     /// <inheritdoc />
+    /// <remarks>Retired with the PDF path (P2-022): closing a document that was never opened is the same idempotent receipt as before.</remarks>
     public override Task<ContentSandboxServiceClosePdfResponse> ClosePdf(ContentSandboxServiceClosePdfRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         var response = new ContentSandboxServiceClosePdfResponse { Meta = MetaOf(request.Meta) };
-        if (!Shape.IsValid(request) || !TryGetLiveSession(request.SessionId, out var session) || !SandboxRecords.TryReadId(request.DocumentId, out var documentId))
+        if (!PdfCallIsLive(request.SessionId, request.DocumentId, Shape.IsValid(request)))
         {
             response.Error = Failure("validation.invalid_request");
             return Task.FromResult(response);
         }
 
-        PdfState? document;
-        lock (_gate)
-        {
-            _ = session.Documents.Remove(documentId, out document);
-        }
-
-        document?.Parser.Dispose();
         response.Value = new ContentSandboxServiceClosePdfValue { Receipt = ReceiptOf(request.Meta) };
         return Task.FromResult(response);
     }
@@ -782,9 +573,6 @@ internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxS
 
     private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * _clock.TimestampFrequency);
 
-    private static bool IsFinite(SandboxTextBox box) =>
-        double.IsFinite(box.X) && double.IsFinite(box.Y) && double.IsFinite(box.Width) && double.IsFinite(box.Height);
-
     private bool TryGetSession(Id? wire, [NotNullWhen(true)] out SessionState? session)
     {
         session = null;
@@ -799,6 +587,13 @@ internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxS
 
         return false;
     }
+
+    /// <summary>
+    /// The request is well formed and names the live session and a well-formed document identifier. Retired PDF calls use it only to choose
+    /// between the validation refusal and their closed answer: no document can exist, so no PDF parser is reached.
+    /// </summary>
+    private bool PdfCallIsLive(Id? sessionId, Id? documentId, bool shapeIsValid) =>
+        shapeIsValid && TryGetLiveSession(sessionId, out _) && SandboxRecords.TryReadId(documentId, out _);
 
     private bool TryGetLiveSession(Id? wire, [NotNullWhen(true)] out SessionState? session)
     {
@@ -839,9 +634,7 @@ internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxS
 
             session.Closed = true;
             parsers.AddRange(session.Images.Values.Select(image => image.Parser));
-            parsers.AddRange(session.Documents.Values.Select(document => document.Parser));
             session.Images.Clear();
-            session.Documents.Clear();
         }
 
         session.Cancelled.Cancel();
@@ -984,19 +777,6 @@ internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxS
             Subimage == otherSubimage && Mip == otherMip && Format == otherFormat;
     }
 
-    private sealed class PdfState(IPdfParser parser, uint pageCount)
-    {
-        internal IPdfParser Parser { get; } = parser;
-
-        internal uint PageCount { get; } = pageCount;
-
-        internal Dictionary<uint, SandboxPdfPage> Pages { get; } = [];
-
-        internal Dictionary<uint, PdfPageText> Texts { get; } = [];
-
-        internal Dictionary<uint, HashSet<uint>> Starts { get; } = [];
-    }
-
     private sealed class SessionState
     {
         internal Guid SessionId { get; init; }
@@ -1016,8 +796,6 @@ internal class ContentSandboxServiceImpl : ContentSandboxService.ContentSandboxS
         internal Dictionary<uint, LocalRpcSlotGrant> Grants { get; } = [];
 
         internal Dictionary<Guid, ImageState> Images { get; } = [];
-
-        internal Dictionary<Guid, PdfState> Documents { get; } = [];
 
         internal Dictionary<string, DateTimeOffset> Renewals { get; } = [];
 

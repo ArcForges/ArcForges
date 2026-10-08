@@ -9,7 +9,7 @@ public sealed class CommonAbiLayoutTests
 {
     [Xunit.Fact]
     [Xunit.Trait("Category", "NativeAbiLayout")]
-    public void ManagedLayoutsMatchTheSeventeenNormativeSizesAndEveryFieldOffset()
+    public void ManagedLayoutsMatchTheSixteenNormativeSizesAndEveryFieldOffset()
     {
         Xunit.Assert.Equal(8, IntPtr.Size);
 
@@ -50,13 +50,10 @@ public sealed class CommonAbiLayoutTests
                  ("Index", 32), ("Reserved", 36)]),
             ("NativeImageOptionsV1", 72,
                 [("StructSize", 0), ("StructVersion", 4), ("Subimage", 8), ("Mip", 12),
-                 ("Format", 16), ("Reserved", 20), ("Limits", 24)]),
-            ("NativePdfPageV1", 32,
-                [("StructSize", 0), ("StructVersion", 4), ("PageIndex", 8), ("Rotation", 12),
-                 ("WidthPoints", 16), ("HeightPoints", 24)])
+                 ("Format", 16), ("Reserved", 20), ("Limits", 24)])
         ];
 
-        Xunit.Assert.Equal(17, layouts.Length + 1); // The enum-sized arc_status_t is counted separately.
+        Xunit.Assert.Equal(16, layouts.Length + 1); // The enum-sized arc_status_t is counted separately.
         Type statusUnderlyingType = Enum.GetUnderlyingType(typeof(NativeStatus));
         Xunit.Assert.Equal(typeof(int), statusUnderlyingType);
         Xunit.Assert.Equal(4, Marshal.SizeOf(statusUnderlyingType));

@@ -545,8 +545,9 @@ class Extraction(unittest.TestCase):
     def test_snapshot_building_is_deterministic(self):
         files = world_files()
         commits = {name: 'd' * 40 for name in ORDER}
-        first = si.build_snapshot(FakeProvider(files), commits, POLICY)
-        second = si.build_snapshot(FakeProvider(files), commits, POLICY)
+        with mock.patch.object(si, 'today_default', return_value=TODAY):
+            first = si.build_snapshot(FakeProvider(files), commits, POLICY)
+            second = si.build_snapshot(FakeProvider(files), commits, POLICY)
         self.assertEqual(si.dump(first), si.dump(second))
         self.assertEqual(si.evaluate(first, POLICY, TODAY), [])
 

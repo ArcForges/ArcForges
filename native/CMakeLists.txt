@@ -43,7 +43,6 @@ endfunction()
 if(ARCFORGES_NATIVE_PROFILE STREQUAL "shim-static")
     find_package(OpenImageIO CONFIG REQUIRED)
     add_subdirectory(arcimage-abi)
-    add_subdirectory(arcpdf-abi)
 
     if(ARCFORGES_BUILD_TESTS)
         find_package(Threads REQUIRED)
