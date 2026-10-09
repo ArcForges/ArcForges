@@ -13,9 +13,9 @@ public sealed class NativeAbiSmokeTests
         Xunit.Assert.All(results, result =>
         {
             Xunit.Assert.Equal(1u, result.AbiMajor);
-            Xunit.Assert.Equal(0u, result.AbiMinor);
+            Xunit.Assert.Equal(1u, result.AbiMinor);
             Xunit.Assert.Equal(0, result.Status);
-            Xunit.Assert.Contains("abi=1.0", result.BuildInfo, StringComparison.Ordinal);
+            Xunit.Assert.Contains("\"capabilities\":[\"image.open\",\"image.read\",\"image.close\"]", result.BuildInfo, StringComparison.Ordinal);
         });
 
     }

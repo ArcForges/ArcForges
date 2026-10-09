@@ -17,13 +17,15 @@ internal static unsafe class NativeSmoke
     private const int BufferTooSmall = 1;
     private const int InvalidArgument = -1;
 
+    // ArcImageNative reports the functional minor (Annex 06 section 1, decision D2); build information is JSON.
     public static NativeProbeResult VerifyImage() => Verify(
-        "ArcImageNative", ArcImageNative.GetAbiVersion, ArcImageNative.GetBuildInfo, ArcImageNative.GetLastError);
+        "ArcImageNative", 1u, ArcImageNative.GetAbiVersion, ArcImageNative.GetBuildInfo, ArcImageNative.GetLastError);
 
     public static IReadOnlyList<NativeProbeResult> VerifyAll() => [VerifyImage()];
 
     private static unsafe NativeProbeResult Verify(
         string libraryName,
+        uint expectedMinor,
         VersionProbe versionProbe,
         BufferProbe buildProbe,
         ErrorProbe errorProbe)
@@ -36,7 +38,7 @@ internal static unsafe class NativeSmoke
         uint major;
         uint minor;
         int status = versionProbe(&major, &minor);
-        if (status != 0 || major != 1 || minor != 0)
+        if (status != 0 || major != 1 || minor != expectedMinor)
         {
             throw new InvalidOperationException($"{libraryName} rejected ABI negotiation ({status}, {major}.{minor}).");
         }
@@ -63,7 +65,7 @@ internal static unsafe class NativeSmoke
         }
 
         string buildInfo = Encoding.UTF8.GetString(bytes);
-        if (!buildInfo.StartsWith(libraryName, StringComparison.Ordinal))
+        if (!buildInfo.StartsWith("{\"library\":\"" + libraryName + "\"", StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"{libraryName} returned unexpected build information.");
         }

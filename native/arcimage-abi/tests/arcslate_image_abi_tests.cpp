@@ -12,7 +12,7 @@ int main()
 {
     uint32_t major = 0;
     uint32_t minor = 0;
-    if (arc_image_get_abi_version(&major, &minor) != ARC_OK || major != 1 || minor != 0) {
+    if (arc_image_get_abi_version(&major, &minor) != ARC_OK || major != 1 || minor != 1) {
         return 1;
     }
     arc_mut_buffer_t query{};
