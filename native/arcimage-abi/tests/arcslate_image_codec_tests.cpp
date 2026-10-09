@@ -820,8 +820,7 @@ void test_handle_lifecycle_and_limit()
     sentinel_output.required = 0xFEEDFACEULL;
     arc_handle_t overflow = 0;
     const arc_status_t refused = arc_image_open(&io, &options, &overflow, &sentinel_output, nullptr);
-    expect(refused == ARC_RESOURCE_LIMIT && overflow == 0,
-           "a 65th handle is refused with RESOURCE_LIMIT");
+    expect(refused == ARC_RESOURCE_LIMIT && overflow == 0, "a 65th handle is refused with RESOURCE_LIMIT");
     expect(std::all_of(sentinel.begin(), sentinel.end(), [](char byte) { return byte == '\x5A'; }) &&
                sentinel_output.required == 0xFEEDFACEULL,
            "a refused 65th open writes no metadata bytes and no required size");
