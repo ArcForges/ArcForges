@@ -3,7 +3,10 @@
 // in memory by OpenImageIO writers during the run and are never shipped (decision D1).
 #include <arc/arc_slate_image_abi.h>
 
+#include <Imath/half.h>
+
 #include <OpenImageIO/filesystem.h>
+#include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
 
 #include <algorithm>
@@ -11,8 +14,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -31,6 +37,11 @@ void expect(bool condition, const char* what)
 }
 
 bool contains(const std::string& text, const char* needle)
+{
+    return text.find(needle) != std::string::npos;
+}
+
+bool contains(const std::string& text, const std::string& needle)
 {
     return text.find(needle) != std::string::npos;
 }
@@ -235,14 +246,13 @@ void append_chunk(std::vector<unsigned char>& out, const char* type, const std::
     append_be32(out, crc32(out.data() + start, out.size() - start));
 }
 
-// A PNG whose header declares a 65535 x 65535 RGBA image with no real pixel data. It is refused from
-// the header alone, before any decode allocation.
-std::vector<unsigned char> decompression_bomb_png()
+// A PNG whose IHDR declares an RGBA8 image of the given size, with one empty stored block and no pixel data.
+std::vector<unsigned char> png_header_only(uint32_t width, uint32_t height)
 {
     std::vector<unsigned char> bytes = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
     std::vector<unsigned char> header;
-    append_be32(header, 65535);
-    append_be32(header, 65535);
+    append_be32(header, width);
+    append_be32(header, height);
     header.push_back(8);
     header.push_back(6);
     header.push_back(0);
@@ -253,6 +263,12 @@ std::vector<unsigned char> decompression_bomb_png()
     append_chunk(bytes, "IDAT", {0x78, 0x01, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01});
     append_chunk(bytes, "IEND", {});
     return bytes;
+}
+
+// A PNG whose header declares a 65535 x 65535 RGBA image. It is refused from the header alone.
+std::vector<unsigned char> decompression_bomb_png()
+{
+    return png_header_only(65535, 65535);
 }
 
 
@@ -581,7 +597,7 @@ void test_buffer_too_small_consumes_nothing()
     arc_image_close(handle);
 }
 
-void test_unsupported_and_corrupt_content()
+void test_unsupported_content()
 {
     const std::vector<unsigned char> bmp = {'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0x36, 0, 0, 0};
     const std::vector<unsigned char> jpeg = {0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, 'J', 'F', 'I', 'F'};
@@ -596,16 +612,6 @@ void test_unsupported_and_corrupt_content()
         expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_UNSUPPORTED && handle == 0,
                "content outside the PNG, TIFF and EXR allowlist is unsupported with no handle");
     }
-
-    const auto png = encode_png_rgba8(8, 8, rgba_pattern(8, 8, 4));
-    std::vector<unsigned char> truncated(png.begin(), png.begin() + 40);
-    source state{};
-    state.bytes = &truncated;
-    const arc_io_v1 io = make_io(state);
-    arc_handle_t handle = 0;
-    std::string metadata;
-    const arc_status_t status = open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata);
-    expect((status == ARC_CORRUPT || status == ARC_IO) && handle == 0, "a truncated PNG is refused as corrupt");
 }
 
 void test_limits_and_decompression_bomb()
@@ -809,28 +815,902 @@ void test_handle_lifecycle_and_limit()
            "the last error snapshot is readable after failures");
 }
 
+// ---- Helpers for bit depth, edges, corruption, cancellation, coverage and subimages -------------
+
+bool all_bytes(const std::vector<uint8_t>& bytes, uint8_t value)
+{
+    return std::all_of(bytes.begin(), bytes.end(), [value](uint8_t byte) { return byte == value; });
+}
+
+// True when a packed block equals the same rectangle of an expected image that is expected_width pixels wide.
+bool region_matches(const std::vector<uint8_t>& block, const std::vector<uint8_t>& expected, uint32_t expected_width,
+                    uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t bytes_per_pixel)
+{
+    if (block.size() != static_cast<size_t>(w) * h * bytes_per_pixel) {
+        return false;
+    }
+    for (uint32_t row = 0; row < h; ++row) {
+        const size_t offset = ((static_cast<size_t>(y) + row) * expected_width + x) * bytes_per_pixel;
+        if (std::memcmp(block.data() + static_cast<size_t>(row) * w * bytes_per_pixel, expected.data() + offset,
+                        static_cast<size_t>(w) * bytes_per_pixel) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<float> float_pattern(uint32_t width, uint32_t height, uint32_t channels, float offset)
+{
+    std::vector<float> values(static_cast<size_t>(width) * height * channels);
+    for (size_t index = 0; index < values.size(); ++index) {
+        values[index] = static_cast<float>((index * 7U + 3U) % 97U) * 0.25F + offset;
+    }
+    return values;
+}
+
+std::vector<uint8_t> as_bytes(const std::vector<float>& values)
+{
+    std::vector<uint8_t> bytes(values.size() * sizeof(float));
+    std::memcpy(bytes.data(), values.data(), bytes.size());
+    return bytes;
+}
+
+// True when float32 output equals each 16-bit sample divided by 65535, to within 1e-6.
+bool decodes_as_unorm16(const std::vector<uint8_t>& raw, const std::vector<uint16_t>& samples)
+{
+    if (raw.size() != samples.size() * sizeof(float)) {
+        return false;
+    }
+    for (size_t index = 0; index < samples.size(); ++index) {
+        float value = 0.0F;
+        std::memcpy(&value, raw.data() + index * sizeof(float), sizeof(float));
+        if (std::abs(value - static_cast<float>(samples[index]) / 65535.0F) > 1e-6F) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// One subimage, or one mip level of the preceding subimage when mip_level is set, for encode_parts.
+struct part {
+    OIIO::ImageSpec spec;
+    OIIO::TypeDesc type;
+    const void* pixels;
+    bool mip_level;
+};
+
+// Removes a temporary fixture file when it leaves scope.
+struct temporary_file final {
+    std::filesystem::path path;
+    ~temporary_file()
+    {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+};
+
+// A fresh temporary path with the given extension.
+std::filesystem::path temporary_fixture_path(const char* extension)
+{
+    static int sequence = 0;
+    return std::filesystem::temp_directory_path() /
+           ("arcimage_codec_fixture_" + std::to_string(++sequence) + extension);
+}
+
+// Writes the parts in order and returns the resulting bytes. The first part creates the file and later parts
+// append. OpenImageIO's EXR writer refuses to append subimages or mip levels through an IOProxy, so these
+// fixtures go through a temporary file that is read back and removed. The shim itself only ever sees the bytes.
+std::vector<unsigned char> encode_parts(const char* extension, const std::vector<part>& parts)
+{
+    const temporary_file cleanup{temporary_fixture_path(extension)};
+    const std::string name = cleanup.path.string();
+    auto output = OIIO::ImageOutput::create(name);
+    if (!output) {
+        return {};
+    }
+    // A format that cannot append subimages must be given every subimage spec when the file is first opened.
+    std::vector<OIIO::ImageSpec> subimage_specs;
+    for (const part& item : parts) {
+        if (!item.mip_level) {
+            subimage_specs.push_back(item.spec);
+        }
+    }
+    const bool declare_subimages =
+        subimage_specs.size() > 1 && output->supports("multiimage") && !output->supports("appendsubimage");
+    for (size_t index = 0; index < parts.size(); ++index) {
+        const part& item = parts[index];
+        bool opened = false;
+        if (index == 0 && declare_subimages) {
+            opened = output->open(name, static_cast<int>(subimage_specs.size()), subimage_specs.data());
+        } else if (index == 0) {
+            opened = output->open(name, item.spec, OIIO::ImageOutput::Create);
+        } else {
+            opened = output->open(name, item.spec,
+                                  item.mip_level ? OIIO::ImageOutput::AppendMIPLevel
+                                                 : OIIO::ImageOutput::AppendSubimage);
+        }
+        if (!opened) {
+            std::fprintf(stderr, "fixture part %zu open failed (declared=%d mip=%d): %s\n", index,
+                         declare_subimages ? 1 : 0, item.mip_level ? 1 : 0, OIIO::geterror().c_str());
+            return {};
+        }
+        if (!output->write_image(item.type, item.pixels)) {
+            std::fprintf(stderr, "fixture part %zu write failed: %s\n", index, OIIO::geterror().c_str());
+            return {};
+        }
+    }
+    output->close();
+    output.reset();
+
+    std::ifstream file(cleanup.path, std::ios::binary | std::ios::ate);
+    if (!file) {
+        return {};
+    }
+    const auto size = static_cast<size_t>(file.tellg());
+    std::vector<unsigned char> bytes(size);
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
+    return file ? bytes : std::vector<unsigned char>{};
+}
+
+// Damaged or truncated input must be refused as CORRUPT, either at open or on the first full read, and the
+// refused read must write no pixels.
+void expect_corrupt(const std::vector<unsigned char>& bytes, uint32_t width, uint32_t height, const char* what)
+{
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    const arc_status_t opened = open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata);
+    if (opened != ARC_OK) {
+        expect(opened == ARC_CORRUPT && handle == 0, what);
+        return;
+    }
+    std::vector<uint8_t> pixels;
+    expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_CORRUPT && all_bytes(pixels, 0), what);
+    arc_image_close(handle);
+}
+
+// A copy of a PNG whose IDAT payload is damaged. The header still parses, and the chunk CRC fails on read.
+std::vector<unsigned char> png_with_damaged_pixels(const std::vector<unsigned char>& good)
+{
+    std::vector<unsigned char> bytes = good;
+    const size_t idat = std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()).find("IDAT");
+    if (idat != std::string_view::npos && idat + 6 < bytes.size()) {
+        bytes[idat + 6] ^= 0x5A; // inside the zlib stream, after its two-byte header
+    }
+    return bytes;
+}
+
+// Reads a fixture one pixel at a time in raster order. Every pixel must match, the image is complete afterwards,
+// and a further pixel is refused.
+void read_pixels_one_by_one(const std::vector<unsigned char>& bytes, uint32_t width, uint32_t height,
+                            const std::vector<uint8_t>& expected)
+{
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "fixture opens for single-pixel reads");
+    bool every_pixel = true;
+    std::vector<uint8_t> pixel;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            every_pixel = every_pixel && read_region(handle, x, y, 1, 1, 4, pixel) == ARC_OK &&
+                          region_matches(pixel, expected, width, x, y, 1, 1, 4);
+        }
+    }
+    expect(every_pixel, "single-pixel raster reads reproduce every pixel once");
+    std::vector<uint8_t> extra;
+    expect(read_region(handle, 0, 0, 1, 1, 4, extra) == ARC_INVALID_ARGUMENT,
+           "a complete image refuses a further pixel");
+    arc_image_close(handle);
+}
+
+// ---- Tests: bit depth and metadata ---------------------------------------------------------------
+
+void test_png16_float_identity_round_trip()
+{
+    const uint32_t width = 3;
+    const uint32_t height = 2;
+    std::vector<uint16_t> samples(static_cast<size_t>(width) * height * 4);
+    for (size_t index = 0; index < samples.size(); ++index) {
+        samples[index] = static_cast<uint16_t>(index * 2731U);
+    }
+    OIIO::ImageSpec spec(static_cast<int>(width), static_cast<int>(height), 4, OIIO::TypeDesc::UINT16);
+    spec.channelnames = {"R", "G", "B", "A"};
+    spec.alpha_channel = 3;
+    const auto bytes = encode("fixture.png", spec, OIIO::TypeDesc::UINT16, samples.data());
+    expect(!bytes.empty(), "16-bit PNG fixture encodes for float output");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED), nullptr, handle, metadata) == ARC_OK,
+           "16-bit PNG opens as float32 interleaved");
+    expect(contains(metadata, "\"sourceBitsMax\":16") && contains(metadata, "\"type\":\"uint16\"") &&
+               contains(metadata, "\"loss\":[]") && contains(metadata, "\"bytesPerPixel\":16"),
+           "float32 output from 16-bit PNG reports the source depth and no loss");
+    std::vector<uint8_t> raw;
+    expect(read_region(handle, 0, 0, width, height, 16, raw) == ARC_OK, "16-bit float32 region reads");
+    expect(decodes_as_unorm16(raw, samples), "16-bit samples map to float32 by 1/65535 without loss");
+    arc_image_close(handle);
+}
+
+void test_tiff8_straight_round_trip()
+{
+    const uint32_t width = 6;
+    const uint32_t height = 4;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    const auto bytes = encode("fixture.tif", rgba8_spec(width, height), OIIO::TypeDesc::UINT8, source_pixels.data());
+    expect(!bytes.empty(), "8-bit TIFF fixture encodes");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "8-bit untiled TIFF opens as rgba8");
+    expect(contains(metadata, "\"format\":\"tiff\"") && contains(metadata, "\"tiled\":false") &&
+               contains(metadata, "\"alpha\":\"straight\"") && contains(metadata, "\"sourceBitsMax\":8"),
+           "8-bit TIFF metadata reports the codec, layout, straight alpha and depth");
+    std::vector<uint8_t> pixels;
+    expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_OK &&
+               region_matches(pixels, source_pixels, width, 0, 0, width, height, 4),
+           "8-bit untiled TIFF round trip is byte exact");
+    arc_image_close(handle);
+}
+
+void test_tiff16_and_float_identity_round_trip()
+{
+    const uint32_t width = 5;
+    const uint32_t height = 3;
+    std::vector<uint16_t> samples(static_cast<size_t>(width) * height * 4);
+    for (size_t index = 0; index < samples.size(); ++index) {
+        samples[index] = static_cast<uint16_t>(index * 1000U);
+    }
+    OIIO::ImageSpec sixteen(static_cast<int>(width), static_cast<int>(height), 4, OIIO::TypeDesc::UINT16);
+    sixteen.channelnames = {"R", "G", "B", "A"};
+    sixteen.alpha_channel = 3;
+    const auto sixteen_bytes = encode("fixture.tif", sixteen, OIIO::TypeDesc::UINT16, samples.data());
+    expect(!sixteen_bytes.empty(), "16-bit TIFF fixture encodes");
+    {
+        source state{};
+        state.bytes = &sixteen_bytes;
+        const arc_io_v1 io = make_io(state);
+        arc_handle_t handle = 0;
+        std::string metadata;
+        expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED), nullptr, handle, metadata) == ARC_OK &&
+                   contains(metadata, "\"format\":\"tiff\"") && contains(metadata, "\"sourceBitsMax\":16"),
+               "16-bit TIFF opens as float32 and reports its source depth");
+        std::vector<uint8_t> raw;
+        expect(read_region(handle, 0, 0, width, height, 16, raw) == ARC_OK && decodes_as_unorm16(raw, samples),
+               "16-bit TIFF samples map to float32 by 1/65535 without loss");
+        arc_image_close(handle);
+    }
+
+    const std::vector<float> floats = float_pattern(width, height, 4, -3.0F);
+    OIIO::ImageSpec single(static_cast<int>(width), static_cast<int>(height), 4, OIIO::TypeDesc::FLOAT);
+    single.channelnames = {"R", "G", "B", "A"};
+    single.alpha_channel = 3;
+    const auto float_bytes = encode("fixture.tif", single, OIIO::TypeDesc::FLOAT, floats.data());
+    expect(!float_bytes.empty(), "float TIFF fixture encodes");
+    source state{};
+    state.bytes = &float_bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED), nullptr, handle, metadata) == ARC_OK &&
+               contains(metadata, "\"type\":\"float\"") && contains(metadata, "\"sourceBitsMax\":32"),
+           "float TIFF opens as float32 and reports its type");
+    std::vector<uint8_t> raw;
+    expect(read_region(handle, 0, 0, width, height, 16, raw) == ARC_OK &&
+               region_matches(raw, as_bytes(floats), width, 0, 0, width, height, 16),
+           "float TIFF channels round trip exactly");
+    arc_image_close(handle);
+}
+
+void test_exr_half_round_trip_and_rgba8_clamp()
+{
+    const uint32_t width = 4;
+    const uint32_t height = 3;
+    std::vector<half> halves(static_cast<size_t>(width) * height * 4);
+    std::vector<float> expected(halves.size());
+    for (size_t index = 0; index < halves.size(); ++index) {
+        // Multiples of one eighth are exact in half precision over this range.
+        halves[index] = half((static_cast<float>(index) - 20.0F) * 0.125F);
+        expected[index] = static_cast<float>(halves[index]);
+    }
+    OIIO::ImageSpec spec(static_cast<int>(width), static_cast<int>(height), 4, OIIO::TypeDesc::HALF);
+    spec.channelnames = {"R", "G", "B", "A"};
+    spec.alpha_channel = 3;
+    const auto bytes = encode("fixture.exr", spec, OIIO::TypeDesc::HALF, halves.data());
+    expect(!bytes.empty(), "half-float EXR fixture encodes");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED), nullptr, handle, metadata) == ARC_OK &&
+               contains(metadata, "\"type\":\"half\"") && contains(metadata, "\"sourceBitsMax\":16"),
+           "half-float EXR opens as float32 and reports its half type");
+    std::vector<uint8_t> raw;
+    expect(read_region(handle, 0, 0, width, height, 16, raw) == ARC_OK &&
+               region_matches(raw, as_bytes(expected), width, 0, 0, width, height, 16),
+           "half-float channels convert to float32 exactly");
+    arc_image_close(handle);
+
+    // rgba8 clamps out-of-range values and rounds to nearest. Alpha is one, so unpremultiplying leaves colour unchanged.
+    const float clamp_values[16] = {-0.5F, 0.0F, 0.5F, 1.0F, 2.0F, 1.0F, 0.25F, 1.0F,
+                                    0.0F,  0.0F, 0.0F, 1.0F, 0.5F, 0.5F, 0.5F, 1.0F};
+    std::vector<half> clamp(16);
+    for (size_t index = 0; index < clamp.size(); ++index) {
+        clamp[index] = half(clamp_values[index]);
+    }
+    const std::vector<uint8_t> clamp_expected = {0, 0, 128, 255, 255, 255, 64, 255,
+                                                 0, 0, 0,   255, 128, 128, 128, 255};
+    OIIO::ImageSpec clamp_spec(4, 1, 4, OIIO::TypeDesc::HALF);
+    clamp_spec.channelnames = {"R", "G", "B", "A"};
+    clamp_spec.alpha_channel = 3;
+    const auto clamp_bytes = encode("fixture.exr", clamp_spec, OIIO::TypeDesc::HALF, clamp.data());
+    expect(!clamp_bytes.empty(), "clamping EXR fixture encodes");
+    source clamp_state{};
+    clamp_state.bytes = &clamp_bytes;
+    const arc_io_v1 clamp_io = make_io(clamp_state);
+    expect(open_image(clamp_io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK &&
+               contains(metadata, "\"rangeClamp\"") && contains(metadata, "\"bitDepthReduction\""),
+           "half-float to rgba8 reports range clamping and bit-depth reduction");
+    std::vector<uint8_t> pixels;
+    expect(read_region(handle, 0, 0, 4, 1, 4, pixels) == ARC_OK &&
+               region_matches(pixels, clamp_expected, 4, 0, 0, 4, 1, 4),
+           "rgba8 clamps to [0, 1] and rounds to nearest");
+    arc_image_close(handle);
+}
+
+// ---- Tests: edge tiles and single-pixel regions --------------------------------------------------
+
+void test_edge_tiles_and_one_pixel_regions()
+{
+    // 17 x 9 with 16 x 16 tiles: the last tile column is one pixel wide and the last tile row is partial.
+    const uint32_t width = 17;
+    const uint32_t height = 9;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    OIIO::ImageSpec spec = rgba8_spec(width, height);
+    spec.tile_width = 16;
+    spec.tile_height = 16;
+    const auto tiled = encode("fixture.tif", spec, OIIO::TypeDesc::UINT8, source_pixels.data());
+    expect(!tiled.empty(), "partial-edge tiled TIFF fixture encodes");
+    read_pixels_one_by_one(tiled, width, height, source_pixels);
+
+    // Two regions split at the tile boundary: the first ends before the one-pixel edge tile, the second crosses it.
+    source state{};
+    state.bytes = &tiled;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "partial-edge tiled TIFF opens for block reads");
+    std::vector<uint8_t> block;
+    expect(read_region(handle, 0, 0, 15, height, 4, block) == ARC_OK &&
+               region_matches(block, source_pixels, width, 0, 0, 15, height, 4),
+           "a region that ends before the last tile column reads exactly");
+    expect(read_region(handle, 15, 0, 2, height, 4, block) == ARC_OK &&
+               region_matches(block, source_pixels, width, 15, 0, 2, height, 4),
+           "a region that crosses the tile boundary into the one-pixel edge reads exactly");
+    expect(read_region(handle, 0, 0, 1, 1, 4, block) == ARC_INVALID_ARGUMENT,
+           "block reads cover the image once, so a further pixel is refused");
+    arc_image_close(handle);
+
+    // Scanline PNG, one pixel at a time.
+    const uint32_t png_width = 5;
+    const uint32_t png_height = 3;
+    const std::vector<uint8_t> png_pixels = rgba_pattern(png_width, png_height, 4);
+    read_pixels_one_by_one(encode_png_rgba8(png_width, png_height, png_pixels), png_width, png_height, png_pixels);
+}
+
+// ---- Tests: coverage (decision D3) ---------------------------------------------------------------
+
+void test_coverage_refusals_keep_the_cursor()
+{
+    const uint32_t width = 16;
+    const uint32_t height = 12;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    const auto bytes = encode_png_rgba8(width, height, source_pixels);
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "PNG opens for coverage refusals");
+
+    std::vector<uint8_t> block;
+    expect(read_region(handle, 0, 0, 8, 4, 4, block) == ARC_OK &&
+               region_matches(block, source_pixels, width, 0, 0, 8, 4, 4),
+           "the first block is accepted");
+    expect(read_region(handle, 0, 0, 8, 4, 4, block) == ARC_INVALID_ARGUMENT,
+           "an identical block overlaps covered pixels");
+    expect(read_region(handle, 4, 0, 8, 4, 4, block) == ARC_INVALID_ARGUMENT,
+           "a block that starts inside the covered prefix overlaps it");
+    expect(read_region(handle, 8, 1, 8, 2, 4, block) == ARC_INVALID_ARGUMENT,
+           "a block below the first pending row is out of raster order");
+    expect(read_region(handle, 8, 0, 0, 4, 4, block) == ARC_INVALID_ARGUMENT, "an empty block is refused");
+    expect(read_region(handle, 8, 0, 16, 4, 4, block) == ARC_INVALID_ARGUMENT,
+           "a block past the right edge is refused");
+    expect(read_region(handle, 8, 0, 8, 4, 4, block) == ARC_OK &&
+               region_matches(block, source_pixels, width, 8, 0, 8, 4, 4),
+           "the refusals left the cursor where it was");
+    expect(read_region(handle, 0, 4, 16, 4, 4, block) == ARC_OK &&
+               region_matches(block, source_pixels, width, 0, 4, 16, 4, 4),
+           "the next band starts on the first pending row");
+    expect(read_region(handle, 0, 8, 16, 4, 4, block) == ARC_OK &&
+               region_matches(block, source_pixels, width, 0, 8, 16, 4, 4),
+           "the last band completes the image");
+    expect(read_region(handle, 0, 0, 1, 1, 4, block) == ARC_INVALID_ARGUMENT,
+           "a complete image refuses every further block");
+    arc_image_close(handle);
+}
+
+// ---- Tests: output buffers -----------------------------------------------------------------------
+
+void test_buffer_one_byte_short_consumes_nothing()
+{
+    const uint32_t width = 8;
+    const uint32_t height = 8;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    const auto bytes = encode_png_rgba8(width, height, source_pixels);
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "fixture opens for the one-byte-short buffer check");
+
+    const uint64_t needed = static_cast<uint64_t>(width) * height * 4;
+    std::vector<uint8_t> short_buffer(static_cast<size_t>(needed - 1), 0x5A);
+    arc_region_v1 region{};
+    region.struct_size = sizeof(arc_region_v1);
+    region.struct_version = 1;
+    region.width = width;
+    region.height = height;
+    arc_mut_buffer_t output{};
+    output.data = short_buffer.data();
+    output.capacity = short_buffer.size();
+    expect(arc_image_read(handle, &region, &output, nullptr) == ARC_BUFFER_TOO_SMALL && output.required == needed,
+           "a buffer one byte short reports the exact required size");
+    expect(all_bytes(short_buffer, 0x5A), "a short buffer is not written");
+    std::vector<uint8_t> full;
+    expect(read_region(handle, 0, 0, width, height, 4, full) == ARC_OK &&
+               region_matches(full, source_pixels, width, 0, 0, width, height, 4),
+           "the full region reads exactly after the short attempt");
+    arc_image_close(handle);
+}
+
+// ---- Tests: formats, corruption, failure and cancellation ----------------------------------------
+
+void test_unsupported_formats_and_empty_input()
+{
+    const std::vector<unsigned char> gif = {'G', 'I', 'F', '8', '9', 'a', 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00};
+    const std::vector<unsigned char> webp = {'R', 'I', 'F', 'F', 0x10, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P',
+                                             'V', 'P', '8', ' '};
+    const std::vector<unsigned char> jpeg2000 = {0xFF, 0x4F, 0xFF, 0x51, 0x00, 0x2F};
+    const std::vector<unsigned char> empty;
+    const std::vector<const std::vector<unsigned char>*> cases = {&gif, &webp, &jpeg2000, &empty};
+    for (const auto* bytes : cases) {
+        source state{};
+        state.bytes = bytes;
+        const arc_io_v1 io = make_io(state);
+        arc_handle_t handle = 0xFF;
+        std::string metadata;
+        expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_UNSUPPORTED &&
+                   handle == 0,
+               "GIF, WebP, JPEG 2000 and empty input are UNSUPPORTED with no handle");
+    }
+}
+
+void test_truncated_and_corrupt_input_is_corrupt()
+{
+    const uint32_t width = 8;
+    const uint32_t height = 8;
+    const auto png = encode_png_rgba8(width, height, rgba_pattern(width, height, 4));
+    expect(png.size() > 64, "PNG fixture is large enough to truncate");
+
+    const std::vector<unsigned char> truncated_png(png.begin(), png.begin() + 40);
+    expect_corrupt(truncated_png, width, height, "a truncated PNG is refused as CORRUPT with no output");
+
+    const std::vector<unsigned char> signature_only(png.begin(), png.begin() + 8);
+    expect_corrupt(signature_only, width, height, "a PNG with only its signature is refused as CORRUPT");
+
+    std::vector<unsigned char> bad_header_crc = png;
+    bad_header_crc[29] ^= 0xFF; // the IHDR CRC starts after the 8-byte signature, 4-byte length, 4-byte type and 13 data bytes
+    expect_corrupt(bad_header_crc, width, height, "a PNG with a damaged IHDR CRC is refused as CORRUPT");
+
+    expect_corrupt(png_with_damaged_pixels(png), width, height,
+                   "a PNG with damaged pixel data fails CORRUPT on read with no output");
+
+    const auto tiff = encode("fixture.tif", rgba8_spec(width, height), OIIO::TypeDesc::UINT8,
+                             rgba_pattern(width, height, 4).data());
+    expect(!tiff.empty(), "TIFF fixture encodes for corruption checks");
+    const std::vector<unsigned char> truncated_tiff(tiff.begin(), tiff.begin() + static_cast<long>(tiff.size() / 2));
+    expect_corrupt(truncated_tiff, width, height, "a truncated TIFF is refused as CORRUPT with no output");
+
+    const auto exr = encode("fixture.exr", [] {
+        OIIO::ImageSpec exr_spec(8, 8, 4, OIIO::TypeDesc::FLOAT);
+        exr_spec.channelnames = {"R", "G", "B", "A"};
+        exr_spec.alpha_channel = 3;
+        return exr_spec;
+    }(), OIIO::TypeDesc::FLOAT, float_pattern(8, 8, 4, 0.0F).data());
+    expect(!exr.empty(), "EXR fixture encodes for corruption checks");
+    const std::vector<unsigned char> truncated_exr(exr.begin(), exr.begin() + static_cast<long>(exr.size() / 2));
+    expect_corrupt(truncated_exr, width, height, "a truncated EXR is refused as CORRUPT with no output");
+
+    std::vector<unsigned char> bad_exr_version = exr;
+    bad_exr_version[4] = 0xFF; // the version field after the 4-byte magic
+    bad_exr_version[5] = 0xFF;
+    expect_corrupt(bad_exr_version, width, height, "an EXR with an invalid version field is refused as CORRUPT");
+}
+
+void test_failed_codec_and_callback_failure_keep_coverage()
+{
+    const uint32_t width = 64;
+    const uint32_t height = 64;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    OIIO::ImageSpec spec = rgba8_spec(width, height);
+    spec.tile_width = 16;
+    spec.tile_height = 16;
+    const auto bytes = encode("fixture.tif", spec, OIIO::TypeDesc::UINT8, source_pixels.data());
+    expect(!bytes.empty(), "tiled TIFF fixture encodes for the failed-codec check");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "fixture opens for the failed-codec check");
+
+    state.fail_after = state.calls; // the next source callback fails in the middle of the decode
+    std::vector<uint8_t> pixels;
+    expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_IO && all_bytes(pixels, 0),
+           "a failing callback during decode is IO and writes no pixels");
+    state.fail_after = -1;
+    expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_OK &&
+               region_matches(pixels, source_pixels, width, 0, 0, width, height, 4),
+           "the failed read consumed no coverage, and the retry is exact");
+    arc_image_close(handle);
+}
+
+void test_decompression_bomb_refused_before_decode()
+{
+    // A pixel count above the hard profile (16385 x 16385) is refused from the header alone.
+    const auto over_profile = png_header_only(16385, 16385);
+    source over_state{};
+    over_state.bytes = &over_profile;
+    const arc_io_v1 over_io = make_io(over_state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(over_io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_RESOURCE_LIMIT &&
+               handle == 0,
+           "a header above the pixel profile is refused as RESOURCE_LIMIT with no handle");
+
+    // Inside the pixel profile, one 16-row band of 16384-wide RGBA32F rows needs about 4 MiB, above a 1 MiB limit.
+    // The refusal happens before any row is decoded, so the pixels stay untouched.
+    const auto wide = png_header_only(16384, 16384);
+    source wide_state{};
+    wide_state.bytes = &wide;
+    const arc_io_v1 wide_io = make_io(wide_state);
+    arc_image_options_v1 tight = make_options(ARC_FORMAT_RGBA8);
+    tight.limits.max_memory_bytes = UINT64_C(1) << 20;
+    expect(open_image(wide_io, tight, nullptr, handle, metadata) == ARC_OK,
+           "a header within the pixel profile opens when the row band fits the memory limit");
+    std::vector<uint8_t> pixels;
+    expect(read_region(handle, 0, 0, 1, 16, 4, pixels) == ARC_RESOURCE_LIMIT && all_bytes(pixels, 0),
+           "a row band above the memory limit is refused before any row decodes");
+    arc_image_close(handle);
+
+    // Tile memory is checked at open. A 16 x 16 RGBA8 tile needs 4096 bytes of float working memory.
+    OIIO::ImageSpec tile_spec = rgba8_spec(16, 16);
+    tile_spec.tile_width = 16;
+    tile_spec.tile_height = 16;
+    const std::vector<uint8_t> tile_pixels = rgba_pattern(16, 16, 4);
+    const auto tiled = encode("fixture.tif", tile_spec, OIIO::TypeDesc::UINT8, tile_pixels.data());
+    expect(!tiled.empty(), "single-tile TIFF fixture encodes");
+    source tile_state{};
+    tile_state.bytes = &tiled;
+    const arc_io_v1 tile_io = make_io(tile_state);
+    arc_image_options_v1 just_under = make_options(ARC_FORMAT_RGBA8);
+    just_under.limits.max_memory_bytes = 4095;
+    expect(open_image(tile_io, just_under, nullptr, handle, metadata) == ARC_RESOURCE_LIMIT && handle == 0,
+           "a tile one byte above the memory limit is refused at open");
+    arc_image_options_v1 exact = make_options(ARC_FORMAT_RGBA8);
+    exact.limits.max_memory_bytes = 4096;
+    expect(open_image(tile_io, exact, nullptr, handle, metadata) == ARC_OK,
+           "a tile exactly at the memory limit opens");
+    arc_image_close(handle);
+}
+
+void test_cancellation_at_every_tile_and_callback_boundary()
+{
+    const uint32_t width = 64;
+    const uint32_t height = 64;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    OIIO::ImageSpec spec = rgba8_spec(width, height);
+    spec.tile_width = 16;
+    spec.tile_height = 16;
+    const auto bytes = encode("fixture.tif", spec, OIIO::TypeDesc::UINT8, source_pixels.data());
+    expect(!bytes.empty(), "tiled TIFF fixture encodes for the cancellation sweep");
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    std::string metadata;
+
+    // One uncancelled full read counts its cancellation checks. Each tile and each callback is a boundary.
+    cancel_state counter{};
+    arc_cancel_token_t counting = make_token(counter);
+    arc_handle_t handle = 0;
+    std::vector<uint8_t> pixels;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) == ARC_OK,
+           "tiled fixture opens for the cancellation sweep");
+    expect(read_region(handle, 0, 0, width, height, 4, pixels, &counting) == ARC_OK &&
+               region_matches(pixels, source_pixels, width, 0, 0, width, height, 4),
+           "the uncancelled read is exact");
+    const int boundaries = counter.calls;
+    arc_image_close(handle);
+    expect(boundaries >= 16, "each of the 16 tiles is a cancellation boundary");
+
+    // Cancelling at any boundary returns CANCELLED, writes no pixels and consumes no coverage.
+    for (int cancel_at = 1; cancel_at <= boundaries; ++cancel_at) {
+        cancel_state cancelled{};
+        cancelled.cancel_from = cancel_at;
+        arc_cancel_token_t token = make_token(cancelled);
+        arc_handle_t fresh = 0;
+        expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, fresh, metadata) == ARC_OK,
+               "fixture reopens for each cancellation point");
+        expect(read_region(fresh, 0, 0, width, height, 4, pixels, &token) == ARC_CANCELLED && all_bytes(pixels, 0),
+               "a read cancelled at a boundary is CANCELLED with no pixels written");
+        expect(read_region(fresh, 0, 0, width, height, 4, pixels) == ARC_OK &&
+                   region_matches(pixels, source_pixels, width, 0, 0, width, height, 4),
+               "a cancelled read consumed no coverage");
+        arc_image_close(fresh);
+    }
+}
+
+void test_read_deadline_refuses_before_commit()
+{
+    const uint32_t width = 64;
+    const uint32_t height = 64;
+    const std::vector<uint8_t> source_pixels = rgba_pattern(width, height, 4);
+    OIIO::ImageSpec spec = rgba8_spec(width, height);
+    spec.tile_width = 16;
+    spec.tile_height = 16;
+    const auto bytes = encode("fixture.tif", spec, OIIO::TypeDesc::UINT8, source_pixels.data());
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_image_options_v1 timed = make_options(ARC_FORMAT_RGBA8);
+    timed.limits.timeout_ms = 100;
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, timed, nullptr, handle, metadata) == ARC_OK, "fixture opens within its deadline");
+
+    // Each source callback now takes 40 ms, so the 100 ms deadline passes between tiles.
+    state.sleep_ms = 40;
+    std::vector<uint8_t> pixels;
+    expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_RESOURCE_LIMIT && all_bytes(pixels, 0),
+           "a read that passes its deadline between tiles is RESOURCE_LIMIT with no pixels written");
+    state.sleep_ms = 0;
+    expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_OK &&
+               region_matches(pixels, source_pixels, width, 0, 0, width, height, 4),
+           "the timed-out read consumed no coverage");
+    arc_image_close(handle);
+}
+
+// ---- Tests: EXR subimages and mip levels within bounds -------------------------------------------
+
+void test_exr_multipart_subimages_within_bounds()
+{
+    // OpenImageIO's EXR writer accepts parts only when they share one size, so both parts are 6 x 3 RGBA with
+    // different samples.
+    const std::vector<float> first = float_pattern(6, 3, 4, -3.0F);
+    const std::vector<float> second = float_pattern(6, 3, 4, 2.0F);
+    OIIO::ImageSpec part_spec(6, 3, 4, OIIO::TypeDesc::FLOAT);
+    part_spec.channelnames = {"R", "G", "B", "A"};
+    part_spec.alpha_channel = 3;
+    const auto bytes = encode_parts(".exr", {part{part_spec, OIIO::TypeDesc::FLOAT, first.data(), false},
+                                             part{part_spec, OIIO::TypeDesc::FLOAT, second.data(), false}});
+    expect(!bytes.empty(), "two-part EXR fixture encodes");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 1, 0), nullptr, handle, metadata) == ARC_OK &&
+               contains(metadata, "\"subimage\":1") && contains(metadata, "\"subimages\":2") &&
+               contains(metadata, "\"width\":6") && contains(metadata, "\"height\":3"),
+           "the second part opens with its own index and the subimage count");
+    std::vector<uint8_t> raw;
+    expect(read_region(handle, 0, 0, 6, 3, 16, raw) == ARC_OK &&
+               region_matches(raw, as_bytes(second), 6, 0, 0, 6, 3, 16),
+           "the second part reads exactly");
+    arc_image_close(handle);
+
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 0, 0), nullptr, handle, metadata) == ARC_OK &&
+               contains(metadata, "\"subimage\":0") && contains(metadata, "\"subimages\":2"),
+           "the first part opens with the same subimage count");
+    expect(read_region(handle, 0, 0, 6, 3, 16, raw) == ARC_OK &&
+               region_matches(raw, as_bytes(first), 6, 0, 0, 6, 3, 16),
+           "the first part reads exactly, and differently from the second");
+    arc_image_close(handle);
+
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 2, 0), nullptr, handle, metadata) == ARC_NOT_FOUND &&
+               handle == 0,
+           "a subimage past the last part is NOT_FOUND");
+
+    arc_image_options_v1 one_item = make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 0, 0);
+    one_item.limits.max_items = 1;
+    expect(open_image(io, one_item, nullptr, handle, metadata) == ARC_RESOURCE_LIMIT && handle == 0,
+           "two subimages exceed a one-item limit before any decode");
+}
+
+void test_exr_mip_levels_within_bounds()
+{
+    const uint32_t width = 32;
+    const uint32_t height = 16;
+    const std::vector<float> base = float_pattern(width, height, 4, -1.0F);
+    OIIO::ImageSpec spec(static_cast<int>(width), static_cast<int>(height), 4, OIIO::TypeDesc::FLOAT);
+    spec.channelnames = {"R", "G", "B", "A"};
+    spec.alpha_channel = 3;
+    OIIO::ImageBuf input(spec);
+    input.set_pixels(OIIO::ROI(0, static_cast<int>(width), 0, static_cast<int>(height), 0, 1, 0, 4),
+                     OIIO::TypeDesc::FLOAT, base.data());
+
+    // OpenImageIO's texture writer produces a tiled, mipmapped EXR. Its own reader is the oracle for every level.
+    const temporary_file cleanup{temporary_fixture_path(".exr")};
+    const bool written = OIIO::ImageBufAlgo::make_texture(OIIO::ImageBufAlgo::MakeTxTexture, input,
+                                                          cleanup.path.string(), OIIO::ImageSpec());
+    expect(written, "the texture writer produces a mipmapped EXR fixture");
+    if (!written) {
+        (void)OIIO::geterror();
+        return;
+    }
+
+    std::vector<std::vector<float>> levels;
+    std::vector<OIIO::ImageSpec> level_specs;
+    {
+        auto oracle = OIIO::ImageInput::open(cleanup.path.string());
+        expect(oracle != nullptr, "the oracle reader opens the mipmapped fixture");
+        for (int mip = 0; oracle && oracle->seek_subimage(0, mip); ++mip) {
+            const OIIO::ImageSpec level = oracle->spec(0, mip);
+            std::vector<float> pixels(static_cast<size_t>(level.width) * level.height * 4);
+            expect(oracle->read_image(0, mip, 0, 4, OIIO::TypeDesc::FLOAT, pixels.data()),
+                   "the oracle reads every mip level");
+            levels.push_back(std::move(pixels));
+            level_specs.push_back(level);
+        }
+    }
+    expect(levels.size() >= 2, "the fixture has a base level and at least one mip level");
+
+    std::ifstream file(cleanup.path, std::ios::binary | std::ios::ate);
+    const auto size = file ? static_cast<size_t>(file.tellg()) : size_t{0};
+    std::vector<unsigned char> bytes(size);
+    if (file) {
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
+    }
+    expect(!bytes.empty(), "the mipmapped fixture bytes are read back");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    const auto mip_count = static_cast<uint32_t>(levels.size());
+    for (uint32_t mip = 0; mip < mip_count; ++mip) {
+        const auto level_width = static_cast<uint32_t>(level_specs[mip].width);
+        const auto level_height = static_cast<uint32_t>(level_specs[mip].height);
+        arc_handle_t handle = 0;
+        std::string metadata;
+        expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 0, mip), nullptr, handle, metadata) == ARC_OK &&
+                   contains(metadata, "\"mip\":" + std::to_string(mip)) &&
+                   contains(metadata, "\"mips\":" + std::to_string(mip_count)) &&
+                   contains(metadata, "\"width\":" + std::to_string(level_width)) &&
+                   contains(metadata, "\"height\":" + std::to_string(level_height)),
+               "a mip level opens with its own dimensions and the mip count");
+        std::vector<uint8_t> raw;
+        expect(read_region(handle, 0, 0, level_width, level_height, 16, raw) == ARC_OK &&
+                   region_matches(raw, as_bytes(levels[mip]), level_width, 0, 0, level_width, level_height, 16),
+               "a mip level reads exactly as the oracle reads it");
+        arc_image_close(handle);
+    }
+
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 0, mip_count), nullptr, handle, metadata) ==
+                   ARC_NOT_FOUND && handle == 0,
+           "a mip level past the last one is NOT_FOUND");
+
+    arc_image_options_v1 one_item = make_options(ARC_FORMAT_FLOAT32_INTERLEAVED, 0, 0);
+    one_item.limits.max_items = 1;
+    expect(open_image(io, one_item, nullptr, handle, metadata) == ARC_RESOURCE_LIMIT && handle == 0,
+           "a mip count above a one-item limit is refused before any decode");
+}
+
+// ---- Registration -------------------------------------------------------------------------------
+// Each entry is one CTest target (arcslate_image_abi.codec.<name>) in native/arcimage-abi/CMakeLists.txt.
+// Keep the two lists in step.
+
+struct test_case final {
+    const char* name;
+    void (*run)();
+};
+
+constexpr test_case test_cases[] = {
+    {"probe", test_probe_and_build_info},
+    {"png_rgba8", test_png_rgba8_round_trip},
+    {"png_rgb_fills_alpha", test_png_rgb_fills_alpha},
+    {"png16_bit_loss", test_png_16bit_reports_bit_depth_loss},
+    {"png16_float_identity", test_png16_float_identity_round_trip},
+    {"png_linear_premultiply", test_png_linear_float_and_premultiply},
+    {"tiff8_straight", test_tiff8_straight_round_trip},
+    {"tiff16_float_identity", test_tiff16_and_float_identity_round_trip},
+    {"exr_float", test_exr_float_round_trip},
+    {"exr_half_clamp", test_exr_half_round_trip_and_rgba8_clamp},
+    {"exr_premultiplied", test_exr_premultiplied_source_is_not_premultiplied_again},
+    {"tiff_associated", test_tiff_associated_alpha_is_not_premultiplied_again},
+    {"tiled_tiff_edges", test_tiled_tiff_edge_tiles_and_coverage},
+    {"edge_one_pixel", test_edge_tiles_and_one_pixel_regions},
+    {"coverage_order", test_coverage_order_and_no_state_change},
+    {"coverage_refusals", test_coverage_refusals_keep_the_cursor},
+    {"buffer_too_small", test_buffer_too_small_consumes_nothing},
+    {"buffer_one_byte_short", test_buffer_one_byte_short_consumes_nothing},
+    {"unsupported_content", test_unsupported_content},
+    {"unsupported_formats", test_unsupported_formats_and_empty_input},
+    {"corrupt_input", test_truncated_and_corrupt_input_is_corrupt},
+    {"failed_codec", test_failed_codec_and_callback_failure_keep_coverage},
+    {"limits_bomb", test_limits_and_decompression_bomb},
+    {"bomb_before_decode", test_decompression_bomb_refused_before_decode},
+    {"region_validation", test_region_validation_and_output_limit},
+    {"options_subimage", test_options_and_subimage_selection},
+    {"cancellation", test_cancellation_and_deadline},
+    {"cancel_each_boundary", test_cancellation_at_every_tile_and_callback_boundary},
+    {"read_deadline", test_read_deadline_refuses_before_commit},
+    {"callback_failures", test_callback_failures},
+    {"handle_lifecycle", test_handle_lifecycle_and_limit},
+    {"exr_multipart", test_exr_multipart_subimages_within_bounds},
+    {"exr_mips", test_exr_mip_levels_within_bounds},
+};
+
 } // namespace
 
-int main()
+// With no argument every test runs. With one argument, only the test of that name runs, so CTest can list each.
+int main(int argc, char** argv)
 {
-    test_probe_and_build_info();
-    test_png_rgba8_round_trip();
-    test_png_rgb_fills_alpha();
-    test_png_16bit_reports_bit_depth_loss();
-    test_png_linear_float_and_premultiply();
-    test_exr_float_round_trip();
-    test_exr_premultiplied_source_is_not_premultiplied_again();
-    test_tiff_associated_alpha_is_not_premultiplied_again();
-    test_tiled_tiff_edge_tiles_and_coverage();
-    test_coverage_order_and_no_state_change();
-    test_buffer_too_small_consumes_nothing();
-    test_unsupported_and_corrupt_content();
-    test_limits_and_decompression_bomb();
-    test_region_validation_and_output_limit();
-    test_options_and_subimage_selection();
-    test_cancellation_and_deadline();
-    test_callback_failures();
-    test_handle_lifecycle_and_limit();
+    if (argc > 2) {
+        std::fprintf(stderr, "usage: arcslate_image_codec_tests [test-name]\n");
+        return 2;
+    }
+    const std::string_view wanted = argc == 2 ? std::string_view(argv[1]) : std::string_view();
+    int selected = 0;
+    for (const test_case& test : test_cases) {
+        if (!wanted.empty() && wanted != test.name) {
+            continue;
+        }
+        ++selected;
+        test.run();
+        (void)OIIO::geterror(); // clears OpenImageIO's pending message so it is not printed at exit
+    }
+    if (selected == 0) {
+        std::fprintf(stderr, "unknown codec test: %s\n", argv[1]);
+        return 2;
+    }
+    (void)OIIO::geterror();
     std::printf("arcimage codec checks: %d, failures: %d\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

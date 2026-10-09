@@ -28,7 +28,36 @@ ownership crosses the boundary. The library reports ABI 1.1 (functional minor, d
   identity.
 - Metadata is a closed JSON document (`arc.image.metadata.v1`) returned by `arc_image_open`.
 
-Probe, build and error exports keep their shipped signatures. The shim's own tests are
-`arcslate_image_abi_tests` (probe) and `arcslate_image_codec_tests` (functional). The codec tests generate
-their fixtures in memory and ship none (decision D1). Production containment of untrusted decode is the
-WP11 helper (NAT.31), not this library.
+Probe, build and error exports keep their shipped signatures. The shim's own tests are the CTest target
+`arcslate_image_abi.hello` (probe, `arcslate_image_abi_tests`) and one CTest target per functional case,
+`arcslate_image_abi.codec.<name>` (`arcslate_image_codec_tests`, 33 cases, 368 checks on win-x64). The
+codec tests generate their fixtures in test code and ship none (decision D1). Production containment of
+untrusted decode is the WP11 helper (NAT.31), not this library.
+
+Codec test coverage:
+
+- Bit depth and metadata: PNG 8 and 16 bit, TIFF 8, 16 and float, EXR half and float round trips. rgba8
+  clamps to [0, 1] and rounds to nearest, and every conversion or loss is reported in the metadata.
+- Edges: partial tiles, one-pixel reads, and a region that crosses a tile boundary into a one-pixel edge tile.
+  Each pixel is covered once in raster order.
+- Limits: pixel-count and tile or scanline memory limits are refused before decode. A read whose row band
+  exceeds the memory limit is refused before any row decodes. A read that passes its deadline between tiles is
+  RESOURCE_LIMIT.
+- Corrupt input: truncated, bad-header-CRC and damaged-pixel PNG, truncated TIFF and EXR, and an invalid EXR
+  version are CORRUPT. Each writes no pixels.
+- Failed codec: a callback failure during decode is IO, writes no pixels and consumes no coverage.
+- Cancellation (decision D9): a read cancelled at each of its cancellation boundaries (every tile and every
+  source callback) is CANCELLED, writes no pixels and consumes no coverage.
+- Coverage (decision D3): overlapping, out-of-raster-order, empty and out-of-bounds regions are refused and
+  leave the cursor unchanged.
+- Buffers: a buffer one byte short reports the exact required size and is not written.
+- Formats (decision D10): GIF, WebP, JPEG 2000 and empty input are UNSUPPORTED. Content decides the codec,
+  never the name.
+- Subimages: EXR multipart and mip levels are read within the item limit. OpenImageIO's EXR writer accepts
+  multipart parts only when they share one size, so the multipart fixture uses equal-sized parts. Multipart
+  fixtures are written through a temporary file because the EXR writer does not append subimages through an
+  IOProxy. Mip fixtures come from OpenImageIO's texture writer, and each level is checked against OpenImageIO's
+  own reader. The shim only ever sees bytes through the callback.
+
+Not run: linux-x64 (decision D8). The WSL cmake and ninja install is not present, so the Linux CTest targets
+are recorded as not run.

@@ -334,6 +334,8 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
         }
         std::unique_ptr<OIIO::ImageInput> input = OIIO::ImageInput::open(hint_name(source), &reader_config);
         if (!input) {
+            // The reader's own message is replaced by ours, so drain it rather than let it accumulate.
+            (void)OIIO::geterror();
             if (session->proxy_->latched_status() != ARC_OK) {
                 return fail_image(session->proxy_->latched_status(), "Image input could not be read");
             }

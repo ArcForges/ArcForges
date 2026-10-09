@@ -54,5 +54,42 @@ if(ARCFORGES_BUILD_TESTS)
     set_target_properties(arcslate_image_codec_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)
     target_compile_features(arcslate_image_codec_tests PRIVATE cxx_std_20)
     target_link_libraries(arcslate_image_codec_tests PRIVATE arcslate_image_abi OpenImageIO::OpenImageIO)
-    add_test(NAME arcslate_image_abi.codec COMMAND arcslate_image_codec_tests)
+    # One CTest target per codec test. Keep this list in step with test_cases in tests/arcimage_codec_tests.cpp.
+    set(ARCFORGES_IMAGE_CODEC_TESTS
+        probe
+        png_rgba8
+        png_rgb_fills_alpha
+        png16_bit_loss
+        png16_float_identity
+        png_linear_premultiply
+        tiff8_straight
+        tiff16_float_identity
+        exr_float
+        exr_half_clamp
+        exr_premultiplied
+        tiff_associated
+        tiled_tiff_edges
+        edge_one_pixel
+        coverage_order
+        coverage_refusals
+        buffer_too_small
+        buffer_one_byte_short
+        unsupported_content
+        unsupported_formats
+        corrupt_input
+        failed_codec
+        limits_bomb
+        bomb_before_decode
+        region_validation
+        options_subimage
+        cancellation
+        cancel_each_boundary
+        read_deadline
+        callback_failures
+        handle_lifecycle
+        exr_multipart
+        exr_mips)
+    foreach(codec_test IN LISTS ARCFORGES_IMAGE_CODEC_TESTS)
+        add_test(NAME arcslate_image_abi.codec.${codec_test} COMMAND arcslate_image_codec_tests ${codec_test})
+    endforeach()
 endif()
