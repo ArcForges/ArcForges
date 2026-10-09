@@ -270,6 +270,45 @@ std::vector<unsigned char> decompression_bomb_png()
     return png_header_only(65535, 65535);
 }
 
+// Rewrites the width, height and rows-per-strip entries of a one-row TIFF written by OpenImageIO, so the header
+// declares a larger image and its strip table still matches the rows. Only the header is read by the open call.
+std::vector<unsigned char> tiff_declaring_size(std::vector<unsigned char> bytes, uint32_t width, uint32_t height)
+{
+    const auto read16 = [&bytes](size_t at) { return static_cast<uint32_t>(bytes[at] | (bytes[at + 1] << 8)); };
+    const auto read32 = [&read16](size_t at) { return read16(at) | (read16(at + 2) << 16); };
+    const auto write = [&bytes](size_t at, uint32_t value, size_t byte_count) {
+        for (size_t index = 0; index < byte_count; ++index) {
+            bytes[at + index] = static_cast<unsigned char>((value >> (8 * index)) & 0xFFU);
+        }
+    };
+    if (bytes.size() < 8 || bytes[0] != 'I' || bytes[1] != 'I') {
+        return {};
+    }
+    const size_t ifd = read32(4);
+    if (ifd + 2 > bytes.size() || ifd + 2 + static_cast<size_t>(read16(ifd)) * 12 > bytes.size()) {
+        return {};
+    }
+    const size_t entries = read16(ifd);
+    for (size_t index = 0; index < entries; ++index) {
+        const size_t entry = ifd + 2 + index * 12;
+        const uint32_t tag = read16(entry);
+        const uint32_t type = read16(entry + 2);
+        if (tag != 256 && tag != 257 && tag != 278) {
+            continue;
+        }
+        const uint32_t value = tag == 256 ? width : height;
+        // TIFF SHORT (3) and LONG (4) hold the value left justified in the four-byte value field.
+        if (type == 3) {
+            write(entry + 8, value, 2);
+        } else if (type == 4) {
+            write(entry + 8, value, 4);
+        } else {
+            return {};
+        }
+    }
+    return bytes;
+}
+
 // ---- Tests -------------------------------------------------------------------------------------
 
 void test_probe_and_build_info()
@@ -1683,6 +1722,30 @@ struct test_case final {
     void (*run)();
 };
 
+void test_openimageio_size_limit_is_pinned()
+{
+    // OpenImageIO's own size guard defaults to min(32 GiB, physical memory), and a process global in the shim's
+    // OpenImageIO copy holds it. The shim pins that guard to the largest image its hard profile admits, which is
+    // 128 GiB (hard_max_pixels x max_channels x 8-byte doubles). This test executable links its own OpenImageIO, so
+    // it cannot read the shim's global. It checks the pin through the shim instead: a 16384 x 16384 header of 64
+    // double channels is exactly the admitted size, above any default guard, so it must open on every host.
+    OIIO::ImageSpec spec(1, 1, 64, OIIO::TypeDesc::DOUBLE);
+    const std::vector<double> pixel(64, 0.5);
+    const auto fixture = encode("fixture.tif", spec, OIIO::TypeDesc::DOUBLE, pixel.data());
+    const auto header = tiff_declaring_size(fixture, 16384, 16384);
+    expect(!header.empty(), "a one-pixel 64-channel double TIFF fixture encodes and declares 16384 x 16384");
+
+    source state{};
+    state.bytes = &header;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    const arc_status_t status = open_image(io, make_options(ARC_FORMAT_FLOAT32_INTERLEAVED), nullptr, handle, metadata);
+    expect(status == ARC_OK && handle != 0,
+           "a 128 GiB header at the admitted maximum opens on every host, so the size guard is pinned");
+    expect(arc_image_close(handle) == ARC_OK, "the admitted-maximum handle closes");
+}
+
 constexpr test_case test_cases[] = {
     {"probe", test_probe_and_build_info},
     {"png_rgba8", test_png_rgba8_round_trip},
@@ -1717,6 +1780,7 @@ constexpr test_case test_cases[] = {
     {"handle_lifecycle", test_handle_lifecycle_and_limit},
     {"exr_multipart", test_exr_multipart_subimages_within_bounds},
     {"exr_mips", test_exr_mip_levels_within_bounds},
+    {"oiio_size_pin", test_openimageio_size_limit_is_pinned},
 };
 
 } // namespace

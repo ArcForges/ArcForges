@@ -220,6 +220,28 @@ float srgb_to_linear(float encoded) noexcept
     return std::pow((encoded + 0.055F) / 1.055F, 2.4F);
 }
 
+// OpenImageIO refuses a header whose uncompressed size exceeds limits:imagesize_MB, a process global whose
+// default is min(32 GiB, physical memory). That default made the shim's answer depend on the host. The shim's
+// own bounds are the only size authority, so the guard is pinned once, before the first open, to the largest
+// image the hard profile admits: hard_max_pixels pixels of max_channels channels at 8 bytes per sample, the
+// widest type (double). The attribute is counted in MiB. Inside that size OpenImageIO never refuses, and the
+// shim's RESOURCE_LIMIT stays the answer for everything it bounds itself.
+constexpr uint64_t widest_sample_bytes = 8;
+constexpr uint64_t mebibyte = UINT64_C(1) << 20;
+constexpr uint64_t admitted_image_bytes = hard_max_pixels * max_channels * widest_sample_bytes;
+constexpr uint64_t admitted_image_mib = admitted_image_bytes / mebibyte;
+static_assert(admitted_image_bytes % mebibyte == 0, "the admitted image size is a whole number of MiB");
+static_assert(admitted_image_mib <= 0x7FFFFFFFU, "limits:imagesize_MB is a 32-bit signed attribute");
+
+// limits:channels keeps OpenImageIO's default of 1024. That value is a constant above the shim's channel bound,
+// so it never refuses a count the shim admits, and the shim's own RESOURCE_LIMIT answers the rest.
+bool pin_openimageio_size_limit()
+{
+    // A function-local static is initialised exactly once, and every later open sees the same result.
+    static const bool pinned = OIIO::attribute("limits:imagesize_MB", static_cast<int>(admitted_image_mib));
+    return pinned;
+}
+
 } // namespace
 
 // Binds the per-call cancellation token and deadline to the session and to the callback adapter, and
@@ -300,6 +322,10 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
     }
     if (io.length > limits.max_input_bytes) {
         return fail_image(ARC_RESOURCE_LIMIT, "Image input exceeds the input byte limit");
+    }
+    // Before the first OpenImageIO open, so no header is ever checked against a host-sized size guard.
+    if (!pin_openimageio_size_limit()) {
+        return fail_image(ARC_INTERNAL, "OpenImageIO size limit could not be pinned");
     }
 
     std::unique_ptr<image_session> session(new image_session());

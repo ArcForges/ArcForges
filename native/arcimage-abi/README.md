@@ -9,6 +9,22 @@ ownership crosses the boundary. The library reports ABI 1.1 (functional minor, d
   `read_at` callback through an OpenImageIO `IOProxy` adapter.
 - Bounds: dimensions, pixel count, channel count, tile memory and scanline memory are checked before any
   decode allocation. Region output is capped at 64 MiB, and at most 64 handles are open per library.
+- Size authority: the shim's own bounds decide image size, not the host. OpenImageIO refuses a header whose
+  uncompressed size exceeds its process global `limits:imagesize_MB`, whose default is min(32 GiB, physical
+  memory). The shim pins that global once, before the first OpenImageIO open (`image_session.cpp`,
+  `pin_openimageio_size_limit`), to 131072 MiB (128 GiB). That value is `hard_max_pixels` (2^28) x
+  `max_channels` (64) x 8 bytes (double, the widest sample type), the largest uncompressed image the hard
+  profile admits. OpenImageIO therefore never refuses an image the shim admits, and the shim's RESOURCE_LIMIT
+  answers everything it bounds. Before the pin, a 65535 x 65535 RGBA8 header (about 16 GiB) was refused by
+  the shim on a host with large physical memory, but by OpenImageIO at open on a smaller host, so the status
+  depended on memory. A header larger than 128 GiB by OpenImageIO's count, such as 65535 x 65535 with 64
+  double channels, still gets OpenImageIO's CORRUPT answer rather than the shim's RESOURCE_LIMIT.
+  `limits:channels` keeps OpenImageIO's default of 1024. That constant is above the shim's 64-channel bound,
+  so it never refuses a count the shim admits, and it does not depend on the host, so it is not pinned.
+  The shim links OpenImageIO statically (`x64-windows-static-md`), so the global is private to
+  ArcImageNative. The codec test executable has its own OpenImageIO copy and cannot read that global, so
+  `arcslate_image_abi.codec.oiio_size_pin` checks the pin through `arc_image_open` instead: a 16384 x 16384
+  header of 64 double channels (128 GiB) must open on every host.
 - Coverage: a handle accepts regions only in raster order without overlap (decision D3). A refused region
   changes no state.
 - Conversion: `rgba8` (straight alpha, no transfer change), `rgba32fLinearPremultiplied` (sRGB to linear
@@ -30,7 +46,7 @@ ownership crosses the boundary. The library reports ABI 1.1 (functional minor, d
 
 Probe, build and error exports keep their shipped signatures. The shim's own tests are the CTest target
 `arcslate_image_abi.hello` (probe, `arcslate_image_abi_tests`) and one CTest target per functional case,
-`arcslate_image_abi.codec.<name>` (`arcslate_image_codec_tests`, 33 cases, 368 checks on win-x64). The
+`arcslate_image_abi.codec.<name>` (`arcslate_image_codec_tests`, 34 cases, 374 checks on win-x64). The
 codec tests generate their fixtures in test code and ship none (decision D1). Production containment of
 untrusted decode is the WP11 helper (NAT.31), not this library.
 
@@ -42,7 +58,8 @@ Codec test coverage:
   Each pixel is covered once in raster order.
 - Limits: pixel-count and tile or scanline memory limits are refused before decode. A read whose row band
   exceeds the memory limit is refused before any row decodes. A read that passes its deadline between tiles is
-  RESOURCE_LIMIT.
+  RESOURCE_LIMIT. A 65535 x 65535 PNG header is refused from the header alone (`limits_bomb`). A 128 GiB header
+  at the admitted maximum opens, which shows the OpenImageIO size pin is in effect (`oiio_size_pin`).
 - Corrupt input: truncated, bad-header-CRC and damaged-pixel PNG, truncated TIFF and EXR, and an invalid EXR
   version are CORRUPT. Each writes no pixels.
 - Failed codec: a callback failure during decode is IO, writes no pixels and consumes no coverage.
@@ -66,8 +83,10 @@ Local win-x64 validation (NAT.11 unit 5; decision D12). The clean shim-static bu
 Visual Studio 2026 Community (MSVC 19.51.36257, toolset 14.51.36231) with the vcpkg commit 36677bbd and the four
 pinned packages installed under the worktree artifacts root:
 
-- CTest with the CI filter: 36 of 36 pass. sccache recorded 9 compile requests and no non-cacheable compilation.
-- `dotnet restore DesktopPlatform.slnx --locked-mode`, NativeAbiLayout 3 of 3, NativeAbi functional 15 of 15, and
+- CTest with the CI filter: 37 of 37 pass (NAT.11 unit 6, after the OpenImageIO size pin). The codec test
+  executable reports 374 checks with no failures. A mutation check that lowers the pin to the 32 GiB default
+  fails `oiio_size_pin` (2 of 3 checks), which shows the test depends on the pin.
+- `dotnet restore DesktopPlatform.slnx --locked-mode`, NativeAbiLayout 3 of 3, NativeAbi functional 16 of 16, and
   a zero-warning build of ArcForges.Native.Abstractions, ArcForges.Native.Image, the Image runtime project and the
   NativeAbi test project. `dotnet format DesktopPlatform.slnx --verify-no-changes` passes.
 - The functional managed tests load a manifest-checked `ArcImageNative.dll` beside the test assembly. Locally that

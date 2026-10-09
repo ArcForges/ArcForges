@@ -88,7 +88,8 @@ if(ARCFORGES_BUILD_TESTS)
         callback_failures
         handle_lifecycle
         exr_multipart
-        exr_mips)
+        exr_mips
+        oiio_size_pin)
     foreach(codec_test IN LISTS ARCFORGES_IMAGE_CODEC_TESTS)
         add_test(NAME arcslate_image_abi.codec.${codec_test} COMMAND arcslate_image_codec_tests ${codec_test})
     endforeach()
