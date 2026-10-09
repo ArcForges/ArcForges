@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -154,8 +155,16 @@ arc_status_t read_region(arc_handle_t handle, uint32_t x, uint32_t y, uint32_t w
 }
 
 // Encodes an in-memory image with an OpenImageIO writer. The writer uses the same proxy path as the reader.
-std::vector<unsigned char> encode(const char* hint, const OIIO::ImageSpec& spec, OIIO::TypeDesc type, const void* pixels)
+// Fixtures hold straight (unassociated) alpha unless the caller says otherwise. OpenImageIO's PNG writer
+// assumes associated input and rewrites colour unless the spec marks the alpha unassociated, and its TIFF
+// writer labels the alpha from the same attribute. Marking the spec keeps the stored bytes equal to the pixels.
+std::vector<unsigned char> encode(const char* hint, OIIO::ImageSpec spec, OIIO::TypeDesc type, const void* pixels,
+                                  bool straight_alpha = true)
 {
+    const std::string_view name(hint);
+    if (straight_alpha && spec.alpha_channel != -1 && (name.ends_with(".png") || name.ends_with(".tif"))) {
+        spec.attribute("oiio:UnassociatedAlpha", 1);
+    }
     std::vector<unsigned char> bytes;
     OIIO::Filesystem::IOVecOutput proxy(bytes);
     auto output = OIIO::ImageOutput::create(hint, &proxy);
@@ -288,9 +297,11 @@ void test_png_rgba8_round_trip()
     expect(status == ARC_OK && handle != 0, "PNG opens as rgba8");
     expect(contains(metadata, "\"format\":\"png\"") && contains(metadata, "\"outputFormat\":\"rgba8\""),
            "metadata names the codec and output format");
-    expect(contains(metadata, "\"premultiplyOnRead\"") && contains(metadata, "\"unpremultiply\""),
-           "straight PNG alpha is associated on read and unpremultiplied for rgba8");
-    expect(contains(metadata, "\"unpremultiplyPrecision\""), "rgba8 output from alpha reports the precision loss");
+    expect(contains(metadata, "\"alpha\":\"straight\""), "straight PNG alpha is read as straight");
+    expect(!contains(metadata, "\"premultiplyOnRead\"") && !contains(metadata, "\"unpremultiply\""),
+           "straight PNG alpha is passed to rgba8 without a premultiply or unpremultiply step");
+    expect(!contains(metadata, "\"unpremultiplyPrecision\""),
+           "rgba8 output from straight alpha reports no precision loss");
 
     std::vector<uint8_t> pixels;
     expect(read_region(handle, 0, 0, width, height, 4, pixels) == ARC_OK, "full-image region reads");
@@ -440,6 +451,31 @@ void test_exr_premultiplied_source_is_not_premultiplied_again()
     std::memcpy(values, raw.data(), sizeof(values));
     expect(std::abs(values[0] - 0.4F) < 1e-6F && std::abs(values[3] - 0.5F) < 1e-6F,
            "associated colour and alpha pass through unchanged");
+    arc_image_close(handle);
+}
+
+void test_tiff_associated_alpha_is_not_premultiplied_again()
+{
+    // Stored with associated alpha (the TIFF marks it associated, so no unassociated attribute is reported).
+    const std::vector<uint8_t> pixel = {102, 102, 102, 128};
+    const auto bytes = encode("fixture.tif", rgba8_spec(1, 1), OIIO::TypeDesc::UINT8, pixel.data(), false);
+    expect(!bytes.empty(), "associated TIFF fixture encodes");
+
+    source state{};
+    state.bytes = &bytes;
+    const arc_io_v1 io = make_io(state);
+    arc_handle_t handle = 0;
+    std::string metadata;
+    expect(open_image(io, make_options(ARC_FORMAT_RGBA32F_LINEAR_PREMULTIPLIED), nullptr, handle, metadata) == ARC_OK,
+           "associated TIFF opens as linear premultiplied float");
+    expect(contains(metadata, "\"alpha\":\"premultiplied\"") && !contains(metadata, "\"premultiplyOnRead\""),
+           "associated TIFF alpha is reported as premultiplied and not premultiplied again");
+    std::vector<uint8_t> raw;
+    expect(read_region(handle, 0, 0, 1, 1, 16, raw) == ARC_OK, "associated TIFF float region reads");
+    float values[4] = {};
+    std::memcpy(values, raw.data(), sizeof(values));
+    expect(std::abs(values[0] - 102.0F / 255.0F) < 1e-6F && std::abs(values[3] - 128.0F / 255.0F) < 1e-6F,
+           "associated TIFF colour and alpha pass through unchanged");
     arc_image_close(handle);
 }
 
@@ -784,6 +820,7 @@ int main()
     test_png_linear_float_and_premultiply();
     test_exr_float_round_trip();
     test_exr_premultiplied_source_is_not_premultiplied_again();
+    test_tiff_associated_alpha_is_not_premultiplied_again();
     test_tiled_tiff_edge_tiles_and_coverage();
     test_coverage_order_and_no_state_change();
     test_buffer_too_small_consumes_nothing();

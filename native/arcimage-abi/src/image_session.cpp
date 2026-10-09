@@ -323,10 +323,16 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
             return fail_image(ARC_UNSUPPORTED, "Image content is not a supported PNG, TIFF or EXR file");
         }
 
-        // OpenImageIO associates alpha as it reads (its default). A reader configuration cannot be passed
-        // together with a callback proxy in this build, so the association is handled by the conversion plan.
-        std::unique_ptr<OIIO::ImageInput> input =
-            OIIO::ImageInput::open(hint_name(source), nullptr, session->proxy_.get());
+        // The callback proxy and the straight-alpha request travel in the open configuration (OpenImageIO's
+        // documented route, ImageInput::open with an ioproxy attribute). Without the request the PNG and TIFF
+        // readers premultiply straight alpha as they read, which loses 8-bit precision for rgba8 output.
+        OIIO::ImageSpec reader_config;
+        OIIO::Filesystem::IOProxy* proxy = session->proxy_.get();
+        reader_config.attribute("oiio:ioproxy", OIIO::TypeDesc::PTR, &proxy);
+        if (source == source_kind::png || source == source_kind::tiff) {
+            reader_config.attribute("oiio:UnassociatedAlpha", 1);
+        }
+        std::unique_ptr<OIIO::ImageInput> input = OIIO::ImageInput::open(hint_name(source), &reader_config);
         if (!input) {
             if (session->proxy_->latched_status() != ARC_OK) {
                 return fail_image(session->proxy_->latched_status(), "Image input could not be read");
@@ -457,18 +463,12 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
             }
         }
 
-        // Transparency and colour metadata. The file's own association is reported: PNG alpha is straight,
-        // TIFF follows its association attribute when present, and EXR is associated by convention when the
-        // attribute is absent. Pixels read through OpenImageIO are associated whenever the source has alpha.
-        const bool association_reported = spec.find_attribute("oiio:UnassociatedAlpha") != nullptr;
-        bool file_straight = false;
-        if (source == source_kind::png) {
-            file_straight = true;
-        } else if (source == source_kind::tiff) {
-            file_straight = association_reported ? spec.get_int_attribute("oiio:UnassociatedAlpha", 0) != 0 : true;
-        } else {
-            file_straight = association_reported && spec.get_int_attribute("oiio:UnassociatedAlpha", 0) != 0;
-        }
+        // Transparency and colour metadata. The file's own association is reported and is what the reader returns:
+        // PNG alpha is straight by its specification, and TIFF and EXR report oiio:UnassociatedAlpha only when their
+        // alpha is unassociated, so an absent attribute means associated. The straight-alpha request keeps the
+        // stored association for both readers, so the pixels match the file.
+        const bool file_straight =
+            source == source_kind::png || spec.get_int_attribute("oiio:UnassociatedAlpha", 0) != 0;
         const bool srgb = equals_ignore_case(spec.get_string_attribute("oiio:ColorSpace"), "sRGB");
 
         // Channel plan (decision D4). Named channels win; otherwise the mapping is positional.
@@ -531,9 +531,11 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
         session->output_channels_ = identity ? channels : 4;
         session->bytes_per_pixel_ = identity ? channels * 4U : 4U * (rgba8 ? 1U : 4U);
         session->srgb_to_linear_ = !identity && rgba32f && srgb;
-        // Pixels with alpha arrive associated. Straight 8-bit output unpremultiplies them, and the
-        // linear float output unpremultiplies only to apply the transfer curve and then premultiplies again.
-        session->unpremultiply_output_ = !identity && rgba8 && has_alpha;
+        // Straight sources are read straight (decision D4 and the straight-alpha adjudication), so only an
+        // associated source needs unpremultiplying. The sRGB transfer applies to straight colour, and the
+        // premultiplied float output multiplies by alpha after the transfer.
+        session->source_associated_ = !identity && has_alpha && !file_straight;
+        session->premultiply_output_ = rgba32f && has_alpha && (file_straight || session->srgb_to_linear_);
 
         // Channels that the RGBA output does not read are dropped and reported as a loss.
         std::vector<bool> used(channels, false);
@@ -555,14 +557,14 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
         if (!identity && !has_alpha) {
             conversions.push_back("alphaFilled");
         }
-        if (!identity && has_alpha && file_straight) {
-            conversions.push_back("premultiplyOnRead");
-        }
-        if (session->unpremultiply_output_) {
+        if (session->source_associated_ && (rgba8 || session->srgb_to_linear_)) {
             conversions.push_back("unpremultiply");
         }
         if (session->srgb_to_linear_) {
             conversions.push_back("srgbToLinear");
+        }
+        if (session->premultiply_output_) {
+            conversions.push_back("premultiplyOnRead");
         }
         std::vector<const char*> losses;
         if (lossy_depth) {
@@ -574,7 +576,7 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
         if (lossy_precision) {
             losses.push_back("precisionReduction");
         }
-        if (session->unpremultiply_output_) {
+        if (rgba8 && session->source_associated_) {
             losses.push_back("unpremultiplyPrecision");
         }
         if (dropped) {
@@ -886,44 +888,29 @@ void image_session::convert_pixel(const float* source, float* destination) const
     float green = grey_ ? red : source[green_];
     float blue = grey_ ? red : source[blue_];
     const float alpha = alpha_ >= 0 ? source[alpha_] : 1.0F;
-    const bool associated = alpha_ >= 0;
 
-    if (format_ == ARC_FORMAT_RGBA8) {
-        // Straight alpha and no transfer change. Associated pixels are unpremultiplied; zero alpha has no
-        // recoverable colour and yields black.
-        if (unpremultiply_output_) {
-            if (alpha > 0.0F) {
-                red /= alpha;
-                green /= alpha;
-                blue /= alpha;
-            } else {
-                red = 0.0F;
-                green = 0.0F;
-                blue = 0.0F;
-            }
+    // Straight colour is needed for rgba8 output and for the transfer curve. An associated source yields it by
+    // division; zero alpha has no recoverable colour and yields black.
+    if (source_associated_ && (format_ == ARC_FORMAT_RGBA8 || srgb_to_linear_)) {
+        if (alpha > 0.0F) {
+            red /= alpha;
+            green /= alpha;
+            blue /= alpha;
+        } else {
+            red = 0.0F;
+            green = 0.0F;
+            blue = 0.0F;
         }
-    } else if (srgb_to_linear_) {
-        // The transfer curve applies to straight colour, so associated pixels are unpremultiplied first and
-        // premultiplied again afterwards.
-        if (associated) {
-            if (alpha > 0.0F) {
-                red /= alpha;
-                green /= alpha;
-                blue /= alpha;
-            } else {
-                red = 0.0F;
-                green = 0.0F;
-                blue = 0.0F;
-            }
-        }
+    }
+    if (srgb_to_linear_) {
         red = srgb_to_linear(red);
         green = srgb_to_linear(green);
         blue = srgb_to_linear(blue);
-        if (associated) {
-            red *= alpha;
-            green *= alpha;
-            blue *= alpha;
-        }
+    }
+    if (premultiply_output_) {
+        red *= alpha;
+        green *= alpha;
+        blue *= alpha;
     }
     destination[0] = red;
     destination[1] = green;

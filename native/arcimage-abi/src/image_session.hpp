@@ -96,7 +96,11 @@ class image_session final {
     bool grey_ = false;
     bool identity_ = false;
     bool srgb_to_linear_ = false;
-    bool unpremultiply_output_ = false;
+    // The source pixels arrive premultiplied (EXR, or a TIFF whose file marks its alpha associated), so
+    // straight colour is recovered before the output needs it.
+    bool source_associated_ = false;
+    // The rgba32f output is premultiplied, so straight colour is multiplied by alpha after any transfer.
+    bool premultiply_output_ = false;
 
     std::vector<float> tile_buffer_;  // one decoded tile (tiled sources)
     std::vector<float> band_;         // decoded full-width rows [band_begin_, band_end_)

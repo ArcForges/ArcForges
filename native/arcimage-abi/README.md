@@ -14,6 +14,14 @@ ownership crosses the boundary. The library reports ABI 1.1 (functional minor, d
 - Conversion: `rgba8` (straight alpha, no transfer change), `rgba32fLinearPremultiplied` (sRGB to linear
   only when OpenImageIO reports sRGB, premultiply only for unassociated alpha) and `float32Interleaved`
   (source channels kept). Every lossy step is listed in the metadata `loss` array (decision D4).
+- Straight alpha: the PNG and TIFF readers are opened with the callback proxy as the `oiio:ioproxy`
+  pointer attribute and `oiio:UnassociatedAlpha` = 1 in the open configuration (OpenImageIO 3.1.14.0,
+  `ImageInput::open` with an `ImageSpec` config). The readers then return straight alpha, so `rgba8`
+  output is byte exact. Without the request OpenImageIO premultiplies straight alpha as it reads, and
+  8-bit output is inexact. The request is honoured for both formats, so no direct libpng or libtiff decode
+  is used. An associated source (EXR, or a TIFF whose file marks its alpha associated) is unpremultiplied
+  only where straight colour is needed. The TIFF reader reports the association only when the alpha is
+  unassociated, so its association is read from that attribute.
 - Cancellation and the per-call timeout are observed at callback and tile boundaries. An in-flight codec
   call is not interruptible.
 - Build information is a closed JSON object that lists the capabilities and formats and embeds the build
