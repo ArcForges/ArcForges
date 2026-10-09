@@ -783,8 +783,25 @@ void test_handle_lifecycle_and_limit()
     source state{};
     state.bytes = &png;
     const arc_io_v1 io = make_io(state);
+    const arc_image_options_v1 options = make_options(ARC_FORMAT_RGBA8);
     std::vector<arc_handle_t> handles;
     std::string metadata;
+
+    // A short metadata buffer reports the required size, writes no metadata byte and leaves no handle open
+    // (the handle is rolled back), so the 64-handle limit below is still fully available afterwards.
+    {
+        char tiny[4] = {'S', 'E', 'N', 'T'};
+        arc_mut_buffer_t output{};
+        output.data = tiny;
+        output.capacity = sizeof(tiny);
+        arc_handle_t short_handle = 0;
+        const arc_status_t status = arc_image_open(&io, &options, &short_handle, &output, nullptr);
+        expect(status == ARC_BUFFER_TOO_SMALL && short_handle == 0 && output.required > sizeof(tiny),
+               "a short metadata buffer reports BUFFER_TOO_SMALL with the required size and no handle");
+        expect(tiny[0] == 'S' && tiny[1] == 'E' && tiny[2] == 'N' && tiny[3] == 'T',
+               "a short metadata buffer is not written");
+    }
+
     for (int index = 0; index < 64; ++index) {
         arc_handle_t handle = 0;
         if (open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, handle, metadata) != ARC_OK) {
@@ -793,10 +810,21 @@ void test_handle_lifecycle_and_limit()
         handles.push_back(handle);
     }
     expect(handles.size() == 64, "64 image handles open per library context");
+
+    // Annex 06 section 1: a refused open writes no output at all, so the metadata buffer keeps its sentinel
+    // bytes and its required field is untouched.
+    std::vector<char> sentinel(65536, '\x5A');
+    arc_mut_buffer_t sentinel_output{};
+    sentinel_output.data = sentinel.data();
+    sentinel_output.capacity = sentinel.size();
+    sentinel_output.required = 0xFEEDFACEULL;
     arc_handle_t overflow = 0;
-    expect(open_image(io, make_options(ARC_FORMAT_RGBA8), nullptr, overflow, metadata) == ARC_RESOURCE_LIMIT &&
-               overflow == 0,
+    const arc_status_t refused = arc_image_open(&io, &options, &overflow, &sentinel_output, nullptr);
+    expect(refused == ARC_RESOURCE_LIMIT && overflow == 0,
            "a 65th handle is refused with RESOURCE_LIMIT");
+    expect(std::all_of(sentinel.begin(), sentinel.end(), [](char byte) { return byte == '\x5A'; }) &&
+               sentinel_output.required == 0xFEEDFACEULL,
+           "a refused 65th open writes no metadata bytes and no required size");
     for (const arc_handle_t handle : handles) {
         expect(arc_image_close(handle) == ARC_OK, "each handle closes once");
     }

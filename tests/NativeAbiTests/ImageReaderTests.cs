@@ -231,6 +231,57 @@ public sealed class ImageReaderTests
         Assert.Equal((ulong)(Width * Height), completion.CoveredPixels);
     }
 
+    // Sweeps the cancellation trigger across every source read of one region, so that a cancellation which lands
+    // after native code has returned success is exercised, not only one which lands inside the native read. The
+    // outcome decides the coverage: pixels returned means the region counts and completion succeeds, and a
+    // cancelled read means nothing was counted and the same region can be read again.
+    [Fact]
+    public async Task CancellationAtEveryReadOrdinalKeepsCoverageConsistentWithOutcome()
+    {
+        byte[] file = ImageFixtures.PngRgba8(Width, Height, StraightRgba);
+        ImageRegion whole = new(0, 0, Width, Height);
+        const int MaxReadOrdinals = 256;
+        for (int ordinal = 1; ordinal <= MaxReadOrdinals; ordinal++)
+        {
+            using var stream = new MemoryStream(file);
+            using var cancellation = new CancellationTokenSource();
+            var source = new ArmableSource(ImageByteSource.FromStream(stream), () => cancellation.Cancel());
+            await using ImageReader reader = await ImageReader.OpenAsync(source);
+
+            source.Arm(ordinal);
+            ImagePixelRegion? first = null;
+            try
+            {
+                first = await reader.ReadRegionAsync(whole, cancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // The outcome is cancellation: no coverage may have been counted.
+            }
+
+            bool fired = source.Fired;
+            source.Disarm();
+            if (first is null)
+            {
+                ImageCoverageIncompleteException missing =
+                    await Assert.ThrowsAsync<ImageCoverageIncompleteException>(() => reader.CompleteAsync());
+                Assert.Equal(0UL, missing.CoveredPixels);
+                first = await reader.ReadRegionAsync(whole);
+            }
+
+            Assert.Equal(StraightRgba, first.Pixels.ToArray());
+            ImageCompletion completion = await reader.CompleteAsync();
+            Assert.Equal((ulong)(Width * Height), completion.CoveredPixels);
+            Assert.Equal(1u, completion.RegionCount);
+
+            // The read finished before reaching this read ordinal, so no later ordinal is reachable.
+            if (!fired)
+            {
+                break;
+            }
+        }
+    }
+
     [Fact]
     public async Task PreCancelledOpenDoesNotReachNative()
     {
@@ -298,20 +349,27 @@ public sealed class ImageReaderTests
     {
         private volatile bool _armed;
         private bool _fired;
+        private int _armedReads;
+        private int _triggerOrdinal = 1;
 
         public override long Length => inner.Length;
 
-        public void Arm()
+        // Fires onArmedRead on the triggerOrdinal-th read after arming (1 is the first read).
+        public void Arm(int triggerOrdinal = 1)
         {
             _fired = false;
+            _armedReads = 0;
+            _triggerOrdinal = triggerOrdinal;
             _armed = true;
         }
 
         public void Disarm() => _armed = false;
 
+        public bool Fired => _fired;
+
         public override int ReadAt(long offset, Span<byte> destination)
         {
-            if (_armed && !_fired)
+            if (_armed && !_fired && ++_armedReads == _triggerOrdinal)
             {
                 _fired = true;
                 onArmedRead();

@@ -65,8 +65,10 @@ public sealed class ImageReader : IAsyncDisposable
         }
     }
 
-    // Reads one rectangle. Regions must be disjoint and arrive in raster order (decision D3). A refused or
-    // cancelled region changes no coverage, so the caller may retry it.
+    // Reads one rectangle. Regions must be disjoint and arrive in raster order (decision D3). A region that
+    // native code refuses, or reports as cancelled, changes no coverage, so the caller may retry it. Once native
+    // code has returned success, the region is counted and its pixels are returned even if cancellation was
+    // requested afterwards, because native coverage has already been committed and the two must agree.
     public async Task<ImagePixelRegion> ReadRegionAsync(ImageRegion region, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeStarted) != 0, this);
@@ -83,11 +85,12 @@ public sealed class ImageReader : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             byte[] pixels = GC.AllocateUninitializedArray<byte>(checked((int)bytes));
+            // Reaching this line means ReadNative returned without throwing, so native code returned OK and has
+            // already committed the coverage. The managed count follows it unconditionally. A cancellation that
+            // arrives now must not discard the pixels, or the image could never complete (the region would be
+            // refused on retry as an overlap).
             await Task.Run(() => ReadNative(region, pixels, linked.Token), linked.Token).ConfigureAwait(false);
 
-            // A read that finished after cancellation was requested is discarded, so it consumes no coverage and
-            // the caller can retry the same region.
-            linked.Token.ThrowIfCancellationRequested();
             _coveredPixels += (ulong)region.Width * region.Height;
             _regionCount++;
             return new ImagePixelRegion(region, Metadata.OutputFormat, Metadata.BytesPerPixel, pixels);

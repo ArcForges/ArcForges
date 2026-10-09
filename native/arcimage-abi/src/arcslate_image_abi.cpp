@@ -115,13 +115,23 @@ arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_op
         if (opened != ARC_OK) {
             return opened;
         }
-        // The metadata is copied before the handle exists, so a short buffer consumes no state.
-        const arc_status_t written = write_text(session->metadata(), metadata);
+        // Annex 06 section 1: a failed call writes no output. The handle is registered first, into a local
+        // token, so a refused create (RESOURCE_LIMIT) leaves the metadata buffer untouched. Only then is the
+        // metadata copied. A short metadata buffer closes the new handle again, so the failed call leaves no
+        // open handle behind.
+        std::shared_ptr<image_session> shared(std::move(session));
+        arc_handle_t created = 0;
+        const arc_status_t registered = image_handles().create(image_handle_kind, shared, &created);
+        if (registered != ARC_OK) {
+            return registered;
+        }
+        const arc_status_t written = write_text(shared->metadata(), metadata);
         if (written != ARC_OK) {
+            (void)image_handles().close(created, image_handle_kind);
             return written;
         }
-        std::shared_ptr<image_session> shared(std::move(session));
-        return image_handles().create(image_handle_kind, shared, image);
+        *image = created;
+        return ARC_OK;
     } catch (const std::bad_alloc&) {
         return arc::abi::fail(ARC_OUT_OF_MEMORY, "Image open allocation failed", image_error_domain);
     } catch (...) {
