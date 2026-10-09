@@ -15,9 +15,7 @@ static_assert(sizeof(size_t) == sizeof(uint64_t), "ArcImageNative is a 64-bit on
 } // namespace
 
 callback_io::callback_io(std::string hint, const arc_io_v1& io)
-    : OIIO::Filesystem::IOProxy(hint, OIIO::Filesystem::IOProxy::Read),
-      read_at_(io.read_at),
-      context_(io.context),
+    : OIIO::Filesystem::IOProxy(hint, OIIO::Filesystem::IOProxy::Read), read_at_(io.read_at), context_(io.context),
       length_(io.length)
 {
 }

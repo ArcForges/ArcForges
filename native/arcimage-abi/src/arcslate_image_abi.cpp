@@ -47,7 +47,8 @@ arc_status_t write_text(std::string_view text, arc_mut_buffer_t* output)
 std::string build_info_json()
 {
     const std::string_view identity(arc_build_identity);
-    const std::string_view identity_fields = identity.empty() || identity.front() != ';' ? identity : identity.substr(1);
+    const std::string_view identity_fields =
+        identity.empty() || identity.front() != ';' ? identity : identity.substr(1);
     std::string json;
     json.reserve(512);
     json += "{\"library\":\"ArcImageNative\",\"abi\":{\"major\":1,\"minor\":1},";
@@ -97,9 +98,8 @@ arc_status_t ARC_ABI_CALL arc_image_get_last_error(arc_error_info_t* out_error)
     return arc::abi::get_last_error(out_error);
 }
 
-arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_options_v1* options,
-                                         arc_handle_t* image, arc_mut_buffer_t* metadata,
-                                         const arc_cancel_token_t* cancel)
+arc_status_t ARC_ABI_CALL arc_image_open(const arc_io_v1* io, const arc_image_options_v1* options, arc_handle_t* image,
+                                         arc_mut_buffer_t* metadata, const arc_cancel_token_t* cancel)
 {
     try {
         const arc_status_t prepared = arc::abi::prepare_handle_output(image);

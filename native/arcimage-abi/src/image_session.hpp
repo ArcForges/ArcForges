@@ -47,8 +47,8 @@ class image_session final {
 
     // Probes the content (PNG, TIFF or EXR only), validates every bound against the limits before
     // any pixel allocation, and builds the metadata document. On failure output stays empty.
-    static arc_status_t open(const arc_io_v1& io, const arc_image_options_v1& options,
-                             const arc_cancel_token_t* cancel, std::unique_ptr<image_session>& output);
+    static arc_status_t open(const arc_io_v1& io, const arc_image_options_v1& options, const arc_cancel_token_t* cancel,
+                             std::unique_ptr<image_session>& output);
 
     // Closed JSON metadata document produced by open().
     [[nodiscard]] const std::string& metadata() const noexcept
@@ -83,7 +83,7 @@ class image_session final {
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     uint32_t channels_ = 0;
-    uint32_t tile_width_ = 0;  // zero for scanline images
+    uint32_t tile_width_ = 0; // zero for scanline images
     uint32_t tile_height_ = 0;
     uint32_t output_channels_ = 0;
     uint32_t bytes_per_pixel_ = 0;
@@ -102,8 +102,8 @@ class image_session final {
     // The rgba32f output is premultiplied, so straight colour is multiplied by alpha after any transfer.
     bool premultiply_output_ = false;
 
-    std::vector<float> tile_buffer_;  // one decoded tile (tiled sources)
-    std::vector<float> band_;         // decoded full-width rows [band_begin_, band_end_)
+    std::vector<float> tile_buffer_; // one decoded tile (tiled sources)
+    std::vector<float> band_;        // decoded full-width rows [band_begin_, band_end_)
     uint32_t band_begin_ = 0;
     uint32_t band_end_ = 0;
     std::vector<float> scratch_;

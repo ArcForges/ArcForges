@@ -288,14 +288,13 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
     }
 
     const arc_limits_v1& limits = options.limits;
-    const bool positive = limits.max_input_bytes != 0 && limits.max_memory_bytes != 0 &&
-                          limits.max_output_bytes != 0 && limits.max_width != 0 && limits.max_height != 0 &&
-                          limits.max_items != 0 && limits.timeout_ms != 0;
-    const bool within_profile = limits.max_input_bytes <= hard_max_input_bytes &&
-                                limits.max_memory_bytes <= hard_max_memory_bytes &&
-                                limits.max_output_bytes <= hard_max_region_bytes &&
-                                limits.max_width <= hard_max_dimension && limits.max_height <= hard_max_dimension &&
-                                limits.max_items <= hard_max_items;
+    const bool positive = limits.max_input_bytes != 0 && limits.max_memory_bytes != 0 && limits.max_output_bytes != 0 &&
+                          limits.max_width != 0 && limits.max_height != 0 && limits.max_items != 0 &&
+                          limits.timeout_ms != 0;
+    const bool within_profile =
+        limits.max_input_bytes <= hard_max_input_bytes && limits.max_memory_bytes <= hard_max_memory_bytes &&
+        limits.max_output_bytes <= hard_max_region_bytes && limits.max_width <= hard_max_dimension &&
+        limits.max_height <= hard_max_dimension && limits.max_items <= hard_max_items;
     if (!positive || !within_profile) {
         return fail_image(ARC_INVALID_ARGUMENT, "Image limits are missing or exceed the producer profile");
     }
@@ -367,8 +366,8 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
 
         uint32_t mip_count = 0;
         for (;;) {
-            const OIIO::ImageSpec dimensions = session->input_->spec_dimensions(
-                static_cast<int>(options.subimage), static_cast<int>(mip_count));
+            const OIIO::ImageSpec dimensions =
+                session->input_->spec_dimensions(static_cast<int>(options.subimage), static_cast<int>(mip_count));
             if (dimensions.format == OIIO::TypeUnknown) {
                 break;
             }
@@ -459,8 +458,8 @@ arc_status_t image_session::open(const arc_io_v1& io, const arc_image_options_v1
             session->tile_height_ = static_cast<uint32_t>(spec.tile_height);
         } else {
             uint64_t row_samples = 0;
-            if (!multiply_u64(width, channels, row_samples) || !multiply_u64(row_samples, sizeof(float), memory_bytes) ||
-                memory_bytes > limits.max_memory_bytes) {
+            if (!multiply_u64(width, channels, row_samples) ||
+                !multiply_u64(row_samples, sizeof(float), memory_bytes) || memory_bytes > limits.max_memory_bytes) {
                 return fail_image(ARC_RESOURCE_LIMIT, "Image scanline exceeds the memory limit");
             }
         }
@@ -799,8 +798,8 @@ arc_status_t image_session::decode_scanlines(uint32_t x, uint32_t y, uint32_t w,
     }
     const uint64_t row_floats = static_cast<uint64_t>(width_) * channels_;
     for (uint32_t row = y; row < y + h; ++row) {
-        const float* source = band_.data() + static_cast<uint64_t>(row - band_begin_) * row_floats +
-                              static_cast<uint64_t>(x) * channels_;
+        const float* source =
+            band_.data() + static_cast<uint64_t>(row - band_begin_) * row_floats + static_cast<uint64_t>(x) * channels_;
         uint8_t* destination = out + static_cast<uint64_t>(row - y) * w * bytes_per_pixel_;
         convert_segment(source, w, destination);
     }
@@ -865,7 +864,7 @@ void image_session::convert_segment(const float* source, uint32_t count, uint8_t
         // than through OpenImageIO's convert_type, which reports failure for this pair.
         for (size_t index = 0; index < output_floats; ++index) {
             float value = scratch_[index];
-            if (!(value > 0.0F)) {  // also maps NaN to zero
+            if (!(value > 0.0F)) { // also maps NaN to zero
                 value = 0.0F;
             } else if (value > 1.0F) {
                 value = 1.0F;

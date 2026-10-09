@@ -49,12 +49,12 @@ if(ARCFORGES_BUILD_TESTS)
     target_link_libraries(arcslate_image_abi_tests PRIVATE arcslate_image_abi)
     add_test(NAME arcslate_image_abi.hello COMMAND arcslate_image_abi_tests)
 
-    add_executable(arcslate_image_codec_tests "tests/arcimage_codec_tests.cpp")
+    add_executable(arcslate_image_codec_tests "tests/arcslate_image_codec_tests.cpp")
     arcforges_declare_target_licence(arcslate_image_codec_tests)
     set_target_properties(arcslate_image_codec_tests PROPERTIES ARCFORGES_TEST_ONLY TRUE)
     target_compile_features(arcslate_image_codec_tests PRIVATE cxx_std_20)
     target_link_libraries(arcslate_image_codec_tests PRIVATE arcslate_image_abi OpenImageIO::OpenImageIO)
-    # One CTest target per codec test. Keep this list in step with test_cases in tests/arcimage_codec_tests.cpp.
+    # One CTest target per codec test. Keep this list in step with test_cases in tests/arcslate_image_codec_tests.cpp.
     set(ARCFORGES_IMAGE_CODEC_TESTS
         probe
         png_rgba8
