@@ -10,9 +10,13 @@
     <OutputType>Exe</OutputType>
     <ArcForgesDeployWindowsNativeRuntime Condition="'$(SolutionFileName)' == 'win.slnx'">true</ArcForgesDeployWindowsNativeRuntime>
     <!-- This suite is exercised after native staging, outside the managed taxonomy. -->
+    <!-- xUnit forbids ConfigureAwait(false) in tests, so CA2007 would force noise on every await; test doubles own short-lived disposables (CA2000). -->
+    <!-- xUnit1051 asks every cancellable call to use TestContext's token; these reads are short and the cancellation tests pass their own token. -->
+    <NoWarn>$(NoWarn);CA2007;CA2000;xUnit1051</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Native\ArcForges.Native.Abstractions\ArcForges.Native.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Native\ArcForges.Native.Image\ArcForges.Native.Image.csproj" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />

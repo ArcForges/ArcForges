@@ -690,6 +690,41 @@
     "testMethod": "ArcForges.Tests.ArchitectureTests.PublicBoundaryContractTests.ImagePublicContractHasOnlyTypedManagedResults()"
   },
   {
+    "apiSymbol": "ArcForges.Native.Image.ImageByteSource.ReadAt(long, System.Span<byte>)",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.CancellationDuringNativeReadKeepsCoverageConsistentWithOutcome()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageByteSource.FromStream(System.IO.Stream)",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.PngRgba8StraightAlphaRoundTripsByteExactAndCompletes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageReader.OpenAsync(ArcForges.Native.Image.ImageByteSource, ArcForges.Native.Image.ImageOpenOptions?, System.Threading.CancellationToken)",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.PngRgba8StraightAlphaRoundTripsByteExactAndCompletes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageReader.ProbeAsync(ArcForges.Native.Image.ImageByteSource, ArcForges.Native.Image.ImageOpenOptions?, System.Threading.CancellationToken)",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.TiffRgba8UnassociatedAlphaRoundTripsByteExact()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageReader.ReadRegionAsync(ArcForges.Native.Image.ImageRegion, System.Threading.CancellationToken)",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.PngRgba8StraightAlphaRoundTripsByteExactAndCompletes()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageReader.CompleteAsync(System.Threading.CancellationToken)",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.RegionsCoverEveryPixelOnlyWhenEveryBandIsRead()"
+  },
+  {
+    "apiSymbol": "ArcForges.Native.Image.ImageReader.DisposeAsync()",
+    "testProject": "tests/NativeAbiTests/ArcForges.Tests.NativeAbiTests.csproj",
+    "testMethod": "ArcForges.Tests.NativeAbiTests.ImageReaderTests.DisposeAsyncClosesTheHandleAndRefusesFurtherUse()"
+  },
+  {
     "apiSymbol": "ArcForges.Security.ActorOperation<T>.Forward<TNext>(TNext)",
     "testProject": "src/BuildingBlocks/ArcForges.Security/Tests/ArcForges.Security.Tests.csproj",
     "testMethod": "ArcForges.Security.Tests.ActorChainTests.FullChainSurvivesLayerQueueAndOfflineProcessBoundary(ArcForges.Security.HumanIdentityKind)"

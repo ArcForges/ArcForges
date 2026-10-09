@@ -12,6 +12,15 @@ import xml.etree.ElementTree as ET
 
 import packages
 
+# Functional libraries advertise a higher minor ABI and a closed capability manifest in their build info
+# (Annex 06 section 1 and decision D2). Their build info is JSON whose identity is a field, not a suffix.
+IMAGE_CAPABILITIES = ["image.open", "image.read", "image.close"]
+IMAGE_FORMATS = ["png", "tiff", "exr"]
+
+
+def abi_minor(entry):
+    return 1 if entry["library"] == "ArcImageNative" else 0
+
 
 def execute(executable, directory, env, failure=False):
     runtime_env = {key: value for key, value in env.items() if not key.upper().startswith(("VCPKG", "DOTNET_ROOT"))}
@@ -80,18 +89,30 @@ def consume(directory, version, commit):
             + '</ItemGroup></Project>\n', encoding="utf-8")
         program = '''using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using ArcForges.Native.Abstractions;
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.System32)]
+static bool StringsEqual(JsonElement element, params string[] expected) => element.EnumerateArray().Select(item => item.GetString()).SequenceEqual(expected);
 '''
         faults = []
+        identity_fields = expected_suffix[1:]
         for entry in selected:
             name = entry["dependencies"][0]
             family = name.split(".")[-1]
             api = f"{name}.{family}Abi"
-            program += f'''if ({api}.GetAbiVersion() != new NativeAbiVersion(1, 0)) throw new Exception("ABI mismatch");
+            minor = abi_minor(entry)
+            if minor == 0:
+                identity_check = f'if (!{api}.GetBuildInfo().EndsWith({json.dumps(expected_suffix)}, StringComparison.Ordinal)) throw new Exception("Native build identity mismatch");\n'
+            else:
+                capabilities = ", ".join(json.dumps(item) for item in IMAGE_CAPABILITIES)
+                formats = ", ".join(json.dumps(item) for item in IMAGE_FORMATS)
+                identity_check = f'''using var manifest{family} = JsonDocument.Parse({api}.GetBuildInfo());
+var build{family} = manifest{family}.RootElement;
+if (build{family}.GetProperty("library").GetString() != {json.dumps(entry["library"])} || build{family}.GetProperty("abi").GetProperty("minor").GetInt32() != {minor} || !StringsEqual(build{family}.GetProperty("capabilities"), {capabilities}) || !StringsEqual(build{family}.GetProperty("formats"), {formats}) || build{family}.GetProperty("identity").GetString() != {json.dumps(identity_fields)}) throw new Exception("Native capability manifest or build identity mismatch");
+'''
+            program += f'''if ({api}.GetAbiVersion() != new NativeAbiVersion(1, {minor})) throw new Exception("ABI mismatch");
 Console.WriteLine({api}.GetBuildInfo());
-if (!{api}.GetBuildInfo().EndsWith({json.dumps(expected_suffix)}, StringComparison.Ordinal)) throw new Exception("Native build identity mismatch");
-var metadata{family} = System.Reflection.CustomAttributeExtensions.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>(typeof({api}).Assembly).ToDictionary(a => a.Key, a => a.Value);
+{identity_check}var metadata{family} = System.Reflection.CustomAttributeExtensions.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>(typeof({api}).Assembly).ToDictionary(a => a.Key, a => a.Value);
 if (metadata{family}["ArcForges.SourceCommit"] != "{commit}" || metadata{family}["ArcForges.BuildId"] != "{manifest['build']['buildId']}" || metadata{family}["ArcForges.PipelineRun"] != "{manifest['build']['pipelineRun'] or 'local'}" || metadata{family}["ArcForges.SourceDateEpoch"] != "{manifest['build']['sourceDateEpoch']}") throw new Exception("Managed build identity mismatch");
 if (System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof({api}).Assembly)?.InformationalVersion.Split('+')[0] != "{version}") throw new Exception("Managed release mismatch");
 if ({api}.GetLastError().Status != NativeStatus.Ok) throw new Exception("Initial error state");
@@ -183,15 +204,23 @@ def c_consumer(root, published, entries, version, env, expected_suffix):
         libraries.append('"' + str(installed / "sdk/win-x64/lib" / (entry["library"] + ".lib")) + '"')
         source += '#include <arc/' + Path(entry["header"]).name + '>\n'
         prefix = entry["prefix"]
+        minor = abi_minor(entry)
+        if minor == 0:
+            identity_expected = [expected_suffix]
+        else:
+            identity_expected = ['"capabilities":[' + ",".join(json.dumps(item) for item in IMAGE_CAPABILITIES) + "]",
+                                 '"formats":[' + ",".join(json.dumps(item) for item in IMAGE_FORMATS) + "]",
+                                 '"identity":"' + expected_suffix[1:] + '"']
+        identity_test = " || ".join(f"strstr(text, {json.dumps(item)}) == NULL" for item in identity_expected)
         body += f'''{{
   uint32_t major = 0, minor = 0;
-  if ({prefix}_get_abi_version(&major, &minor) != ARC_OK || major != 1 || minor != 0) return 1;
+  if ({prefix}_get_abi_version(&major, &minor) != ARC_OK || major != 1 || minor != {minor}) return 1;
   arc_mut_buffer_t query = {{0}};
   if ({prefix}_get_build_info(&query) != ARC_BUFFER_TOO_SMALL || query.required > 4096 || query.required == 0) return 2;
   char text[4096] = {{0}};
   arc_mut_buffer_t output = {{text, sizeof(text), 0}};
   if ({prefix}_get_build_info(&output) != ARC_OK || output.required != query.required) return 3;
-  if (output.required >= sizeof(text) || strstr(text, {json.dumps(expected_suffix)}) == NULL) return 7;
+  if (output.required >= sizeof(text) || {identity_test}) return 7;
   if ({prefix}_get_abi_version(NULL, &minor) != ARC_INVALID_ARGUMENT) return 4;
   arc_error_info_t error = {{0}};
   error.struct_size = sizeof(error); error.struct_version = 1;

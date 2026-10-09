@@ -157,8 +157,7 @@ def inspect(path, entry, expected_version, commit):
                 require(all(name in files or native.system_dependency(name) for name in details["imports"]),
                         "Missing non-system native dependency.")
             owned = files[entry["library"].lower() + ".dll"]
-            require(set(owned["exports"]) == {entry["prefix"] + suffix for suffix in
-                    ["_get_abi_version", "_get_build_info", "_get_last_error"]}, "Owned ABI exports mismatch.")
+            native.require_owned_exports(entry, owned["exports"])
             sbom = json.loads(archive.read("sbom.json"))
             require(sbom["sourceCommit"] == commit and sbom["binaryFiles"] == document["files"], "Native SBOM identity mismatch.")
             for dependency in sbom["buildDependencies"]:

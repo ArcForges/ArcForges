@@ -11,6 +11,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import zipfile
 
+import native
 import packages
 
 
@@ -301,6 +302,45 @@ class PackageGuards(unittest.TestCase):
         target, manifest = self.mutate_native(tamper)
         with self.assertRaisesRegex(ValueError, 'identity'):
             packages.verify(target, manifest['version'], manifest['sourceCommit'])
+
+
+class OwnedExportGuards(unittest.TestCase):
+    image = {"id": "ArcForges.Native.Image.Runtime.win-x64", "kind": "native", "library": "ArcImageNative", "prefix": "arc_image"}
+    probes = ["arc_image_get_abi_version", "arc_image_get_build_info", "arc_image_get_last_error"]
+    functional = ["arc_image_open", "arc_image_read", "arc_image_close"]
+
+    def test_image_admits_exactly_the_abi_1_1_surface(self):
+        native.require_owned_exports(self.image, self.probes + self.functional)
+
+    def test_image_missing_export_fails(self):
+        for name in self.probes + self.functional:
+            with self.subTest(missing=name), self.assertRaisesRegex(ValueError, "admitted ABI"):
+                native.require_owned_exports(self.image, [item for item in self.probes + self.functional if item != name])
+
+    def test_image_extra_export_fails(self):
+        for extra in ["arc_image_finish", "arc_image_open_ex", "arc_pdf_open"]:
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "admitted ABI"):
+                native.require_owned_exports(self.image, self.probes + self.functional + [extra])
+
+    def test_image_probe_only_surface_is_no_longer_admitted(self):
+        with self.assertRaisesRegex(ValueError, "admitted ABI"):
+            native.require_owned_exports(self.image, self.probes)
+
+    def test_other_libraries_keep_the_probe_only_surface(self):
+        other = {"id": "ArcForges.Other.Runtime.win-x64", "kind": "native", "library": "ArcOtherNative", "prefix": "arc_other"}
+        probes = [name.replace("arc_image", "arc_other") for name in self.probes]
+        native.require_owned_exports(other, probes)
+        with self.assertRaisesRegex(ValueError, "admitted ABI"):
+            native.require_owned_exports(other, probes + ["arc_other_open"])
+
+    def test_admitted_set_matches_the_windows_def_file(self):
+        document = json.loads((packages.ROOT / "eng/packaging/packages.json").read_text())
+        entry = next(item for item in document["packages"] if item.get("library") == "ArcImageNative")
+        lines = (packages.ROOT / "native/arcimage-abi/exports/windows.def").read_text().splitlines()
+        start = next(index for index, line in enumerate(lines) if line.strip() == "EXPORTS") + 1
+        defined = {line.strip() for line in lines[start:] if line.strip()}
+        self.assertEqual(defined, native.admitted_exports(entry))
+        self.assertEqual(defined, set(self.probes + self.functional))
 
 
 if __name__ == "__main__":

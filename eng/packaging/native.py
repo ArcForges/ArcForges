@@ -16,11 +16,22 @@ sys.path.insert(0, str(ROOT / "eng"))
 import native_provenance
 import build_identity
 VCPKG_COMMIT = "36677bbd0b3bf11da7376e62e14bffcc54d2eaeb"
+# Every owned library exports the three probes. ArcImageNative (ABI 1.1, Annex 06) adds its functional surface.
+PROBE_EXPORTS = ("_get_abi_version", "_get_build_info", "_get_last_error")
+FUNCTIONAL_EXPORTS = {"ArcImageNative": ("_open", "_read", "_close")}
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def admitted_exports(entry):
+    return {entry["prefix"] + suffix for suffix in PROBE_EXPORTS + FUNCTIONAL_EXPORTS.get(entry["library"], ())}
+
+
+def require_owned_exports(entry, exports):
+    require(set(exports) == admitted_exports(entry), "Owned native export set differs from the admitted ABI.")
 
 
 def digest(path):
@@ -279,8 +290,7 @@ def stage(directory, vcpkg, installed_root):
                 if not system_dependency(dependency):
                     pending.append(dependency)
         owned = selected[entry["library"].lower() + ".dll"]
-        require(set(owned["exports"]) == {entry["prefix"] + suffix for suffix in ["_get_abi_version", "_get_build_info", "_get_last_error"]},
-                "Owned native export set differs from the admitted ABI.")
+        require_owned_exports(entry, owned["exports"])
         for original, relative in [(ROOT / entry["header"], "include/arc/" + Path(entry["header"]).name),
                                    (ROOT / "native/shared/include/arc/arc_native_abi.h", "include/arc/arc_native_abi.h"),
                                    (binary_root / "lib" / (entry["library"] + ".lib"), "sdk/win-x64/lib/" + entry["library"] + ".lib")]:
