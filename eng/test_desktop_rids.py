@@ -69,7 +69,9 @@ class DesktopRidResidueTests(unittest.TestCase):
     def test_dependency_policy_has_no_osx_admission_and_names_the_successor(self):
         policy = json.loads(self.read('eng/policy/dependency-policy.json'))
         self.assertEqual([key for key in policy['nugetClosure'] if OSX.search(key)], [])
-        self.assertEqual(policy['reviewReceipt'], 'eng/policy/dependency-reviews/gov-30-r1.json')
+        self.assertEqual(policy['reviewReceipt'], 'eng/policy/dependency-reviews/nat-11-r1.json')
+        successor = json.loads(self.read(policy['reviewReceipt']))
+        self.assertEqual(successor['review']['previousReceipt'], 'eng/policy/dependency-reviews/gov-30-r1.json')
         self.assertTrue((ROOT / policy['reviewReceipt']).is_file())
 
     def test_directory_inventory_has_no_osx_row_and_its_count_matches(self):
