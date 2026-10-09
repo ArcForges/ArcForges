@@ -3,10 +3,11 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
     <IsPackable>true</IsPackable>
     <PackageId>ArcForges.Native.Image</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Description>ArcForges Image existing native ABI version, build-information and error bindings.</Description>
+    <Description>ArcForges Image native ABI bindings: version, build information, errors and functional still-image reads.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ArcForges.Native.Abstractions/ArcForges.Native.Abstractions.csproj" />
