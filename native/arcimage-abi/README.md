@@ -61,3 +61,23 @@ Codec test coverage:
 
 Not run: linux-x64 (decision D8). The WSL cmake and ninja install is not present, so the Linux CTest targets
 are recorded as not run.
+
+Local win-x64 validation (NAT.11 unit 5; decision D12). The clean shim-static build used the CI sequence on
+Visual Studio 2026 Community (MSVC 19.51.36257, toolset 14.51.36231) with the vcpkg commit 36677bbd and the four
+pinned packages installed under the worktree artifacts root:
+
+- CTest with the CI filter: 36 of 36 pass. sccache recorded 9 compile requests and no non-cacheable compilation.
+- `dotnet restore DesktopPlatform.slnx --locked-mode`, NativeAbiLayout 3 of 3, NativeAbi functional 15 of 15, and
+  a zero-warning build of ArcForges.Native.Abstractions, ArcForges.Native.Image, the Image runtime project and the
+  NativeAbi test project. `dotnet format DesktopPlatform.slnx --verify-no-changes` passes.
+- The functional managed tests load a manifest-checked `ArcImageNative.dll` beside the test assembly. Locally that
+  pair is the cmake install output with a manifest written from the same bytes. It is a test prerequisite, not
+  staged provenance.
+- Toolchain drift from the CI owned build: the local CMake is 4.4.3 (owned 4.3.3; vcpkg uses 4.4.0) and the local
+  Ninja is 1.13.2 (owned 1.13.1). `eng/packaging/native.py stage` refuses the owned generator with "Unreviewed owned
+  CMake build generator", so the staged packages, the managed Runtime pack and the package-guard tests are not run
+  locally (13 of 25 package-guard tests error on the missing `artifacts/packages` tree). The hosted native workflow
+  is the authority for them. The other 12 package tests and the dependency-policy, desktop-RID, licence-boundary and
+  provenance checks pass locally.
+- Two clean builds of the same commit gave different `ArcImageNative.dll` hashes. The cause was not investigated.
+- linux-x64 is still not run (decision D8).
