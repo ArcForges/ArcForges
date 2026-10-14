@@ -1,0 +1,26 @@
+[
+  {
+    "File": "Avalonia.LICENSE.txt",
+    "Package": "Avalonia 12.1.4",
+    "Source": "https://raw.githubusercontent.com/AvaloniaUI/Avalonia/2d79ba55fae1b1e71c69f93a668080c9029e6a31/licence.md",
+    "Sha256": "213814d306090074d234d760239ff0f67eb9b8d20eefb4d5631bb39dbe0b769b"
+  },
+  {
+    "File": "MicroCom.LICENSE.txt",
+    "Package": "MicroCom.Runtime 0.11.6",
+    "Source": "https://raw.githubusercontent.com/kekekeks/MicroCom/76785efcafd91b5902fd19dd11145f6dd655b7b4/LICENSE",
+    "Sha256": "6ee769c9ac4dac9abb16b98b1341e9528ff9f4ab685481410d3376d14148f3a9"
+  },
+  {
+    "File": "Tmds.DBus.LICENSE.txt",
+    "Package": "Tmds.DBus.Protocol 0.94.1",
+    "Source": "https://raw.githubusercontent.com/tmds/Tmds.DBus/b4a7fed0b878f74cb54f7cca84d2889af4e596ba/COPYING",
+    "Sha256": "d7cca2dc9211a140ce3e1dbfd90ac911d49268b5ddc2162a06a79ea85d1d67f1"
+  },
+  {
+    "File": "dotnet.LICENSE.txt",
+    "Package": ".NET 10.0.12",
+    "Source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+    "Sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310"
+  }
+]

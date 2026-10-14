@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible problem with ArcForges.
+body:
+  - type: markdown
+    attributes:
+      value: 'For vulnerabilities, use SECURITY.md instead. Never include credentials or private data.'
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Commit or artifact, operating system and CPU architecture.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include expected behavior, actual behavior and sanitized logs if useful.
+    validations:
+      required: true

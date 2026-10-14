@@ -1,0 +1,9 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ArcForges.Desktop.App"
+             RequestedThemeVariant="Default">
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+</Application>

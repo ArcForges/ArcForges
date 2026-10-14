@@ -1,0 +1,31 @@
+# Build, test and publish output
+**/bin/
+**/obj/
+artifacts/
+**/TestResults/
+*.binlog
+
+# Local worktrees must never become repository content
+.worktree/
+.worktrees/
+worktrees/
+
+# Editors and operating systems
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Local configuration, credentials and signing material
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+*.keystore
+*.jks
+NuGet.Config.user

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.cs text diff=csharp
+*.png binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.dll binary
+*.exe binary
+*.pdb binary

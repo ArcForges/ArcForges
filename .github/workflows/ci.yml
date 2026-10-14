@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  native:
+    name: Native (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+          - os: ubuntu-24.04
+            rid: linux-x64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - name: Install Linux native build prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+      - name: Restore locked dependencies
+        run: dotnet restore ArcForges.slnx --locked-mode
+      - name: Check formatting once
+        if: runner.os == 'Linux'
+        run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
+      - name: Build and run offline tests once
+        if: runner.os == 'Linux'
+        run: |
+          dotnet build ArcForges.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test --project tests/ArcForges.Desktop.Tests -c Release --no-build
+      - name: Compile Native AOT executable
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+        run: dotnet publish src/ArcForges.Desktop -c Release -r $env:TARGET_RID --no-restore -o "artifacts/publish/$env:TARGET_RID"
+      - name: Package the complete native directory
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+        run: ./eng/package.ps1 -RuntimeIdentifier $env:TARGET_RID
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: arcforges-${{ matrix.rid }}-${{ github.sha }}
+          path: artifacts/packages/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  verify:
+    name: Verify
+    if: always()
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require all native builds and offline checks
+        env:
+          RESULT: ${{ needs.native.result }}
+        run: test "$RESULT" = success
