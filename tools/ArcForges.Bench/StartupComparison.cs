@@ -75,7 +75,7 @@ internal static class StartupComparison
             Status = regression ? "regression" : "pass",
             Reason = string.Create(
                 CultureInfo.InvariantCulture,
-                $"p50 {currentP50Ms:0.###} ms against {baseline:0.###} ms: {delta:+0.###;-0.###;0} ms ({percent:+0.#;-0.#;0}%); a regression exceeds {maxRegressionPercent:0.#}% and {noiseFloorMs:0.###} ms."),
+                $"p50 {currentP50Ms:0.###} ms against {baseline:0.###} ms, a change of {delta:0.###} ms ({percent:0.#}%); a regression exceeds {maxRegressionPercent:0.#}% and {noiseFloorMs:0.###} ms."),
             BaselineSource = baselineSource,
             BaselineP50Ms = baseline,
             CurrentP50Ms = currentP50Ms,
