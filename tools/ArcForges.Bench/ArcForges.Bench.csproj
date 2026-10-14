@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!-- Performance benchmarks of 15-performance-targets: binary size and process startup. JSON results go to PR evidence. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>arcforges-bench</AssemblyName>
+    <RootNamespace>ArcForges.Bench</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.Tools.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,9 +1,11 @@
 <Project>
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!-- Every version here needs an admission entry in eng/policy/dependency-admissions.json. -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="ArcForges.Build.Policy" Version="1.0.0-ci.133.1" />
     <PackageVersion Include="Avalonia.Desktop" Version="12.1.4" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
     <PackageVersion Include="Avalonia.Headless" Version="12.1.4" />

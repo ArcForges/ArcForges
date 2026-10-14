@@ -1,8 +1,15 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ArcForges.Desktop/ArcForges.Desktop.csproj" />
+    <Project Path="src/ArcForges.Host/ArcForges.Host.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/ArcForges.Bench/ArcForges.Bench.csproj" />
+    <Project Path="tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ArcForges.Desktop.Tests/ArcForges.Desktop.Tests.csproj" />
+    <Project Path="tests/ArcForges.Repository.Tests/ArcForges.Repository.Tests.csproj" />
+    <Project Path="tests/ArcForges.Tools.Tests/ArcForges.Tools.Tests.csproj" />
   </Folder>
 </Solution>

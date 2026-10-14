@@ -9,10 +9,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path $PSScriptRoot -Parent
-$publish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier"
-$executable = if ($RuntimeIdentifier.StartsWith('win-')) { 'ArcForges.exe' } else { 'ArcForges' }
+# Packages the arcforges-desktop publish directory of eng/publish.ps1 (unsigned development preview).
+$publish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/desktop"
+$executable = if ($RuntimeIdentifier.StartsWith('win-')) { 'arcforges-desktop.exe' } else { 'arcforges-desktop' }
 if (-not (Test-Path -LiteralPath (Join-Path $publish $executable))) {
-  throw "Publish the $RuntimeIdentifier executable before packaging."
+  throw "Publish the $RuntimeIdentifier desktop (eng/publish.ps1) before packaging."
 }
 
 # A fresh staging directory keeps repeated local packaging free of stale files.
@@ -28,6 +29,8 @@ $assetsPath = Join-Path $repository 'src/ArcForges.Desktop/obj/project.assets.js
 $assets = Get-Content -LiteralPath $assetsPath -Raw | ConvertFrom-Json -AsHashtable
 foreach ($library in $assets.libraries.Values) {
   if ($library.type -ne 'package') { continue }
+  # Build-only policy package (PrivateAssets=all): nothing from it is redistributed.
+  if ($library.path -like 'arcforges.build.policy/*') { continue }
   $packagePath = $null
   foreach ($cacheRoot in $assets.packageFolders.Keys) {
     $candidate = Join-Path $cacheRoot $library.path
@@ -57,10 +60,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not identify local changes.' }
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'build-info.json') -Encoding utf8
 
 if ($RuntimeIdentifier.StartsWith('win-')) {
-  $archive = Join-Path $packages "ArcForges-$RuntimeIdentifier.zip"
+  $archive = Join-Path $packages "arcforges-desktop-$RuntimeIdentifier.zip"
   Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
 } else {
-  $archive = Join-Path $packages "ArcForges-$RuntimeIdentifier.tar.gz"
+  $archive = Join-Path $packages "arcforges-desktop-$RuntimeIdentifier.tar.gz"
   tar -czf $archive -C $stage .
   if ($LASTEXITCODE -ne 0) { throw 'Archive creation failed.' }
 }

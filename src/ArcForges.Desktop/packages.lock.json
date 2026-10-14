@@ -2,6 +2,12 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "ArcForges.Build.Policy": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.133.1, )",
+        "resolved": "1.0.0-ci.133.1",
+        "contentHash": "0irW3wqQps/GGmbTGew3ucHg/CnT/PDeMjChypIIKMJeIwTxOEd5wXlLESRq//gpBgewwwoDJIXlgbHWLDOD7g=="
+      },
       "Avalonia.Desktop": {
         "type": "Direct",
         "requested": "[12.1.4, )",

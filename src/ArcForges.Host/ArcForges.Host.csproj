@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The multi-role native executable `arcforges` (AD-0003): node run, CLI, mcp serve, hook and
+    bridge wsl roles are added by their delivery tasks, starting with AF-NODE-01. Until then the
+    project is the empty AOT composition root whose zero-warning publish and size/startup
+    baselines CI measures.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>arcforges</AssemblyName>
+    <RootNamespace>ArcForges.Host</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+</Project>
