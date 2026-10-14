@@ -63,17 +63,24 @@ any change. They are binding; this file summarizes them and adds the repository 
   check versions, lock hashes and the never-admit list). First-party packages only at versions
   whose publishing commit is an ancestor of the producer's main; never Build.Policy
   `1.0.0-ci.124.1` or Contracts `1.0.0-ci.350.1`.
-- **Native AOT:** zero warnings on every RID (`eng/publish.ps1` fails on any warning). On Windows
-  the MSVC linker comes from the Visual Studio developer environment (`Launch-VsDevShell.ps1`);
-  Linux targets are published in WSL Debian (clang and zlib).
+- **Native AOT:** zero warnings on every RID: win-x64, win-arm64, linux-x64 and linux-arm64
+  (`eng/publish.ps1` fails on any warning). On Windows the MSVC linker comes from the Visual Studio
+  developer environment (`Launch-VsDevShell.ps1`); Linux targets are published in WSL Debian
+  (clang and zlib). linux-arm64 links only on an arm64 host or with an arm64 sysroot (hosted CI).
 - **Tests:** select suites by trait with `eng/test.ps1` or `eng/test.sh` (`-List` / `--list`
   shows suites and task kinds; definitions in `eng/test-suites.conf`). Real-OS tests carry
   `env=windows-real|linux-real|wsl-bridge` and skip with a reason elsewhere; tool-dependent tests
   carry `tool=...` and skip with a reason when the tool is missing.
 - **Workloads and benchmarks:** `arcforges-testload` (cpu, mem-ramp, output, fork) is a
   deterministic synthetic workload, not a fake; evidence names the scenario and parameters.
-  `arcforges-bench` (size, startup) produces the JSON results of 15-performance-targets.
-- Set `AVALONIA_TELEMETRY_OPTOUT=1` for builds (the `eng/` scripts and CI do); Avalonia's build
-  services otherwise send build telemetry.
-- Keep the CI check names stable: `Native (<rid>)`, `Verify`, `Workflow lint`, `Secret scan`,
+  `arcforges-bench` (size, startup, compare-startup) produces the JSON results of
+  15-performance-targets. CI gates sizes, and gates startup against the previous successful main
+  run (`eng/compare-startup.ps1`): the statistic is the p50 of 50 runs, and a regression must
+  exceed both 25% and an absolute noise floor of 5 ms. Without a baseline, the result passes
+  with its reason. On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms`.
+- Avalonia build telemetry is off repository-wide: `Directory.Build.targets` replaces the
+  `AvaloniaStats` target of the transitive Avalonia.BuildServices package (a repository test keeps
+  it). CI and the `eng/` scripts also set `AVALONIA_TELEMETRY_OPTOUT=1`; keep it set in your shell.
+- Keep the CI check names stable: `Native (<rid>)` for win-x64, win-arm64, linux-x64 and
+  linux-arm64, `Verify`, `Workflow lint`, `Secret scan`,
   `Dependency review`, `CodeQL (csharp)`, `CodeQL (actions)`.

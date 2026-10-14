@@ -12,6 +12,9 @@ namespace ArcForges.TestLoad;
 internal static class MemoryRampScenario
 {
     public const long MaxTargetMiB = 64 * 1024;
+
+    /// <summary>One step is one array, so a step stays well below the 2 GiB array limit.</summary>
+    public const long MaxStepMiB = 1024;
     public const long MaxStepMs = 60_000;
     public const long MaxHoldMs = 3_600_000;
     private const long MiB = 1024 * 1024;
@@ -19,7 +22,7 @@ internal static class MemoryRampScenario
     public static ScenarioReport Run(ScenarioOptions options)
     {
         var targetMiB = options.GetInt64("target-mb", 256, 1, MaxTargetMiB);
-        var stepMiB = options.GetInt64("step-mb", 64, 1, targetMiB);
+        var stepMiB = options.GetInt64("step-mb", Math.Min(64, targetMiB), 1, Math.Min(targetMiB, MaxStepMiB));
         var stepMs = options.GetInt64("step-ms", 0, 0, MaxStepMs);
         var holdMs = options.GetInt64("hold-ms", 0, 0, MaxHoldMs);
         var seed = options.GetSeed();

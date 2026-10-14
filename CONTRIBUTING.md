@@ -17,8 +17,8 @@ references or private package feeds.
   Publish Linux executables on Linux or in WSL, not directly on Windows.
 - Desktop Linux needs an X11/XWayland session, fontconfig, standard system fonts,
   libX11, libICE and libSM. WSL compilation alone is not native Linux desktop validation.
-- Reuse installed SDKs, package caches and toolchains. Set `AVALONIA_TELEMETRY_OPTOUT=1`
-  for manual builds; the `eng/` scripts and CI set it.
+- Reuse installed SDKs, package caches and toolchains. Avalonia build telemetry is disabled in
+  `Directory.Build.targets`; the `eng/` scripts and CI also set `AVALONIA_TELEMETRY_OPTOUT=1`.
 
 Run the restore, build, format and test commands in the README. `eng/test.ps1` / `eng/test.sh`
 select suites by trait (`-List` / `--list`). Desktop tests run the real view in Avalonia's headless
@@ -34,7 +34,7 @@ Create branches and worktrees beneath `.worktree/`; it is intentionally ignored.
 Do not commit build output, local settings, secrets or signing keys. Explain what changed
 and what you actually verified, with exact commands. CI publishes build artifacts only: no
 automatic release, deployment, privileged code execution or merge. The expected checks are
-`Native (win-x64)`, `Native (win-arm64)`, `Native (linux-x64)`, `Verify`, `Workflow lint`,
+`Native (win-x64)`, `Native (win-arm64)`, `Native (linux-x64)`, `Native (linux-arm64)`, `Verify`, `Workflow lint`,
 `Secret scan`, `Dependency review`, and both `CodeQL` jobs.
 
 Do not bypass failing security checks or silence AOT and trim warnings without investigating them.

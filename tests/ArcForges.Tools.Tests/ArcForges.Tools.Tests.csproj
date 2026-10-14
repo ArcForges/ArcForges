@@ -5,6 +5,10 @@
     executables (JIT build by default; ARCFORGES_TESTLOAD_PATH / ARCFORGES_BENCH_PATH select a
     published Native AOT binary instead).
   -->
+  <PropertyGroup>
+    <!-- ProcessTree reads Windows parent links through source-generated P/Invoke. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
     <ProjectReference Include="../../tools/ArcForges.Bench/ArcForges.Bench.csproj" />

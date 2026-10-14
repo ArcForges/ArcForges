@@ -79,6 +79,17 @@ public sealed class RepositoryLayoutTests
     }
 
     [Fact]
+    public void AvaloniaBuildTelemetryIsReplacedForEveryProject()
+    {
+        // Avalonia.BuildServices defines AvaloniaStats; the later Directory.Build.targets definition wins.
+        var target = RepositoryFiles.Xml("Directory.Build.targets").Descendants("Target")
+            .Single(element => (string?)element.Attribute("Name") == "AvaloniaStats");
+
+        Assert.Null(target.Attribute("Condition"));
+        Assert.DoesNotContain(target.Elements(), element => element.Name.LocalName != "Message");
+    }
+
+    [Fact]
     public void TestProjectsDoNotPublishNativeAot()
     {
         foreach (var project in RepositoryFiles.Projects("tests"))

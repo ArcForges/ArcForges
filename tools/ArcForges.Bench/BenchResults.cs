@@ -89,7 +89,44 @@ internal sealed class StartupResult
     public required BenchEnvironment Environment { get; init; }
 }
 
+internal sealed class StartupComparisonResult
+{
+    public string Tool { get; init; } = "arcforges-bench";
+
+    public int SchemaVersion { get; init; } = 1;
+
+    public string Benchmark { get; init; } = "startup-comparison";
+
+    public required string Name { get; init; }
+
+    /// <summary><c>pass</c>, <c>regression</c> or <c>no-baseline</c>.</summary>
+    public required string Status { get; init; }
+
+    public required string Reason { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BaselineSource { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? BaselineP50Ms { get; init; }
+
+    public required double CurrentP50Ms { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? DeltaMs { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? DeltaPercent { get; init; }
+
+    public required double MaxRegressionPercent { get; init; }
+
+    public required double NoiseFloorMs { get; init; }
+
+    public required bool Pass { get; init; }
+}
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(SizeResult))]
 [JsonSerializable(typeof(StartupResult))]
+[JsonSerializable(typeof(StartupComparisonResult))]
 internal sealed partial class BenchJsonContext : JsonSerializerContext;

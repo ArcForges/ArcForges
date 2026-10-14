@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)]
-  [ValidateSet('win-x64', 'win-arm64', 'linux-x64')]
+  [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')]
   [string] $RuntimeIdentifier,
   [ValidateSet('host', 'desktop', 'testload', 'bench')]
   [string[]] $Component = @('host', 'desktop', 'testload', 'bench'),

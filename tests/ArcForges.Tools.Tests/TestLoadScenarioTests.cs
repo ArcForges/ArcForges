@@ -116,6 +116,8 @@ public sealed class TestLoadScenarioTests
     [InlineData("cpu", "--threads", "1", "--threads", "2")]
     [InlineData("mem-ramp", "--target-mb", "65537")]
     [InlineData("mem-ramp", "--target-mb", "4", "--step-mb", "5")]
+    [InlineData("mem-ramp", "--target-mb", "4096", "--step-mb", "1025")]
+    [InlineData("mem-ramp", "--target-mb", "4096", "--step-mb", "2048")]
     [InlineData("output", "--stream", "file")]
     [InlineData("output", "--line-bytes", "0")]
     [InlineData("fork", "--width", "4", "--depth", "5")]

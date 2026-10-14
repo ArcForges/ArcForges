@@ -10,7 +10,10 @@ namespace ArcForges.TestLoad;
 /// <c>width</c> child processes of this tool concurrently and waits for them; leaves stay alive for
 /// <c>hold-ms</c>, so the whole tree is observable during that window. The tree shape, the process
 /// count and the digest (over node identities and child digests, in order) are reproducible.
-/// A child that fails or outlives its bound fails its parent, which kills the remaining children.
+/// The first child that fails or outlives its bound fails its parent at once: the parent kills
+/// the remaining children with their process trees and exits with 1, so a failure anywhere ends
+/// the whole tree promptly. <c>fail-node</c> injects that fault: the node with the given identity
+/// (<c>0</c> is the root, <c>0.1</c> its second child) exits with 1 as soon as it starts.
 /// </summary>
 internal static class ForkScenario
 {
@@ -43,6 +46,7 @@ internal static class ForkScenario
         var holdMs = options.GetInt64("hold-ms", 0, 0, MaxHoldMs);
         var seed = options.GetSeed();
         var level = options.GetInt64("level", 0, 0, MaxDepth, hidden: true);
+        var failNode = options.GetOptional("fail-node");
         var node = options.GetUnrecorded("node") ?? "0";
         options.GetUnrecorded("report");
         options.EnsureAllUsed();
@@ -57,6 +61,11 @@ internal static class ForkScenario
         if (level > depth)
         {
             throw new UsageException("Option '--level' must not exceed '--depth'.");
+        }
+
+        if (failNode == node)
+        {
+            throw new InvalidOperationException($"Node {node} failed as requested by --fail-node.");
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -96,9 +105,9 @@ internal static class ForkScenario
     {
         var (fileName, prefix) = SelfCommand();
         var started = new List<Process>();
+        var runs = new List<Task<ScenarioReport>>();
         try
         {
-            var runs = new List<Task<ScenarioReport>>();
             for (var i = 0; i < width; i++)
             {
                 var start = new ProcessStartInfo(fileName)
@@ -130,17 +139,38 @@ internal static class ForkScenario
                 runs.Add(CollectAsync(process, TimeSpan.FromMilliseconds(holdMs) + (ChildGrace * levelsBelow)));
             }
 
-            return await Task.WhenAll(runs).ConfigureAwait(false);
+            // Fail fast: the first failed child ends the wait; the finally block kills its siblings.
+            var pending = new List<Task<ScenarioReport>>(runs);
+            while (pending.Count > 0)
+            {
+                var finished = await Task.WhenAny(pending).ConfigureAwait(false);
+                await finished.ConfigureAwait(false);
+                pending.Remove(finished);
+            }
+
+            return [.. runs.Select(run => run.Result)];
         }
         finally
         {
             foreach (var process in started)
             {
-                if (!process.HasExited)
+                try
                 {
-                    process.Kill(entireProcessTree: true);
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
                 }
+                catch (InvalidOperationException)
+                {
+                    // The process exited between the check and the kill.
+                }
+            }
 
+            // Let the collectors observe the killed processes before their handles are released.
+            await Task.WhenAny(Task.WhenAll(runs), Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+            foreach (var process in started)
+            {
                 process.Dispose();
             }
         }

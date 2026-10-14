@@ -21,7 +21,8 @@ internal static class Program
           cpu       --threads N (1)  --iterations N per thread (100000000)  --seed N (1)
           mem-ramp  --target-mb MiB (256)  --step-mb MiB (64)  --step-ms ms (0)  --hold-ms ms (0)  --seed N (1)
           output    --bytes N (1048576)  --line-bytes N (100)  --stream stdout|stderr|both|none (stdout)  --seed N (1)
-          fork      --width N (2)  --depth N (2)  --hold-ms ms (0)  --seed N (1)
+          fork      --width N (2)  --depth N (2)  --hold-ms ms (0)  --seed N (1)  [--fail-node id]
+                    (--fail-node: the node with that id, e.g. 0.1, exits with 1 at once; a fault for tests)
 
         Every scenario accepts --report <file>. The JSON report goes to that file; without it,
         cpu, mem-ramp, fork and `output --stream none` print it on standard output.
@@ -56,7 +57,8 @@ internal static class Program
             await Console.Error.WriteLineAsync("Run 'arcforges-testload --help' for the scenarios.").ConfigureAwait(false);
             return ExitCodes.Usage;
         }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException or OperationCanceledException or JsonException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
+            or OperationCanceledException or JsonException)
         {
             await Console.Error.WriteLineAsync($"arcforges-testload: {exception.Message}").ConfigureAwait(false);
             return ExitCodes.Failure;

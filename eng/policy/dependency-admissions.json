@@ -44,8 +44,8 @@
       "source": "https://github.com/AvaloniaUI/Avalonia",
       "sourceCommit": "2d79ba55fae1b1e71c69f93a668080c9029e6a31",
       "provenance": "nuget.org; nuspec repository commit on release/12.1.4. Transitive closure (SkiaSharp, HarfBuzzSharp, MicroCom.Runtime, Tmds.DBus.Protocol, ANGLE natives) is pinned by src/ArcForges.Desktop/packages.lock.json; notices are in THIRD_PARTY_NOTICES.md and third-party/.",
-      "aot": "Avalonia documents Native AOT support with compiled bindings (AD-0003, V-N04); the desktop publishes with zero trim/AOT warnings on win-x64, win-arm64 and linux-x64.",
-      "buildTimeNote": "The transitive Avalonia.BuildServices 11.3.2 sends anonymous build telemetry unless AVALONIA_TELEMETRY_OPTOUT=1; CI and eng/ scripts set it.",
+      "aot": "Avalonia documents Native AOT support with compiled bindings (AD-0003, V-N04); the desktop publishes with zero trim/AOT warnings on win-x64, win-arm64 and linux-x64 (linux-arm64: zero warnings through native code generation locally, full publish in hosted CI). SkiaSharp and HarfBuzzSharp ship linux-arm64 natives.",
+      "buildTimeNote": "The transitive Avalonia.BuildServices 11.3.2 runs an AvaloniaStats build target that sends anonymous build telemetry unless AVALONIA_TELEMETRY_OPTOUT=1. Directory.Build.targets replaces that target for every project (verified by build log: the AvaloniaStatsTask does not run without the environment variable); CI and eng/ scripts also set the variable.",
       "reason": "Desktop UI framework of AD-0003 section 2. Admitted with the desktop bootstrap (ArcForges#1, main a40f72c); recorded here by AF-REPO-01.",
       "admittedBy": "ArcForges#1; recorded by AF-REPO-01",
       "reviewedOn": "2026-10-14"

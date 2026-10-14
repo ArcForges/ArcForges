@@ -98,6 +98,18 @@ internal sealed class ScenarioOptions
         return value;
     }
 
+    /// <summary>An optional text parameter, recorded (and passed to child processes) only when given.</summary>
+    public string? GetOptional(string name)
+    {
+        if (!_given.TryGetValue(name, out var value))
+        {
+            return null;
+        }
+
+        Record(name, value, hidden: false);
+        return value;
+    }
+
     /// <summary>A free-text option that does not identify the workload (for example a report path).</summary>
     public string? GetUnrecorded(string name)
     {

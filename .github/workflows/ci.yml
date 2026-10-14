@@ -20,13 +20,17 @@ env:
   AVALONIA_TELEMETRY_OPTOUT: "1"
 
 # Platform-independent merge gate (16-testing-strategy section 3): build, analyzers, format,
-# tests, Native AOT publish with zero warnings, size gates and the startup benchmark.
+# tests, Native AOT publish with zero warnings, size gates and the startup regression gate
+# (15-performance-targets) on win-x64, win-arm64, linux-x64 and linux-arm64.
 # No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
 jobs:
   native:
     name: Native (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read # eng/compare-startup.ps1 reads the previous main run's bench artifact
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +47,10 @@ jobs:
             rid: linux-x64
             full: true
             components: host,desktop,testload,bench
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+            full: false
+            components: host,desktop,bench
     defaults:
       run:
         shell: pwsh
@@ -64,7 +72,7 @@ jobs:
       - name: Restore locked dependencies
         run: dotnet restore ArcForges.slnx --locked-mode
       - name: Check formatting and analyzers once
-        if: runner.os == 'Linux'
+        if: matrix.rid == 'linux-x64'
         run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
       - name: Build with analyzers as errors
         if: matrix.full
@@ -91,6 +99,11 @@ jobs:
         env:
           TARGET_RID: ${{ matrix.rid }}
         run: ./eng/bench.ps1 -RuntimeIdentifier $env:TARGET_RID
+      - name: Gate startup against the previous main run
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./eng/compare-startup.ps1 -RuntimeIdentifier $env:TARGET_RID
       - name: Package the complete desktop directory
         env:
           TARGET_RID: ${{ matrix.rid }}
@@ -103,11 +116,12 @@ jobs:
           retention-days: 14
           compression-level: 0
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ !cancelled() }} # also keep the results of a failed size or startup gate
         with:
           name: bench-${{ matrix.rid }}-${{ github.sha }}
           path: artifacts/bench/${{ matrix.rid }}/*.json
-          if-no-files-found: error
-          retention-days: 30
+          if-no-files-found: warn
+          retention-days: 90
 
   verify:
     name: Verify

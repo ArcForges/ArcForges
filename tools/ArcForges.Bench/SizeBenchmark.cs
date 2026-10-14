@@ -6,8 +6,9 @@ internal sealed record SizeTarget(string Name, bool IsDirectory, long LimitBytes
 
 /// <summary>
 /// <c>size</c>: the file size of a published binary, or the size of a publish directory. Debug
-/// symbols are never counted (they are not shipped); the Desktop target also excludes the native
-/// Skia and HarfBuzz libraries, as its target states.
+/// symbols are never counted (they are not shipped). The Desktop target excludes only the native
+/// Skia library (libSkiaSharp), as 15 section 1 states ("without native Skia libraries"); the
+/// separate HarfBuzz text-shaping library and the ANGLE library count towards the limit.
 /// </summary>
 internal static class SizeBenchmark
 {
@@ -17,7 +18,7 @@ internal static class SizeBenchmark
     {
         ["arcforges"] = new("arcforges", IsDirectory: false, 45 * Megabyte, []),
         ["arcforges-supervisor"] = new("arcforges-supervisor", IsDirectory: false, 4 * Megabyte, []),
-        ["arcforges-desktop"] = new("arcforges-desktop", IsDirectory: true, 60 * Megabyte, ["libSkiaSharp.", "libHarfBuzzSharp."]),
+        ["arcforges-desktop"] = new("arcforges-desktop", IsDirectory: true, 60 * Megabyte, ["libSkiaSharp."]),
     };
 
     private static readonly string[] SymbolExtensions = [".pdb", ".dbg", ".dSYM"];

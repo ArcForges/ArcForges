@@ -26,7 +26,7 @@ public sealed class BenchTests
     }
 
     [Fact]
-    public void DesktopDirectorySizeExcludesNativeSkiaHarfBuzzAndSymbols()
+    public void DesktopDirectorySizeExcludesOnlyNativeSkiaAndSymbols()
     {
         using var directory = new TemporaryDirectory();
         directory.File("arcforges-desktop.exe", 3000);
@@ -38,8 +38,9 @@ public sealed class BenchTests
 
         var (bytes, excluded) = SizeBenchmark.Measure(directory.Path, SizeBenchmark.Targets["arcforges-desktop"]);
 
-        Assert.Equal(3525, bytes);
-        Assert.Equal(["arcforges-desktop.pdb", "libHarfBuzzSharp.so", "libSkiaSharp.dll"], excluded);
+        // 15 section 1: "without native Skia libraries"; HarfBuzz and ANGLE count.
+        Assert.Equal(10525, bytes);
+        Assert.Equal(["arcforges-desktop.pdb", "libSkiaSharp.dll"], excluded);
     }
 
     [Fact]
@@ -110,8 +111,94 @@ public sealed class BenchTests
         Assert.Contains("exited with 2, expected 0", run.StandardError, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StartupKillsAndFailsARunThatDoesNotExitInTime()
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var run = await ToolProcess.RunAsync(
+            ToolProcess.Bench,
+            ["startup", "--exe", ToolProcess.TestLoad, "--arg", "fork", "--arg", "--width", "--arg", "1", "--arg", "--depth", "--arg", "1",
+             "--arg", "--hold-ms", "--arg", "60000", "--runs", "1", "--warmup", "0", "--timeout-ms", "1500"],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, run.ExitCode);
+        Assert.Contains("did not exit within 1500 ms; the run was killed", run.StandardError, StringComparison.Ordinal);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"The hung run must be cut off at its timeout; it took {watch.Elapsed}.");
+    }
+
+    [Theory]
+    [InlineData(10.0, 12.4, true, "pass")]      // +24%: below the relative limit
+    [InlineData(10.0, 16.0, false, "regression")] // +60% and +6 ms
+    [InlineData(2.0, 6.0, true, "pass")]        // +200% but only +4 ms: within the noise floor
+    [InlineData(2.0, 7.5, false, "regression")]  // +275% and +5.5 ms
+    [InlineData(40.0, 45.0, true, "pass")]      // +12.5%
+    [InlineData(20.0, 25.0, true, "pass")]      // exactly +25% and +5 ms: not above either limit
+    [InlineData(30.0, 20.0, true, "pass")]      // faster
+    public void StartupRegressionMustExceedBothTheRelativeLimitAndTheNoiseFloor(double baseline, double current, bool pass, string status)
+    {
+        var result = StartupComparison.Compare("arcforges", baseline, current, 25, 5, "run 1", null);
+
+        Assert.Equal(pass, result.Pass);
+        Assert.Equal(status, result.Status);
+        Assert.Equal(Math.Round(current - baseline, 3), result.DeltaMs);
+    }
+
+    [Fact]
+    public void AMissingBaselinePassesWithItsReason()
+    {
+        var result = StartupComparison.Compare("arcforges", null, 9.5, 25, 5, null, "No successful main run yet.");
+
+        Assert.True(result.Pass);
+        Assert.Equal("no-baseline", result.Status);
+        Assert.Equal("No successful main run yet.", result.Reason);
+        Assert.Null(result.BaselineP50Ms);
+    }
+
+    [Theory]
+    [InlineData("10", 0, "pass")]
+    [InlineData("4", 1, "regression")]
+    public async Task CompareStartupReadsBenchResultsAndGates(string baselineP50, int exitCode, string status)
+    {
+        using var directory = new TemporaryDirectory();
+        var current = Path.Combine(directory.Path, "current.json");
+        var baseline = Path.Combine(directory.Path, "baseline.json");
+        var output = Path.Combine(directory.Path, "comparison.json");
+        await File.WriteAllTextAsync(current, StartupJson("12"), TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(baseline, StartupJson(baselineP50), TestContext.Current.CancellationToken);
+
+        var run = await ToolProcess.RunAsync(
+            ToolProcess.Bench,
+            ["compare-startup", "--current", current, "--baseline", baseline, "--baseline-source", "fixture", "--output", output],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(exitCode, run.ExitCode);
+        using var written = JsonDocument.Parse(await File.ReadAllBytesAsync(output, TestContext.Current.CancellationToken));
+        Assert.Equal(status, written.RootElement.GetProperty("status").GetString());
+        Assert.Equal(25, written.RootElement.GetProperty("maxRegressionPercent").GetDouble());
+        Assert.Equal(5, written.RootElement.GetProperty("noiseFloorMs").GetDouble());
+    }
+
+    [Fact]
+    public async Task CompareStartupRefusesResultsOfDifferentRuntimes()
+    {
+        using var directory = new TemporaryDirectory();
+        var current = Path.Combine(directory.Path, "current.json");
+        var baseline = Path.Combine(directory.Path, "baseline.json");
+        await File.WriteAllTextAsync(current, StartupJson("12"), TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(baseline, StartupJson("12", "linux-arm64"), TestContext.Current.CancellationToken);
+
+        var run = await ToolProcess.RunAsync(
+            ToolProcess.Bench, ["compare-startup", "--current", current, "--baseline", baseline], TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, run.ExitCode);
+        Assert.Contains("does not measure the same benchmark", run.StandardError, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("size", "--path", ".", "--target", "no-such-target")]
+    [InlineData("compare-startup", "--current", "x.json")]
+    [InlineData("startup", "--exe", "x", "--timeout-ms", "0")]
     [InlineData("size", "--path", ".")]
     [InlineData("startup", "--runs", "3")]
     [InlineData("nothing")]
@@ -121,4 +208,10 @@ public sealed class BenchTests
 
         Assert.Equal(2, run.ExitCode);
     }
+
+    private static string StartupJson(string p50, string runtime = "linux-x64") => $$"""
+        {"tool":"arcforges-bench","schemaVersion":1,"benchmark":"startup","name":"arcforges","command":["arcforges"],
+         "runs":1,"warmup":0,"samplesMs":[{{p50}}],"p50Ms":{{p50}},"p95Ms":{{p50}},"minMs":{{p50}},"maxMs":{{p50}},"meanMs":{{p50}},
+         "pass":true,"environment":{"os":"Linux","architecture":"X64","runtimeIdentifier":"{{runtime}}","processorCount":4,"framework":".NET 10"} }
+        """;
 }

@@ -17,6 +17,17 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <!--
+    Avalonia build telemetry. The transitive Avalonia.BuildServices package runs its AvaloniaStats
+    target (AvaloniaStatsTask, which sends anonymous build data) before every compile unless the
+    environment sets AVALONIA_TELEMETRY_OPTOUT=1. Directory.Build.targets is imported after the
+    packages' build targets, so this definition replaces theirs for every project and every build,
+    with or without the environment variable. The message makes the replacement visible in logs.
+  -->
+  <Target Name="AvaloniaStats" BeforeTargets="CoreCompile">
+    <Message Importance="normal" Text="ArcForges: Avalonia build telemetry is disabled (AvaloniaStats replaced by Directory.Build.targets)." />
+  </Target>
+
   <!-- Executables shipped from src/ and tools/ must be Native AOT; test hosts must not be. -->
   <Target Name="ArcForgesVerifyAotPolicy" BeforeTargets="PrepareForBuild"
           Condition="'$(MSBuildProjectExtension)' == '.csproj'">

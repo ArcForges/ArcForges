@@ -18,9 +18,13 @@ internal static class Program
         usage:
           arcforges-bench size --path <file|directory> (--target <name> | --max-mb N [--name label]) [--output file]
               targets: arcforges (file, 45 MB), arcforges-supervisor (file, 4 MB),
-                       arcforges-desktop (directory without native Skia/HarfBuzz libraries, 60 MB)
+                       arcforges-desktop (directory without the native Skia library, 60 MB)
           arcforges-bench startup --exe <path> [--arg value ...] [--runs N (50)] [--warmup N (1)]
-              [--expect-exit code (0)] [--max-p50-ms ms] [--max-p95-ms ms] [--name label] [--output file]
+              [--expect-exit code (0)] [--timeout-ms ms per run (30000)] [--max-p50-ms ms] [--max-p95-ms ms]
+              [--name label] [--output file]
+          arcforges-bench compare-startup --current <startup.json> (--baseline <startup.json> | --reason text)
+              [--baseline-source text] [--max-regression-percent N (25)] [--noise-floor-ms ms (5)] [--output file]
+              a regression is a p50 increase above both the percentage and the noise floor
 
         1 MB = 1,000,000 bytes; debug symbols are never counted.
         Exit codes: 0 within limits, 1 over a limit or failed, 2 invalid command line.
@@ -51,6 +55,11 @@ internal static class Program
                     var startup = await StartupBenchmark.RunAsync(options).ConfigureAwait(false);
                     (json, pass) = (JsonSerializer.Serialize(startup, BenchJsonContext.Default.StartupResult), startup.Pass);
                     break;
+                case "compare-startup":
+                    options = BenchOptions.Parse(args[1..]);
+                    var comparison = StartupComparison.Run(options);
+                    (json, pass) = (JsonSerializer.Serialize(comparison, BenchJsonContext.Default.StartupComparisonResult), comparison.Pass);
+                    break;
                 default:
                     throw new UsageException($"Unknown benchmark '{args[0]}'.");
             }
@@ -75,7 +84,8 @@ internal static class Program
             await Console.Error.WriteLineAsync("Run 'arcforges-bench --help' for usage.").ConfigureAwait(false);
             return ExitCodes.Usage;
         }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
+            or JsonException or System.ComponentModel.Win32Exception)
         {
             await Console.Error.WriteLineAsync($"arcforges-bench: {exception.Message}").ConfigureAwait(false);
             return ExitCodes.Failure;

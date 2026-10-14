@@ -2,23 +2,45 @@
 <#
 .SYNOPSIS
   Runs test suites selected by traits (16-testing-strategy section 4; suites in eng/test-suites.conf).
+.DESCRIPTION
+  Options: -Suite <name[,name]> (repeatable), -Kind <name>, -Configuration <name> (Release),
+  -NoBuild, -List. Every argument from the first one that starts with '--' (or after a bare '--')
+  is passed to each test application. The script parses its own arguments so that pass-through
+  works both as `./eng/test.ps1 ...` and as `pwsh -File eng/test.ps1 ...`.
 .EXAMPLE
   ./eng/test.ps1                         # the unit suite
   ./eng/test.ps1 -Suite tools,repository
   ./eng/test.ps1 -Kind windows           # the suites for a kind of change
   ./eng/test.ps1 -Suite ci -NoBuild -- --output Detailed
+  pwsh -File eng/test.ps1 -Suite ci -NoBuild -- --output Detailed
   ./eng/test.ps1 -List
 #>
-[CmdletBinding()]
-param(
-  [string[]] $Suite = @(),
-  [string] $Kind,
-  [string] $Configuration = 'Release',
-  [switch] $NoBuild,
-  [switch] $List,
-  [Parameter(ValueFromRemainingArguments)]
-  [string[]] $PassThru = @()
-)
+
+$Suite = @()
+$Kind = $null
+$Configuration = 'Release'
+$NoBuild = $false
+$List = $false
+$PassThru = @()
+# -Command mode passes 'a,b' as one array argument; -File mode passes it as one string.
+$arguments = @(foreach ($item in $args) { foreach ($element in @($item)) { "$element" } })
+$i = 0
+while ($i -lt $arguments.Count) {
+  $argument = $arguments[$i]
+  if ($argument -eq '--') { $PassThru = @($arguments | Select-Object -Skip ($i + 1)); break }
+  if ($argument.StartsWith('--')) { $PassThru = @($arguments | Select-Object -Skip $i); break }
+  $values = @($arguments | Select-Object -Skip ($i + 1) | ForEach-Object -Begin { $open = $true } -Process {
+      if ($open -and -not $_.StartsWith('-')) { $_ } else { $open = $false } })
+  if ($argument -in '-Suite', '-Kind', '-Configuration' -and $values.Count -eq 0) { throw "test.ps1: $argument needs a value." }
+  switch ($argument) {
+    '-Suite' { $Suite += @($values | ForEach-Object { $_ -split ',' }); $i += 1 + $values.Count; continue }
+    '-Kind' { $Kind = $values[0]; $i += 2; continue }
+    '-Configuration' { $Configuration = $values[0]; $i += 2; continue }
+    '-NoBuild' { $NoBuild = $true; $i++; continue }
+    '-List' { $List = $true; $i++; continue }
+    default { throw "test.ps1: unknown argument '$argument'. Options: -Suite, -Kind, -Configuration, -NoBuild, -List; test application arguments start with '--'." }
+  }
+}
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -49,7 +71,6 @@ if ($List) {
   return
 }
 
-$PassThru = @($PassThru | Where-Object { $_ -ne '--' })
 if ($Kind) {
   if (-not $kinds.Contains($Kind)) { throw "Unknown kind '$Kind'. Known: $($kinds.Keys -join ', ')." }
   $Suite += $kinds[$Kind]

@@ -53,14 +53,15 @@ arcforges-testload mem-ramp --target-mb 512 --step-mb 64 --step-ms 50 --hold-ms 
 arcforges-testload output --bytes 268435456 --line-bytes 120 --report out.json > captured.txt
 arcforges-testload fork --width 4 --depth 2 --hold-ms 1000
 arcforges-bench size --target arcforges --path artifacts/publish/win-x64/host/arcforges.exe
-arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --runs 50
+arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --runs 50 --output now.json
+arcforges-bench compare-startup --current now.json --baseline before.json   # >25% and >5 ms fails
 ```
 
 Equal parameters give equal bytes and digests on every run and platform; `--help` lists the options.
 
-CI builds and tests on Windows and Ubuntu, publishes Native AOT for **win-x64, win-arm64 and
-linux-x64**, gates binary sizes, and checks formatting, analyzers, dependencies, secrets and
-CodeQL. Desktop archives are unsigned development previews, not releases.
+CI builds and tests on Windows and Ubuntu, publishes Native AOT for **win-x64, win-arm64,
+linux-x64 and linux-arm64**, gates binary sizes and startup regressions against main, and checks
+formatting, analyzers, dependencies, secrets and CodeQL. Desktop archives are unsigned development previews, not releases.
 
 [Agent and contributor rules](AGENTS.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

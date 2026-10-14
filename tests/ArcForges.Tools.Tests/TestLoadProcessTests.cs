@@ -81,28 +81,40 @@ public sealed class TestLoadProcessTests
     [Fact]
     public async Task ForkBuildsARealProcessTreeThatIsAliveDuringTheHold()
     {
-        var name = Path.GetFileNameWithoutExtension(ToolProcess.TestLoad);
-        var before = Process.GetProcessesByName(name).Length;
-        var run = RunAsync(["fork", "--width", "2", "--depth", "2", "--hold-ms", "3000", "--seed", "2"]);
+        var (root, run) = ToolProcess.Start(
+            ToolProcess.TestLoad, ["fork", "--width", "2", "--depth", "2", "--hold-ms", "3000", "--seed", "2"], TestContext.Current.CancellationToken);
 
-        var observed = 0;
-        var watch = Stopwatch.StartNew();
-        while (!run.IsCompleted && watch.Elapsed < TimeSpan.FromSeconds(30))
-        {
-            var processes = Process.GetProcessesByName(name);
-            observed = Math.Max(observed, processes.Length - before);
-            foreach (var process in processes)
-            {
-                process.Dispose();
-            }
+        // Only descendants of the process this test started count, never other tests' trees.
+        var (observed, seen) = await WatchDescendantsAsync(root, run);
 
-            await Task.Delay(50, TestContext.Current.CancellationToken);
-        }
-
-        var report = await run;
+        var result = await run;
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        var report = result.Json();
         Assert.Equal(7, report.GetProperty("results").GetProperty("processes").GetInt64());
         Assert.Equal(7, report.GetProperty("results").GetProperty("expectedProcesses").GetInt64());
-        Assert.True(observed >= 7, $"Expected the 7-process tree to be observable, saw at most {observed} processes.");
+        Assert.True(observed >= 6, $"Expected the root's 6 descendants to be observable during the hold, saw at most {observed}.");
+        AssertExited(seen);
+    }
+
+    [Theory]
+    [InlineData("0.1")]
+    [InlineData("0.1.0")]
+    [InlineData("0")]
+    public async Task AFailedNodeEndsTheWholeTreePromptly(string failNode)
+    {
+        var watch = Stopwatch.StartNew();
+        var (root, run) = ToolProcess.Start(
+            ToolProcess.TestLoad,
+            ["fork", "--width", "2", "--depth", "2", "--hold-ms", "20000", "--fail-node", failNode],
+            TestContext.Current.CancellationToken);
+
+        var (_, seen) = await WatchDescendantsAsync(root, run);
+        var result = await run;
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains($"Node {failNode} failed as requested by --fail-node.", result.StandardError, StringComparison.Ordinal);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"The tree must end long before the 20 s hold; it took {watch.Elapsed}.");
+        AssertExited(seen);
     }
 
     [Fact]
@@ -129,11 +141,60 @@ public sealed class TestLoadProcessTests
     [InlineData]
     [InlineData("no-such-scenario")]
     [InlineData("cpu", "--threads", "0")]
+    [InlineData("mem-ramp", "--target-mb", "4096", "--step-mb", "2048")]
+    [InlineData("mem-ramp", "--target-mb", "4096", "--step-mb", "99999999999")]
     public async Task InvalidCommandLinesExitWithTwo(params string[] arguments)
     {
         var run = await ToolProcess.RunAsync(ToolProcess.TestLoad, arguments, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, run.ExitCode);
+    }
+
+    [Fact]
+    public async Task AnUnwritableReportPathExitsWithOneAndAMessage()
+    {
+        using var directory = new TemporaryDirectory();
+
+        // The report path is an existing directory, which cannot be written as a file.
+        var run = await ToolProcess.RunAsync(
+            ToolProcess.TestLoad, ["cpu", "--iterations", "1", "--report", directory.Path], TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, run.ExitCode);
+        Assert.StartsWith("arcforges-testload: ", run.StandardError, StringComparison.Ordinal);
+    }
+
+    /// <summary>Polls the root's descendants until it completes: the largest count seen and every descendant seen.</summary>
+    private static async Task<(int Largest, HashSet<int> Seen)> WatchDescendantsAsync(int root, Task<ToolRun> run)
+    {
+        var largest = 0;
+        var seen = new HashSet<int>();
+        var watch = Stopwatch.StartNew();
+        while (!run.IsCompleted && watch.Elapsed < TimeSpan.FromSeconds(60))
+        {
+            var descendants = ProcessTree.Descendants(root);
+            largest = Math.Max(largest, descendants.Count);
+            seen.UnionWith(descendants);
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        return (largest, seen);
+    }
+
+    /// <summary>Every observed descendant has exited (orphans are found by PID, not by parent link).</summary>
+    private static void AssertExited(IEnumerable<int> processIds)
+    {
+        foreach (var processId in processIds)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                Assert.True(process.WaitForExit(TimeSpan.FromSeconds(5)), $"Process {processId} of the tree is still running.");
+            }
+            catch (ArgumentException)
+            {
+                // Already gone.
+            }
+        }
     }
 
     private static async Task<JsonElement> RunAsync(string[] arguments)

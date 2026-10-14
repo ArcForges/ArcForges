@@ -19,7 +19,11 @@ internal static class ToolProcess
 
     public static string Bench => Resolve("ARCFORGES_BENCH_PATH", "arcforges-bench");
 
-    public static async Task<ToolRun> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken cancellationToken)
+    public static Task<ToolRun> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken cancellationToken) =>
+        Start(executable, arguments, cancellationToken).Completion;
+
+    /// <summary>Starts the tool and returns its process (for observing it while it runs) and its completion.</summary>
+    public static (int ProcessId, Task<ToolRun> Completion) Start(string executable, IEnumerable<string> arguments, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -33,9 +37,15 @@ internal static class ToolProcess
             start.ArgumentList.Add(argument);
         }
 
+        var process = Process.Start(start)!;
+        return (process.Id, CompleteAsync(process, cancellationToken));
+    }
+
+    private static async Task<ToolRun> CompleteAsync(Process process, CancellationToken cancellationToken)
+    {
+        using var owned = process;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
-        using var process = Process.Start(start)!;
         try
         {
             using var output = new MemoryStream();
