@@ -2,16 +2,15 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyName>ArcForges</AssemblyName>
+    <!-- AD-0003: the optional Desktop executable is arcforges-desktop; arcforges is the node/CLI. -->
+    <AssemblyName>arcforges-desktop</AssemblyName>
     <RootNamespace>ArcForges.Desktop</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <PublishAot>true</PublishAot>
-    <IsAotCompatible>true</IsAotCompatible>
-    <IlcTreatWarningsAsErrors>true</IlcTreatWarningsAsErrors>
-    <ILLinkTreatWarningsAsErrors>true</ILLinkTreatWarningsAsErrors>
-    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
-    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64</RuntimeIdentifiers>
+    <!-- The desktop keeps culture-aware text handling; the policy default is invariant. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" />

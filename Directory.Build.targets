@@ -1,0 +1,44 @@
+<Project>
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Native AOT settings, evaluated after each project's own properties (AD-0003: shipped executables
+    are Native AOT; 15 section 5: targets apply to Release Native AOT builds). Trim, AOT and
+    single-file analysis warnings are errors, and each warning is reported individually, so a
+    successful publish is a zero-warning publish.
+  -->
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">true</InvariantGlobalization>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <ILLinkTreatWarningsAsErrors>true</ILLinkTreatWarningsAsErrors>
+    <IlcTreatWarningsAsErrors>true</IlcTreatWarningsAsErrors>
+    <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    Avalonia build telemetry. The transitive Avalonia.BuildServices package runs its AvaloniaStats
+    target (AvaloniaStatsTask, which sends anonymous build data) before every compile unless the
+    environment sets AVALONIA_TELEMETRY_OPTOUT=1. Directory.Build.targets is imported after the
+    packages' build targets, so this definition replaces theirs for every project and every build,
+    with or without the environment variable. The message makes the replacement visible in logs.
+  -->
+  <Target Name="AvaloniaStats" BeforeTargets="CoreCompile">
+    <Message Importance="normal" Text="ArcForges: Avalonia build telemetry is disabled (AvaloniaStats replaced by Directory.Build.targets)." />
+  </Target>
+
+  <!-- Executables shipped from src/ and tools/ must be Native AOT; test hosts must not be. -->
+  <Target Name="ArcForgesVerifyAotPolicy" BeforeTargets="PrepareForBuild"
+          Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <PropertyGroup>
+      <_ArcForgesRelativeProjectDir>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/'))</_ArcForgesRelativeProjectDir>
+    </PropertyGroup>
+    <Error Code="AFR001"
+           Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and '$(PublishAot)' != 'true' and ($(_ArcForgesRelativeProjectDir.StartsWith('src/')) or $(_ArcForgesRelativeProjectDir.StartsWith('tools/')))"
+           Text="Executables under src/ and tools/ must set PublishAot=true (AD-0003)." />
+    <Error Code="AFR002"
+           Condition="'$(PublishAot)' == 'true' and $(_ArcForgesRelativeProjectDir.StartsWith('tests/'))"
+           Text="Test projects run on the JIT runtime; do not set PublishAot in tests/." />
+  </Target>
+</Project>

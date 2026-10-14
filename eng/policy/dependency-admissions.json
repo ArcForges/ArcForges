@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "repository": "ArcForges",
+  "rules": [
+    "Every PackageVersion in Directory.Packages.props has exactly one entry here with the same id and version, and every entry has a PackageVersion (tests/ArcForges.Repository.Tests checks both directions).",
+    "contentHash is the NuGet content hash that every packages.lock.json records for the package; a changed hash is a new admission.",
+    "Transitive packages are pinned by the committed locks and reviewed with their direct parent; SDK-implicit packs (Microsoft.DotNet.ILCompiler, Microsoft.NET.ILLink.Tasks) follow the global.json SDK.",
+    "First-party packages are admitted only at a version whose publishing commit is an ancestor of the producer's main, and never at a version listed under neverAdmit.",
+    "Runtime packages of Native AOT executables must publish with zero trim and AOT warnings; an exception is recorded here as a decision, never suppressed in a project.",
+    "A change of id, version or hash updates the entry in the same pull request, with the reviewer's date and reason."
+  ],
+  "neverAdmit": [
+    {
+      "id": "ArcForges.Build.Policy",
+      "version": "1.0.0-ci.124.1",
+      "reason": "Rolled back by its producer (Plan execution-policy section 4, baseline section 2)."
+    }
+  ],
+  "packages": [
+    {
+      "id": "ArcForges.Build.Policy",
+      "version": "1.0.0-ci.133.1",
+      "contentHash": "0irW3wqQps/GGmbTGew3ucHg/CnT/PDeMjChypIIKMJeIwTxOEd5wXlLESRq//gpBgewwwoDJIXlgbHWLDOD7g==",
+      "nuspecSha256": "dbfc91aae607f1bb5e645bb1183b3e49ac0d74a29268e1abbe8f379569c29932",
+      "licence": "AGPL-3.0-only",
+      "class": "build-only",
+      "usedBy": "Every project, through Directory.Build.props with PrivateAssets=all. MSBuild props/targets only; nothing is copied to any output or redistributed.",
+      "source": "https://github.com/ArcForges/DesktopPlatform",
+      "sourceCommit": "60309ec94129f1354ed2507468541f133ec76204",
+      "provenance": "The nuspec repository commit and the packaged build-identity.json (kind ci, run 38140442120.1, dirty false) name DesktopPlatform 60309ec9, which is DesktopPlatform main. The packaged build/ files are byte-identical to src/Build/ArcForges.Build.Policy/build at that commit.",
+      "aot": "No runtime assembly. Adds IL2026 and IL3050 to WarningsAsErrors.",
+      "reason": "Shared ArcForges build policy (AF-REPO-01 scope): C# 14, nullable, deterministic warnings-as-errors, central exact versions, locked restores, CI build identity (AFP001-AFP006). Latest published cohort 1.0.0-ci.133.1 (baseline); not the rolled-back 1.0.0-ci.124.1.",
+      "admittedBy": "AF-REPO-01",
+      "reviewedOn": "2026-10-14"
+    },
+    {
+      "id": "Avalonia.Desktop",
+      "version": "12.1.4",
+      "contentHash": "2vrr0Ao77r3BoZSZ5BTg6rEb8N0987hw5H6lxtZkR8tpagiOTaL9a31Pi02jJha8es7Y+jJR8Qwis7PMQRjytg==",
+      "nuspecSha256": "f0196a02d393b9c2874625d2baac39592ccc2ce1ffbc6cf39248434df77b1bc5",
+      "licence": "MIT",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Desktop (arcforges-desktop).",
+      "source": "https://github.com/AvaloniaUI/Avalonia",
+      "sourceCommit": "2d79ba55fae1b1e71c69f93a668080c9029e6a31",
+      "provenance": "nuget.org; nuspec repository commit on release/12.1.4. Transitive closure (SkiaSharp, HarfBuzzSharp, MicroCom.Runtime, Tmds.DBus.Protocol, ANGLE natives) is pinned by src/ArcForges.Desktop/packages.lock.json; notices are in THIRD_PARTY_NOTICES.md and third-party/.",
+      "aot": "Avalonia documents Native AOT support with compiled bindings (AD-0003, V-N04); the desktop publishes with zero trim/AOT warnings on win-x64, win-arm64 and linux-x64 (linux-arm64: zero warnings through native code generation locally, full publish in hosted CI). SkiaSharp and HarfBuzzSharp ship linux-arm64 natives.",
+      "buildTimeNote": "The transitive Avalonia.BuildServices 11.3.2 runs an AvaloniaStats build target that sends anonymous build telemetry unless AVALONIA_TELEMETRY_OPTOUT=1. Directory.Build.targets replaces that target for every project (verified by build log: the AvaloniaStatsTask does not run without the environment variable); CI and eng/ scripts also set the variable.",
+      "reason": "Desktop UI framework of AD-0003 section 2. Admitted with the desktop bootstrap (ArcForges#1, main a40f72c); recorded here by AF-REPO-01.",
+      "admittedBy": "ArcForges#1; recorded by AF-REPO-01",
+      "reviewedOn": "2026-10-14"
+    },
+    {
+      "id": "Avalonia.Themes.Fluent",
+      "version": "12.1.4",
+      "contentHash": "vx7P4as07WLQqA2mhMy4iBsqhkWEGwZI7g9Rd2DlJgz3uKS2tSvY6nZqHq3sWMFDBYBT65jkTsetPrgV8oprsQ==",
+      "nuspecSha256": "6a6ef66a64ca591f344a2bc71892f6071ecf7e82135215bada358941a12f22b6",
+      "licence": "MIT",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Desktop (arcforges-desktop).",
+      "source": "https://github.com/AvaloniaUI/Avalonia",
+      "sourceCommit": "2d79ba55fae1b1e71c69f93a668080c9029e6a31",
+      "provenance": "nuget.org; same Avalonia release as Avalonia.Desktop.",
+      "aot": "Part of the zero-warning desktop AOT publish.",
+      "reason": "Theme of the existing desktop view until AF-DESK-01 adopts the DesktopPlatform design system. Admitted with ArcForges#1; recorded here by AF-REPO-01.",
+      "admittedBy": "ArcForges#1; recorded by AF-REPO-01",
+      "reviewedOn": "2026-10-14"
+    },
+    {
+      "id": "Avalonia.Headless",
+      "version": "12.1.4",
+      "contentHash": "XsVJaOc2OXDAMJ66eSnclm3YvfuVdiPay0zJUP0+fqoGoFv4XgPxvM2pMbwwt5VRVDyTSHHDpT0YGdg61ZCk/g==",
+      "nuspecSha256": "9a9a3b9e43091b4d6ac76ca4d3539957f2c176c3aa926284e5c5a3105a10fab7",
+      "licence": "MIT",
+      "class": "test",
+      "usedBy": "tests/ArcForges.Desktop.Tests.",
+      "source": "https://github.com/AvaloniaUI/Avalonia",
+      "sourceCommit": "2d79ba55fae1b1e71c69f93a668080c9029e6a31",
+      "provenance": "nuget.org; same Avalonia release as Avalonia.Desktop.",
+      "aot": "Test-only (JIT); never shipped.",
+      "reason": "Avalonia headless UI tests (16 section 1, UI layer; headless only in CI). Admitted with ArcForges#1; recorded here by AF-REPO-01.",
+      "admittedBy": "ArcForges#1; recorded by AF-REPO-01",
+      "reviewedOn": "2026-10-14"
+    },
+    {
+      "id": "xunit.v3.mtp-v2",
+      "version": "4.0.1",
+      "contentHash": "s88KiWwDDYgOWV3A+ViJiqCe9cLU/Rt6Gb5TfOC7Abv/HKSoj4IHVPcOQk7jPt7HhZHHEts5IuaVpB30eO5B1w==",
+      "nuspecSha256": "9134992ab09b0b8545f7fa31f6ab3c84a659b58493c7afca586a4977ee8998e2",
+      "licence": "Apache-2.0",
+      "class": "test",
+      "usedBy": "Every project under tests/, through tests/Directory.Build.props.",
+      "source": "https://github.com/xunit/xunit",
+      "sourceCommit": "8ed8aa354c7298e157a0fc2dcd61b95df345256a",
+      "provenance": "nuget.org; nuspec repository commit. Microsoft.Testing.Platform closure pinned by the test project locks.",
+      "aot": "Test-only (JIT); never shipped.",
+      "reason": "xUnit v3 on Microsoft.Testing.Platform (global.json test runner); trait filters select suites (16 section 4). Admitted with ArcForges#1; recorded here by AF-REPO-01.",
+      "admittedBy": "ArcForges#1; recorded by AF-REPO-01",
+      "reviewedOn": "2026-10-14"
+    }
+  ]
+}

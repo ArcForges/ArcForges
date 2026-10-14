@@ -1,12 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-  </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="xunit.v3.mtp-v2" />
     <PackageReference Include="Avalonia.Headless" />
     <ProjectReference Include="../../src/ArcForges.Desktop/ArcForges.Desktop.csproj" />
-    <Using Include="Xunit" />
   </ItemGroup>
 </Project>

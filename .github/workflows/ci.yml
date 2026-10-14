@@ -17,22 +17,40 @@ env:
   CI: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
+  AVALONIA_TELEMETRY_OPTOUT: "1"
 
+# Platform-independent merge gate (16-testing-strategy section 3): build, analyzers, format,
+# tests, Native AOT publish with zero warnings, size gates and the startup regression gate
+# (15-performance-targets) on win-x64, win-arm64, linux-x64 and linux-arm64.
+# No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
 jobs:
   native:
     name: Native (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read # eng/compare-startup.ps1 reads the previous main run's bench artifact
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-2025
             rid: win-x64
+            full: true
+            components: host,desktop,testload,bench
           - os: windows-11-arm
             rid: win-arm64
+            full: false
+            components: host,desktop,bench
           - os: ubuntu-24.04
             rid: linux-x64
+            full: true
+            components: host,desktop,testload,bench
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+            full: false
+            components: host,desktop,bench
     defaults:
       run:
         shell: pwsh
@@ -53,30 +71,57 @@ jobs:
           sudo apt-get install -y clang zlib1g-dev
       - name: Restore locked dependencies
         run: dotnet restore ArcForges.slnx --locked-mode
-      - name: Check formatting once
-        if: runner.os == 'Linux'
+      - name: Check formatting and analyzers once
+        if: matrix.rid == 'linux-x64'
         run: dotnet format ArcForges.slnx --verify-no-changes --no-restore
-      - name: Build and run offline tests once
-        if: runner.os == 'Linux'
-        run: |
-          dotnet build ArcForges.slnx -c Release --no-restore
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet test --project tests/ArcForges.Desktop.Tests -c Release --no-build
-      - name: Compile Native AOT executable
+      - name: Build with analyzers as errors
+        if: matrix.full
+        run: dotnet build ArcForges.slnx -c Release --no-restore
+      - name: Run the ci test suite
+        if: matrix.full
+        run: ./eng/test.ps1 -Suite ci -NoBuild
+      - name: Publish Native AOT with zero warnings
         env:
           TARGET_RID: ${{ matrix.rid }}
-        run: dotnet publish src/ArcForges.Desktop -c Release -r $env:TARGET_RID --no-restore -o "artifacts/publish/$env:TARGET_RID"
-      - name: Package the complete native directory
+          COMPONENTS: ${{ matrix.components }}
+        run: ./eng/publish.ps1 -RuntimeIdentifier $env:TARGET_RID -Component ($env:COMPONENTS -split ',') -NoRestore
+      - name: Run the tools suite against the native TestLoad and Bench
+        if: matrix.full
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+        run: |
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $publish = Join-Path $env:GITHUB_WORKSPACE "artifacts/publish/$env:TARGET_RID"
+          $env:ARCFORGES_TESTLOAD_PATH = Join-Path $publish "testload/arcforges-testload$suffix"
+          $env:ARCFORGES_BENCH_PATH = Join-Path $publish "bench/arcforges-bench$suffix"
+          ./eng/test.ps1 -Suite tools -NoBuild
+      - name: Gate sizes and record the startup benchmark
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+        run: ./eng/bench.ps1 -RuntimeIdentifier $env:TARGET_RID
+      - name: Gate startup against the previous main run
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./eng/compare-startup.ps1 -RuntimeIdentifier $env:TARGET_RID
+      - name: Package the complete desktop directory
         env:
           TARGET_RID: ${{ matrix.rid }}
         run: ./eng/package.ps1 -RuntimeIdentifier $env:TARGET_RID
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: arcforges-${{ matrix.rid }}-${{ github.sha }}
+          name: arcforges-desktop-${{ matrix.rid }}-${{ github.sha }}
           path: artifacts/packages/*
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ !cancelled() }} # also keep the results of a failed size or startup gate
+        with:
+          name: bench-${{ matrix.rid }}-${{ github.sha }}
+          path: artifacts/bench/${{ matrix.rid }}/*.json
+          if-no-files-found: warn
+          retention-days: 90
 
   verify:
     name: Verify

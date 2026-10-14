@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!-- Repository policy checks over the real checked-in files: admissions, locks, executable names, solution and suites. -->
+</Project>
