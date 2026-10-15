@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "rules": [
+    "Each released migration step is listed here with the SHA-256 of its UTF-8 SQL; a released step never changes (forward-only, 13-distribution-updates section 6).",
+    "Steps are consecutive from version 1. Within a release, steps are expand-only; tests/ArcForges.Node.Store.Tests checks every consecutive pair with SchemaDiff (the CI step 'Check the node store schema is expand-only').",
+    "A contract step (drop or rename) is released only after min_reader_version excludes every version still eligible as a rollback target, and raises minReaderVersion."
+  ],
+  "steps": [
+    {
+      "version": 1,
+      "minReaderVersion": 1,
+      "file": "0001-schema-v1.sql",
+      "sha256": "8f56a161a3c73c18a455dc01d6061fa34bde6341a6eb130900daac336205a649",
+      "source": "ArcForges-Design docs/data/node-store.sql at 78f0f5a (last changed in 4823296), verbatim",
+      "addedBy": "AF-NODE-02"
+    }
+  ]
+}

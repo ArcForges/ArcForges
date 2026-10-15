@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Store-internal wrapper messages of the node store (ArcForges-Design docs/data/node-store.md section 1).
+// Not a public contract: these messages are only ever read back by the node that wrote them. Changes are
+// additive (new fields and messages only), because a store written by a newer node may be read by an
+// older one within min_reader_version (13 section 6). Later subsystems add their wrappers here
+// (FindingActions, KeySet, BundleFiles, Reservoir) with their tasks.
+syntax = "proto3";
+
+package arcforges.node.store.v1;
+
+option csharp_namespace = "ArcForges.Node.Store.Proto";
+
+// One environment variable.
+message EnvEntry {
+  string name = 1;
+  string value = 2;
+}
+
+// env_snapshot.entries: a caller environment without secret-shaped values (R-EXE-017). Entries are
+// sorted by the UTF-8 bytes of their names. Secret-shaped names are listed in sealed_names (presence
+// only); their values are sealed in task_secret.
+message EnvSnapshot {
+  repeated EnvEntry entries = 1;
+  repeated string sealed_names = 2;
+}
+
+// The plaintext of task_secret.ciphertext (AES-256-GCM, associated data = task ID): the values of
+// secret-shaped variables of the caller environment and of TaskSpec.environment.set, sorted by name.
+message SecretEnvironment {
+  repeated EnvEntry caller = 1;
+  repeated EnvEntry set = 2;
+}

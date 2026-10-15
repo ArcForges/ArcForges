@@ -20,7 +20,8 @@ env:
   AVALONIA_TELEMETRY_OPTOUT: "1"
 
 # Platform-independent merge gate (16-testing-strategy section 3): build, analyzers, format,
-# tests, Native AOT publish with zero warnings, size gates and the startup regression gate
+# tests, the node store's expand-only schema check (13-distribution-updates section 9), Native AOT
+# publish with zero warnings, size gates, the startup regression gate and the store growth bound
 # (15-performance-targets) on win-x64, win-arm64, linux-x64 and linux-arm64.
 # No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
 jobs:
@@ -80,6 +81,9 @@ jobs:
       - name: Run the ci test suite
         if: matrix.full
         run: ./eng/test.ps1 -Suite ci -NoBuild
+      - name: Check the node store schema is expand-only
+        if: matrix.rid == 'linux-x64'
+        run: ./eng/test.ps1 -Suite store-schema -NoBuild
       - name: Publish Native AOT with zero warnings
         env:
           TARGET_RID: ${{ matrix.rid }}
@@ -95,7 +99,7 @@ jobs:
           $env:ARCFORGES_TESTLOAD_PATH = Join-Path $publish "testload/arcforges-testload$suffix"
           $env:ARCFORGES_BENCH_PATH = Join-Path $publish "bench/arcforges-bench$suffix"
           ./eng/test.ps1 -Suite tools -NoBuild
-      - name: Gate sizes and record the startup benchmark
+      - name: Gate sizes and store growth, and record the startup benchmark
         env:
           TARGET_RID: ${{ matrix.rid }}
         run: ./eng/bench.ps1 -RuntimeIdentifier $env:TARGET_RID

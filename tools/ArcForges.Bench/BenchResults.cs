@@ -125,8 +125,70 @@ internal sealed class StartupComparisonResult
     public required bool Pass { get; init; }
 }
 
+internal sealed class TableSize
+{
+    public required string Table { get; init; }
+
+    public required long Rows { get; init; }
+
+    /// <summary>Pages of the table and its indexes (SQLite dbstat); absent when the SQLite build has no dbstat.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public required long? Bytes { get; init; }
+}
+
+internal sealed class StoreGrowthResult
+{
+    public string Tool { get; init; } = "arcforges-bench";
+
+    public int SchemaVersion { get; init; } = 1;
+
+    public string Benchmark { get; init; } = "store-growth";
+
+    public required string Name { get; init; }
+
+    public required int Attempts { get; init; }
+
+    public required int Tasks { get; init; }
+
+    public required int Sessions { get; init; }
+
+    public required int SealedTasks { get; init; }
+
+    public required long DistinctEnvironments { get; init; }
+
+    public required IReadOnlyList<string> EnvironmentSources { get; init; }
+
+    /// <summary>The new, empty store (schema and default policy) after a checkpoint.</summary>
+    public required long BaselineBytes { get; init; }
+
+    /// <summary>The database file after a final checkpoint (logs are files outside the store and never counted).</summary>
+    public required long DatabaseBytes { get; init; }
+
+    public required long WalBytes { get; init; }
+
+    /// <summary>The measured growth: database plus WAL minus the baseline; the gated value.</summary>
+    public required long GrowthBytes { get; init; }
+
+    public required double BytesPerAttempt { get; init; }
+
+    public required long LimitBytes { get; init; }
+
+    public required long LimitBytesPer10000Attempts { get; init; }
+
+    public required bool Pass { get; init; }
+
+    public required long DurationMs { get; init; }
+
+    public required string Profile { get; init; }
+
+    public required IReadOnlyList<TableSize> Tables { get; init; }
+
+    public required BenchEnvironment Environment { get; init; }
+}
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(SizeResult))]
 [JsonSerializable(typeof(StartupResult))]
 [JsonSerializable(typeof(StartupComparisonResult))]
+[JsonSerializable(typeof(StoreGrowthResult))]
 internal sealed partial class BenchJsonContext : JsonSerializerContext;

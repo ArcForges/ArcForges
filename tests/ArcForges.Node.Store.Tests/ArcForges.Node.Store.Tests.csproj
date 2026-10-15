@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Store-layer tests of 16-testing-strategy: real SQLite, a controllable clock, the real OS secret store (Windows Credential
+    Manager; on Linux the owner-only file fallback through a private, absent bus), and real processes killed during writes
+    (the store growth workload of arcforges-bench; ARCFORGES_BENCH_PATH selects a published Native AOT binary). No fakes.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
+    <ProjectReference Include="../../tools/ArcForges.Bench/ArcForges.Bench.csproj" />
+    <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

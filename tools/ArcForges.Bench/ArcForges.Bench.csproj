@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-  <!-- Performance benchmarks of 15-performance-targets: binary size and process startup. JSON results go to PR evidence. -->
+  <!--
+    Performance benchmarks of 15-performance-targets: binary size, process startup and node store growth. JSON results go
+    to PR evidence. The store growth benchmark runs the node store under Native AOT (AD-0003 Microsoft.Data.Sqlite obligation).
+  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>arcforges-bench</AssemblyName>
@@ -10,5 +13,6 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ArcForges.Tools.Tests" />
+    <ProjectReference Include="../../src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
   </ItemGroup>
 </Project>

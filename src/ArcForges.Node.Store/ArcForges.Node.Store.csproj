@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The node store (ArcForges-Design docs/data/node-store.md): SQLite schema version 1 (node-store.sql),
+    forward-only expand-only migrations with min_reader enforcement and pre-migration backups, command
+    deduplication, sealed task secrets, content-addressed caller environments and the default policy.
+    Library of the AOT executable arcforges (AD-0003), so it is AOT- and trim-compatible.
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.Node.Store</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- The RIDs of the executables that carry the store, so a RID-specific publish keeps this project's lock file consistent. -->
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.Node" />
+    <!--
+      Security.Secrets 1.0.0-ci.138.1 and its ArcForges.Security and ArcForges.Foundation dependencies pin
+      ArcForges.Contracts.Foundation to exactly 1.0.0-ci.216.1; the node contracts need 1.0.0-ci.375.1. Every
+      Contracts.Foundation type and member those assemblies reference exists unchanged in 1.0.0-ci.375.1
+      (recorded in eng/policy/dependency-admissions.json), so NU1608 is accepted for this package's graph only.
+    -->
+    <PackageReference Include="ArcForges.Security.Secrets" />
+    <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Store-internal wrapper messages (node-store.md section 1): public C# types for node subsystems, not a wire contract. -->
+    <Protobuf Include="Proto/store.proto" GrpcServices="None" />
+    <!-- Migration scripts are immutable once released; Schema/schema-history.json records their digests. -->
+    <EmbeddedResource Include="Schema/*.sql" LogicalName="ArcForges.Node.Store.Schema.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="ArcForges.Node.Store.Tests" />
+  </ItemGroup>
+</Project>

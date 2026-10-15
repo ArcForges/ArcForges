@@ -1,0 +1,508 @@
+{
+  "source": "windows-git-bash",
+  "note": "Captured shape of a real shell environment: names kept, every value synthetic (each letter/digit run replaced by a keyed-hash word of the same length and classes; the key was discarded). No real values.",
+  "entryCount": 125,
+  "valueBytes": 8094,
+  "entries": [
+    {
+      "name": "AI_AGENT",
+      "value": "kwvfvs-lvuj_4-1-395_nvuad"
+    },
+    {
+      "name": "ALLUSERSPROFILE",
+      "value": "X:\\OsozbdaAygg"
+    },
+    {
+      "name": "ANDROID_HOME",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Onbbsmk\\Pqr"
+    },
+    {
+      "name": "ANDROID_SDK_ROOT",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Onbbsmk\\Pqr"
+    },
+    {
+      "name": "ANTHROPIC_BASE_URL",
+      "value": "qbfmj://ofk.uybtovkhp.jjv"
+    },
+    {
+      "name": "API_TIMEOUT_MS",
+      "value": "274522"
+    },
+    {
+      "name": "APPDATA",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Hhshyew"
+    },
+    {
+      "name": "ASL.LOG",
+      "value": "Zxkrocrdegh=inpx"
+    },
+    {
+      "name": "BAGGAGE",
+      "value": "tavtpk-vucdsrqhmkj=fvduiserdi,tavtpk-pyrmpvl=Ddxkxc%644.32655.1,tavtpk-ufisoo_ryk=7t97067trnsp2432u3e297z0ef58r83d,tavtpk-ddxdp_tb=3wl8b94s01440u0ev050f3t5n9v2ysp9,tavtpk-vdc_tb=1840150"
+    },
+    {
+      "name": "CARGO_HOME",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\lmntib\\.gqfgc"
+    },
+    {
+      "name": "CHROME_CRASHPAD_PIPE_NAME",
+      "value": "\\\\.\\pkaf\\nbilvqhq_57235_JNZJCQZJGVDQCQIM"
+    },
+    {
+      "name": "CLAUDECODE",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_AGENT_SDK_MCP_NO_PREFIX",
+      "value": "6"
+    },
+    {
+      "name": "CLAUDE_AGENT_SDK_VERSION",
+      "value": "6.7.395"
+    },
+    {
+      "name": "CLAUDE_CODE_ACCOUNT_UUID",
+      "value": "095z5l10-5460-4y3q-lg01-fx35b0091sp1"
+    },
+    {
+      "name": "CLAUDE_CODE_CHILD_SESSION",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_DESKTOP_APP_VERSION",
+      "value": "4.32655.1"
+    },
+    {
+      "name": "CLAUDE_CODE_DISABLE_CRON",
+      "value": ""
+    },
+    {
+      "name": "CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_EAGER_FLUSH",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+      "value": "nmgrg"
+    },
+    {
+      "name": "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL",
+      "value": "oyuk"
+    },
+    {
+      "name": "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+      "value": "oyuk"
+    },
+    {
+      "name": "CLAUDE_CODE_ENTRYPOINT",
+      "value": "kwvfvs-kyrmgcx"
+    },
+    {
+      "name": "CLAUDE_CODE_EXECPATH",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Oalojtav\\Ddxkxc_cup2hztucsuqq\\DqlhjVrwip\\Hhshyew\\Ddxkxc\\kwvfvs-lvuj\\4.1.395\\r2l14395ys10\\kwvfvs.ckf"
+    },
+    {
+      "name": "CLAUDE_CODE_GIT_BASH_PATH",
+      "value": "X:\\Jhjndki Zisov\\Ukl\\lap\\snzi.ckf"
+    },
+    {
+      "name": "CLAUDE_CODE_HOST_SESSION_ID",
+      "value": "aoebq_x49jt324-g729-5mhr-9r93-d42qw6ogv33l"
+    },
+    {
+      "name": "CLAUDE_CODE_MESSAGING_SOCKET",
+      "value": "\\\\.\\pkaf\\CRJLC\\sf-irs-c4hzo405973m7yn120ng5uwa538qf0ek"
+    },
+    {
+      "name": "CLAUDE_CODE_MESSAGING_TOKEN",
+      "value": "82j81u55463873e9rf5i58dsm93oa242"
+    },
+    {
+      "name": "CLAUDE_CODE_OAUTH_SCOPES",
+      "value": "unvo:rjgqydkod unvo:inpx_dwxxmo unvo:fgvwqkc unvo:zypkemmp:kwvfvs_lvuj unvo:ecdlsdr"
+    },
+    {
+      "name": "CLAUDE_CODE_ORGANIZATION_UUID",
+      "value": "264n0881-eu5x-9y47-b18e-4418s27x9780"
+    },
+    {
+      "name": "CLAUDE_CODE_REPORT_FINDINGS",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_SESSION_ATTENDED",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_SESSION_ID",
+      "value": "6s9ljy40-04d8-570y-a0st-3xd7lo3304zt"
+    },
+    {
+      "name": "CLAUDE_CODE_SIMPLE",
+      "value": "6"
+    },
+    {
+      "name": "CLAUDE_CODE_SUBAGENT_MODEL",
+      "value": "kwvfvs-pfpe-9-9"
+    },
+    {
+      "name": "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+      "value": "1"
+    },
+    {
+      "name": "CLAUDE_CODE_TERMINAL_MCP_TOOLS",
+      "value": "qsm__pls_axpd__trlz_tq"
+    },
+    {
+      "name": "CLAUDE_CODE_USER_EMAIL",
+      "value": "puqrocz@hchpa.jjv"
+    },
+    {
+      "name": "CLAUDE_EFFORT",
+      "value": "lfpl"
+    },
+    {
+      "name": "CLAUDE_PID",
+      "value": "84449"
+    },
+    {
+      "name": "CLAUDE_PREVIEW_CLASSIFIER_FLOOR",
+      "value": "1"
+    },
+    {
+      "name": "CMAKE_PREFIX_PATH",
+      "value": "X:\\Dw\\4.97.1\\cryr1200_46"
+    },
+    {
+      "name": "COMMONPROGRAMFILES",
+      "value": "X:\\Jhjndki Zisov\\Virkpf Zisov"
+    },
+    {
+      "name": "COMMONPROGRAMFILES(X86)",
+      "value": "X:\\Jhjndki Zisov (e92)\\Virkpf Zisov"
+    },
+    {
+      "name": "COMMONPROGRAMW6432",
+      "value": "X:\\Jhjndki Zisov\\Virkpf Zisov"
+    },
+    {
+      "name": "COMPUTERNAME",
+      "value": "MDSQ"
+    },
+    {
+      "name": "COMSPEC",
+      "value": "X:\\ZLQSPDX\\ewhtak97\\ogk.ckf"
+    },
+    {
+      "name": "COREPACK_ENABLE_AUTO_PIN",
+      "value": "6"
+    },
+    {
+      "name": "DISABLE_AUTOUPDATER",
+      "value": "1"
+    },
+    {
+      "name": "DISABLE_MICROCOMPACT",
+      "value": "1"
+    },
+    {
+      "name": "DOTNET_ROOT",
+      "value": "X:\\Ctfna\\J8Ikw\\.wnisgb"
+    },
+    {
+      "name": "DRIVERDATA",
+      "value": "X:\\Fqcdoha\\Owgvrh75\\Ncnnubb\\MuovgiKdka"
+    },
+    {
+      "name": "EXEPATH",
+      "value": "X:\\Jhjndki Zisov\\Ukl\\lap"
+    },
+    {
+      "name": "FASTBUILD_CACHE_PATH",
+      "value": "X:\\jbvysttb\\baxwiaeyf-jjutu"
+    },
+    {
+      "name": "FNM_DIR",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\bbm\\spkpsop"
+    },
+    {
+      "name": "FORGEJO_TOKEN",
+      "value": "59250s180d1020u113o5d3wq6d7h7v5xm0mw0510"
+    },
+    {
+      "name": "GITLAB_TOKEN",
+      "value": "apbgg-Zlf9h15mjzNZRjB9eoQyt837GVo4BpFC.03.4k9s7cjpw"
+    },
+    {
+      "name": "GIT_EDITOR",
+      "value": "oyuk"
+    },
+    {
+      "name": "GIT_INSTALL_ROOT",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\pyj\\spkpsop"
+    },
+    {
+      "name": "GLOBAL_VCPKG_PATH",
+      "value": "X:\\llwdy"
+    },
+    {
+      "name": "HOME",
+      "value": "X:\\Ctfna\\J8Ikw"
+    },
+    {
+      "name": "HOMEDRIVE",
+      "value": "X:"
+    },
+    {
+      "name": "HOMEPATH",
+      "value": "\\Ctfna\\J8Ikw"
+    },
+    {
+      "name": "JAVA_HOME",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\dfqtsltbm10-fjc\\spkpsop"
+    },
+    {
+      "name": "LEVEL_ZERO_V1_SDK_PATH",
+      "value": "X:\\Jhjndki Zisov\\ZwcrqTsggADF\\1.03.6\\"
+    },
+    {
+      "name": "LOCALAPPDATA",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj"
+    },
+    {
+      "name": "LOGONSERVER",
+      "value": "\\\\MDSQ"
+    },
+    {
+      "name": "MAGICK_CODER_MODULE_PATH",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\ijrqndxgzuq\\spkpsop\\ltzvrhl\\vjwbqf"
+    },
+    {
+      "name": "MAGICK_CONFIGURE_PATH",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\ijrqndxgzuq\\spkpsop"
+    },
+    {
+      "name": "MAGICK_HOME",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\ijrqndxgzuq\\spkpsop"
+    },
+    {
+      "name": "MCP_CONNECTION_NONBLOCKING",
+      "value": "oyuk"
+    },
+    {
+      "name": "MCP_SERVER_CONNECTION_BATCH_SIZE",
+      "value": "8"
+    },
+    {
+      "name": "MSBUILDDISABLENODEREUSE",
+      "value": "1"
+    },
+    {
+      "name": "MSYSTEM",
+      "value": "XAMCO06"
+    },
+    {
+      "name": "NODEFAULTCURRENTDIRECTORYINEXEPATH",
+      "value": "1"
+    },
+    {
+      "name": "NODE_PATH",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\hckx\\spkpsop\\efdkxw\\flvk_ltzvrhl"
+    },
+    {
+      "name": "NODE_USE_SYSTEM_CA",
+      "value": "1"
+    },
+    {
+      "name": "NUMBER_OF_PROCESSORS",
+      "value": "41"
+    },
+    {
+      "name": "ONEDRIVE",
+      "value": "X:\\Ctfna\\J8Ikw\\UrcXtwup"
+    },
+    {
+      "name": "OS",
+      "value": "Fqcdoha_ZT"
+    },
+    {
+      "name": "PATH",
+      "value": "X:\\UeWwef\\Temuhfph\\maf\\lap;X:\\UeWwef\\Temuhfph\\maf;X:\\UeWwef\\Temuhfph\\maf\\ulbxgf576\\Mwieflr;X:\\UeWwef\\Temuhfph\\maf\\dxdbk\\dxdbk-4.7.7-gonsggc-e92_46\\lap;X:\\UeWwef\\Temuhfph\\maf\\ejtks;X:\\UeWwef\\Temuhfph\\maf\\baxwiaeyf;X:\\Ctfna\\J8Ikw\\.wnisgb;X:\\Ctfna\\J8Ikw\\.wnisgb\\gykgz;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\zvtkbf-rxm\\spkpsop;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\dfqtsltbm10-fjc\\spkpsop\\lap;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\hckx\\spkpsop\\lap;X:\\Ctfna\\J8Ikw\\esiod\\nrrds;X:\\llwdy;X:\\Ctfna\\J8Ikw\\lap;X:\\Jhjndki Zisov\\Ukl\\czyob13\\lap;X:\\Jhjndki Zisov\\Ukl\\wdy\\aoebq\\lap;X:\\Jhjndki Zisov\\Ukl\\wdy\\lap;X:\\Jhjndki Zisov\\Ukl\\wdy\\lap;X:\\Jhjndki Zisov\\Ukl\\czyob13\\lap;X:\\Jhjndki Zisov\\Ukl\\wdy\\lap;X:\\Ctfna\\J8Ikw\\lap;X:\\ZLQSPDX\\ewhtak97;X:\\ZLQSPDX;X:\\ZLQSPDX\\Owgvrh75\\Avpm;X:\\ZLQSPDX\\Owgvrh75\\NatjmuhMwzknSiqrq\\c4.6;X:\\ZLQSPDX\\Owgvrh75\\XjmzKYB;X:\\Jhjndki Zisov\\wnisgb;X:\\Jhjndki Zisov\\Hrueodptc LIV Xqomzd\\Etzpgq HTV\\MUGT\\857\\Taesa\\Nxel;X:\\Jhjndki Zisov\\Azcrm Grzk Mmqfno\\lap;X:\\Jhjndki Zisov\\Hrueodptc LIV Xqomzd\\857\\Taesa\\Nxel;X:\\Jhjndki Zisov\\IuoctvalMyi\\lap;X:\\Jhjndki Zisov\\Ukl\\ogk;X:\\Jhjndki Zisov (e92)\\Fqcdoha Rejp\\99\\Fqcdoha Wrgrxwwhgnm Rwweiio;X:\\Jhjndki Zisov\\EYT;X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\hckx\\efdkxw\\flvk_ltzvrhl\\.lap;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\pgws\\spkpsop\\lap;X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\gykgz\\nrrds;X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\esswno\\nrrds;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\lmntib\\spkpsop\\.gqfgc\\lap;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\esswno\\spkpsop\\Mwieflr;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\esswno\\spkpsop;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\zvtkbf-rxm\\spkpsop\\lap;X:\\Ctfna\\J8Ikw\\esiod\\oeon\\ijrqndxgzuq\\spkpsop;X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\zvtkbf-rxm\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Lfilyayv\\DskyQT\\Rmodz\\lap;X:\\Ctfna\\J8Ikw\\.aoebq\\lap;X:\\Ctfna\\J8Ikw\\.wdnd\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Hrueodptc\\LdpehqpItyw;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Lfilyayv\\Vfv\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\ImhJwhumn\\Gdbanab\\ndcjvcv;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Lfilyayv\\Hrueodptc DM Quvl\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Hrueodptc\\EiyVkp\\Gicdr;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Lfilyayv\\Zasedp;X:\\Ctfna\\J8Ikw\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Onbbsmk\\Pqr\\nntmllda-gykgz;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Onbbsmk\\Pqr\\jvylbctq;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Onbbsmk\\Pqr\\wuefqgm-gykgz\\sblvey\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Lfilyayv\\Uxpyp\\lap;X:\\Dw\\4.97.1\\cryr1200_46\\lap;X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\lmntib\\.gqfgc\\lap;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Yunb\\GwgAgbect-SZU17-BldccZfyy-12706814\\Qbeokgbh-96247591239\\mmwzozuh-yxunkgv\\wnisgb-ftip\\.wnisgb\\gykgz;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Yunb\\GwgAgbect-SZU17-BldccZfyy-12706814\\Qbeokgbh-96247591239\\mmwzozuh-yxunkgv-46842714505\\wnisgb-ftip\\.wnisgb\\gykgz;X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Yunb\\kwvfvs\\X--UeWwef-Temuhfph-GwgAgbect\\l68lk13f-1bs4-1n33-w69h-u09fgxk8092r\\rclehysjbo\\xik-ftip\\.wnisgb\\gykgz;X:\\Jhjndki Zisov\\Ukl\\czyob13\\lap;X:\\Jhjndki Zisov\\Ukl\\wdy\\lap\\xarjnn_kjui;X:\\Jhjndki Zisov\\Ukl\\wdy\\lap\\ismm_kjui"
+    },
+    {
+      "name": "PATHEXT",
+      "value": ".DVR;.PAT;.BWI;.HZR;.OYA;.WKA;.MA;.PYX;.ADE;.ZEY;.CHF"
+    },
+    {
+      "name": "PLINK_PROTOCOL",
+      "value": "frt"
+    },
+    {
+      "name": "PNPM_HOME",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\oeon\\pgws\\spkpsop"
+    },
+    {
+      "name": "PROCESSOR_ARCHITECTURE",
+      "value": "PEN60"
+    },
+    {
+      "name": "PROCESSOR_IDENTIFIER",
+      "value": "Kfbsp62 Upxrch 4 Mbdjl 857 Ethefelz 4, IrjjmlxEnzvn"
+    },
+    {
+      "name": "PROCESSOR_LEVEL",
+      "value": "4"
+    },
+    {
+      "name": "PROCESSOR_REVISION",
+      "value": "tw70"
+    },
+    {
+      "name": "PROGRAMDATA",
+      "value": "X:\\OsozbdaAygg"
+    },
+    {
+      "name": "PROGRAMFILES",
+      "value": "X:\\Jhjndki Zisov"
+    },
+    {
+      "name": "PROGRAMFILES(X86)",
+      "value": "X:\\Jhjndki Zisov (e92)"
+    },
+    {
+      "name": "PROGRAMW6432",
+      "value": "X:\\Jhjndki Zisov"
+    },
+    {
+      "name": "PSMODULEPATH",
+      "value": "X:\\Jhjndki Zisov\\NatjmuhMwzknSiqrq\\Fenwjhq;X:\\ZLQSPDX\\ewhtak97\\NatjmuhMwzknSiqrq\\c4.6\\Fenwjhq"
+    },
+    {
+      "name": "PUBLIC",
+      "value": "X:\\Ctfna\\Cmpmja"
+    },
+    {
+      "name": "PWD",
+      "value": "X:/UeWwef/Temuhfph/GwgAgbect/GwgAgbect"
+    },
+    {
+      "name": "PYTHONDONTWRITEBYTECODE",
+      "value": "1"
+    },
+    {
+      "name": "QT6_DIR",
+      "value": "X:\\Dw\\4.97.1\\cryr1200_46\\qqh\\dxdbk\\Vj8"
+    },
+    {
+      "name": "QTDIR",
+      "value": "X:\\Dw\\4.97.1\\cryr1200_46"
+    },
+    {
+      "name": "RUSTUP_HOME",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\lmntib\\.lmntib"
+    },
+    {
+      "name": "SENTRY-TRACE",
+      "value": "3wl8b94s01440u0ev050f3t5n9v2ysp9-7rh5x8z19tsp296c"
+    },
+    {
+      "name": "SHELL",
+      "value": "X:\\Jhjndki Zisov\\Ukl\\lap\\snzi.ckf"
+    },
+    {
+      "name": "SHLVL",
+      "value": "1"
+    },
+    {
+      "name": "SYSTEMDRIVE",
+      "value": "X:"
+    },
+    {
+      "name": "SYSTEMROOT",
+      "value": "X:\\ZLQSPDX"
+    },
+    {
+      "name": "TEMP",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Yunb"
+    },
+    {
+      "name": "TERM",
+      "value": "xywfk-434qpbnc"
+    },
+    {
+      "name": "TMP",
+      "value": "X:\\Ctfna\\J8Ikw\\GstXrot\\Woefj\\Yunb"
+    },
+    {
+      "name": "USERDOMAIN",
+      "value": "MDSQ"
+    },
+    {
+      "name": "USERDOMAIN_ROAMINGPROFILE",
+      "value": "MDSQ"
+    },
+    {
+      "name": "USERNAME",
+      "value": "J8Ikw"
+    },
+    {
+      "name": "USERPROFILE",
+      "value": "X:\\Ctfna\\J8Ikw"
+    },
+    {
+      "name": "USE_LOCAL_OAUTH",
+      "value": ""
+    },
+    {
+      "name": "USE_STAGING_OAUTH",
+      "value": ""
+    },
+    {
+      "name": "UV_CACHE_DIR",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\jjutu"
+    },
+    {
+      "name": "UV_PYTHON_BIN_DIR",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\esswno\\nrrds"
+    },
+    {
+      "name": "UV_PYTHON_INSTALL_DIR",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\esswno\\kywqmzdw"
+    },
+    {
+      "name": "UV_TOOL_BIN_DIR",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\gykgz\\nrrds"
+    },
+    {
+      "name": "UV_TOOL_DIR",
+      "value": "X:\\Ctfna\\J8Ikw\\esiod\\ktdizqr\\wb\\gykgz\\kywqmzdw"
+    },
+    {
+      "name": "VCPKG_ROOT",
+      "value": "X:\\llwdy"
+    },
+    {
+      "name": "WINDIR",
+      "value": "X:\\ZLQSPDX"
+    },
+    {
+      "name": "WINDOWSKITRC",
+      "value": "X:\\Jhjndki Zisov (e92)\\Fqcdoha Rejp\\99\\lap\\99.6.73681.6\\e83"
+    },
+    {
+      "name": "ZES_ENABLE_SYSMAN",
+      "value": "1"
+    },
+    {
+      "name": "_",
+      "value": "X:/UeWwef/Temuhfph/maf/ulbxgf576/Mwieflr/esswno"
+    }
+  ]
+}

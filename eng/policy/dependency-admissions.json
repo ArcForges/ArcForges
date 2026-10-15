@@ -7,13 +7,19 @@
     "Transitive packages are pinned by the committed locks and reviewed with their direct parent; SDK-implicit packs (Microsoft.DotNet.ILCompiler, Microsoft.NET.ILLink.Tasks) follow the global.json SDK.",
     "First-party packages are admitted only at a version whose publishing commit is an ancestor of the producer's main, and never at a version listed under neverAdmit.",
     "Runtime packages of Native AOT executables must publish with zero trim and AOT warnings; an exception is recorded here as a decision, never suppressed in a project.",
-    "A change of id, version or hash updates the entry in the same pull request, with the reviewer's date and reason."
+    "A change of id, version or hash updates the entry in the same pull request, with the reviewer's date and reason.",
+    "A NuGet restore warning accepted for a dependency graph is listed under nugetWarningExceptions with the project and package reference that carry the package-specific NoWarn, its evidence and its removal condition (tests/ArcForges.Repository.Tests checks both directions); no other project suppresses it."
   ],
   "neverAdmit": [
     {
       "id": "ArcForges.Build.Policy",
       "version": "1.0.0-ci.124.1",
       "reason": "Rolled back by its producer (Plan execution-policy section 4, baseline section 2)."
+    },
+    {
+      "id": "ArcForges.Contracts.Foundation",
+      "version": "1.0.0-ci.350.1",
+      "reason": "Contracts cohort rolled back by its producer (Plan execution-policy section 4); never pinned or admitted."
     }
   ],
   "packages": [
@@ -32,6 +38,54 @@
       "reason": "Shared ArcForges build policy (AF-REPO-01 scope): C# 14, nullable, deterministic warnings-as-errors, central exact versions, locked restores, CI build identity (AFP001-AFP006). Latest published cohort 1.0.0-ci.133.1 (baseline); not the rolled-back 1.0.0-ci.124.1.",
       "admittedBy": "AF-REPO-01",
       "reviewedOn": "2026-10-14"
+    },
+    {
+      "id": "ArcForges.Contracts.Foundation",
+      "version": "1.0.0-ci.375.1",
+      "contentHash": "v6kJFsDVjpdmii/UHu6hVoT6u3q7eYEfqrvwYD8WAd8vJS8DpTkh/dOkoHAYornz4Ih5oijK9ZBl94Cb2Zsl+g==",
+      "nuspecSha256": "1ee94935433c8d198323a4f4cf4b85a46ddd672064a17dbce14edeadcb336d2d",
+      "licence": "Apache-2.0",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.Store (ArcError, RetryAdvice, Id) and, through it, tools/ArcForges.Bench and the store tests; pinned directly so the whole graph resolves the cohort of ArcForges.Contracts.Node.",
+      "source": "https://github.com/ArcForges/Contracts",
+      "sourceCommit": "dea4cd831ce74dbf7ed8f875a68fcf0a74cbe04e",
+      "provenance": "nuget.org; nuspec repository commit dea4cd8, the AF-CON-01 merge on Contracts main (publication run 38675685268, cohort 1.0.0-ci.375.1), an ancestor of Contracts main (e2b0346 on 2026-10-15). Not the rolled-back 1.0.0-ci.350.1.",
+      "aot": "Generated protobuf code (Google.Protobuf 3.36.1, IsAotCompatible); part of the zero-warning Native AOT publish of arcforges-bench on win-x64 and linux-x64 (AF-NODE-02).",
+      "reason": "Foundation contract types of the node store's errors (CONFLICT/command_id_reused, STATE/secrets_unavailable) at the AF-CON-01 cohort. Overrides the exact 1.0.0-ci.216.1 constraint of the DesktopPlatform 138.1 packages: see nugetWarningExceptions NU1608.",
+      "admittedBy": "AF-NODE-02",
+      "reviewedOn": "2026-10-15"
+    },
+    {
+      "id": "ArcForges.Contracts.Node",
+      "version": "1.0.0-ci.375.1",
+      "contentHash": "dS9y7TQcsIAcLtEKqErtUfRTL4/lKnaVFo9sRMjfqhmSi8IJG9ai5Rtp0G00ACU57XHM7nNuOhlxPICpT/Oo2A==",
+      "nuspecSha256": "51543c17d2b3b6c40ed7a5065b847e19eac1059173b0743e1fb67d2d8c3a5de8",
+      "licence": "Apache-2.0",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.Store (PolicyDocument revision 1, TaskSpec environment split, ActorRef, Origin, NodeRole, SubmitTask messages) and, through it, tools/ArcForges.Bench and the store tests.",
+      "source": "https://github.com/ArcForges/Contracts",
+      "sourceCommit": "dea4cd831ce74dbf7ed8f875a68fcf0a74cbe04e",
+      "provenance": "nuget.org; the published Contracts cohort of AF-CON-01 (1.0.0-ci.375.1, run 38675685268) from Contracts main dea4cd8, an ancestor of Contracts main. Transitive Google.Protobuf 3.36.1 (BSD-3-Clause) and Grpc.Core.Api 2.84.0 (Apache-2.0) are pinned by the locks.",
+      "aot": "IsAotCompatible generated code; arcforges-bench (which carries the node store) publishes Native AOT with zero warnings on win-x64 and linux-x64 (AF-NODE-02).",
+      "reason": "arcforges.node.v1, the node contract the store serializes (enums as proto numbers, protobuf columns as contract messages; node-store.md section 1). AF-NODE-02 scope: pin the published Contracts cohort of AF-CON-01.",
+      "admittedBy": "AF-NODE-02",
+      "reviewedOn": "2026-10-15"
+    },
+    {
+      "id": "ArcForges.Security.Secrets",
+      "version": "1.0.0-ci.138.1",
+      "contentHash": "52soPnc43Vngo6bZXqzHo/oTMFAwPjHRqlueK0W6qbxFbAKxBaL2tRnM3V93Q3+CUlDQDmFxeUR35pssP3s6kg==",
+      "nuspecSha256": "b6609e4e5c3f3d1c6394772be4d281ecc92884f0f4d1414e06c5d09aefb4ee5d",
+      "licence": "AGPL-3.0-only",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.Store (NodeDataKeyRing: OsSecretStore.SelectForCurrentPlatform, ISecretBackingStore) and, through it, tools/ArcForges.Bench and the store tests.",
+      "source": "https://github.com/ArcForges/DesktopPlatform",
+      "sourceCommit": "4e2093225212acded4a4d5ef55a1dff940e30b9f",
+      "provenance": "nuget.org; the AF-DP-02 cohort 1.0.0-ci.138.1 published by DesktopPlatform's Publish NuGet run 38714733282 from main 4e20932 (the AF-DP-02 merge, DesktopPlatform main at review). Transitive ArcForges.Security and ArcForges.Foundation 1.0.0-ci.138.1 (same commit, AGPL-3.0-only) and Tmds.DBus.Protocol 0.94.1 (MIT) are pinned by the locks. Not Build.Policy 1.0.0-ci.124.1.",
+      "aot": "Its selection, both Linux backends and the Windows adapter are Native AOT probed by DesktopPlatform (SecretStoreSelectionAotTests); here they are part of the zero-warning arcforges-bench publish on win-x64 and linux-x64, which runs the Credential Manager and owner-only file paths (AF-NODE-02).",
+      "reason": "The OS secret store for the node data key that seals task secrets (04-execution section 2; reuse inventory: Security.Secrets adapted by AF-DP-02). The node follows its consumer obligations: SelectForCurrentPlatform, the backend recorded per key in the store, data root 0700, and a locked keyring reported as an unavailable key (never redirected to the file fallback). Its exact Contracts.Foundation 1.0.0-ci.216.1 constraint is overridden: see nugetWarningExceptions NU1608.",
+      "admittedBy": "AF-NODE-02",
+      "reviewedOn": "2026-10-15"
     },
     {
       "id": "Avalonia.Desktop",
@@ -83,6 +137,38 @@
       "reviewedOn": "2026-10-14"
     },
     {
+      "id": "Grpc.Tools",
+      "version": "2.84.0",
+      "contentHash": "SarjdfpQYU/mmdu/fWgSW8kEHQ54jiyG2+I4THu9eubtAud+QJf+1iJdGtoKTJ/ZRaI0qAG+7ttsK2WUTao2OQ==",
+      "nuspecSha256": "ec22ca632fad79aac17b94fdad74aa17dd999a493b68f6b6e693863737daf2ed",
+      "licence": "Apache-2.0",
+      "class": "build-only",
+      "usedBy": "src/ArcForges.Node.Store with PrivateAssets=all: protoc generates the C# of the store-internal Proto/store.proto (EnvSnapshot, SecretEnvironment). Nothing is copied to any output.",
+      "source": "https://github.com/grpc/grpc",
+      "sourceCommit": "3252a89f10d8e92997862167ca7d095ecda85973",
+      "provenance": "nuget.org; nuspec repository commit. The same version the Contracts repository uses for its generated code (Contracts Directory.Packages.props at dea4cd8).",
+      "aot": "Build-time code generator only; the generated messages use Google.Protobuf (AOT-compatible).",
+      "reason": "node-store.md section 1: the store-internal wrapper messages are defined in ArcForges.Node.Store (store.proto). GrpcServices=None: messages only.",
+      "admittedBy": "AF-NODE-02",
+      "reviewedOn": "2026-10-15"
+    },
+    {
+      "id": "Microsoft.Data.Sqlite",
+      "version": "10.0.12",
+      "contentHash": "xUq9xUc653ue7ac2rMfCaf8UQN+U3zS8poWYlugycpvJllplMM0Mk7v/+MM0CTlu9zGvbGML4BPH8YWhrUOfGw==",
+      "nuspecSha256": "8e1c47c77197daaac1584979b7bb42a9a8f6deaff9f6d18029b3a689a2107c6c",
+      "licence": "MIT",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.Store (the node store) and, through it, tools/ArcForges.Bench and the store tests.",
+      "source": "https://github.com/dotnet/dotnet",
+      "sourceCommit": "95017c711e6afc1085133d440e42b4bd78155701",
+      "provenance": "nuget.org; nuspec repository commit (the .NET 10.0.12 release, the same as the SDK runtime packs). The version DesktopPlatform's ArcForges.Persistence.Sqlite uses. Transitive SQLitePCLRaw.bundle_e_sqlite3, core, lib.e_sqlite3 and provider.e_sqlite3 2.1.12 (Apache-2.0; the bundled SQLite is public domain) are pinned by the locks; lib.e_sqlite3 ships the win-x64, win-arm64, linux-x64 and linux-arm64 natives.",
+      "aot": "Re-verified by AF-NODE-02 (AD-0003 obligation): arcforges-bench with the node store publishes Native AOT with zero warnings on win-x64 (Windows, VS 2026 developer environment) and linux-x64 (WSL2 Debian), and the AOT binaries run the store growth benchmark and the crash-consistency tests (ARCFORGES_BENCH_PATH). e_sqlite3 is a native library beside the executable. The store calls SQLitePCL.Batteries_V2.Init explicitly.",
+      "reason": "The node store engine (node-store.md section 1: Microsoft.Data.Sqlite with the SQLitePCLRaw bundle, WAL, STRICT tables). ArcForges.Persistence.Sqlite was evaluated and not adopted (AF-NODE-02 decision in the PR): the node uses Microsoft.Data.Sqlite directly and that package stays Retain.",
+      "admittedBy": "AF-NODE-02",
+      "reviewedOn": "2026-10-15"
+    },
+    {
       "id": "xunit.v3.mtp-v2",
       "version": "4.0.1",
       "contentHash": "s88KiWwDDYgOWV3A+ViJiqCe9cLU/Rt6Gb5TfOC7Abv/HKSoj4IHVPcOQk7jPt7HhZHHEts5IuaVpB30eO5B1w==",
@@ -97,6 +183,17 @@
       "reason": "xUnit v3 on Microsoft.Testing.Platform (global.json test runner); trait filters select suites (16 section 4). Admitted with ArcForges#1; recorded here by AF-REPO-01.",
       "admittedBy": "ArcForges#1; recorded by AF-REPO-01",
       "reviewedOn": "2026-10-14"
+    }
+  ],
+  "nugetWarningExceptions": [
+    {
+      "code": "NU1608",
+      "project": "src/ArcForges.Node.Store/ArcForges.Node.Store.csproj",
+      "reference": "ArcForges.Contracts.Foundation",
+      "constraint": "ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.138.1 (DesktopPlatform 4e20932) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",
+      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Foundation, ArcForges.Security and ArcForges.Security.Secrets 1.0.0-ci.138.1 (152 references) against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-02 PR evidence); the Secrets selection, Windows Credential Manager and owner-only file paths run in the store tests on Windows and WSL2 Debian and in the Native AOT store benchmark.",
+      "removeWhen": "A DesktopPlatform cohort whose Security.Secrets depends on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
+      "reviewedOn": "2026-10-15"
     }
   ]
 }
