@@ -2,30 +2,44 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using ArcForges.Tests;
 
 namespace ArcForges.Tools.Tests;
 
 /// <summary>
 /// Live descendants of one process, from the OS parent links (Linux <c>/proc/&lt;pid&gt;/stat</c>,
-/// Windows Toolhelp snapshots). Processes other tests start are never counted.
+/// Windows Toolhelp snapshots), each with its identity (ID and creation). Processes other tests start are never counted: a parent link
+/// counts only when the child was created no earlier than the live parent it names, so an orphan of an earlier process with a reused
+/// ID (Windows keeps the parent ID of an exited parent) is never taken for a descendant.
 /// </summary>
 internal static partial class ProcessTree
 {
-    public static IReadOnlyList<int> Descendants(int root)
+    public static IReadOnlyList<ProcessIdentity> Descendants(int root)
     {
+        var result = new List<ProcessIdentity>();
+        if (ProcessIdentity.Capture(root) is not { } rootIdentity)
+        {
+            return result;
+        }
+
         var parents = OperatingSystem.IsWindows() ? WindowsParents() : LinuxParents();
         var children = parents.GroupBy(pair => pair.Value).ToDictionary(group => group.Key, group => group.Select(pair => pair.Key).ToList());
-        var result = new List<int>();
-        var queue = new Queue<int>([root]);
+        var seen = new HashSet<int> { root };
+        var queue = new Queue<ProcessIdentity>([rootIdentity]);
         while (queue.Count > 0)
         {
-            foreach (var child in children.GetValueOrDefault(queue.Dequeue(), []))
+            var parent = queue.Dequeue();
+            foreach (var child in children.GetValueOrDefault(parent.Pid, []))
             {
-                if (child != root && !result.Contains(child))
+                if (seen.Contains(child) || ProcessIdentity.Capture(child) is not { } identity || identity.StartKey < parent.StartKey)
                 {
-                    result.Add(child);
-                    queue.Enqueue(child);
+                    // Gone meanwhile, or older than the parent that now holds the parent ID: not this tree's.
+                    continue;
                 }
+
+                seen.Add(child);
+                result.Add(identity);
+                queue.Enqueue(identity);
             }
         }
 

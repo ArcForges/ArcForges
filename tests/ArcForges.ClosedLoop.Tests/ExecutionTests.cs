@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Node.Platform;
+using ArcForges.Tests;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -125,10 +126,10 @@ public sealed class ExecutionTests
         client.Kill();
         await client.WaitForExitAsync(Ct);
         var interrupted = Stopwatch.StartNew();
-        var pid = Marker(marker)[0].Pid;
+        var task = MarkerProcess(marker);
         await TestNode.WaitAsync(() => TestNode.LogEvents(node.NodeLog, "execution.caller_gone").Count > 0, TimeSpan.FromSeconds(20), "the caller-gone cancellation");
         var cancelledAfter = interrupted.Elapsed;
-        await TestNode.WaitAsync(() => !IsRunning(pid), TimeSpan.FromSeconds(20), "the interrupted run's task to stop");
+        await TestNode.WaitAsync(() => !task.IsRunning(), TimeSpan.FromSeconds(20), "the interrupted run's task to stop");
         TestContext.Current.TestOutputHelper?.WriteLine($"cancelled {cancelledAfter.TotalMilliseconds:0} ms after the client was killed; the root ended after {interrupted.Elapsed.TotalMilliseconds:0} ms");
         Assert.True(cancelledAfter < TimeSpan.FromSeconds(5), $"Cancelled {cancelledAfter} after the client ended (AD-0006 section 7: within 5 s).");
         var list = await node.CliAsync("tasks", "list", "--json");
@@ -153,10 +154,10 @@ public sealed class ExecutionTests
         // The node is killed (not stopped): the attempts continue under their holders.
         first.Kill();
         await first.WaitForExitAsync(Ct);
-        var pid = Marker(marker)[0].Pid;
+        var attempt = MarkerProcess(marker);
         await Task.Delay(TimeSpan.FromSeconds(4), Ct);
-        Assert.True(IsRunning(pid), "The attempt survived the node.");
-        Assert.False(IsRunning(Marker(shortMarker)[0].Pid), "The short attempt finished while the node was down.");
+        Assert.True(attempt.IsRunning(), "The attempt survived the node.");
+        Assert.False(MarkerProcess(shortMarker).IsRunning(), "The short attempt finished while the node was down.");
 
         await node.StartNodeAsync();
         var shortTask = JsonDocument.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output).RootElement;
@@ -174,7 +175,7 @@ public sealed class ExecutionTests
         Assert.Equal("TASK_STATE_CANCELLED", cancelled.GetProperty("state").GetString());
         var usage = cancelled.GetProperty("currentAttempt").GetProperty("usage");
         Assert.True(long.Parse(usage.GetProperty("memPeakBytes").GetString()!, CultureInfo.InvariantCulture) > 0);
-        Assert.False(IsRunning(pid));
+        Assert.False(attempt.IsRunning());
     }
 
     /// <summary>
@@ -259,13 +260,13 @@ public sealed class ExecutionTests
         var detached = await node.CliBytesAsync(Bound, "run", "--detach", "--", cmd, "/d", "/c", "exit 3");
         var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
         Assert.True(first.WaitForExit(TimeSpan.FromSeconds(30)), "The node did not kill itself after recording the attempt.");
-        var holders = node.LiveProcesses().Select(process => process.Id).ToList();
+        var holders = node.LiveProcesses().Select(process => ProcessIdentity.Capture(process.Id)).OfType<ProcessIdentity>().ToList();
         Assert.Single(holders);
         await Task.Delay(TimeSpan.FromSeconds(2), Ct);
-        Assert.True(IsRunning(holders[0]), "The holder waits for the acknowledgement.");
+        Assert.True(holders[0].IsRunning(), "The holder waits for the acknowledgement.");
 
         await node.StartNodeAsync();
-        await TestNode.WaitAsync(() => !IsRunning(holders[0]), TimeSpan.FromSeconds(15), "the holder to be released");
+        await TestNode.WaitAsync(() => !holders[0].IsRunning(), TimeSpan.FromSeconds(15), "the holder to be released");
         Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.recover.acknowledged"));
         var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
         Assert.Equal(3, task.GetProperty("currentAttempt").GetProperty("result").GetProperty("exitCode").GetInt32());
@@ -490,7 +491,7 @@ public sealed class ExecutionTests
         return result;
     }
 
-    private static List<(string Event, int Pid)> Marker(string path)
+    private static List<(string Event, int Pid, long At)> Marker(string path)
     {
         if (!File.Exists(path))
         {
@@ -499,19 +500,14 @@ public sealed class ExecutionTests
 
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         return [.. new StreamReader(stream).ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Split(' '))
-            .Where(parts => parts.Length == 3).Select(parts => (parts[0], int.Parse(parts[1], CultureInfo.InvariantCulture)))];
+            .Where(parts => parts.Length == 3)
+            .Select(parts => (parts[0], int.Parse(parts[1], CultureInfo.InvariantCulture), long.Parse(parts[2], CultureInfo.InvariantCulture)))];
     }
 
-    private static bool IsRunning(int pid)
+    /// <summary>The process that wrote the first line of a marker, identified by its ID and that line's time (never by its ID alone).</summary>
+    private static ProcessIdentity MarkerProcess(string marker)
     {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-        {
-            return false;
-        }
+        var first = Marker(marker)[0];
+        return ProcessIdentity.CreatedNoLaterThan(first.Pid, first.At);
     }
 }
