@@ -192,6 +192,18 @@ public sealed unsafe class JobObject : IDisposable
     }
 
     /// <summary>
+    /// The job's committed memory now (<c>JobObjectLimitViolationInformation.JobMemory</c>). <c>PeakJobMemoryUsed</c> can exceed the commit
+    /// limit by the size of a rejected request (the charge is counted before it is refused), so bounds are checked on this value.
+    /// </summary>
+    public long CurrentCommit()
+    {
+        var info = default(Native.JobObjectLimitViolationInformation);
+        return Native.QueryInformationJobObject(Handle, Native.JobObjectLimitViolationInformationClass, &info, sizeof(Native.JobObjectLimitViolationInformation), out _)
+            ? (long)info.JobMemory
+            : -1;
+    }
+
+    /// <summary>
     /// Limits the job exceeded (<c>JobObjectLimitViolationInformation</c>; AD-0005 section 4): <c>job_memory</c>, <c>cpu_time</c>, <c>io</c>.
     /// </summary>
     public List<string> LimitViolations()

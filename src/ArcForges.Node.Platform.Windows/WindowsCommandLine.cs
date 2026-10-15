@@ -135,6 +135,34 @@ public static class WindowsCommandLine
         return Checked(builder);
     }
 
+    /// <summary>
+    /// The Unicode environment block of <paramref name="entries"/> (<c>NAME=value</c>), sorted by name in upper-case ordinal order as
+    /// Windows expects, double-NUL terminated.
+    /// </summary>
+    public static char[] EnvironmentBlock(IReadOnlyList<string> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        var sorted = entries.OrderBy(entry => entry.AsSpan()[..Math.Max(0, entry.IndexOf('=', 1))].ToString().ToUpperInvariant(), StringComparer.Ordinal).ToList();
+        var builder = new StringBuilder();
+        foreach (var entry in sorted)
+        {
+            if (entry.Contains('\0', StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Environment entries cannot contain NUL.", nameof(entries));
+            }
+
+            builder.Append(entry).Append('\0');
+        }
+
+        if (sorted.Count == 0)
+        {
+            builder.Append('\0');
+        }
+
+        builder.Append('\0');
+        return builder.ToString().ToCharArray();
+    }
+
     /// <summary>Parses a command line the way <c>CommandLineToArgvW</c> does (used by tests and diagnostics).</summary>
     public static List<string> Parse(string commandLine)
     {

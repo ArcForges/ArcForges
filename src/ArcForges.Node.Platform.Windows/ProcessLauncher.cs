@@ -182,7 +182,7 @@ public static unsafe class ProcessLauncher
             }
 
             var commandLine = (options.CommandLine + "\0").ToCharArray();
-            var environment = options.Environment is null ? null : EnvironmentBlock(options.Environment);
+            var environment = options.Environment is null ? null : WindowsCommandLine.EnvironmentBlock(options.Environment);
             fixed (char* line = commandLine)
             fixed (char* block = environment)
             {
@@ -213,34 +213,6 @@ public static unsafe class ProcessLauncher
                 Native.CloseHandle(copy);
             }
         }
-    }
-
-    /// <summary>
-    /// The Unicode environment block of <paramref name="entries"/> (<c>NAME=value</c>), sorted by name in upper-case ordinal order as
-    /// Windows expects, double-NUL terminated.
-    /// </summary>
-    public static char[] EnvironmentBlock(IReadOnlyList<string> entries)
-    {
-        ArgumentNullException.ThrowIfNull(entries);
-        var sorted = entries.OrderBy(entry => entry.AsSpan()[..Math.Max(0, entry.IndexOf('=', 1))].ToString().ToUpperInvariant(), StringComparer.Ordinal).ToList();
-        var builder = new StringBuilder();
-        foreach (var entry in sorted)
-        {
-            if (entry.Contains('\0', StringComparison.Ordinal))
-            {
-                throw new ArgumentException("Environment entries cannot contain NUL.", nameof(entries));
-            }
-
-            builder.Append(entry).Append('\0');
-        }
-
-        if (sorted.Count == 0)
-        {
-            builder.Append('\0');
-        }
-
-        builder.Append('\0');
-        return builder.ToString().ToCharArray();
     }
 
     /// <summary>An inheritable duplicate of <paramref name="handle"/> that the caller closes (<see cref="Native.CloseHandle"/>).</summary>

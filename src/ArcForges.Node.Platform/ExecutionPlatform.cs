@@ -120,6 +120,13 @@ public sealed class ContainerLimits
     /// <summary>The commit limit (<c>commit_factor x mem_ceiling</c>), or 0 for none.</summary>
     public long CommitLimitBytes { get; init; }
 
+    /// <summary>
+    /// The commit notification limit (<c>mem_ceiling</c>): crossing it is reported (and recorded as the <c>job_memory</c> violation), never
+    /// enforced; an attempt that crossed it and exits non-zero ended at its memory limit (04 section 7 <c>MEMORY_LIMIT</c>). 0 uses the
+    /// commit limit.
+    /// </summary>
+    public long CommitNotificationBytes { get; init; }
+
     /// <summary>The active process limit when policy sets one.</summary>
     public int? ActiveProcessLimit { get; init; }
 }

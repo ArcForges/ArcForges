@@ -1148,6 +1148,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             {
                 CpuWeight = ExecutionSettings.Weight(row.Priority),
                 CommitLimitBytes = (long)(settings.CommitFactor * admitted.Ceiling),
+                CommitNotificationBytes = admitted.Ceiling,
             },
             KillWithNode = attempt.KillWithNode,
             DiscardOutput = attempt.DiscardOutput,

@@ -21,8 +21,13 @@ internal static class Program
           cpu       --threads N (1)  --iterations N per thread (100000000)  --seed N (1)
           mem-ramp  --target-mb MiB (256)  --step-mb MiB (64)  --step-ms ms (0)  --hold-ms ms (0)  --seed N (1)
           output    --bytes N (1048576)  --line-bytes N (100)  --stream stdout|stderr|both|none (stdout)  --seed N (1)
+                    [--rate bytes-per-second (0 = as fast as the reader accepts)]
           fork      --width N (2)  --depth N (2)  --hold-ms ms (0)  --seed N (1)  [--fail-node id]
                     (--fail-node: the node with that id, e.g. 0.1, exits with 1 at once; a fault for tests)
+          signal    --marker <file>  --hold-ms ms (60000)  --on-break exit|ignore (exit)  --window 0|1 (0)
+                    --free-console 0|1 (0)  --child none|same|group|console|window|breakaway (none)
+                    --child-hold-ms ms (hold-ms)   (Windows only)
+                    (records ready/break/close lines in the marker; break exits 3, WM_CLOSE exits 4)
 
         Every scenario accepts --report <file>. The JSON report goes to that file; without it,
         cpu, mem-ramp, fork and `output --stream none` print it on standard output.
@@ -46,6 +51,7 @@ internal static class Program
                 "mem-ramp" => MemoryRampScenario.Run(options),
                 "output" => OutputScenario.Run(options),
                 "fork" => await ForkScenario.RunAsync(options).ConfigureAwait(false),
+                "signal" => OperatingSystem.IsWindows() ? SignalScenario.Run(options) : throw new UsageException("The signal scenario runs on Windows."),
                 _ => throw new UsageException($"Unknown scenario '{args[0]}'."),
             };
             await WriteReportAsync(report, options.GetUnrecorded("report")).ConfigureAwait(false);

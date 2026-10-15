@@ -10,7 +10,9 @@ namespace ArcForges.TestLoad;
 /// in <c>\n</c>; the last line may be shorter). With <c>stream both</c>, even lines go to standard
 /// output and odd lines to standard error; <c>none</c> only computes the expected digests.
 /// <see cref="ScenarioReport.Digest"/> is the SHA-256 of the whole text, so a captured single
-/// stream can be compared byte for byte with <c>sha256sum</c>.
+/// stream can be compared byte for byte with <c>sha256sum</c>. <c>rate</c> (bytes per second, 0 for
+/// the maximum) paces the writes without changing the bytes, so a limit's overshoot can be measured
+/// against a known write rate.
 /// </summary>
 internal static class OutputScenario
 {
@@ -25,10 +27,12 @@ internal static class OutputScenario
         var lineBytes = options.GetInt64("line-bytes", 100, 1, MaxLineBytes);
         var stream = options.GetChoice("stream", "stdout", "stdout", "stderr", "both", "none");
         var seed = options.GetSeed();
+        var rate = options.GetInt64("rate", 0, 0, 1L << 40, hidden: true);
         options.GetUnrecorded("report");
         options.EnsureAllUsed();
 
         var stopwatch = Stopwatch.StartNew();
+        var pace = new Pace(rate, stopwatch);
         using var whole = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var stdoutHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var stderrHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -46,6 +50,7 @@ internal static class OutputScenario
                 var span = buffer.AsSpan(0, length);
                 Fill(seed, lineBytes, offset, span);
                 whole.AppendData(span);
+                pace.Wait(offset, stdout, stderr);
                 if (line % 2 == 0)
                 {
                     stdout!.Write(span);
@@ -63,9 +68,11 @@ internal static class OutputScenario
         else
         {
             var target = stdout ?? stderr;
-            for (var offset = 0L; offset < totalBytes; offset += ChunkBytes)
+            var chunk = rate > 0 ? (int)Math.Clamp(rate / 20, 1, ChunkBytes) : ChunkBytes;
+            for (var offset = 0L; offset < totalBytes; offset += chunk)
             {
-                var span = buffer.AsSpan(0, (int)Math.Min(ChunkBytes, totalBytes - offset));
+                pace.Wait(offset, stdout, stderr);
+                var span = buffer.AsSpan(0, (int)Math.Min(chunk, totalBytes - offset));
                 Fill(seed, lineBytes, offset, span);
                 whole.AppendData(span);
                 target?.Write(span);
@@ -112,6 +119,27 @@ internal static class OutputScenario
             StreamDigests = streamDigests,
             Measured = Measurements.Collect(stopwatch),
         };
+    }
+
+    /// <summary>Paces writes to a byte rate: before writing at an offset, waits until that offset is due (flushing first).</summary>
+    private sealed class Pace(long rate, Stopwatch clock)
+    {
+        public void Wait(long offset, Stream? stdout, Stream? stderr)
+        {
+            if (rate <= 0)
+            {
+                return;
+            }
+
+            var due = TimeSpan.FromSeconds((double)offset / rate);
+            var ahead = due - clock.Elapsed;
+            if (ahead > TimeSpan.Zero)
+            {
+                stdout?.Flush();
+                stderr?.Flush();
+                Thread.Sleep(ahead);
+            }
+        }
     }
 
     /// <summary>Writes the text at <paramref name="offset"/>; a pure function of seed, line length and position.</summary>

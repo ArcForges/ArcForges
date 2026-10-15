@@ -168,7 +168,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             job.SetLimits(launch.Limits.CommitLimitBytes, launch.Limits.ActiveProcessLimit, killOnClose: launch.KillWithNode);
             if (launch.Limits.CommitLimitBytes > 0)
             {
-                job.SetMemoryNotification(launch.Limits.CommitLimitBytes);
+                job.SetMemoryNotification(launch.Limits.CommitNotificationBytes > 0 ? launch.Limits.CommitNotificationBytes : launch.Limits.CommitLimitBytes);
             }
 
             if (launch.Limits.CpuRateCap is { } cap)
@@ -428,6 +428,10 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             {
                 var runner = new AttemptRunner(spec, root, job, stdinCopy, stdout, stderr, handle.OnReport);
                 runner.Run(guard: false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The node closed the job (kill-on-close ended the attempt): nothing is left to record.
             }
             catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException)
             {
