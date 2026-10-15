@@ -81,9 +81,13 @@ any change. They are binding; this file summarizes them and adds the repository 
   deterministic synthetic workload, not a fake; evidence names the scenario and parameters.
   `arcforges-bench` (size, startup, compare-startup, store-growth) produces the JSON results of
   15-performance-targets. CI gates sizes and node store growth, and gates the CLI cold start (`arcforges --version`)
-  against the previous successful main run (`eng/compare-startup.ps1`): the statistic is the p50 of 50 runs, and a
-  regression must exceed both 25% and an absolute noise floor of 5 ms. Without a baseline, the result passes
-  with its reason. On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms 40 -StartupP95Ms 80`;
+  against the previous successful main run (`eng/compare-startup.ps1`) on the same runner: main-push runs upload their
+  CLI (`startup-host-<rid>-<sha>`), and a run downloads the previous main run's CLI and measures it and its own CLI
+  interleaved (alternating runs, same warm-up and count; never a p50 recorded on another VM). The statistic is the p50
+  of 50 runs, and a regression must exceed both 25% and an absolute noise floor of 5 ms. Without a main run or its CLI
+  artifact (the first main run after the change), the result passes with its reason; other API failures fail the step.
+  Locally, `eng/compare-startup.ps1 -RuntimeIdentifier <rid> -BaselineExecutable <main build>` runs the same comparison.
+  On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms 40 -StartupP95Ms 80`;
   the status round trip is the `category=perf` test `StatusRoundTrip` with `ARCFORGES_HOST_PATH` set.
 - Avalonia build telemetry is off repository-wide: `Directory.Build.targets` replaces the
   `AvaloniaStats` target of the transitive Avalonia.BuildServices package (a repository test keeps

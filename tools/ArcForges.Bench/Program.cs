@@ -22,8 +22,13 @@ internal static class Program
           arcforges-bench startup --exe <path> [--arg value ...] [--runs N (50)] [--warmup N (1)]
               [--expect-exit code (0)] [--timeout-ms ms per run (30000)] [--max-p50-ms ms] [--max-p95-ms ms]
               [--name label] [--output file]
+          arcforges-bench compare-startup --baseline-exe <path> --current-exe <path> [--arg value ...] [--runs N (50)] [--warmup N (1)]
+              [--expect-exit code (0)] [--timeout-ms ms per run (30000)] [--name label] [--baseline-source text]
+              [--max-regression-percent N (25)] [--noise-floor-ms ms (5)] [--output file]
+              measures both executables on this machine, interleaved (the CI gate)
           arcforges-bench compare-startup --current <startup.json> (--baseline <startup.json> | --reason text)
               [--baseline-source text] [--max-regression-percent N (25)] [--noise-floor-ms ms (5)] [--output file]
+              compares two saved results (meaningful only from the same machine), or records one without a baseline
               a regression is a p50 increase above both the percentage and the noise floor
           arcforges-bench store-growth --environment <captured environment JSON> [--environment ...] [--attempts N (10000)]
               [--seed N (1)] [--max-mb-per-10000 MB (50)] [--data-root <new directory, kept>] [--acks true|false (false)]
@@ -66,8 +71,8 @@ internal static class Program
                     (json, pass) = (JsonSerializer.Serialize(growth, BenchJsonContext.Default.StoreGrowthResult), growth.Pass);
                     break;
                 case "compare-startup":
-                    options = BenchOptions.Parse(args[1..]);
-                    var comparison = StartupComparison.Run(options);
+                    options = BenchOptions.Parse(args[1..], "arg");
+                    var comparison = await StartupComparison.RunAsync(options).ConfigureAwait(false);
                     (json, pass) = (JsonSerializer.Serialize(comparison, BenchJsonContext.Default.StartupComparisonResult), comparison.Pass);
                     break;
                 default:

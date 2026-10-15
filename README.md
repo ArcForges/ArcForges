@@ -91,7 +91,9 @@ arcforges-testload signal --hold-ms 60000 --marker m.txt --on-break exit   # Win
 arcforges-testload args "two words" 'a"b'                                     # prints its argv and working directory as JSON
 arcforges-bench size --target arcforges --path artifacts/publish/win-x64/host/arcforges.exe
 arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --arg --version --runs 50 --output now.json
-arcforges-bench compare-startup --current now.json --baseline before.json   # >25% and >5 ms fails
+arcforges-bench compare-startup --baseline-exe main/arcforges.exe --current-exe artifacts/publish/win-x64/host/arcforges.exe --arg --version
+                                       # both measured here, interleaved; a p50 increase >25% and >5 ms fails
+./eng/compare-startup.ps1 -RuntimeIdentifier win-x64 -BaselineExecutable main/arcforges.exe   # the CI gate, locally
 arcforges-bench store-growth --environment tests/ArcForges.Node.Store.Tests/Fixtures/environments/env-wsl-debian-bash.json --attempts 10000
 ```
 
