@@ -14,6 +14,12 @@ namespace ArcForges.Node.Core.Execution;
 /// <param name="Approximate">Written while the node was down.</param>
 public sealed record OutputSlice(OutputStreamKind Stream, long Offset, byte[] Data, long UnixNanos, bool Approximate);
 
+/// <summary>A follower's position: the next index record and the per-stream offsets already delivered (or to start from).</summary>
+/// <param name="Record">The next index record number.</param>
+/// <param name="StdoutFrom">The stdout offset to continue from.</param>
+/// <param name="StderrFrom">The stderr offset to continue from.</param>
+public readonly record struct OutputCursor(long Record, long StdoutFrom, long StderrFrom);
+
 /// <summary>
 /// Reads an attempt's captured output (04 section 4): one stream by its own offsets, or the merged view, which interleaves the two
 /// streams in index order with offsets that count the merged bytes. Only indexed bytes are visible, so every reader sees the same
@@ -108,15 +114,17 @@ public static class OutputReader
     }
 
     /// <summary>
-    /// Reads index records from record number <paramref name="firstRecord"/> and the bytes they name, split into chunks of at most
-    /// 64 KiB, skipping bytes before the per-stream start offsets. Returns the slices and the next record number.
+    /// Reads index records from <paramref name="cursor"/> and the bytes they name, split into chunks of at most 64 KiB, skipping bytes
+    /// before the cursor's per-stream offsets. At most <paramref name="maxBytes"/> (rounded up to one chunk) are read, also inside one
+    /// record, so a reader never holds more than its budget whatever the record sizes (a record written before the cap, or the backlog of
+    /// a node restart). Returns the slices and the cursor after them.
     /// </summary>
-    public static (List<OutputSlice> Slices, long NextRecord) Follow(AttemptFiles files, long firstRecord, long stdoutFrom, long stderrFrom, int maxBytes)
+    public static (List<OutputSlice> Slices, OutputCursor Next) Follow(AttemptFiles files, OutputCursor cursor, int maxBytes)
     {
         ArgumentNullException.ThrowIfNull(files);
         var slices = new List<OutputSlice>();
-        var records = OutputIndexFile.Read(files.IndexPath, firstRecord, out _);
-        var next = firstRecord;
+        var records = OutputIndexFile.Read(files.IndexPath, cursor.Record, out _, MaxFollowRecords);
+        var next = cursor;
         long total = 0;
         foreach (var record in records)
         {
@@ -125,29 +133,33 @@ public static class OutputReader
                 break;
             }
 
-            next++;
-            var from = record.Stream == OutputStreamKind.Stdout ? stdoutFrom : stderrFrom;
-            if (record.End <= from)
-            {
-                continue;
-            }
-
+            var from = record.Stream == OutputStreamKind.Stdout ? next.StdoutFrom : next.StderrFrom;
             var start = Math.Max(record.Offset, from);
-            var remaining = record.End - start;
             var path = files.OutputPath(record.Stream);
-            while (remaining > 0)
+            while (start < record.End && total < maxBytes)
             {
-                var take = (int)Math.Min(remaining, ChunkBytes);
+                var take = (int)Math.Min(record.End - start, ChunkBytes);
                 slices.Add(new OutputSlice(record.Stream, start, ReadRange(path, start, take), record.UnixNanos,
                     (record.Marks & OutputChunkMarks.ApproximateTime) != 0));
                 start += take;
-                remaining -= take;
                 total += take;
             }
+
+            next = record.Stream == OutputStreamKind.Stdout ? next with { StdoutFrom = Math.Max(next.StdoutFrom, start) } : next with { StderrFrom = Math.Max(next.StderrFrom, start) };
+            if (start < record.End)
+            {
+                // The budget ended inside this record: the cursor stays on it, past the bytes returned.
+                break;
+            }
+
+            next = next with { Record = next.Record + 1 };
         }
 
         return (slices, next);
     }
+
+    /// <summary>The most index records one <see cref="Follow"/> call reads (22 bytes each).</summary>
+    private const int MaxFollowRecords = 4096;
 
     private static ContractIndexRecord Contract(IndexRecord record, long offset, uint length) => new()
     {

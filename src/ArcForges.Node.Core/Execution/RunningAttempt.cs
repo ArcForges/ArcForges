@@ -183,7 +183,7 @@ public sealed class RunningAttempt : IDisposable
                 var indexed = stream == OutputStreamKind.Stdout ? StdoutIndexed : StderrIndexed;
                 while (length > indexed)
                 {
-                    var chunk = (uint)Math.Min(length - indexed, uint.MaxValue);
+                    var chunk = (uint)Math.Min(length - indexed, OutputIndexRecord.MaxLength);
                     new OutputIndexRecord(stream, indexed, chunk, unixNanos, ApproximateNext ? OutputChunkMarks.ApproximateTime : OutputChunkMarks.None).Write(_record);
                     _index.Write(_record);
                     indexed += chunk;

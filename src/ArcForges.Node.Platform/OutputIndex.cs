@@ -28,6 +28,12 @@ public readonly record struct OutputIndexRecord(OutputStreamKind Stream, long Of
     /// <summary>The encoded size.</summary>
     public const int Size = 22;
 
+    /// <summary>
+    /// The longest chunk one record names (1 MiB). The tailer splits larger reads, for example the backlog written while the node was
+    /// down, so a reader working record by record never has to hold more than this at once.
+    /// </summary>
+    public const uint MaxLength = 1 << 20;
+
     /// <summary>The offset after the chunk.</summary>
     public long End => Offset + Length;
 
@@ -69,7 +75,13 @@ public static class OutputIndexFile
     /// Reads every complete record of <paramref name="path"/> from record number <paramref name="first"/>. A torn record at the end (a
     /// crash during an append) is ignored; <paramref name="completeBytes"/> is the length of the complete records.
     /// </summary>
-    public static List<OutputIndexRecord> Read(string path, long first, out long completeBytes)
+    public static List<OutputIndexRecord> Read(string path, long first, out long completeBytes) => Read(path, first, out completeBytes, int.MaxValue);
+
+    /// <summary>
+    /// Reads at most <paramref name="maxRecords"/> complete records of <paramref name="path"/> from record number <paramref name="first"/>;
+    /// <paramref name="completeBytes"/> is the length of all complete records in the file.
+    /// </summary>
+    public static List<OutputIndexRecord> Read(string path, long first, out long completeBytes, int maxRecords)
     {
         var records = new List<OutputIndexRecord>();
         completeBytes = 0;
@@ -90,7 +102,7 @@ public static class OutputIndexFile
             var start = Math.Min(first * OutputIndexRecord.Size, length);
             stream.Position = start;
             var buffer = new byte[OutputIndexRecord.Size * 4096];
-            var remaining = length - start;
+            var remaining = Math.Min(length - start, (long)maxRecords * OutputIndexRecord.Size);
             while (remaining > 0)
             {
                 var want = (int)Math.Min(buffer.Length, remaining);

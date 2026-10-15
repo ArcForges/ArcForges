@@ -23,6 +23,9 @@ namespace ArcForges.Node.Api;
 /// </summary>
 public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 {
+    /// <summary>The bytes one output follow step reads (8 chunks); with the stream's room check it bounds an attach's memory.</summary>
+    private const int FollowBudget = 8 * OutputReader.ChunkBytes;
+
     private const string ServiceName = "arcforges.node.v1.TaskService";
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private readonly NodeRuntime _node;
@@ -321,9 +324,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 });
                 long revision = -1;
                 string? attemptName = null;
-                long record = 0;
-                var stdoutFrom = (long)request.StdoutFromOffset;
-                var stderrFrom = (long)request.StderrFromOffset;
+                var cursor = new OutputCursor(0, (long)request.StdoutFromOffset, (long)request.StderrFromOffset);
                 var lastWrite = _node.Clock.GetTimestamp();
                 while (!stop.IsCancellationRequested)
                 {
@@ -343,15 +344,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     var current = AttemptName(task);
                     if (current is not null && current != attemptName)
                     {
-                        if (attemptName is not null)
-                        {
-                            // A new attempt (a retry): its output starts at zero.
-                            stdoutFrom = 0;
-                            stderrFrom = 0;
-                        }
-
+                        // A new attempt (a retry) starts its output at zero; the first one at the requested offsets.
+                        cursor = attemptName is null ? cursor with { Record = 0 } : new OutputCursor(0, 0, 0);
                         attemptName = current;
-                        record = 0;
                     }
 
                     if (attemptName is not null)
@@ -359,8 +354,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         var files = new AttemptFiles(_node.DataRoot, attemptName);
                         while (true)
                         {
-                            var (slices, nextRecord) = OutputReader.Follow(files, record, stdoutFrom, stderrFrom, 8 * OutputReader.ChunkBytes);
-                            record = nextRecord;
+                            var (slices, following) = OutputReader.Follow(files, cursor, FollowBudget);
+                            cursor = following;
                             foreach (var slice in slices)
                             {
                                 await WaitForRoomAsync(writer, stop.Token).ConfigureAwait(false);
@@ -391,11 +386,20 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         if (attemptName is not null)
                         {
                             var files = new AttemptFiles(_node.DataRoot, attemptName);
-                            var (slices, _) = OutputReader.Follow(files, record, stdoutFrom, stderrFrom, int.MaxValue);
-                            foreach (var slice in slices)
+                            while (true)
                             {
-                                await WaitForRoomAsync(writer, stop.Token).ConfigureAwait(false);
-                                writer.TryWrite(new TaskServiceAttachTaskFrame { Meta = new ResponseMeta(), Output = Chunk(final!.CurrentAttempt!.AttemptId, slice) });
+                                var (slices, following) = OutputReader.Follow(files, cursor, FollowBudget);
+                                cursor = following;
+                                foreach (var slice in slices)
+                                {
+                                    await WaitForRoomAsync(writer, stop.Token).ConfigureAwait(false);
+                                    writer.TryWrite(new TaskServiceAttachTaskFrame { Meta = new ResponseMeta(), Output = Chunk(final!.CurrentAttempt!.AttemptId, slice) });
+                                }
+
+                                if (slices.Count == 0)
+                                {
+                                    break;
+                                }
                             }
                         }
 
@@ -785,10 +789,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             var files = new AttemptFiles(_node.DataRoot, name);
             var pulse = Execution.TaskPulse(attempt!.TaskId.Value.Span);
             var from = (long)request.FromOffset;
-            var stdoutFrom = stream == OutputStream.Stdout ? from : stream == OutputStream.Stderr ? long.MaxValue : 0;
-            var stderrFrom = stream == OutputStream.Stderr ? from : stream == OutputStream.Stdout ? long.MaxValue : 0;
+            var cursor = new OutputCursor(0, stream == OutputStream.Stdout ? from : stream == OutputStream.Stderr ? long.MaxValue : 0,
+                stream == OutputStream.Stderr ? from : stream == OutputStream.Stdout ? long.MaxValue : 0);
             long merged = 0;
-            long record = 0;
             var lastWrite = _node.Clock.GetTimestamp();
             try
             {
@@ -796,8 +799,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 {
                     var next = pulse.Next;
                     var running = Execution.Running(name) is not null;
-                    var (slices, nextRecord) = OutputReader.Follow(files, record, stdoutFrom, stderrFrom, 8 * OutputReader.ChunkBytes);
-                    record = nextRecord;
+                    var (slices, following) = OutputReader.Follow(files, cursor, FollowBudget);
+                    cursor = following;
                     foreach (var slice in slices)
                     {
                         if (stream == OutputStream.Merged && merged + slice.Data.Length <= from)

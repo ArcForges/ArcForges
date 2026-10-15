@@ -173,6 +173,72 @@ public sealed class ExecutionTests
         Assert.False(IsRunning(pid));
     }
 
+    /// <summary>
+    /// 04 section 4 and 15 section 2 (node at most 150 MB private under load): 700 MiB written while the node is down are indexed in
+    /// records of at most 1 MiB after the restart, and <c>tasks attach --from-start</c> replays them byte for byte while the node's private
+    /// bytes stay bounded.
+    /// </summary>
+    [Fact(Timeout = 300_000)]
+    public async Task AttachingAfterARestartReplaysTheBacklogInBoundedNodeMemory()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        const long Bytes = 700L << 20;
+        await using var node = TestNode.Create();
+        var first = await node.StartNodeAsync();
+        var report = Path.Combine(node.Root, "report.json");
+        var detached = await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "output", "--bytes", Bytes.ToString(CultureInfo.InvariantCulture),
+            "--line-bytes", "4096", "--rate", "150000000", "--report", report);
+        var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
+        var attempt = await AttemptDirectoryAsync(node, id);
+        first.Kill();
+        await first.WaitForExitAsync(Ct);
+        await TestNode.WaitAsync(() => File.Exists(Path.Combine(attempt, "exit.json")), Bound, "the attempt to finish under its holder");
+
+        await node.StartNodeAsync();
+        var nodePid = node.NodePid();
+        using var nodeProcess = Process.GetProcessById(nodePid);
+        nodeProcess.Refresh();
+        var baseline = nodeProcess.PrivateMemorySize64;
+        long peak = baseline;
+        using var sampling = new CancellationTokenSource();
+        var sampler = Task.Run(async () =>
+        {
+            while (!sampling.IsCancellationRequested)
+            {
+                nodeProcess.Refresh();
+                peak = Math.Max(peak, nodeProcess.PrivateMemorySize64);
+                await Task.Delay(20, CancellationToken.None);
+            }
+        }, CancellationToken.None);
+
+        using var attach = node.Start(TestNode.Host, [NodeLocations.TestModeOption, "tasks", "attach", id, "--from-start"]);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[1 << 20];
+        long received = 0;
+        var output = attach.StandardOutput.BaseStream;
+        var errors = attach.StandardError.ReadToEndAsync(Ct);
+        int count;
+        while ((count = await output.ReadAsync(buffer, Ct)) > 0)
+        {
+            hash.AppendData(buffer, 0, count);
+            received += count;
+        }
+
+        await attach.WaitForExitAsync(Ct);
+        await sampling.CancelAsync();
+        await sampler;
+        var records = new FileInfo(Path.Combine(attempt, "index.bin")).Length / OutputIndexRecord.Size;
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"node private bytes {baseline} before the attach, peak {peak}; {received} bytes replayed; {records} index records");
+        Assert.True(attach.ExitCode == 0, $"tasks attach exited {attach.ExitCode}: {await errors}");
+        Assert.Equal(Bytes, received);
+        var expected = JsonDocument.Parse(File.ReadAllBytes(report)).RootElement.GetProperty("streamDigests").GetProperty("stdout").GetString();
+        Assert.Equal(expected, Convert.ToHexStringLower(hash.GetHashAndReset()));
+        Assert.True(records >= Bytes / OutputIndexRecord.MaxLength, $"{records} index records for {Bytes} bytes: the records were not capped.");
+        Assert.True(peak <= 150L << 20, $"The node peaked at {peak} private bytes while replaying the backlog (15 section 2: 150 MB).");
+    }
+
     [Fact(Timeout = 300_000)]
     public async Task TheHolderTakesOverTheOutputLimitWhileTheNodeIsDown()
     {
