@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using System.Text;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Node.Store.Proto;
@@ -103,14 +104,14 @@ public sealed class TaskSecretTests
                 "INSERT INTO task_secret (task_id, key_id, nonce, ciphertext, tag, names_json, purge_after, created_at) SELECT $other, key_id, nonce, ciphertext, tag, names_json, NULL, created_at FROM task_secret WHERE task_id = $task;",
                 ("$other", otherTask),
                 ("$task", taskId)));
-            AssertUnavailable(new TaskSecrets(store, keys).Unseal(otherTask), "do not open with node data key 1");
+            AssertKeyUnavailable(new TaskSecrets(store, keys).Unseal(otherTask), "do not open with node data key 1");
 
             // Another key under the same name (a different node data key) does not open the values.
             var target = NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, "1");
             selection.Store.Write(target, System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             using (var restarted = new NodeDataKeyRing(store, selection))
             {
-                AssertUnavailable(new TaskSecrets(store, restarted).Unseal(taskId), "do not open with node data key 1");
+                AssertKeyUnavailable(new TaskSecrets(store, restarted).Unseal(taskId), "do not open with node data key 1");
             }
 
             // A lost key: values sealed under it are unavailable, and the next seal creates key 2.
@@ -118,7 +119,7 @@ public sealed class TaskSecretTests
             using (var restarted = new NodeDataKeyRing(store, selection))
             {
                 var sealer = new TaskSecrets(store, restarted);
-                AssertUnavailable(sealer.Unseal(taskId), "node data key 1 is missing from");
+                AssertKeyUnavailable(sealer.Unseal(taskId), "node data key 1 is missing from");
                 var newer = store.Write(transaction =>
                 {
                     var id = Rows.InsertTask(transaction);
@@ -128,7 +129,7 @@ public sealed class TaskSecretTests
 
                 Assert.Equal(["1", "2"], restarted.Keys().Select(key => key.KeyId));
                 Assert.Equal(secrets, sealer.Unseal(newer).Values);
-                AssertUnavailable(sealer.Unseal(taskId), "node data key 1 is missing from");
+                AssertKeyUnavailable(sealer.Unseal(taskId), "node data key 1 is missing from");
                 Assert.Equal(1, restarted.DeleteKeys());
             }
         }
@@ -166,7 +167,7 @@ public sealed class TaskSecretTests
             using var restarted = new NodeDataKeyRing(store, selection);
             var sealer = new TaskSecrets(store, restarted);
 
-            AssertUnavailable(sealer.Unseal(taskId), $"node data key 1 is held by {other}, which is not the selected secret store ({selection.Backend})");
+            AssertKeyUnavailable(sealer.Unseal(taskId), $"node data key 1 is held by {other}, which is not the selected secret store ({selection.Backend})");
             var newer = store.Write(transaction =>
             {
                 var id = Rows.InsertTask(transaction);
@@ -220,7 +221,9 @@ public sealed class TaskSecretTests
             clock.Advance(TimeSpan.FromSeconds(1));
             Assert.Equal(1, sealer.PurgeDue());
             var purged = sealer.Unseal(taskId);
-            var error = AssertUnavailable(purged, "purged at " + StoreTime.ToRfc3339(finishedAt + (long)retention.TotalMicroseconds));
+            // Created 2026-10-15T12:00Z, terminal 3 days later, purged 24 h after that.
+            var error = AssertPurged(purged, "2026-10-19T12:00:00.000000Z");
+            Assert.Equal(StoreTime.ToRfc3339(finishedAt + (long)retention.TotalMicroseconds), error.Details.State.Reason);
             Assert.Equal(["GITHUB_TOKEN", "NPM_TOKEN"], purged.Names);
             Assert.Equal(TaskSecrets.PurgedKeyId, store.Read(reader => reader.Scalar("SELECT key_id FROM task_secret;")));
             Assert.Equal([0], store.Read(reader => (byte[])reader.Scalar("SELECT ciphertext FROM task_secret;")!));
@@ -267,7 +270,7 @@ public sealed class TaskSecretTests
 
             Assert.True(store.Write(transaction => TaskSecrets.PurgeNow(transaction, taskId)));
             Assert.False(store.Write(transaction => TaskSecrets.PurgeNow(transaction, taskId)));
-            AssertUnavailable(sealer.Unseal(taskId), "purged at " + StoreTime.ToRfc3339(StoreTime.NowMicroseconds(store.Clock)));
+            AssertPurged(sealer.Unseal(taskId), "2026-10-15T12:00:00.000000Z");
 
             store.Write(transaction => transaction.Execute("DELETE FROM task WHERE task_id = $id;", ("$id", taskId)));
             Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM task_secret;")));
@@ -278,7 +281,29 @@ public sealed class TaskSecretTests
         }
     }
 
-    private static ArcError AssertUnavailable(UnsealResult result, string reason)
+    /// <summary>Purged values: errors.md details <c>state.reason</c> = the purge time, exactly the RFC 3339 UTC instant.</summary>
+    private static ArcError AssertPurged(UnsealResult result, string purgeTime)
+    {
+        var error = AssertSecretsUnavailable(result);
+        Assert.Equal(ErrorDetails.DetailOneofCase.State, error.Details.DetailCase);
+        Assert.Equal(purgeTime, error.Details.State.Reason);
+        Assert.Equal(DateTimeOffset.Parse(purgeTime, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).UtcDateTime.ToString(
+            "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture), error.Details.State.Reason);
+        Assert.False(error.Details.State.HasState);
+        Assert.Null(error.Details.State.Resource);
+        Assert.Equal("the sealed environment values were purged at " + purgeTime, result.UnavailableReason);
+        return error;
+    }
+
+    /// <summary>Values the node data key cannot open: no purge time, so no details; the explanation stays local.</summary>
+    private static void AssertKeyUnavailable(UnsealResult result, string diagnostic)
+    {
+        var error = AssertSecretsUnavailable(result);
+        Assert.Null(error.Details);
+        Assert.Contains(diagnostic, result.UnavailableReason, StringComparison.Ordinal);
+    }
+
+    private static ArcError AssertSecretsUnavailable(UnsealResult result)
     {
         Assert.Equal(UnsealStatus.Unavailable, result.Status);
         Assert.Null(result.Values);
@@ -288,7 +313,6 @@ public sealed class TaskSecretTests
         Assert.Equal("error.state.secrets_unavailable", error.MessageKey);
         Assert.Equal(RetryMode.Never, error.Retry.Mode);
         Assert.Equal(EffectCertainty.DidNotHappen, error.Effect);
-        Assert.Contains(reason, error.Details.State.Reason, StringComparison.Ordinal);
         return error;
     }
 

@@ -23,12 +23,14 @@ public enum UnsealStatus
 /// <summary>The result of <see cref="TaskSecrets.Unseal(ReadOnlySpan{byte})"/>.</summary>
 public sealed class UnsealResult
 {
-    internal UnsealResult(UnsealStatus status, SecretEnvironment? values, IReadOnlyList<string> names, ArcError? error)
+    internal UnsealResult(UnsealStatus status, SecretEnvironment? values, IReadOnlyList<string> names, ArcError? error,
+        string? unavailableReason = null)
     {
         Status = status;
         Values = values;
         Names = names;
         Error = error;
+        UnavailableReason = unavailableReason;
     }
 
     /// <summary>The outcome.</summary>
@@ -42,6 +44,12 @@ public sealed class UnsealResult
 
     /// <summary><c>STATE/secrets_unavailable</c>, for <see cref="UnsealStatus.Unavailable"/>.</summary>
     public ArcError? Error { get; }
+
+    /// <summary>
+    /// Why the values are unavailable, for node logs and diagnostics only (never part of the error on the wire): the purge
+    /// time, or why the node data key cannot open them. Contains no secret material.
+    /// </summary>
+    public string? UnavailableReason { get; }
 }
 
 /// <summary>
@@ -52,8 +60,8 @@ public sealed class UnsealResult
 /// </summary>
 /// <remarks>
 /// A purge destroys the values and keeps the row as a tombstone: <c>key_id</c> <see cref="PurgedKeyId"/>, a zero nonce, tag and
-/// one-byte ciphertext, the sealed names (presence only, shown in records) and <c>purge_after</c> (the purge time reported in
-/// the error). The row goes with its task (<c>ON DELETE CASCADE</c>, <c>PurgeTaskRecord</c> and record retention). The writer
+/// one-byte ciphertext, the sealed names (presence only, shown in records) and <c>purge_after</c> (the purge time, which the
+/// error reports as <c>details.state.reason</c>, an RFC 3339 UTC instant). The row goes with its task (<c>ON DELETE CASCADE</c>, <c>PurgeTaskRecord</c> and record retention). The writer
 /// runs with <c>secure_delete</c>, so the overwritten values are zeroed in the database pages, and a purge checkpoints the WAL.
 /// </remarks>
 public sealed class TaskSecrets
@@ -160,15 +168,15 @@ public sealed class TaskSecrets
 
         if (string.Equals(keyId, PurgedKeyId, StringComparison.Ordinal))
         {
-            var at = StoreTime.ToRfc3339(purgeAfter ?? 0);
-            return new UnsealResult(UnsealStatus.Unavailable, values: null, names,
-                StoreErrors.SecretsUnavailable($"The sealed environment values were purged at {at}; submit the task again with its environment."));
+            var at = purgeAfter ?? 0;
+            return new UnsealResult(UnsealStatus.Unavailable, values: null, names, StoreErrors.SecretsUnavailable(at),
+                $"the sealed environment values were purged at {StoreTime.ToRfc3339(at)}");
         }
 
         if (!_keys.TryGet(reader, keyId, out var key, out var reason))
         {
-            return new UnsealResult(UnsealStatus.Unavailable, values: null, names, StoreErrors.SecretsUnavailable(
-                $"The sealed environment values cannot be opened: {reason}; submit the task again with its environment."));
+            return new UnsealResult(UnsealStatus.Unavailable, values: null, names, StoreErrors.SecretsUnavailable(purgedAt: null),
+                $"the sealed environment values cannot be opened: {reason}");
         }
 
         var plaintext = new byte[ciphertext.Length];
@@ -183,8 +191,8 @@ public sealed class TaskSecrets
         }
         catch (AuthenticationTagMismatchException)
         {
-            return new UnsealResult(UnsealStatus.Unavailable, values: null, names, StoreErrors.SecretsUnavailable(
-                $"The sealed environment values do not open with node data key {keyId}; submit the task again with its environment."));
+            return new UnsealResult(UnsealStatus.Unavailable, values: null, names, StoreErrors.SecretsUnavailable(purgedAt: null),
+                $"the sealed environment values do not open with node data key {keyId}");
         }
         finally
         {

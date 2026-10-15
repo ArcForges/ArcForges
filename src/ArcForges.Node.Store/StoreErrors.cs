@@ -21,16 +21,28 @@ public static class StoreErrors
 
     /// <summary>
     /// <c>STATE/secrets_unavailable</c>: a retry needs sealed secret environment values that are gone. Retry <c>NEVER</c>
-    /// (submit again with the environment), effect <c>DID_NOT_HAPPEN</c>; <c>details.state.reason</c> is the purge time,
-    /// or why the node data key cannot open them.
+    /// (submit again with the environment), effect <c>DID_NOT_HAPPEN</c>. Per errors.md, <c>details.state.reason</c> is the
+    /// purge time and nothing else: the RFC 3339 UTC instant of <paramref name="purgedAt"/>. Values that were not purged but
+    /// cannot be opened (the node data key is lost, or another key) have no purge time, so the error carries no details;
+    /// <c>ArcError</c> has no free-text field, and the explanation stays a local diagnostic
+    /// (<see cref="UnsealResult.UnavailableReason"/>).
     /// </summary>
-    public static ArcError SecretsUnavailable(string reason) => new()
+    /// <param name="purgedAt">The purge time in microseconds since the Unix epoch, or <see langword="null"/> when not purged.</param>
+    public static ArcError SecretsUnavailable(long? purgedAt)
     {
-        Code = "secrets_unavailable",
-        Category = ErrorCategory.State,
-        MessageKey = "error.state.secrets_unavailable",
-        Retry = new RetryAdvice { Mode = RetryMode.Never },
-        Effect = EffectCertainty.DidNotHappen,
-        Details = new ErrorDetails { State = new StateFailure { Reason = reason } },
-    };
+        var error = new ArcError
+        {
+            Code = "secrets_unavailable",
+            Category = ErrorCategory.State,
+            MessageKey = "error.state.secrets_unavailable",
+            Retry = new RetryAdvice { Mode = RetryMode.Never },
+            Effect = EffectCertainty.DidNotHappen,
+        };
+        if (purgedAt is { } at)
+        {
+            error.Details = new ErrorDetails { State = new StateFailure { Reason = StoreTime.ToRfc3339(at) } };
+        }
+
+        return error;
+    }
 }
