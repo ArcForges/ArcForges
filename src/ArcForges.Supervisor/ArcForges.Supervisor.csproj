@@ -12,7 +12,8 @@
     <AssemblyName>arcforges-supervisor</AssemblyName>
     <RootNamespace>ArcForges.Supervisor</RootNamespace>
     <PublishAot>true</PublishAot>
-    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- Published for Windows only (eng/publish.ps1); the Linux RIDs keep the lock file consistent with restores on Linux, where the solution builds too. -->
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
     <!-- 15 section 1: arcforges-supervisor.exe at most 4 MB. -->
     <OptimizationPreference>Size</OptimizationPreference>
   </PropertyGroup>
