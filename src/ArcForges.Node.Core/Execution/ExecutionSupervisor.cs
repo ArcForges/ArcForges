@@ -1491,7 +1491,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             var remaining = incomplete && handle is not null ? handle.Processes() : [];
             var outcome = Outcome(attempt, exit, launch, guard, incomplete, remaining, handle?.MemoryLimitHit == true);
             var settings = Settings;
-            for (var tries = 0; !_stop.IsCancellationRequested; tries++)
+            for (var tries = 0; ; tries++)
             {
                 try
                 {
@@ -1501,7 +1501,13 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 }
                 catch (CommandQueueFullException)
                 {
-                    // The queue drains; the attempt waits its turn (bounded backoff), however long that takes.
+                    // The queue drains; the attempt waits its turn (bounded backoff), however long that takes. At shutdown it stops
+                    // trying after about 5 s and is left to the next start (the holder keeps its exit record).
+                    if (_stop.IsCancellationRequested && tries >= 10)
+                    {
+                        break;
+                    }
+
                     if (tries % 50 == 49)
                     {
                         _log.Warning("execution.finalize.queue_full", new LogField("attempt", attempt.Name), new LogField("tries", tries + 1));

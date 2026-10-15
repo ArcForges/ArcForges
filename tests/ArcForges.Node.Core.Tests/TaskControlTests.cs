@@ -305,6 +305,9 @@ public sealed class TaskControlTests
             shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "2000", "--marker", shortMarker));
             await Tasks.RunningAsync(channel, longId);
             await Tasks.RunningAsync(channel, shortId);
+
+            // RUNNING records the root process; its marker follows once the workload started.
+            await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0 && Tasks.Marker(shortMarker).Count > 0, Tasks.Bound, "the workloads to start");
         }
 
         await node.StopAsync();
