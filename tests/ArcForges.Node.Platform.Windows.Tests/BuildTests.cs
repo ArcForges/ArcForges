@@ -25,6 +25,7 @@ public sealed class BuildTests
     public void ADotnetBuildRunsInNestedJobs()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Builds in Windows nested job objects (Linux execution is AF-EXEC-02).");
         var dotnet = Tool("dotnet");
         using var harness = PlatformHarness.Start();
         var project = Directory.CreateDirectory(Path.Combine(harness.Root, "dotnet-hello")).FullName;
@@ -50,6 +51,7 @@ public sealed class BuildTests
     public void ACargoBuildRunsInNestedJobs()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Builds in Windows nested job objects (Linux execution is AF-EXEC-02).");
         var cargo = Tool("cargo");
         using var harness = PlatformHarness.Start();
         var project = Directory.CreateDirectory(Path.Combine(harness.Root, "cargo-hello")).FullName;
@@ -67,6 +69,7 @@ public sealed class BuildTests
     public void ACmakeBuildRunsInNestedJobs()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Builds in Windows nested job objects (Linux execution is AF-EXEC-02).");
         var cmake = Tool("cmake");
         using var harness = PlatformHarness.Start();
         var project = Directory.CreateDirectory(Path.Combine(harness.Root, "cmake-hello")).FullName;

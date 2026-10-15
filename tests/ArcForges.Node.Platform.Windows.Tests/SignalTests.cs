@@ -24,6 +24,7 @@ public sealed class SignalTests
     public async Task CtrlBreakReachesTheRootsProcessGroupThroughTheHelper()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--child", "same", "--marker", marker]);
@@ -49,6 +50,7 @@ public sealed class SignalTests
     public async Task ADescendantWithItsOwnGroupOrConsoleMissesTheEventAndIsForced(string child)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--child", child, "--marker", marker]);
@@ -74,6 +76,7 @@ public sealed class SignalTests
     public async Task AGuiProcessInTheTreeGetsWmCloseOnItsHiddenWindow()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--child", "window", "--marker", marker]);
@@ -97,6 +100,7 @@ public sealed class SignalTests
     public async Task AFailedAttachIsReportedAndTheForcedPhaseEndsTheTree()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
 
@@ -116,6 +120,7 @@ public sealed class SignalTests
     public async Task AnExitedRootIsReportedAndItsLeftoversAreForced()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "500", "--child", "group", "--child-hold-ms", "60000", "--marker", marker],
@@ -135,6 +140,7 @@ public sealed class SignalTests
     public async Task ATreeThatIgnoresTheGracefulSignalIsTerminatedByTheForcedPhase()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--on-break", "ignore", "--child", "same", "--marker", marker]);

@@ -23,6 +23,7 @@ public sealed class HolderTests
     public async Task TheHolderRecordsTheExitWithAccountingAndKeepsTheJobUntilAcknowledged()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows exec-wrap holders and job objects.");
         using var harness = PlatformHarness.Start();
         var handle = harness.Launch([TestPrograms.TestLoad, "cpu", "--threads", "1", "--iterations", "200000000"]);
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
@@ -51,6 +52,7 @@ public sealed class HolderTests
     public void LaunchStepsRunInTheJobsBeforeTheRootAndEndStepsBeforeLeftoverTermination()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows exec-wrap holders and job objects.");
         using var harness = PlatformHarness.Start();
         var launchMarker = Path.Combine(harness.Root, "launch.txt");
         var rootMarker = Path.Combine(harness.Root, "root.txt");
@@ -88,6 +90,7 @@ public sealed class HolderTests
     public async Task AFailingLaunchStepRecordsTheFailureAndNeverStartsTheCommand()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows exec-wrap holders and job objects.");
         using var harness = PlatformHarness.Start();
         var rootMarker = Path.Combine(harness.Root, "root.txt");
         var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
@@ -108,6 +111,7 @@ public sealed class HolderTests
     public async Task AProgramThatCannotBeStartedIsAFailedLaunch()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows exec-wrap holders and job objects.");
         using var harness = PlatformHarness.Start();
         var notAProgram = Path.Combine(harness.Root, "not-a-program.exe");
         File.WriteAllText(notAProgram, "this is text, not a Windows program");
@@ -125,6 +129,7 @@ public sealed class HolderTests
     public void TheAttemptRunsWindowlessWithTheExactEnvironmentAndWorkingDirectory()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows exec-wrap holders and job objects.");
         using var harness = PlatformHarness.Start();
         var work = Directory.CreateDirectory(Path.Combine(harness.Root, "work dir")).FullName;
         var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");

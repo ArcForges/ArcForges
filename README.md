@@ -8,8 +8,9 @@ C# · Native AOT · Avalonia. Local and LAN use need no account.
 
 The `arcforges` executable runs the node (`arcforges node run`) and the CLI: the node host with its
 per-user endpoint, lifecycle, event journal and streams, the Windows supervisor, the shared client library
-and the CLI skeleton (`status`, `node`, `config`, `events`, `jobs`, `version`, `completion`).
-Execution, scheduling and the other node subsystems arrive with their delivery tasks, and
+the CLI (`status`, `node`, `config`, `events`, `jobs`, `run`, `tasks`, `version`, `completion`) and Windows
+execution: managed commands in nested job objects with exec-wrap holders that survive a node restart.
+Linux execution, scheduling and the other node subsystems arrive with their delivery tasks, and
 `arcforges-desktop` still shows the bootstrap **Hello World** view until the desktop shell task
 replaces it. Product design: [ArcForges-Design](https://github.com/ArcForges/ArcForges-Design);
 delivery plan: [Plan](https://github.com/ArcForges/Plan).
@@ -21,6 +22,8 @@ delivery plan: [Plan](https://github.com/ArcForges/Plan).
 | `src/ArcForges.Host` | `arcforges`, the multi-role node/CLI executable |
 | `src/ArcForges.Node.Core` | The node's core: configuration and data root, single instance, logging with redaction, command processor, event journal and stream hub, lifecycle, settings, notifications, jobs |
 | `src/ArcForges.Node.Api` | The node's API on the LocalRpc service endpoint (NodeService, NodeEventService) and the node host (startup and shutdown) |
+| `src/ArcForges.Node.Platform` | The execution platform contract and the helper file formats (exit, launch, guard, heartbeat, output index) |
+| `src/ArcForges.Node.Platform.Windows` | Windows execution: job objects, command resolution and quoting, the `node exec-wrap` holder and disk guard, the `node signal` helper |
 | `src/ArcForges.Client` | The client library of the CLI, Desktop and MCP adapter: endpoint resolution, auto-start, hello, NodeStreamCache, command IDs, connection state |
 | `src/ArcForges.CommandLine` | The CLI (System.CommandLine): global options, human and JSON output, exit codes |
 | `src/ArcForges.Supervisor` | `arcforges-supervisor.exe`: the Windows GUI-subsystem supervisor that starts the node and restarts it after a crash |
@@ -64,6 +67,10 @@ arcforges node info | health | capabilities [--reevaluate] | rename <name> | wai
 arcforges config list | get <key> | set logLevel debug
 arcforges events --topic node --since <cursor>    # JSON Lines; resumes after the cursor
 arcforges jobs list | show <id> | cancel <id>
+arcforges run -- dotnet build    # a managed task: output mirrored byte for byte, the task's exit code (125/126/127 when not started)
+arcforges run --detach -- cmake --build out          # prints the task ID
+arcforges run --client-timeout 10m -- cargo test    # hands off with exit 124 before the caller's own timeout
+arcforges tasks list | show | wait [--output tail|all|none] | attach | logs | cancel | retry | pin | unpin | purge | attempts
 arcforges version
 eval "$(arcforges completion bash)"                # also zsh, fish, pwsh
 ```
@@ -80,6 +87,8 @@ arcforges-testload cpu --threads 4 --iterations 200000000 --seed 42
 arcforges-testload mem-ramp --target-mb 512 --step-mb 64 --step-ms 50 --hold-ms 500
 arcforges-testload output --bytes 268435456 --line-bytes 120 --report out.json > captured.txt
 arcforges-testload fork --width 4 --depth 2 --hold-ms 1000
+arcforges-testload signal --hold-ms 60000 --marker m.txt --on-break exit   # Windows console/GUI stop behaviour
+arcforges-testload args "two words" 'a"b'                                     # prints its argv and working directory as JSON
 arcforges-bench size --target arcforges --path artifacts/publish/win-x64/host/arcforges.exe
 arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --arg --version --runs 50 --output now.json
 arcforges-bench compare-startup --current now.json --baseline before.json   # >25% and >5 ms fails

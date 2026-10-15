@@ -138,6 +138,7 @@ public sealed class CommandLineTests
     [Fact]
     public void ProgramResolutionUsesPathAndPathExtButNotTheWorkingDirectory()
     {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows program resolution (PATH and PATHEXT).");
         var root = Directory.CreateTempSubdirectory("arcforges-resolve-").FullName;
         try
         {
