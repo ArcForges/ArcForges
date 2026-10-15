@@ -1472,6 +1472,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         try
         {
             attempt.Tail((_clock.GetUtcNow().UtcTicks - DateTime.UnixEpoch.Ticks) * 100);
+            if (_faults.Take("finalize-throw") is not null)
+            {
+                throw new NotSupportedException("test fault finalize-throw");
+            }
+
             var exit = ExitRecord.TryRead(attempt.Files.ExitPath);
             var launch = LaunchRecord.TryRead(attempt.Files.LaunchPath);
             var guard = GuardEvent.ReadAll(attempt.Files.GuardEventsPath);
@@ -1527,7 +1532,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
             if (recorded)
             {
-                handle?.Acknowledge();
+                Acknowledge(attempt, handle);
                 _log.Info("execution.finished", new LogField("attempt", attempt.Name), new LogField("reason", outcome.Reason),
                     new LogField("exitCode", exit?.ExitStatus ?? -1), new LogField("outputBytes", attempt.OutputBytes),
                     new LogField("limitEnforcedBy", outcome.LimitEnforcedBy ?? "-"));
@@ -1540,6 +1545,16 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         catch (Exception exception) when (exception is IOException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
         {
             _log.Error("execution.finalize.failed", exception);
+        }
+#pragma warning disable CA1031 // Any other failure must not leave the attempt finalizing forever: it is logged by type and retried.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            _log.Error("execution.finalize.unexpected", exception, new LogField("attempt", attempt.Name), new LogField("recorded", recorded));
+            if (recorded)
+            {
+                Acknowledge(attempt, handle: null);
+            }
         }
 
         if (!recorded && !_stop.IsCancellationRequested)
@@ -1556,15 +1571,53 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
         // Recorded, or left unacknowledged for the next start at shutdown (the holder keeps the jobs and the exit record).
         _running.TryRemove(attempt.Name, out _);
-        attempt.Changed.Pulse();
-        attempt.Dispose();
-        TaskPulse(attempt.TaskId).Pulse();
-        if (recorded)
+        try
         {
-            CleanupTemp(attempt);
+            attempt.Changed.Pulse();
+            attempt.Dispose();
+            TaskPulse(attempt.TaskId).Pulse();
+            if (recorded)
+            {
+                CleanupTemp(attempt);
+            }
+        }
+#pragma warning disable CA1031 // The attempt is recorded and released; a cleanup failure is logged, never thrown into a fire-and-forget task.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            _log.Warning("execution.finalize.cleanup_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
         }
 
         Kick();
+    }
+
+    /// <summary>
+    /// Acknowledges a recorded attempt's exit record through its handle, or by name when the handle cannot (disposed or failed), so the
+    /// holder is released now rather than at the next start.
+    /// </summary>
+    private void Acknowledge(RunningAttempt attempt, IAttemptHandle? handle)
+    {
+        try
+        {
+            if (handle is not null)
+            {
+                handle.Acknowledge();
+                return;
+            }
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or Win32Exception or InvalidOperationException)
+        {
+            _log.Warning("execution.ack.handle_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+        }
+
+        try
+        {
+            Platform?.AcknowledgeRecorded(NodeName, attempt.Name);
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or Win32Exception or InvalidOperationException)
+        {
+            _log.Warning("execution.ack.by_name_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+        }
     }
 
     private static AttemptOutcome Outcome(RunningAttempt attempt, ExitRecord? exit, LaunchRecord? launch, List<GuardEvent> guard, bool incomplete,

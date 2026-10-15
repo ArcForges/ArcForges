@@ -273,6 +273,25 @@ public sealed class ExecutionTests
 
     private const string ExecutionFaultVariable = "ARCFORGES_TEST_FAULT";
 
+    /// <summary>An unexpected exception in the finalization never leaves the attempt stuck: it is logged by type and retried.</summary>
+    [Fact(Timeout = 120_000)]
+    public async Task AnUnexpectedFinalizationFailureIsLoggedAndRetried()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        await using var node = TestNode.Create();
+        node.Environment[ExecutionFaultVariable] = "finalize-throw=0";
+        await node.StartNodeAsync();
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var run = await node.CliBytesAsync(Bound, "run", "--", cmd, "/d", "/c", "exit 4");
+        Assert.Equal(4, run.ExitCode);
+        var failures = TestNode.LogEvents(node.NodeLog, "execution.finalize.unexpected");
+        var failure = Assert.Single(failures);
+        Assert.Equal("NotSupportedException", failure.GetProperty("fields").GetProperty("errorType").GetString());
+        Assert.Single(TestNode.LogEvents(node.NodeLog, "execution.finished"));
+        Assert.Single(node.LiveProcesses());
+    }
+
     [Fact(Timeout = 300_000)]
     public async Task TheHolderTakesOverTheOutputLimitWhileTheNodeIsDown()
     {
