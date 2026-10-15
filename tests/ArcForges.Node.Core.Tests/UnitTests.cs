@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ArcForges.Contracts.Node.V1;
@@ -100,21 +101,22 @@ public sealed class UnitTests
     {
         // R-SEC-003: field names the Observability redaction processor knows as sensitive are written as [redacted], and an
         // exception is written as its reason code and type, never its message.
-        const string Secret = "ghp_s3cr3tV4lu3NeverLogged";
+        // Generated per run: a credential-shaped literal in the source would itself be a secret-scan finding.
+        var secret = "seeded-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         var line = Encoding.UTF8.GetString(NodeLog.Format(DateTimeOffset.UnixEpoch, LogLevel.Debug, "node.test",
         [
-            new("token", Secret),
-            new("apiKey", Secret),
-            new("password", Secret),
-            new("authorization", "Bearer " + Secret),
-            new("commandLine", Secret),
-            new("prompt", Secret),
-            new("environmentPath", Secret),
+            new("token", secret),
+            new("apiKey", secret),
+            new("password", secret),
+            new("authorization", "Bearer " + secret),
+            new("commandLine", secret),
+            new("prompt", secret),
+            new("environmentPath", secret),
             new("pid", 42),
             new("state", "ready"),
         ]));
 
-        Assert.DoesNotContain(Secret, line, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, line, StringComparison.Ordinal);
         using var document = JsonDocument.Parse(line);
         var fields = document.RootElement.GetProperty("fields");
         Assert.Equal(NodeLog.Redacted, fields.GetProperty("token").GetString());
@@ -133,17 +135,18 @@ public sealed class UnitTests
     [Fact]
     public void ExceptionsAreLoggedAsReasonCodesWithoutTheirText()
     {
+        var leaked = "leaked-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         var directory = Directory.CreateTempSubdirectory("arcforges-log-tests-");
         try
         {
             using (var log = new NodeLog(directory.FullName, LogLevel.Info))
             {
-                log.Error("node.failed", new InvalidOperationException("token=ghp_leaked in a message"));
+                log.Error("node.failed", new InvalidOperationException("token=" + leaked + " in a message"));
                 log.Debug("node.hidden", new LogField("x", 1));
             }
 
             var text = File.ReadAllText(Path.Combine(directory.FullName, "node.log"));
-            Assert.DoesNotContain("ghp_leaked", text, StringComparison.Ordinal);
+            Assert.DoesNotContain(leaked, text, StringComparison.Ordinal);
             Assert.Contains("\"reason\":\"state.invalid_transition\"", text, StringComparison.Ordinal);
             Assert.Contains("\"errorType\":\"InvalidOperationException\"", text, StringComparison.Ordinal);
             Assert.DoesNotContain("node.hidden", text, StringComparison.Ordinal);
