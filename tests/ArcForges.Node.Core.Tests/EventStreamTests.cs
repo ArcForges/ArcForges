@@ -2,6 +2,7 @@
 using ArcForges.Client;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using ArcForges.Node.Api;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Store;
 using Grpc.Core;
@@ -307,28 +308,170 @@ public sealed class EventStreamTests
         TestContext.Current.TestOutputHelper?.WriteLine($"{events} events: {received} frames reached the stalled subscriber before the typed overflow.");
     }
 
+    /// <summary>
+    /// 02 section 1 (per-subscriber buffer of 2,048 events; overflow, then reset): a cache that stops reading while thousands of events
+    /// are published overflows its stream once; the node never holds more than the buffer, and the cache converges to the latest state.
+    /// How it learns of the overflow depends on how long it stays stalled afterwards, and LocalRpc specifies both: a reader that takes the
+    /// message already on its way within the settle window (the stream's heartbeat interval, 15 s) receives RESOURCE_EXHAUSTED with the
+    /// overflow trailer and resubscribes for a reset and a snapshot; a reader stalled longer is reset by the transport, sees a disconnect,
+    /// and resumes from its cursor, catching up from the journal. The stall lasts until every event was published, so on a slow runner the
+    /// second branch is taken (main CI run 38813142678: the 70,000 events took about 15 s). The test measures the stall after the overflow
+    /// and asserts the branch the transport must take for it; <see cref="AReaderStalledBeyondTheSettleWindowResumesFromItsCursorAndConverges"/>
+    /// covers the second branch deterministically.
+    /// </summary>
     [Theory(Timeout = 240_000)]
     [InlineData(6_000)]
     [InlineData(70_000)]
     public async Task AtTheProductionBufferAStalledCacheIsResetAndCatchesUp(int events)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        using var stall = new ManualResetEventSlim(true);
-        await using var cache = new NodeStreamCache(_ => node.ChannelAsync(), [EventTopic.Node], new ReconnectBackoff(() => 0));
+        var run = await StallAndOverflowAsync(events, holdAfterOverflow: TimeSpan.Zero);
+        await using var node = run.Node;
+        await using var cache = run.Cache;
+        var settle = NodeEventServiceHandler.HeartbeatInterval;
+        if (run.Held < settle - TimeSpan.FromSeconds(2))
+        {
+            // Read within the settle window: the typed overflow, then a reset with a snapshot.
+            Assert.True(cache.Resets >= 1 && cache.SnapshotsApplied >= 2, run.Describe());
+        }
+        else if (run.Held > settle + TimeSpan.FromSeconds(2))
+        {
+            // Stalled beyond it: reset by the transport, resumed from the cursor and caught up from the journal.
+            Assert.True(cache.Resumes >= 1 && cache.SnapshotsApplied == 1, run.Describe());
+        }
+
+        Assert.True(cache.LastSequence >= run.Latest, run.Describe());
+        await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
+        Assert.Equal(1, node.Runtime.Hub.Overflows);
+        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
+        Assert.Equal(ConnectionState.Connected, cache.Connection.State);
+    }
+
+    /// <summary>
+    /// The second branch of the stalled-cache case, deterministically: the reader stays stalled for longer than the settle window after
+    /// the overflow, so the node, which cannot pass a status the reader never takes, resets the transport stream (LocalRpc); the cache
+    /// sees a disconnect, resumes from its cursor and catches up from the journal. The node still overflowed exactly once and never held
+    /// more than the buffer.
+    /// </summary>
+    [Fact(Timeout = 240_000)]
+    public async Task AReaderStalledBeyondTheSettleWindowResumesFromItsCursorAndConverges()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var run = await StallAndOverflowAsync(6_000, holdAfterOverflow: NodeEventServiceHandler.HeartbeatInterval + TimeSpan.FromSeconds(3));
+        await using var node = run.Node;
+        await using var cache = run.Cache;
+        Assert.True(cache.Resumes >= 1 && cache.SnapshotsApplied == 1 && cache.Resets == 0, run.Describe());
+        Assert.True(cache.LastSequence >= run.Latest, run.Describe());
+        Assert.Equal(1, node.Runtime.Hub.Overflows);
+        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
+        Assert.Equal(ConnectionState.Connected, cache.Connection.State);
+    }
+
+    /// <summary>
+    /// Stalls a NODE-topic cache, publishes <paramref name="events"/> events, notes when the node overflowed the cache's stream, releases
+    /// the cache <paramref name="holdAfterOverflow"/> after that (or once every event was published, whichever is later) and waits until
+    /// it converged: caught up with the last event on a settled stream. The wait is progress-based: it fails only when nothing changed for
+    /// 30 s, or after 180 s in all.
+    /// </summary>
+    private static async Task<StalledRun> StallAndOverflowAsync(int events, TimeSpan holdAfterOverflow)
+    {
+        var node = await InProcessNode.Create().StartAsync();
+        var stall = new ManualResetEventSlim(true);
+        var cache = new NodeStreamCache(_ => node.ChannelAsync(), [EventTopic.Node], new ReconnectBackoff(() => 0));
         cache.Applied += (_, _) => stall.Wait(TimeSpan.FromSeconds(60));
+        try
+        {
+            return await RunStalledAsync(node, cache, stall, events, holdAfterOverflow);
+        }
+        catch
+        {
+            stall.Set();
+            await cache.DisposeAsync();
+            await node.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task<StalledRun> RunStalledAsync(InProcessNode node, NodeStreamCache cache, ManualResetEventSlim stall, int events, TimeSpan holdAfterOverflow)
+    {
         cache.Start();
         await WaitAsync(() => cache.SnapshotsApplied == 1);
 
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         stall.Reset();
-        var latest = await EmitAsync(node, events);
-        await WaitAsync(() => node.Runtime.Hub.Overflows >= 1, TimeSpan.FromSeconds(60));
-        stall.Set();
+        var overflowAt = TimeSpan.MinValue;
+        using var watching = new CancellationTokenSource();
+        var watcher = Task.Run(async () =>
+        {
+            while (!watching.IsCancellationRequested && node.Runtime.Hub.Overflows < 1)
+            {
+                await Task.Delay(5, CancellationToken.None);
+            }
 
-        await WaitAsync(() => cache.Resets >= 1 && cache.SnapshotsApplied >= 2 && cache.LastSequence >= latest, TimeSpan.FromSeconds(120));
-        await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
-        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
-        Assert.Equal(ConnectionState.Connected, cache.Connection.State);
+            overflowAt = clock.Elapsed;
+        }, CancellationToken.None);
+        var latest = await EmitAsync(node, events);
+        var published = clock.Elapsed;
+        await WaitAsync(() => node.Runtime.Hub.Overflows >= 1, TimeSpan.FromSeconds(60));
+        await watcher;
+        var releaseAt = overflowAt + holdAfterOverflow;
+        if (releaseAt > clock.Elapsed)
+        {
+            await Task.Delay(releaseAt - clock.Elapsed, Ct);
+        }
+
+        var released = clock.Elapsed;
+        stall.Set();
+        var run = new StalledRun(node, cache, stall, latest, overflowAt, published, released, clock);
+        await WaitForProgressAsync(() => cache.LastSequence >= latest && (cache.Resets >= 1 || cache.Resumes >= 1),
+            () => (cache.LastSequence, cache.Subscriptions, cache.SnapshotsApplied), run.Describe);
+        run.Converged = clock.Elapsed;
+        TestContext.Current.TestOutputHelper?.WriteLine(run.Describe());
+        return run;
+    }
+
+    /// <summary>Waits for <paramref name="condition"/> while <paramref name="progress"/> changes: fails after 30 s without progress or 180 s in all.</summary>
+    private static async Task WaitForProgressAsync<T>(Func<bool> condition, Func<T> progress, Func<string> describe)
+    {
+        var started = TimeProvider.System.GetTimestamp();
+        var lastChange = started;
+        var last = progress();
+        while (!condition())
+        {
+            var now = progress();
+            if (!EqualityComparer<T>.Default.Equals(now, last))
+            {
+                last = now;
+                lastChange = TimeProvider.System.GetTimestamp();
+            }
+
+            Assert.True(TimeProvider.System.GetElapsedTime(lastChange) < TimeSpan.FromSeconds(30), "No progress for 30 s: " + describe());
+            Assert.True(TimeProvider.System.GetElapsedTime(started) < TimeSpan.FromSeconds(180), "Not converged within 180 s: " + describe());
+            await Task.Delay(20, Ct);
+        }
+    }
+
+    /// <summary>One stalled-cache run: the node, the cache and its timings (from the stall).</summary>
+    private sealed class StalledRun(InProcessNode node, NodeStreamCache cache, ManualResetEventSlim stall, ulong latest, TimeSpan overflowAt,
+        TimeSpan published, TimeSpan released, System.Diagnostics.Stopwatch clock)
+    {
+        public InProcessNode Node { get; } = node;
+
+        public NodeStreamCache Cache { get; } = cache;
+
+        public ulong Latest { get; } = latest;
+
+        /// <summary>How long the cache stayed stalled after the node overflowed its stream.</summary>
+        public TimeSpan Held { get; } = released - overflowAt;
+
+        public TimeSpan? Converged { get; set; }
+
+        public string Describe() => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"overflow at {overflowAt.TotalMilliseconds:0} ms, published by {published.TotalMilliseconds:0} ms, released at {released.TotalMilliseconds:0} ms "
+            + $"(held {Held.TotalMilliseconds:0} ms after the overflow), converged at {(Converged ?? clock.Elapsed).TotalMilliseconds:0} ms; "
+            + $"resets {Cache.Resets}, snapshots {Cache.SnapshotsApplied}, resumes {Cache.Resumes}, subscriptions {Cache.Subscriptions}, "
+            + $"last {Cache.LastSequence}/{Latest}, node overflows {Node.Runtime.Hub.Overflows}, peak pending {Node.Runtime.Hub.PeakPending}")
+            + (stall.IsSet ? string.Empty : " (still stalled)");
     }
 
     [Fact(Timeout = 120_000)]
