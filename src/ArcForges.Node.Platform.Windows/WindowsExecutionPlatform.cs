@@ -110,8 +110,11 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             CpuReason = enforced ? "job CPU rate control: weighted attempt jobs under a hard-capped root job (V-W04)" : why,
             Memory = enforced ? MemoryControl.EnforcedCommit : MemoryControl.ObserveOnly,
             MemoryReason = enforced ? "job commit limits bound committed memory, not physical memory (V-W05; 03 section 5.4)" : why,
-            Pids = enforced ? ProcessCountControl.Enforced : ProcessCountControl.ObserveOnly,
-            PidsReason = enforced ? "job active-process limit when policy sets one" : why,
+            // No policy field sets a process-count limit in this build, so no attempt gets one: counted (job accounting), not enforced.
+            Pids = ProcessCountControl.ObserveOnly,
+            PidsReason = enforced
+                ? "processes are counted by job accounting; no policy field sets a job active-process limit in this build"
+                : why,
             Io = IoControl.ObserveOnly,
             IoReason = "Windows jobs account I/O but do not limit it without privileges",
             Pause = PauseSupport.Unsupported,

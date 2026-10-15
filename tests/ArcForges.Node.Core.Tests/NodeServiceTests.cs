@@ -270,7 +270,8 @@ public sealed class NodeServiceTests
         {
             Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
             Assert.Equal(MemoryControl.EnforcedCommit, report.Memory);
-            Assert.Equal(ProcessCountControl.Enforced, report.Pids);
+            Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
+            Assert.Contains("no policy field", report.PidsReason, StringComparison.Ordinal);
             Assert.Equal(PauseSupport.Unsupported, report.Pause);
             Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
             Assert.True(report.RestartSurvival);

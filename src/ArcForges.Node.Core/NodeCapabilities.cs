@@ -26,7 +26,7 @@ public static class NodeCapabilities
         return report;
     }
 
-    /// <summary>The first missing capability's reason, or <see langword="null"/> when every capability is enforced.</summary>
+    /// <summary>The first missing capability's reason (cpu, then memory), or <see langword="null"/> when both are enforced.</summary>
     public static string? MissingReason(CapabilityReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
@@ -40,7 +40,7 @@ public static class NodeCapabilities
             return report.MemoryReason;
         }
 
-        return report.Pids == ProcessCountControl.Enforced ? null : report.PidsReason;
+        return null;
     }
 
     /// <summary>The lifecycle reason of the DEGRADED state this report leads to.</summary>
@@ -74,13 +74,16 @@ public static class NodeCapabilities
         return report;
     }
 
-    /// <summary>True when every enforcement capability is enforced (READY rather than DEGRADED).</summary>
+    /// <summary>
+    /// True when the enforcement a task can require (03 section 8: <c>require_enforcement = {cpu, memory}</c>) is enforced: READY rather
+    /// than DEGRADED. <c>pids</c> and <c>io</c> are reported as they are but do not degrade the node: no policy field sets a process-count
+    /// limit in this build (Windows reports it OBSERVE_ONLY, counted by job accounting), and I/O limits are a privileged option.
+    /// </summary>
     public static bool FullyEnforced(CapabilityReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
         return report.Cpu is CpuControl.EnforcedShareAndCap or CpuControl.EnforcedShare
-            && report.Memory is MemoryControl.EnforcedSoftAndHard or MemoryControl.EnforcedCommit
-            && report.Pids == ProcessCountControl.Enforced;
+            && report.Memory is MemoryControl.EnforcedSoftAndHard or MemoryControl.EnforcedCommit;
     }
 
     private static KeyValue Fact(string name, string value) => new() { Name = name, Value = value };

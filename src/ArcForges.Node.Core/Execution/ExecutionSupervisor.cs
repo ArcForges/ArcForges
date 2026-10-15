@@ -956,18 +956,17 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         }
 
         var settings = Settings;
-        if (settings.MaxOutputBytes > 0 && attempt.OutputBytes > settings.MaxOutputBytes && attempt.StopReason is null)
+        // Under NOTIFY the check is done once the finding is raised; under TERMINATE the stop ends it. Only then is the guard's file read.
+        if (settings.MaxOutputBytes > 0 && attempt.OutputBytes > settings.MaxOutputBytes && attempt.StopReason is null
+            && !(settings.DiskLimitAction == "NOTIFY" && attempt.OutputNotified))
         {
             // The guard may have acted on the limit while the node was down (06 section 5): its decision stands and is recorded as GUARD.
             var guard = GuardEvent.ReadAll(attempt.Files.GuardEventsPath);
             if (settings.DiskLimitAction == "NOTIFY")
             {
-                if (!attempt.OutputNotified)
-                {
-                    attempt.OutputNotified = true;
-                    var notified = guard.FirstOrDefault(item => item.Event == GuardEventKinds.Notify);
-                    RaiseOutputFinding(attempt, notified?.OutputBytes ?? attempt.OutputBytes, notified?.LimitBytes ?? settings.MaxOutputBytes, notified is null ? "NODE" : "GUARD");
-                }
+                attempt.OutputNotified = true;
+                var notified = guard.FirstOrDefault(item => item.Event == GuardEventKinds.Notify);
+                RaiseOutputFinding(attempt, notified?.OutputBytes ?? attempt.OutputBytes, notified?.LimitBytes ?? settings.MaxOutputBytes, notified is null ? "NODE" : "GUARD");
             }
             else if (guard.FirstOrDefault(item => item.Event == GuardEventKinds.Terminate) is { } guardStop)
             {
