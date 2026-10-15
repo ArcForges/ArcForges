@@ -244,6 +244,12 @@ public static class NodeHost
                 return 0;
             }).ConfigureAwait(false);
             await node.TransitionAsync(NodeLifecycleState.Recovering, unclean ? "unclean_shutdown" : "store_opened").ConfigureAwait(false);
+            if (store.Opening.TransientRetries > 0)
+            {
+                log.Warning("store.open.retried", new LogField("retries", store.Opening.TransientRetries),
+                    new LogField("extendedCode", store.Opening.LastTransientCode ?? 0));
+            }
+
             log.Info("node.recovering", new LogField("uncleanShutdown", unclean), new LogField("bootChanged", bootChanged),
                 new LogField("storeCreated", store.Opening.Created), new LogField("migratedFrom", store.Opening.MigratedFrom ?? 0),
                 new LogField("generation", journal.Generation));

@@ -82,6 +82,12 @@ public sealed class StoreOpening
         BackupPath = backupPath;
     }
 
+    /// <summary>How many times opening was retried after a transient I/O error (another handle on the store's files).</summary>
+    public int TransientRetries { get; internal set; }
+
+    /// <summary>The extended SQLite code of the last transient I/O error, when opening was retried.</summary>
+    public int? LastTransientCode { get; internal set; }
+
     /// <summary>The store did not exist and was created at the latest schema.</summary>
     public bool Created { get; }
 
@@ -172,25 +178,9 @@ public sealed class NodeStore : IDisposable
         StorePaths.CreatePrivateDirectory(dataRoot);
         StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(path)!);
 
-        // Inspect an existing file read-only first, so a store this binary must not open is left untouched.
-        var existing = File.Exists(path) ? Inspect(path) : null;
-        if (existing is { MinReaderVersion: var minReader } && minReader > plan.LatestVersion)
-        {
-            throw new StoreIncompatibleException(string.Create(CultureInfo.InvariantCulture,
-                $"The node store needs a reader of schema version {minReader} or later; this binary reads up to version {plan.LatestVersion}. Install a newer ArcForges version (13-distribution-updates section 6)."));
-        }
-
-        var writer = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWriteCreate));
+        var (existing, writer, retries, lastCode) = OpenWriter(path, plan);
         try
         {
-            writer.Open();
-            Pragma(writer, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
-            var journal = Convert.ToString(Scalar(writer, "PRAGMA journal_mode=WAL;"), CultureInfo.InvariantCulture);
-            if (!string.Equals(journal, "wal", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException($"The node store could not enter WAL mode (journal_mode={journal}).");
-            }
-
             Pragma(writer, "PRAGMA foreign_keys=ON;");
             Pragma(writer, "PRAGMA synchronous=NORMAL;");
 
@@ -234,6 +224,8 @@ public sealed class NodeStore : IDisposable
                 opening = new StoreOpening(created: false, migratedFrom: null, existing.SchemaVersion, backupPath: null);
             }
 
+            opening.TransientRetries = retries;
+            opening.LastTransientCode = lastCode;
             var metadata = Start(writer, options);
             return new NodeStore(dataRoot, path, writer, options.Clock, metadata, opening);
         }
@@ -361,6 +353,77 @@ public sealed class NodeStore : IDisposable
             if (durability == CommitDurability.Full)
             {
                 Pragma(connection, "PRAGMA synchronous=NORMAL;");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extended SQLite I/O codes that mean another handle holds the store's files, not a damaged store (sqlite3.h): on Windows a file
+    /// cannot be truncated while any process has a mapped view of it, and the first connection after an unclean shutdown truncates the
+    /// <c>-shm</c> file (SQLITE_IOERR_TRUNCATE 1546), so a predecessor still being torn down after its kill, or a scanner or indexer
+    /// mapping the files it just released, fails the open briefly. Lock and shared-memory codes have the same cause.
+    /// </summary>
+    internal static readonly IReadOnlySet<int> TransientOpenErrors = new HashSet<int>
+    {
+        1546, // SQLITE_IOERR_TRUNCATE
+        2058, // SQLITE_IOERR_UNLOCK
+        2314, // SQLITE_IOERR_RDLOCK
+        2570, // SQLITE_IOERR_DELETE
+        3338, // SQLITE_IOERR_ACCESS
+        3594, // SQLITE_IOERR_CHECKRESERVEDLOCK
+        3850, // SQLITE_IOERR_LOCK
+        4618, // SQLITE_IOERR_SHMOPEN
+        4874, // SQLITE_IOERR_SHMSIZE
+        5130, // SQLITE_IOERR_SHMLOCK
+        5386, // SQLITE_IOERR_SHMMAP
+    };
+
+    /// <summary>How long opening retries a transient I/O error: the store's busy timeout (node-store.md: <c>busy_timeout=5000</c>).</summary>
+    internal static readonly TimeSpan TransientOpenBound = TimeSpan.FromMilliseconds(BusyTimeoutMilliseconds);
+
+    /// <summary>
+    /// Inspects an existing store read-only (so a store this binary must not open is left untouched), then opens the writer in WAL mode.
+    /// A transient I/O error (<see cref="TransientOpenErrors"/>) is retried with backoff for up to <see cref="TransientOpenBound"/>; the
+    /// retries and the last code are reported in <see cref="StoreOpening"/>. Every other error, corruption included, fails at once.
+    /// </summary>
+    private static (ExistingStore? Existing, SqliteConnection Writer, int Retries, int? LastCode) OpenWriter(string path, MigrationPlan plan)
+    {
+        var started = TimeProvider.System.GetTimestamp();
+        int? lastCode = null;
+        for (var retries = 0; ; retries++)
+        {
+            SqliteConnection? writer = null;
+            try
+            {
+                var existing = File.Exists(path) ? Inspect(path) : null;
+                if (existing is { MinReaderVersion: var minReader } && minReader > plan.LatestVersion)
+                {
+                    throw new StoreIncompatibleException(string.Create(CultureInfo.InvariantCulture,
+                        $"The node store needs a reader of schema version {minReader} or later; this binary reads up to version {plan.LatestVersion}. Install a newer ArcForges version (13-distribution-updates section 6)."));
+                }
+
+                writer = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWriteCreate));
+                writer.Open();
+                Pragma(writer, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
+                var journal = Convert.ToString(Scalar(writer, "PRAGMA journal_mode=WAL;"), CultureInfo.InvariantCulture);
+                if (!string.Equals(journal, "wal", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"The node store could not enter WAL mode (journal_mode={journal}).");
+                }
+
+                return (existing, writer, retries, lastCode);
+            }
+            catch (SqliteException exception) when (exception.SqliteErrorCode == 10 && TransientOpenErrors.Contains(exception.SqliteExtendedErrorCode)
+                && TimeProvider.System.GetElapsedTime(started) < TransientOpenBound)
+            {
+                writer?.Dispose();
+                lastCode = exception.SqliteExtendedErrorCode;
+                Thread.Sleep(TimeSpan.FromMilliseconds(Math.Min(25 << Math.Min(retries, 4), 250)));
+            }
+            catch
+            {
+                writer?.Dispose();
+                throw;
             }
         }
     }

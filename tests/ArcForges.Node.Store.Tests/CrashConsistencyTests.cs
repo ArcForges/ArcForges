@@ -84,12 +84,15 @@ public sealed class CrashConsistencyTests
     }
 
     /// <summary>
-    /// Extended SQLite I/O codes of locking and shared-memory calls (sqlite3.h): on Windows they report a sharing or lock violation by
-    /// another handle on the database, WAL or shared-memory file (the VFS retries those for about 1.4 s before giving up), not a damaged
-    /// file. A read, short-read, write, truncate or fsync error, and any other code, is never retried.
+    /// The extended SQLite I/O codes that mean another handle holds the killed store's files (sqlite3.h), the same set the store's own
+    /// open retries (<c>NodeStore.TransientOpenErrors</c>). SQLITE_IOERR_TRUNCATE (1546) is the first connection's truncation of the
+    /// <c>-shm</c> file failing while another handle still has a mapped view of it (Windows refuses to truncate a mapped file;
+    /// <c>StoreOpenTests.AnOpenWaitsOutAMappedSharedMemoryFile</c> reproduces it). A read, short-read, write or fsync error, and any
+    /// other code, is never retried.
     /// </summary>
     private static readonly HashSet<int> LockClassIoErrors =
     [
+        1546, // SQLITE_IOERR_TRUNCATE
         2058, // SQLITE_IOERR_UNLOCK
         2314, // SQLITE_IOERR_RDLOCK
         2570, // SQLITE_IOERR_DELETE (the WAL or journal still open elsewhere)
