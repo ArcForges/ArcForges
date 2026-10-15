@@ -289,6 +289,9 @@
       "arcforges-supervisor": {
         "type": "Project"
       },
+      "arcforges-testload": {
+        "type": "Project"
+      },
       "arcforges.client": {
         "type": "Project",
         "dependencies": {

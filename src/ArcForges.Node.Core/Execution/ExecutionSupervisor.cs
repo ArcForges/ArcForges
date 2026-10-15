@@ -882,13 +882,23 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         var settings = Settings;
         if (settings.MaxOutputBytes > 0 && attempt.OutputBytes > settings.MaxOutputBytes && attempt.StopReason is null)
         {
+            // The guard may have acted on the limit while the node was down (06 section 5): its decision stands and is recorded as GUARD.
+            var guard = GuardEvent.ReadAll(attempt.Files.GuardEventsPath);
             if (settings.DiskLimitAction == "NOTIFY")
             {
                 if (!attempt.OutputNotified)
                 {
                     attempt.OutputNotified = true;
-                    RaiseOutputFinding(attempt, attempt.OutputBytes, settings.MaxOutputBytes, "NODE");
+                    var notified = guard.FirstOrDefault(item => item.Event == GuardEventKinds.Notify);
+                    RaiseOutputFinding(attempt, notified?.OutputBytes ?? attempt.OutputBytes, notified?.LimitBytes ?? settings.MaxOutputBytes, notified is null ? "NODE" : "GUARD");
                 }
+            }
+            else if (guard.FirstOrDefault(item => item.Event == GuardEventKinds.Terminate) is { } guardStop)
+            {
+                // The job is already terminated; the node records the guard's stop and lets the exit be collected.
+                attempt.LimitEnforcedBy = "GUARD";
+                attempt.StopDetail = $"stopped by the attempt's guard while the node was down ({guardStop.OutputBytes} bytes of output, limit {guardStop.LimitBytes})";
+                Stop(attempt.Name, guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, null, graceful: false);
             }
             else
             {
