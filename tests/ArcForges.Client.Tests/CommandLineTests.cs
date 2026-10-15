@@ -175,6 +175,24 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public void ABusyNodeInJsonModeIsOverloadedNotNotRunning()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new CliOutput(output, error, json: true, quiet: false, color: false, verbose: false, width: 120);
+
+        var exit = cli.Fail(new NodeUnavailableException(NodeUnavailableReason.Busy, "the node is busy", "retry later"));
+
+        Assert.Equal(75, exit);
+        using var document = System.Text.Json.JsonDocument.Parse(output.ToString());
+        var json = document.RootElement.GetProperty("error");
+        Assert.Equal("overloaded", json.GetProperty("code").GetString());
+        Assert.Equal("ERROR_CATEGORY_RESOURCE", json.GetProperty("category").GetString());
+        Assert.Equal("RETRY_MODE_AFTER_TIME", json.GetProperty("retry").GetProperty("mode").GetString());
+        Assert.Contains("busy", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ErrorsGoToStderrInHumanModeAndToStdoutAsJson()
     {
         var correlation = CommandIds.New();

@@ -225,7 +225,8 @@ public sealed class NodeLifecycleTests
 
             // Either the bounded retries got through (the backlog drains as the node accepts) or the client reports the node busy
             // (exit 75); it never reads the refusal as "not running", so no second node is started.
-            Assert.True(run.ExitCode == 0 ? !run.Json().GetProperty("autoStarted").GetBoolean() : run.ExitCode == 75 && run.Output.Contains("busy", StringComparison.Ordinal),
+            Assert.True(run.ExitCode == 0 ? !run.Json().GetProperty("autoStarted").GetBoolean() : run.ExitCode == 75 && run.Json().GetProperty("error").GetProperty("code").GetString() == "overloaded"
+                    && run.Error.Contains("busy", StringComparison.Ordinal),
                 $"held {held.Count} connections (then '{refused}'); status: {run}");
             Assert.Equal(nodePid, node.NodePid());
             Assert.Single(node.LiveProcesses(), process => process.ProcessName == "arcforges");

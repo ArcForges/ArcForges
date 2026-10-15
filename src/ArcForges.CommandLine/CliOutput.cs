@@ -238,15 +238,23 @@ public sealed class CliOutput
             : exception.Message.TrimEnd('.') + (exception.Guidance.Length > 0 ? "; " + exception.Guidance : string.Empty);
         if (Json)
         {
+            // A busy node is running: RESOURCE/overloaded (retry later), never "not running".
             var error = exception.Error ?? new ArcError
             {
-                Category = exception.Reason == NodeUnavailableReason.AccessDenied ? ErrorCategory.Authorization : ErrorCategory.State,
+                Category = exception.Reason switch
+                {
+                    NodeUnavailableReason.AccessDenied => ErrorCategory.Authorization,
+                    NodeUnavailableReason.Busy => ErrorCategory.Resource,
+                    _ => ErrorCategory.State,
+                },
                 Code = exception.Reason switch
                 {
                     NodeUnavailableReason.AccessDenied => "permission_denied",
                     NodeUnavailableReason.Incompatible => "incompatible_version",
+                    NodeUnavailableReason.Busy => "overloaded",
                     _ => "node_not_running",
                 },
+                Retry = exception.Reason == NodeUnavailableReason.Busy ? new RetryAdvice { Mode = RetryMode.AfterTime } : null,
                 Effect = EffectCertainty.DidNotHappen,
             };
             error.MessageKey = error.MessageKey.Length > 0 ? error.MessageKey : "error." + error.Category.ToString().ToLowerInvariant() + "." + error.Code;
