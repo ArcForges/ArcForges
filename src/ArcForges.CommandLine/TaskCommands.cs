@@ -285,7 +285,7 @@ internal static class TaskCommands
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             return taskId is null
                 ? exit
-                : await RunCommand.AttachAsync(cli, session, taskId, forwardStdin: false, clientTimeout: null, result.GetValue(fromStart), cancellationToken).ConfigureAwait(false);
+                : await RunCommand.AttachAsync(cli, session, taskId, forwardStdin: false, handoffAt: null, result.GetValue(fromStart), cancellationToken).ConfigureAwait(false);
         });
         return command;
     }

@@ -117,7 +117,8 @@ public sealed class ExecutionTests
         Assert.Equal(124, own.ExitCode);
         Assert.DoesNotContain("tasks wait", Encoding.UTF8.GetString(own.Stderr), StringComparison.Ordinal);
 
-        // Interrupt before the hand-off: the client disappears (killed), so its bound task is cancelled within 5 s.
+        // Interrupt before the hand-off: the client process ends (killed), so its bound task is cancelled within 5 s (AD-0006 section 7);
+        // the root's exit follows the stop sequence's graceful phase (CTRL_BREAK; the workload exits on it).
         var marker = Path.Combine(node.Root, "i.txt");
         using var client = node.Start(TestNode.Host, ["--test-mode", "run", "--client-timeout", "10m", "--", TestNode.TestLoad, "signal", "--hold-ms", "60000", "--marker", marker]);
         await TestNode.WaitAsync(() => Marker(marker).Count > 0, Bound, "the task to start");
@@ -125,8 +126,11 @@ public sealed class ExecutionTests
         await client.WaitForExitAsync(Ct);
         var interrupted = Stopwatch.StartNew();
         var pid = Marker(marker)[0].Pid;
-        await TestNode.WaitAsync(() => !IsRunning(pid), TimeSpan.FromSeconds(20), "the interrupted run's task to be cancelled");
-        Assert.True(interrupted.Elapsed < TimeSpan.FromSeconds(15), $"Cancelled after {interrupted.Elapsed}.");
+        await TestNode.WaitAsync(() => TestNode.LogEvents(node.NodeLog, "execution.caller_gone").Count > 0, TimeSpan.FromSeconds(20), "the caller-gone cancellation");
+        var cancelledAfter = interrupted.Elapsed;
+        await TestNode.WaitAsync(() => !IsRunning(pid), TimeSpan.FromSeconds(20), "the interrupted run's task to stop");
+        TestContext.Current.TestOutputHelper?.WriteLine($"cancelled {cancelledAfter.TotalMilliseconds:0} ms after the client was killed; the root ended after {interrupted.Elapsed.TotalMilliseconds:0} ms");
+        Assert.True(cancelledAfter < TimeSpan.FromSeconds(5), $"Cancelled {cancelledAfter} after the client ended (AD-0006 section 7: within 5 s).");
         var list = await node.CliAsync("tasks", "list", "--json");
         Assert.Contains("TASK_STATE_CANCELLED", list.Output, StringComparison.Ordinal);
     }

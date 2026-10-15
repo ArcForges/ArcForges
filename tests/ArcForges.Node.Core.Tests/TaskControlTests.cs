@@ -416,7 +416,7 @@ public sealed class TaskControlTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task ACallerThatDisappearsCancelsItsTaskUnlessItReleasedTheBinding()
+    public async Task ABindingSurvivesALostConnectionOfALiveCallerAndReleaseIsIdempotent()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
@@ -435,14 +435,19 @@ public sealed class TaskControlTests
             Assert.Null(twice.Error);
         }
 
-        // The caller (this process's only connection) is gone: after 5 s its bound task is cancelled; the released one keeps running.
+        // The binding is to the caller's process (08 section 4; AD-0006 section 7): this process lost its only connection but is alive
+        // (a client reconnecting after a lost connection), so nothing is cancelled. A caller whose process ends is cancelled within 5 s:
+        // ExecutionTests.AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels kills a real CLI process.
         TaskState State(Id id) => (TaskState)node.Runtime.Store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM task WHERE task_id = $id;", ("$id", id.Value.ToByteArray())), CultureInfo.InvariantCulture));
-        await Tasks.WaitForAsync(() => State(bound) == TaskState.Cancelled, TimeSpan.FromSeconds(20), "the bound task to be cancelled");
-        await Task.Delay(1_000, Ct);
+        await Task.Delay(TimeSpan.FromSeconds(6), Ct);
+        Assert.Equal(TaskState.Running, State(bound));
         Assert.Equal(TaskState.Running, State(released));
         await using var after = await node.ChannelAsync();
-        await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = released }, cancellationToken: Ct);
-        await Tasks.WaitAsync(after, released);
+        foreach (var id in (Id[])[bound, released])
+        {
+            await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id }, cancellationToken: Ct);
+            await Tasks.WaitAsync(after, id);
+        }
     }
 
     private static StepSpec Step(string name, params string[] argv) => new()

@@ -119,8 +119,14 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     /// <summary>The delay before a finalization that failed on a store error is retried.</summary>
     public static readonly TimeSpan FinalizeRetry = TimeSpan.FromSeconds(5);
 
-    /// <summary>How long a caller may be gone before its <c>cancel_when_caller_gone</c> tasks are cancelled (AD-0006 section 7).</summary>
+    /// <summary>The bound within which a caller that is gone has its <c>cancel_when_caller_gone</c> tasks cancelled (AD-0006 section 7).</summary>
     public static readonly TimeSpan CallerGoneGrace = TimeSpan.FromSeconds(5);
+
+    /// <summary>How often a disconnected caller's process is checked.</summary>
+    private static readonly TimeSpan CallerPollInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>The tolerance between a process start time read now and the one the session recorded.</summary>
+    private static readonly TimeSpan CallerStartTolerance = TimeSpan.FromMilliseconds(50);
 
     private readonly NodeStore _store;
     private readonly CommandProcessor _processor;
@@ -705,13 +711,14 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     public void CallerConnected(CallerKey caller) => _callerConnections.AddOrUpdate(caller, 1, (_, count) => count + 1);
 
     /// <summary>
-    /// A client process closed a connection. When it has none left, its bound tasks are cancelled after 5 s unless it reconnected or
-    /// the binding was released (AD-0006 section 7: interrupts before the hand-off still cancel).
+    /// A client process closed a connection. While it has none, the node checks every 250 ms whether the process still exists: once it is
+    /// gone (killed or interrupted), its bound tasks are cancelled at once, within 5 s of its end (AD-0006 section 7: interrupts before
+    /// the hand-off still cancel). A process that is alive and reconnects (a lost connection) keeps its bindings.
     /// </summary>
     public void CallerDisconnected(CallerKey caller)
     {
         var remaining = _callerConnections.AddOrUpdate(caller, 0, (_, count) => Math.Max(0, count - 1));
-        if (remaining > 0)
+        if (remaining > 0 || !_bindings.Values.Contains(caller))
         {
             return;
         }
@@ -720,26 +727,36 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         {
             try
             {
-                await Task.Delay(CallerGoneGrace, _stop.Token).ConfigureAwait(false);
+                while (CallerAlive(caller))
+                {
+                    await Task.Delay(CallerPollInterval, _stop.Token).ConfigureAwait(false);
+                    if (_callerConnections.TryGetValue(caller, out var count) && count > 0)
+                    {
+                        return;
+                    }
+                }
+
+                await CancelBoundAsync(caller).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                return;
+                // The node stops; bindings are not durable.
+            }
+        });
+    }
+
+    /// <summary>Cancels the tasks bound to a caller that is gone; a full command queue is retried, so no binding is lost.</summary>
+    private async Task CancelBoundAsync(CallerKey caller)
+    {
+        foreach (var (task, key) in _bindings.ToArray())
+        {
+            if (key != caller || !IdText.TryParse(task, out var taskId))
+            {
+                continue;
             }
 
-            if (_callerConnections.TryGetValue(caller, out var count) && count > 0)
+            for (var tries = 0; ; tries++)
             {
-                return;
-            }
-
-            foreach (var (task, key) in _bindings.ToArray())
-            {
-                if (key != caller || !IdText.TryParse(task, out var taskId))
-                {
-                    continue;
-                }
-
-                _bindings.TryRemove(task, out _);
                 try
                 {
                     var (_, error, stop) = await _processor.ExecuteAsync(context =>
@@ -749,6 +766,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                             ? (TaskState.Unspecified, (ArcError?)null, (string?)null)
                             : Cancel(context, taskId, "caller_gone");
                     }).ConfigureAwait(false);
+                    _bindings.TryRemove(task, out _);
                     if (stop is not null)
                     {
                         Stop(stop, TerminationReason.Cancelled, null);
@@ -756,13 +774,29 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
                     _log.Info("execution.caller_gone", new LogField("task", task), new LogField("cancelled", error is null));
                     Kick();
+                    break;
                 }
                 catch (CommandQueueFullException)
                 {
-                    _log.Warning("execution.caller_gone.deferred", new LogField("task", task));
+                    _log.Warning("execution.caller_gone.queue_full", new LogField("task", task), new LogField("tries", tries + 1));
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100 * (tries + 1), 1_000)), _stop.Token).ConfigureAwait(false);
                 }
             }
-        });
+        }
+    }
+
+    /// <summary>True while the process of <paramref name="caller"/> (its ID and start time) still exists.</summary>
+    private static bool CallerAlive(CallerKey caller)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(caller.ProcessId);
+            return !process.HasExited && Math.Abs(process.StartTime.ToUniversalTime().Ticks - caller.StartTicks) < CallerStartTolerance.Ticks;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Win32Exception or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------------------------------------------------------------ stdin

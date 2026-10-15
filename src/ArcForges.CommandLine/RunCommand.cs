@@ -26,6 +26,26 @@ internal static class RunCommand
     /// <summary>routing.handoff_margin_ms (default 15 s).</summary>
     public static readonly TimeSpan HandoffMargin = TimeSpan.FromSeconds(15);
 
+    /// <summary>
+    /// When <c>run --client-timeout</c> hands off: the caller's timeout minus <see cref="HandoffMargin"/>, counted from this process's
+    /// start (the caller started its timer when it started the CLI), as a UTC time.
+    /// </summary>
+    public static DateTime HandoffAt(TimeSpan clientTimeout)
+    {
+        DateTime started;
+        try
+        {
+            using var self = System.Diagnostics.Process.GetCurrentProcess();
+            started = self.StartTime.ToUniversalTime();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            started = DateTime.UtcNow;
+        }
+
+        return started + (clientTimeout > HandoffMargin ? clientTimeout - HandoffMargin : TimeSpan.Zero);
+    }
+
     private static readonly TimeSpan ReconnectBudget = TimeSpan.FromSeconds(60);
 
     public static Command Build(Func<ParseResult, Cli> factory)
@@ -147,7 +167,8 @@ internal static class RunCommand
             }
 
             spec.Resources = Resources(result.GetValue(cpu), result.GetValue(mem), result.GetValue(memMax), result.GetValue(require));
-            TimeSpan? handoff = result.GetValue(clientTimeout) is { } clientText ? Duration(clientText, "--client-timeout") : null;
+            // The caller's timeout counts from the CLI's start, so connecting, an auto-start and the submission use part of it.
+            DateTime? handoff = result.GetValue(clientTimeout) is { } clientText ? HandoffAt(Duration(clientText, "--client-timeout")) : null;
             var request = new TaskServiceSubmitTaskRequest
             {
                 Meta = Cli.Meta(),
@@ -215,7 +236,7 @@ internal static class RunCommand
     /// after a lost connection with the offsets already written, handles Ctrl+C (cancel, then detach) and the client-timeout hand-off,
     /// and returns the exit code of its result.
     /// </summary>
-    public static async Task<int> AttachAsync(Cli cli, NodeSession session, Id taskId, bool forwardStdin, TimeSpan? clientTimeout, bool fromStart,
+    public static async Task<int> AttachAsync(Cli cli, NodeSession session, Id taskId, bool forwardStdin, DateTime? handoffAt, bool fromStart,
         CancellationToken cancellationToken)
     {
         using var mirror = new TaskText.Mirror();
@@ -234,8 +255,8 @@ internal static class RunCommand
         var channel = session.Channel;
         NodeSession? reconnected = null;
         using var detached = new CancellationTokenSource();
-        var handoff = clientTimeout is { } timeout
-            ? Task.Delay(timeout > HandoffMargin ? timeout - HandoffMargin : TimeSpan.Zero, detached.Token)
+        var handoff = handoffAt is { } at
+            ? Task.Delay(at > DateTime.UtcNow ? at - DateTime.UtcNow : TimeSpan.Zero, detached.Token)
             : Task.Delay(Timeout.Infinite, detached.Token);
         try
         {
