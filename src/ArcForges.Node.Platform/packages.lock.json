@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "ArcForges.Build.Policy": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.138.1, )",
+        "resolved": "1.0.0-ci.138.1",
+        "contentHash": "YxuYMCF+rfM44q2y18daDpkdg/XRakb6NHMFoFZgcVMaUTIWAraqzTpx9PyHe/fuEwabeOnznYa9N4fyL4IDyA=="
+      },
+      "ArcForges.Contracts.Node": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.375.1, )",
+        "resolved": "1.0.0-ci.375.1",
+        "contentHash": "dS9y7TQcsIAcLtEKqErtUfRTL4/lKnaVFo9sRMjfqhmSi8IJG9ai5Rtp0G00ACU57XHM7nNuOhlxPICpT/Oo2A==",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "1.0.0-ci.375.1",
+          "Google.Protobuf": "3.36.1",
+          "Grpc.Core.Api": "2.84.0"
+        }
+      },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "xi+BDjFpW+Sb+MHFHaH6Y/gV9I8BluFwRXc1QyCdoZbIK26eNiBeFuMTe/FMwc33G1wdHCyDg7CVTmb8OdQrMQ=="
+      },
+      "Google.Protobuf": {
+        "type": "Transitive",
+        "resolved": "3.36.1",
+        "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
+      },
+      "Grpc.Core.Api": {
+        "type": "Transitive",
+        "resolved": "2.84.0",
+        "contentHash": "p2SOMl6q/GZ4/5MLkgboC/z55g4zKUEruRn/g46QgppjQBVnsLZVBU/9VO7n60ll38G3Eo8Zu9b7x+W01GKFVg=="
+      },
+      "ArcForges.Contracts.Foundation": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.0-ci.375.1, )",
+        "resolved": "1.0.0-ci.375.1",
+        "contentHash": "v6kJFsDVjpdmii/UHu6hVoT6u3q7eYEfqrvwYD8WAd8vJS8DpTkh/dOkoHAYornz4Ih5oijK9ZBl94Cb2Zsl+g==",
+        "dependencies": {
+          "Google.Protobuf": "3.36.1"
+        }
+      }
+    },
+    "net10.0/linux-arm64": {},
+    "net10.0/linux-x64": {},
+    "net10.0/win-arm64": {},
+    "net10.0/win-x64": {}
+  }
+}

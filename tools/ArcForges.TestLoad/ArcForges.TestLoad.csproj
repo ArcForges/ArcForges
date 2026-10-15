@@ -2,13 +2,15 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
     Deterministic synthetic workload generator (16 section 2: a synthetic workload, not a fake).
-    Scenarios cpu, mem-ramp, output and fork are the inputs to scheduling, enforcement,
-    capture and diagnosis tests.
+    Scenarios cpu, mem-ramp, output, fork and signal (Windows console signals and windows) are the
+    inputs to scheduling, enforcement, capture, termination and diagnosis tests.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>arcforges-testload</AssemblyName>
     <RootNamespace>ArcForges.TestLoad</RootNamespace>
+    <!-- The signal scenario creates processes and a hidden window through source-generated P/Invoke (LibraryImport). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishAot>true</PublishAot>
     <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>

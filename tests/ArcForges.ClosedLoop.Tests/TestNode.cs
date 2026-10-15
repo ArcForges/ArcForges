@@ -62,6 +62,9 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>The <c>arcforges</c> binary under test: <c>ARCFORGES_HOST_PATH</c> or the JIT build next to the tests.</summary>
     public static string Host { get; } = Binary("ARCFORGES_HOST_PATH", "arcforges");
 
+    /// <summary>The <c>arcforges-testload</c> workload: <c>ARCFORGES_TESTLOAD_PATH</c> or the build next to the tests.</summary>
+    public static string TestLoad { get; } = Binary("ARCFORGES_TESTLOAD_PATH", "arcforges-testload");
+
     public string Root { get; }
 
     public string ConfigDirectory { get; }
@@ -91,6 +94,60 @@ internal sealed class TestNode : IAsyncDisposable
     {
         using var process = Start(Host, [.. args, NodeLocations.TestModeOption]);
         return await CompleteAsync(process, ProcessTimeout);
+    }
+
+    /// <summary>
+    /// Runs <c>arcforges --test-mode &lt;args&gt;</c> (the option before the arguments, so <c>run -- program</c> works) to completion and returns
+    /// the exact bytes of its streams.
+    /// </summary>
+    public async Task<(int ExitCode, byte[] Stdout, byte[] Stderr)> CliBytesAsync(TimeSpan timeout, params string[] args)
+    {
+        using var process = Start(Host, [NodeLocations.TestModeOption, .. args]);
+        return await BytesAsync(process, timeout);
+    }
+
+    /// <summary>Collects a started process's streams as bytes until it exits (bounded).</summary>
+    public static async Task<(int ExitCode, byte[] Stdout, byte[] Stderr)> BytesAsync(Process process, TimeSpan timeout)
+    {
+        using var stdout = new MemoryStream();
+        using var stderr = new MemoryStream();
+        var copyOut = process.StandardOutput.BaseStream.CopyToAsync(stdout);
+        var copyErr = process.StandardError.BaseStream.CopyToAsync(stderr);
+        using var deadline = new CancellationTokenSource(timeout);
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"{process.StartInfo.FileName} {string.Join(' ', process.StartInfo.ArgumentList)} did not exit within {timeout.TotalSeconds:0} s.");
+        }
+
+        await Task.WhenAll(copyOut, copyErr);
+        return (process.ExitCode, stdout.ToArray(), stderr.ToArray());
+    }
+
+    /// <summary>Writes policy revision 2 with <paramref name="change"/> applied (before the node first starts; PolicyService is AF-SCHED-01's).</summary>
+    public void SeedPolicy(Action<ArcForges.Contracts.Node.V1.PolicyDocument> change)
+    {
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "seed" });
+        store.Write(transaction =>
+        {
+            var document = ArcForges.Node.Store.Policy.PolicyDocuments.Current(transaction).Document.Clone();
+            change(document);
+            transaction.Execute("UPDATE policy_document SET is_current = 0 WHERE is_current = 1;");
+            transaction.Execute(
+                """
+                INSERT INTO policy_document (revision, document, digest, created_at, actor, comment, approval_id, is_current)
+                VALUES (2, $document, $digest, $now, $actor, 'test policy', NULL, 1);
+                """,
+                ("$document", Google.Protobuf.MessageExtensions.ToByteArray(document)),
+                ("$digest", ArcForges.Node.Store.Policy.PolicyDocuments.Digest(document)),
+                ("$now", transaction.NowMicroseconds),
+                ("$actor", Google.Protobuf.MessageExtensions.ToByteArray(new ArcForges.Contracts.Node.V1.ActorRef { Origin = ArcForges.Contracts.Node.V1.Origin.Human })));
+        });
+        SqliteConnection.ClearAllPools();
     }
 
     /// <summary>Starts <c>arcforges node run --test-mode</c> as a child of the test and waits until it answers.</summary>
@@ -228,6 +285,12 @@ internal sealed class TestNode : IAsyncDisposable
                 await CliAsync("node", "stop", "--timeout", "15s");
             }
 
+            // Attempts outlive a stopped node under their holders: end them, release the holders, and count what was left (16 section 4).
+            if (OperatingSystem.IsWindows())
+            {
+                leftovers.AddRange(EndAttempts());
+            }
+
             // Supervisors exit once their node stopped; give them a moment.
             await WaitAsync(() => LiveProcesses().Count == 0, TimeSpan.FromSeconds(15), "the node and supervisor processes to exit").ContinueWith(_ => { }, TaskScheduler.Default);
             foreach (var process in LiveProcesses())
@@ -268,6 +331,74 @@ internal sealed class TestNode : IAsyncDisposable
         }
 
         Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
+    }
+
+    /// <summary>Terminates every attempt job of this node by name and sets its ack event; returns the attempts that still ran.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private List<string> EndAttempts()
+    {
+        var running = new List<string>();
+        if (!File.Exists(StorePaths.Database(DataRoot)))
+        {
+            return running;
+        }
+
+        string node;
+        List<string> attempts;
+        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" }))
+        {
+            node = IdText.Format(store.Metadata.NodeId.Span);
+            attempts = store.Read(reader =>
+            {
+                var names = new List<string>();
+                using var command = reader.CreateCommand("SELECT attempt_id FROM attempt;");
+                using var rows = command.ExecuteReader();
+                while (rows.Read())
+                {
+                    names.Add(IdText.Format((byte[])rows.GetValue(0)));
+                }
+
+                return names;
+            });
+        }
+
+        SqliteConnection.ClearAllPools();
+        foreach (var attempt in attempts)
+        {
+            using var job = ArcForges.Node.Platform.Windows.JobObject.Open(ArcForges.Node.Platform.Windows.WindowsExecutionPlatform.JobName(node, attempt));
+            if (job is not null && job.Accounting().ActiveProcesses > 0)
+            {
+                running.Add($"attempt {attempt}");
+                job.Terminate(1);
+            }
+        }
+
+        var watch = Stopwatch.StartNew();
+        while (watch.Elapsed < TimeSpan.FromSeconds(15))
+        {
+            var open = 0;
+            foreach (var attempt in attempts)
+            {
+                if (EventWaitHandle.TryOpenExisting(ArcForges.Node.Platform.Windows.WindowsExecutionPlatform.AckName(node, attempt), out var ack))
+                {
+                    using (ack)
+                    {
+                        ack.Set();
+                    }
+
+                    open++;
+                }
+            }
+
+            if (open == 0)
+            {
+                break;
+            }
+
+            Thread.Sleep(100);
+        }
+
+        return running;
     }
 
     private void DeleteDataKeys()

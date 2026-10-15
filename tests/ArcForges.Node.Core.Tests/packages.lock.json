@@ -272,6 +272,17 @@
           "xunit.v3.runner.common": "[4.0.1]"
         }
       },
+      "arcforges": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.CommandLine": "[0.1.0-dev, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
+          "ArcForges.Node.Api": "[0.1.0-dev, )"
+        }
+      },
+      "arcforges-testload": {
+        "type": "Project"
+      },
       "arcforges.client": {
         "type": "Project",
         "dependencies": {
@@ -280,11 +291,20 @@
           "ArcForges.LocalRpc": "[1.0.0-ci.138.1, )"
         }
       },
+      "arcforges.commandline": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Client": "[0.1.0-dev, )",
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
+          "System.CommandLine": "[2.0.13, )"
+        }
+      },
       "arcforges.node.api": {
         "type": "Project",
         "dependencies": {
           "ArcForges.LocalRpc": "[1.0.0-ci.138.1, )",
-          "ArcForges.Node.Core": "[0.1.0-dev, )"
+          "ArcForges.Node.Core": "[0.1.0-dev, )",
+          "ArcForges.Node.Platform.Windows": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.core": {
@@ -293,8 +313,22 @@
           "ArcForges.Client": "[0.1.0-dev, )",
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
+          "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.Node.Store": "[0.1.0-dev, )",
           "ArcForges.Observability": "[1.0.0-ci.138.1, )"
+        }
+      },
+      "arcforges.node.platform": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )"
+        }
+      },
+      "arcforges.node.platform.windows": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
+          "ArcForges.Node.Platform": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.store": {
@@ -359,6 +393,12 @@
           "SQLitePCLRaw.bundle_e_sqlite3": "2.1.12",
           "SQLitePCLRaw.core": "2.1.12"
         }
+      },
+      "System.CommandLine": {
+        "type": "CentralTransitive",
+        "requested": "[2.0.13, )",
+        "resolved": "2.0.13",
+        "contentHash": "TIO2lMV+sSP7WW7pD/oCRHD9ENWY+jqwXmYzgks3R46cEdDzwjQOAhsiBn+M3EegfGjgTpa2h+eIrcU+AM2k6A=="
       }
     }
   }

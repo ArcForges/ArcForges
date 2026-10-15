@@ -112,7 +112,9 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             CheckId = "node.enforcement",
             Area = "enforcement",
             Status = NodeCapabilities.FullyEnforced(_node.Capabilities) ? CheckStatus.Pass : CheckStatus.Warn,
-            Summary = NodeCapabilities.FullyEnforced(_node.Capabilities) ? "Resource limits are enforced." : "Resource limits are observed only: " + NodeCapabilities.NotInBuild + ".",
+            Summary = NodeCapabilities.FullyEnforced(_node.Capabilities)
+                ? "Resource limits are enforced."
+                : "Resource limits are observed only: " + (NodeCapabilities.MissingReason(_node.Capabilities) ?? NodeCapabilities.NotInBuild) + ".",
         });
         value.Metrics.Add(Gauge("node.uptime_seconds", (_node.Clock.GetUtcNow() - _node.StartedAt).TotalSeconds));
         value.Metrics.Add(Counter("node.rpc_calls", _node.RpcCalls));

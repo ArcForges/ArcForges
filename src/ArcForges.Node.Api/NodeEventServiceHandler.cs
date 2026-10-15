@@ -23,7 +23,8 @@ namespace ArcForges.Node.Api;
 /// and when it fills the subscriber catches up from the journal instead.</item>
 /// <item><c>ListEvents</c>: the events after a cursor, or <c>reset_required</c>.</item>
 /// </list>
-/// The topics with event sources in this build are NODE, JOBS and NOTIFICATIONS; the other topics are valid and carry nothing yet.
+/// The topics with event sources in this build are NODE, TASKS (live tasks in the snapshot; task and attempt changes), FINDINGS (raised by
+/// execution), JOBS and NOTIFICATIONS; the other topics are valid and carry nothing yet.
 /// </summary>
 public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceBase
 {
@@ -239,6 +240,14 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
         if (topics.Contains(EventTopic.Node))
         {
             Add(EventTopic.Node, new NodeEvent { Node = _node.Status() });
+        }
+
+        if (topics.Contains(EventTopic.Tasks))
+        {
+            foreach (var task in ArcForges.Node.Core.Execution.TaskRecords.LiveTasks(reader))
+            {
+                Add(EventTopic.Tasks, new NodeEvent { Task = new TaskChanged { Task = task } });
+            }
         }
 
         if (topics.Contains(EventTopic.Jobs))

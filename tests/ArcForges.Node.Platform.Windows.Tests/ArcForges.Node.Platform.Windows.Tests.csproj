@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Tests of src/ArcForges.Node.Platform and src/ArcForges.Node.Platform.Windows (16-testing-strategy section 4): pure units (command lines
+    and the batch refusal corpus, helper formats, the heartbeat takeover rule) on every OS, and the Windows platform with real job objects,
+    real holders (the arcforges executable built next to the tests, or ARCFORGES_HOST_PATH), real console signals and real tools
+    (Trait env=windows-real; tool=dotnet|cargo|cmake for the nested-job builds of F-W02). The deterministic workloads are arcforges-testload
+    (ARCFORGES_TESTLOAD_PATH selects a published binary). Every test kills the jobs and processes it started and fails when any is left.
+  -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ArcForges.Node.Platform.Windows/ArcForges.Node.Platform.Windows.csproj" />
+    <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
+    <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
+    <!-- The host's graph carries the DesktopPlatform 1.0.0-ci.138.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
+    <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+  </ItemGroup>
+</Project>

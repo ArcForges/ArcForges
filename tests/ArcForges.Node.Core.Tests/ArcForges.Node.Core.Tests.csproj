@@ -2,14 +2,17 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
     Unit and node-component tests of src/ArcForges.Node.Core and src/ArcForges.Node.Api (16-testing-strategy sections 1 and 4):
-    lifecycle, cursors, configuration and log redaction as units; the journal, command processor, NodeService and
-    NodeEventService with their real neighbours: a real SQLite store, a real LocalRpc server on a real named pipe or Unix
+    lifecycle, cursors, configuration and log redaction as units; the journal, command processor, NodeService, NodeEventService and
+    TaskService (with the real Windows execution platform, real holders and arcforges-testload workloads) with their real neighbours: a real SQLite store, a real LocalRpc server on a real named pipe or Unix
     socket, the real client library and the real OS secret store (Windows Credential Manager with uniquely named, deleted
     entries; on Linux the owner-only file fallback). No fakes.
   -->
   <ItemGroup>
     <ProjectReference Include="../../src/ArcForges.Node.Api/ArcForges.Node.Api.csproj" />
     <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />
+    <!-- The node starts its helper roles from the arcforges executable; attempts run the deterministic arcforges-testload workloads. -->
+    <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
+    <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
     <!-- The node's graph carries the DesktopPlatform 1.0.0-ci.138.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
   </ItemGroup>

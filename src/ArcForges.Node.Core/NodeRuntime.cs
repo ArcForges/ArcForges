@@ -84,6 +84,9 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>The node ID (16 bytes).</summary>
     public ReadOnlyMemory<byte> NodeId => Store.Metadata.NodeId;
 
+    /// <summary>The execution supervisor (set by the host before the API listens).</summary>
+    public Execution.ExecutionSupervisor? Execution { get; set; }
+
     /// <summary>A snapshot of the API server's counters (set by the API layer).</summary>
     public Func<IReadOnlyList<HealthMetric>>? ServerMetrics { get; set; }
 
@@ -107,7 +110,7 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>Re-runs the capability evaluation (<c>GetCapabilities</c> with <c>reevaluate</c>).</summary>
     public CapabilityReport Reevaluate()
     {
-        var report = NodeCapabilities.Evaluate(Clock);
+        var report = Execution?.Platform is { } platform ? NodeCapabilities.FromPlatform(platform, Clock) : NodeCapabilities.Evaluate(Clock);
         Volatile.Write(ref _capabilities, report);
         return report;
     }

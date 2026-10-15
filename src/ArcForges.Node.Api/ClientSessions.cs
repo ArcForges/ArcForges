@@ -27,6 +27,12 @@ public sealed class ClientSessions
     /// <summary>Open sessions.</summary>
     public int Count => _sessions.Count;
 
+    /// <summary>Called when a connection said hello (once per connection).</summary>
+    public Action<ClientSession>? Opened { get; init; }
+
+    /// <summary>Called when a connection that said hello closed.</summary>
+    public Action<ClientSession>? Closed { get; init; }
+
     /// <summary>The interim origin of a client.</summary>
     public static Origin AssignOrigin(ClientHello hello)
     {
@@ -48,13 +54,27 @@ public sealed class ClientSessions
         var id = http.Connection.Id;
         if (_sessions.TryAdd(id, session))
         {
+            Opened?.Invoke(session);
             var lifetime = http.Features.Get<IConnectionLifetimeFeature>();
-            lifetime?.ConnectionClosed.Register(() => _sessions.TryRemove(id, out _));
+            lifetime?.ConnectionClosed.Register(() =>
+            {
+                if (_sessions.TryRemove(id, out var closed))
+                {
+                    Closed?.Invoke(closed);
+                }
+            });
         }
         else
         {
             _sessions[id] = session;
         }
+    }
+
+    /// <summary>The session of the call's connection, or <see langword="null"/> when it sent no hello.</summary>
+    public ClientSession? SessionOf(ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) ? session : null;
     }
 
     /// <summary>The origin of the call's connection: assigned at its hello, or SCRIPT for a connection that sent none.</summary>

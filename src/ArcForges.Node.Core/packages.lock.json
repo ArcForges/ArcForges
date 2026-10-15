@@ -189,6 +189,12 @@
           "ArcForges.LocalRpc": "[1.0.0-ci.138.1, )"
         }
       },
+      "arcforges.node.platform": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )"
+        }
+      },
       "arcforges.node.store": {
         "type": "Project",
         "dependencies": {

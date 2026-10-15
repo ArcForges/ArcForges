@@ -13,6 +13,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../ArcForges.Node.Core/ArcForges.Node.Core.csproj" />
+    <ProjectReference Include="../ArcForges.Node.Platform.Windows/ArcForges.Node.Platform.Windows.csproj" />
     <PackageReference Include="ArcForges.LocalRpc" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
   </ItemGroup>

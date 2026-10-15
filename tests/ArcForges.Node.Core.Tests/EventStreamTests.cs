@@ -33,7 +33,7 @@ public sealed class EventStreamTests
         var snapshot = await ReadUntilAsync(reader, frame => frame.FrameCase == NodeEventServiceSubscribeFrame.FrameOneofCase.SnapshotComplete);
         var complete = snapshot[^1];
         Assert.All(snapshot[..^1], frame => Assert.True(frame.Event.FromSnapshot));
-        Assert.Contains(snapshot, frame => frame.Event?.Node?.State == NodeLifecycleState.Degraded);
+        Assert.Contains(snapshot, frame => frame.Event?.Node?.State == InProcessNode.ExpectedState);
         Assert.Contains(snapshot, frame => frame.Event?.Job?.Kind == JobKind.Doctor);
         Assert.Equal(node.Runtime.Journal.Generation, complete.Position.Generation);
         Assert.True(EventCursor.TryParse(complete.Position.Cursor, out var cursor));
@@ -148,7 +148,7 @@ public sealed class EventStreamTests
         }, Topics, new ReconnectBackoff(() => 0));
         cache.Start();
         await WaitAsync(() => cache.SnapshotsApplied == 1 && cache.NodeStatus is not null);
-        Assert.Equal(NodeLifecycleState.Degraded, cache.NodeStatus!.State);
+        Assert.Equal(InProcessNode.ExpectedState, cache.NodeStatus!.State);
         Assert.Equal(ConnectionState.Connected, cache.Connection.State);
 
         // A disconnect (the channel closes under the subscription), events while away, then a resume from the cursor.

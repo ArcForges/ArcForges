@@ -29,6 +29,9 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
     /// <summary>The supervisor log.</summary>
     public string LogFile => Path.Combine(DataRoot, "logs", "supervisor", "supervisor.log");
 
+    /// <summary>The node heartbeat <c>run/node-heartbeat</c> (02 section 2; 06 section 5).</summary>
+    public string HeartbeatFile => Path.Combine(DataRoot, "run", "node-heartbeat");
+
     public static SupervisorLocations Resolve(bool testMode)
     {
         var configDirectory = testMode && Environment.GetEnvironmentVariable(ConfigDirectoryVariable) is { Length: > 0 } overridden && Path.IsPathFullyQualified(overridden)

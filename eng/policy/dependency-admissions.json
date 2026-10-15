@@ -263,6 +263,15 @@
     },
     {
       "code": "NU1608",
+      "project": "tests/ArcForges.Node.Platform.Windows.Tests/ArcForges.Node.Platform.Windows.Tests.csproj",
+      "reference": "ArcForges.Contracts.Foundation",
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.138.1 (DesktopPlatform 4e20932) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins. The project references the arcforges host (its holder and signal roles run in the tests), so it carries the host's graph.",
+      "evidence": "The same graph as tests/ArcForges.Node.Core.Tests (AF-EXEC-01 adds or changes no package): the 436-reference System.Reflection.Metadata comparison recorded for AF-NODE-01 applies unchanged. The Windows platform tests (jobs, holders, signals, builds) run against it on Windows, JIT and Native AOT.",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
+      "reviewedOn": "2026-10-15"
+    },
+    {
+      "code": "NU1608",
       "project": "tests/ArcForges.Node.Core.Tests/ArcForges.Node.Core.Tests.csproj",
       "reference": "ArcForges.Contracts.Foundation",
       "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.138.1 (DesktopPlatform 4e20932) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",

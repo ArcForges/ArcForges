@@ -13,6 +13,19 @@ public sealed class CommandLineTests
 {
     private static readonly NodeRunner NoNode = (_, _) => throw new InvalidOperationException("These tests never run the node role.");
 
+    [Fact]
+    public void TheClientTimeoutHandOffCountsFromTheCliStart()
+    {
+        // The caller's timer started with the CLI: connecting, an auto-start and the submission use part of the budget (cli.md, run).
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        var started = self.StartTime.ToUniversalTime();
+        var at = RunCommand.HandoffAt(TimeSpan.FromMinutes(10));
+        Assert.Equal(started + TimeSpan.FromMinutes(10) - RunCommand.HandoffMargin, at);
+        Assert.Equal(started, RunCommand.HandoffAt(TimeSpan.FromSeconds(10)));
+        Assert.True(RunCommand.HandoffAt(TimeSpan.FromMinutes(10)) < DateTime.UtcNow + TimeSpan.FromMinutes(10) - RunCommand.HandoffMargin,
+            "The hand-off time does not restart when the attach begins.");
+    }
+
     [Theory]
     [InlineData("status")]
     [InlineData("status --json")]
