@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Closed-loop (local) tests of 16-testing-strategy: real `arcforges` node and CLI processes (and, on Windows, the real
+    arcforges-supervisor.exe) over the real per-user endpoint, with the real OS: named pipes and their access lists, Unix sockets,
+    single-instance mutexes and flock, the systemd user manager, process kills. The JIT builds next to the tests run by default;
+    ARCFORGES_HOST_PATH (and ARCFORGES_SUPERVISOR_PATH on Windows) select published Native AOT binaries. Every test node gets
+    its own configuration, data root and endpoint through the test hooks (the test-mode option), and the fixture fails a test that leaves
+    a node or supervisor process behind (16 section 4).
+  -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
+    <ProjectReference Include="../../src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
+    <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />
+    <ProjectReference Include="../../tools/ArcForges.Bench/ArcForges.Bench.csproj" />
+    <!-- The node's graph carries the DesktopPlatform 1.0.0-ci.138.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
+    <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+    <None Include="Procedures/**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../eng/systemd/arcforges-node.service" Link="Procedures/arcforges-node.service" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The shared client library of the CLI, Desktop and MCP adapter (architecture 12 section 1): endpoint resolution and
+    auto-start (02 section 3), the LocalRpc channel with the client hello, NodeStreamCache, CommandIds and ConnectionState.
+    Library of the AOT executable arcforges (AD-0003), so it is AOT- and trim-compatible.
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.Client</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- Windows process creation, job queries and named-pipe probing are source-generated P/Invoke (LibraryImport). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ArcForges.Contracts.Node" />
+    <PackageReference Include="ArcForges.Contracts.Foundation" />
+    <PackageReference Include="ArcForges.LocalRpc" />
+    <InternalsVisibleTo Include="ArcForges.Client.Tests" />
+  </ItemGroup>
+</Project>

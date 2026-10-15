@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Unit tests of src/ArcForges.Client and src/ArcForges.CommandLine (16-testing-strategy section 1, unit layer): IDs, command
+    IDs and retried bytes, reconnect backoff, endpoint locations and descriptors, the CLI grammar, output modes, exit codes and
+    completion. Pure logic and real files; no node process (the closed-loop suite covers those).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />
+    <ProjectReference Include="../../src/ArcForges.CommandLine/ArcForges.CommandLine.csproj" />
+  </ItemGroup>
+</Project>

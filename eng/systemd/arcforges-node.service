@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Development systemd user unit of the ArcForges node (ArcForges-Design 13 section 3.4; 02 section 2 Crash).
+# The installers (AF-DIST-01) ship the release units; this one is for development and tests. It differs from
+# 13 section 3.4 in having no OnFailure= rollback unit (the updater and its rollback unit are later tasks) and in
+# RestartPreventExitStatus=3, so a node that finds another instance running is not restarted in a loop.
+#
+# Try it (installs nothing persistent; the runtime unit directory is cleared at logout):
+#   mkdir -p "$XDG_RUNTIME_DIR/systemd/user"
+#   sed "s|@ARCFORGES@|$PWD/artifacts/publish/linux-x64/host/arcforges|" eng/systemd/arcforges-node.service \
+#     > "$XDG_RUNTIME_DIR/systemd/user/arcforges-node.service"
+#   systemctl --user daemon-reload && arcforges status
+#   arcforges node stop; rm "$XDG_RUNTIME_DIR/systemd/user/arcforges-node.service"; systemctl --user daemon-reload
+[Unit]
+Description=ArcForges node (development unit)
+Documentation=https://github.com/ArcForges/ArcForges
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=30
+ExecStart=@ARCFORGES@ node run --systemd
+Restart=on-failure
+RestartSec=2
+RestartForceExitStatus=75
+SuccessExitStatus=75
+# Exit 3: another node instance already runs for this user (for example 'arcforges node run' in a terminal); not a crash.
+RestartPreventExitStatus=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

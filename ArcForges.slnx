@@ -1,15 +1,23 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/ArcForges.Client/ArcForges.Client.csproj" />
+    <Project Path="src/ArcForges.CommandLine/ArcForges.CommandLine.csproj" />
     <Project Path="src/ArcForges.Desktop/ArcForges.Desktop.csproj" />
     <Project Path="src/ArcForges.Host/ArcForges.Host.csproj" />
+    <Project Path="src/ArcForges.Node.Api/ArcForges.Node.Api.csproj" />
+    <Project Path="src/ArcForges.Node.Core/ArcForges.Node.Core.csproj" />
     <Project Path="src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
+    <Project Path="src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/ArcForges.Bench/ArcForges.Bench.csproj" />
     <Project Path="tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ArcForges.Client.Tests/ArcForges.Client.Tests.csproj" />
+    <Project Path="tests/ArcForges.ClosedLoop.Tests/ArcForges.ClosedLoop.Tests.csproj" />
     <Project Path="tests/ArcForges.Desktop.Tests/ArcForges.Desktop.Tests.csproj" />
+    <Project Path="tests/ArcForges.Node.Core.Tests/ArcForges.Node.Core.Tests.csproj" />
     <Project Path="tests/ArcForges.Node.Store.Tests/ArcForges.Node.Store.Tests.csproj" />
     <Project Path="tests/ArcForges.Repository.Tests/ArcForges.Repository.Tests.csproj" />
     <Project Path="tests/ArcForges.Tools.Tests/ArcForges.Tools.Tests.csproj" />

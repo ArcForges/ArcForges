@@ -1,0 +1,3 @@
+# Exact false positives: fabricated test values that remain in pushed history. One line per finding fingerprint; never a wildcard.
+# AF-NODE-01: a synthetic redaction-test token in commit 70d08ef, replaced by a run-time value in c055fad.
+70d08efe78381c3241534d66870b308c00ee02f7:tests/ArcForges.Node.Core.Tests/UnitTests.cs:generic-api-key:103

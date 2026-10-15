@@ -51,6 +51,7 @@ any change. They are binding; this file summarizes them and adds the repository 
   `ArcForges.Bench`), `tests/` (16 §4), `eng/` scripts and policy. Add a project only when its task
   fills it; no placeholder behaviour.
 - **Executables** (AD-0003): `arcforges` (`src/ArcForges.Host`, multi-role node/CLI),
+  `arcforges-supervisor.exe` (`src/ArcForges.Supervisor`, Windows only, GUI subsystem),
   `arcforges-desktop` (`src/ArcForges.Desktop`), plus the tools `arcforges-testload` and
   `arcforges-bench`. Names must stay distinct on case-insensitive file systems.
 - **Build policy:** `Directory.Build.props` references DesktopPlatform's build-only
@@ -70,14 +71,20 @@ any change. They are binding; this file summarizes them and adds the repository 
 - **Tests:** select suites by trait with `eng/test.ps1` or `eng/test.sh` (`-List` / `--list`
   shows suites and task kinds; definitions in `eng/test-suites.conf`). Real-OS tests carry
   `env=windows-real|linux-real|wsl-bridge` and skip with a reason elsewhere; tool-dependent tests
-  carry `tool=...` and skip with a reason when the tool is missing.
+  carry `tool=...` and skip with a reason when the tool is missing. Closed-loop tests (`loop=local`)
+  run real `arcforges` processes (JIT next to the tests, or `ARCFORGES_HOST_PATH`), each node isolated with
+  `--test-mode` and the `ARCFORGES_ENDPOINT` / `ARCFORGES_CONFIG_DIR` hooks; their fixture fails a test that leaves a
+  node or supervisor running and deletes the node data key it created in the OS secret store. On Windows a
+  shell inside a job without breakaway (an AI-client sandbox) refuses auto-start by design, so the auto-start
+  test skips there with its reason.
 - **Workloads and benchmarks:** `arcforges-testload` (cpu, mem-ramp, output, fork) is a
   deterministic synthetic workload, not a fake; evidence names the scenario and parameters.
   `arcforges-bench` (size, startup, compare-startup, store-growth) produces the JSON results of
-  15-performance-targets. CI gates sizes and node store growth, and gates startup against the previous successful main
-  run (`eng/compare-startup.ps1`): the statistic is the p50 of 50 runs, and a regression must
-  exceed both 25% and an absolute noise floor of 5 ms. Without a baseline, the result passes
-  with its reason. On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms`.
+  15-performance-targets. CI gates sizes and node store growth, and gates the CLI cold start (`arcforges --version`)
+  against the previous successful main run (`eng/compare-startup.ps1`): the statistic is the p50 of 50 runs, and a
+  regression must exceed both 25% and an absolute noise floor of 5 ms. Without a baseline, the result passes
+  with its reason. On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms 40 -StartupP95Ms 80`;
+  the status round trip is the `category=perf` test `StatusRoundTrip` with `ARCFORGES_HOST_PATH` set.
 - Avalonia build telemetry is off repository-wide: `Directory.Build.targets` replaces the
   `AvaloniaStats` target of the transitive Avalonia.BuildServices package (a repository test keeps
   it). CI and the `eng/` scripts also set `AVALONIA_TELEMETRY_OPTOUT=1`; keep it set in your shell.

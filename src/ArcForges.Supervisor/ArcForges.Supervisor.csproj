@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    arcforges-supervisor.exe (AD-0003 section 1; 02 section 2 Crash; 13 section 3.1): a small Windows GUI-subsystem Native AOT
+    executable with no window. It starts `arcforges.exe node run` with CREATE_NO_WINDOW, restarts the node after a crash
+    (backoff 2 s, 5 s, 10 s; after 5 crashes in 10 minutes it records node_crash_loop in its log and exits, so the next client
+    auto-start tries again), and provides the HKCU Run autostart registration that the installer (AF-DIST-01) writes.
+    On Linux systemd fills this role.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>arcforges-supervisor</AssemblyName>
+    <RootNamespace>ArcForges.Supervisor</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <!-- Published for Windows only (eng/publish.ps1); the Linux RIDs keep the lock file consistent with restores on Linux, where the solution builds too. -->
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+    <!-- 15 section 1: arcforges-supervisor.exe at most 4 MB. -->
+    <OptimizationPreference>Size</OptimizationPreference>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ArcForges.ClosedLoop.Tests" />
+  </ItemGroup>
+</Project>

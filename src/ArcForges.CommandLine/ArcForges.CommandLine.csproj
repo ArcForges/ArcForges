@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The arcforges CLI (architecture 12 section 3, experience/cli.md): System.CommandLine 2.x (F-N02 decision: warning-free
+    Native AOT publish and a cold start within 15 section 1), global options, human and JSON output, exit codes and the
+    commands status, node, config, events, jobs, version and completion. The node role itself is supplied by the host.
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.CommandLine</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Client/ArcForges.Client.csproj" />
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="ArcForges.Contracts.Node" />
+    <InternalsVisibleTo Include="ArcForges.Client.Tests" />
+  </ItemGroup>
+</Project>

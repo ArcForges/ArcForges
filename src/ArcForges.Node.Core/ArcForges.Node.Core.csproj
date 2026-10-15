@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The node's core (architecture 02 sections 1-5): configuration and data root, single instance, structured logging through
+    the ArcForges.Observability redaction processor, the command processor (single writer), the event journal and stream hub,
+    node settings, notifications, jobs, the lifecycle (SM-NODE) and the crash recovery hooks. Library of the AOT executable
+    arcforges (AD-0003), so it is AOT- and trim-compatible.
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.Node.Core</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- flock, sd_notify and the Windows boot time are source-generated P/Invoke (LibraryImport). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
+    <ProjectReference Include="../ArcForges.Client/ArcForges.Client.csproj" />
+    <PackageReference Include="ArcForges.Contracts.Node" />
+    <!--
+      ArcForges.Observability 1.0.0-ci.138.1 and its ArcForges.Capabilities and ArcForges.Foundation pin
+      ArcForges.Contracts.Foundation to exactly 1.0.0-ci.216.1, as Security.Secrets does in the store; the node contracts need
+      1.0.0-ci.375.1. NU1608 is accepted for this package's graph only (recorded in eng/policy/dependency-admissions.json).
+    -->
+    <PackageReference Include="ArcForges.Observability" />
+    <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+    <InternalsVisibleTo Include="ArcForges.Node.Api" />
+    <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+  </ItemGroup>
+</Project>

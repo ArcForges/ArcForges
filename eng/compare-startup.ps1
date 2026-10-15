@@ -10,7 +10,8 @@
   unexpired bench artifact of it, exists (for example the first run), the result is recorded as
   passing with that reason. Any other API failure fails the step.
 
-  Needs eng/bench.ps1 output (artifacts/bench/<rid>/startup-arcforges.json) and the published
+  Needs eng/bench.ps1 output (artifacts/bench/<rid>/startup-arcforges-version.json, the CLI cold start of
+  `arcforges --version`) and the published
   arcforges-bench. In GitHub Actions it reads GITHUB_TOKEN (actions: read), GITHUB_REPOSITORY,
   GITHUB_API_URL and GITHUB_RUN_ID; the token is sent only to the GitHub API. Locally, pass
   -BaselineFile to compare with a saved result instead.
@@ -24,14 +25,16 @@ param(
   [string] $BaselineFile,
   [string] $Workflow = 'ci.yml',
   [double] $MaxRegressionPercent = 25,
-  [double] $NoiseFloorMs = 5
+  [double] $NoiseFloorMs = 5,
+  # The startup result compared: the CLI cold start since AF-NODE-01 (before it, the empty host's startup-arcforges.json).
+  [string] $ResultFile = 'startup-arcforges-version.json'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path $PSScriptRoot -Parent
 $results = Join-Path $repository "artifacts/bench/$RuntimeIdentifier"
-$current = Join-Path $results 'startup-arcforges.json'
+$current = Join-Path $results $ResultFile
 $suffix = if ($RuntimeIdentifier.StartsWith('win-')) { '.exe' } else { '' }
 $bench = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/bench/arcforges-bench$suffix"
 if (-not (Test-Path -LiteralPath $current)) { throw "Run eng/bench.ps1 first: $current is missing." }
@@ -62,8 +65,8 @@ function Get-MainBaseline {
   # The redirect to the storage host does not carry the Authorization header.
   Invoke-WebRequest -Headers $headers -Uri $artifact.archive_download_url -OutFile $archive
   Expand-Archive -LiteralPath $archive -DestinationPath $download
-  $file = Join-Path $download 'startup-arcforges.json'
-  if (-not (Test-Path -LiteralPath $file)) { return @{ Reason = "$source has no startup-arcforges.json in $name." } }
+  $file = Join-Path $download $ResultFile
+  if (-not (Test-Path -LiteralPath $file)) { return @{ Reason = "$source has no $ResultFile in $name (the benchmark is new there)." } }
   return @{ Path = $file; Source = $source }
 }
 

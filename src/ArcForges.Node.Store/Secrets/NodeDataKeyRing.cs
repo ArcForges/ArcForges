@@ -129,6 +129,96 @@ public sealed class NodeDataKeyRing : IDisposable
         }
     }
 
+    /// <summary>
+    /// Loads the current node data key into memory at node startup, creating a new key version in the selected backend when none is
+    /// usable, so that sealing never waits on the secret store while it holds the store's writer lock (Security.Secrets calls can
+    /// block for their timeouts). The secret-store read or write happens outside any store transaction; only recording a new
+    /// version takes a short write transaction. Returns the current key ID, or <see langword="null"/> with the reason when the
+    /// backend is unavailable (sealing then fails closed until it is).
+    /// </summary>
+    public string? Prepare(out string? unavailableReason)
+    {
+        string keyId;
+        byte[] created;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var records = _store.Read(ReadRecords);
+            var current = records.Keys.LastOrDefault(key => string.Equals(key.KeyId, records.Current, StringComparison.Ordinal));
+            if (current is not null && string.Equals(current.Backend, _selection.Backend.ToString(), StringComparison.Ordinal)
+                && TryLoad(current.KeyId, out _, out _))
+            {
+                unavailableReason = null;
+                return current.KeyId;
+            }
+
+            var next = records.Keys.Count == 0
+                ? 1
+                : records.Keys.Max(key => int.Parse(key.KeyId, NumberStyles.None, CultureInfo.InvariantCulture)) + 1;
+            keyId = next.ToString(CultureInfo.InvariantCulture);
+            created = RandomNumberGenerator.GetBytes(KeyBytes);
+            try
+            {
+                _selection.Store.Write(TargetName(_store.Metadata.NodeId.Span, keyId), created);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                CryptographicOperations.ZeroMemory(created);
+                // A reason code and the exception type only: secret-store messages are not logged (R-SEC-003, reason codes only).
+                unavailableReason = $"secret_store_write_failed backend={_selection.Backend} errorType={exception.GetType().Name}";
+                return null;
+            }
+        }
+
+        // Record the new version; the lock order (writer, then ring) is the one GetOrCreateCurrent uses inside a transaction.
+        var recorded = _store.Write(transaction =>
+        {
+            lock (_gate)
+            {
+                var records = ReadRecords(transaction);
+                var current = records.Keys.LastOrDefault(key => string.Equals(key.KeyId, records.Current, StringComparison.Ordinal));
+                if (current is not null && string.Equals(current.Backend, _selection.Backend.ToString(), StringComparison.Ordinal)
+                    && _cache.ContainsKey(current.KeyId))
+                {
+                    // Another caller created a usable key meanwhile; it stays current.
+                    return current.KeyId;
+                }
+
+                records.Keys.Add(new DataKeyInfo
+                {
+                    KeyId = keyId,
+                    Backend = _selection.Backend.ToString(),
+                    Protection = _selection.Protection.ToString(),
+                    CreatedAt = transaction.NowMicroseconds,
+                });
+                records.Current = keyId;
+                transaction.Execute(
+                    """
+                    INSERT INTO node_setting (name, value_json, updated_at, rev) VALUES ($name, $value, $now, 0)
+                    ON CONFLICT (name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at, rev = rev + 1;
+                    """,
+                    ("$name", SettingName),
+                    ("$value", JsonSerializer.Serialize(records, StoreJsonContext.Default.DataKeyRecords)),
+                    ("$now", transaction.NowMicroseconds));
+                if (_cache.Remove(keyId, out var stale))
+                {
+                    CryptographicOperations.ZeroMemory(stale);
+                }
+
+                _cache[keyId] = created;
+                return keyId;
+            }
+        });
+        if (!string.Equals(recorded, keyId, StringComparison.Ordinal))
+        {
+            _selection.Store.Delete(TargetName(_store.Metadata.NodeId.Span, keyId));
+            CryptographicOperations.ZeroMemory(created);
+        }
+
+        unavailableReason = null;
+        return recorded;
+    }
+
     /// <summary>Zeroes the cached key material.</summary>
     public void Dispose()
     {
