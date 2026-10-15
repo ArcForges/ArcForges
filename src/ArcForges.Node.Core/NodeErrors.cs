@@ -48,6 +48,20 @@ public static class NodeErrors
     public static ArcError InvalidState(string state, string reason) =>
         Create(ErrorCategory.State, "invalid_state", RetryMode.Never, new StateFailure { State = state, Reason = reason });
 
+    /// <summary>A catalogued <c>VALIDATION</c> error with <c>state.reason</c> (unsafe_batch_argument, program_not_found, unsupported_shell, path_not_found, invalid_dependency).</summary>
+    public static ArcError Validation(string code, string reason) =>
+        Create(ErrorCategory.Validation, code, RetryMode.Never, new StateFailure { Reason = reason });
+
+    /// <summary><c>STATE/not_attached</c>: a stdin call without the caller's current attach.</summary>
+    public static ArcError NotAttached() => Create(ErrorCategory.State, "not_attached", RetryMode.Never, null);
+
+    /// <summary><c>STATE/pause_unsupported</c>.</summary>
+    public static ArcError PauseUnsupported() => Create(ErrorCategory.State, "pause_unsupported", RetryMode.Never, null);
+
+    /// <summary><c>RESOURCE/enforcement_unavailable</c>: <c>state.reason</c> names the capability.</summary>
+    public static ArcError EnforcementUnavailable(string capability) =>
+        Create(ErrorCategory.Resource, "enforcement_unavailable", RetryMode.Never, new StateFailure { Reason = capability });
+
     /// <summary><c>STATE/node_stopping</c>: retry <c>AFTER_TIME</c> (2 s), effect <c>DID_NOT_HAPPEN</c>.</summary>
     public static ArcError NodeStopping(DateTimeOffset now)
     {

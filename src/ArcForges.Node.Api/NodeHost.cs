@@ -5,7 +5,9 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
 
@@ -62,6 +64,15 @@ public sealed record NodeHostOptions
     /// component tests on Linux select the owner-only file fallback so the user's keyring is never touched).
     /// </summary>
     public Func<string, SecretStoreSelection> SecretStore { get; init; } = dataRoot => OsSecretStore.SelectForCurrentPlatform(dataRoot);
+
+    /// <summary>
+    /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
+    /// executable beside this one (04 section 3: helpers are invoked by path); component tests name the host built next to them.
+    /// </summary>
+    public string? HelperExecutable { get; init; }
+
+    /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
+    public ILaunchStepProvider? LaunchSteps { get; init; }
 }
 
 /// <summary>
@@ -126,6 +137,13 @@ public static class NodeHost
         using var log = new NodeLog(Path.Combine(dataRoot, "logs", "node"), NodeConfiguration.ParseLogLevel(configuration.LogLevel), clock);
         log.Info("node.starting", new LogField("pid", Environment.ProcessId), new LogField("version", NodeContract.ProductVersion),
             new LogField("testMode", options.TestMode), new LogField("systemd", options.Systemd));
+        var faults = ExecutionFaults.FromEnvironment(options.TestMode, dataRoot);
+        if (faults.Take("slow-startup") is { } slow)
+        {
+            // Fault injection (test mode): a long store migration before the first heartbeat.
+            log.Warning("node.fault.slow_startup", new LogField("delayMs", (long)slow.TotalMilliseconds));
+            await Task.Delay(slow, cancellationToken).ConfigureAwait(false);
+        }
         using var notifier = SystemdNotifier.FromEnvironment();
         using var ready = OperatingSystem.IsWindows() ? WindowsReadyEvent.Create(instanceKey) : null;
 
@@ -144,7 +162,7 @@ public static class NodeHost
 
         try
         {
-            return await ServeAsync(options, store, log, notifier, ready, configPath, dataRoot, endpoint, cancellationToken).ConfigureAwait(false);
+            return await ServeAsync(options, store, log, notifier, ready, configPath, dataRoot, endpoint, faults, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -154,7 +172,7 @@ public static class NodeHost
     }
 
     private static async Task<int> ServeAsync(NodeHostOptions options, NodeStore store, NodeLog log, SystemdNotifier notifier, WindowsReadyEvent? ready,
-        string configPath, string dataRoot, LocalRpcEndpoint endpoint, CancellationToken cancellationToken)
+        string configPath, string dataRoot, LocalRpcEndpoint endpoint, ExecutionFaults faults, CancellationToken cancellationToken)
     {
         var clock = options.Clock;
         var metadata = store.Metadata;
@@ -173,12 +191,47 @@ public static class NodeHost
         var hub = new StreamHub();
         var processor = new CommandProcessor(store, journal, hub);
         var settings = new NodeSettingsManager(configPath, dataRoot, log);
-        using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, NodeCapabilities.Evaluate(clock));
+
+        // The node data key loads at startup, outside the writer (secret-store I/O must never run under the writer lock).
+        var keys = new NodeDataKeyRing(store, options.SecretStore(dataRoot));
+        var keyLoad = Task.Run(() =>
+        {
+            var keyId = keys.Prepare(out var reason);
+            if (keyId is null)
+            {
+                log.Warning("node.data_key.unavailable", new LogField("backend", keys.Backend), new LogField("reason", NodeLog.OneLine(reason)));
+            }
+            else
+            {
+                log.Info("node.data_key.loaded", new LogField("keyId", keyId), new LogField("backend", keys.Backend), new LogField("protection", keys.Protection));
+            }
+        }, CancellationToken.None);
+
+        // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
+        var platform = StartPlatform(options, store, log);
+        var capabilities = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        using var heartbeat = new NodeHeartbeatWriter(dataRoot, log, clock);
+        var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = clock,
+            DataRoot = dataRoot,
+            Platform = platform,
+            Secrets = new TaskSecrets(store, keys),
+            KeysReady = keyLoad,
+            Steps = options.LaunchSteps,
+            Faults = faults,
+            Heartbeat = heartbeat,
+        });
+        using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
+        {
+            Execution = execution,
+        };
         using var stopSignals = RegisterSignals(node);
         using var external = cancellationToken.Register(() => node.RequestStop("cancelled"));
         LocalRpcServer? server = null;
-        NodeDataKeyRing? keys = null;
-        Task keyLoad = Task.CompletedTask;
         using var housekeeping = new PeriodicTimer(HousekeepingInterval);
         Task housekeepingLoop = Task.CompletedTask;
         Task watchdogLoop = Task.CompletedTask;
@@ -194,13 +247,17 @@ public static class NodeHost
             log.Info("node.recovering", new LogField("uncleanShutdown", unclean), new LogField("bootChanged", bootChanged),
                 new LogField("storeCreated", store.Opening.Created), new LogField("migratedFrom", store.Opening.MigratedFrom ?? 0),
                 new LogField("generation", journal.Generation));
-            foreach (var participant in options.Recovery)
+            foreach (var participant in options.Recovery.Prepend(execution))
             {
                 await participant.RecoverAsync(recovery, processor, node.Stopping).ConfigureAwait(false);
                 log.Info("node.recovery.done", new LogField("participant", participant.Name));
             }
 
-            var sessions = new ClientSessions();
+            var sessions = new ClientSessions
+            {
+                Opened = session => execution.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
+                Closed = session => execution.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
+            };
             server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer);
             try
             {
@@ -226,7 +283,7 @@ public static class NodeHost
                 Version = NodeContract.ProductVersion,
             }.Write(NodeLocations.EndpointDescriptorFile(dataRoot));
 
-            housekeepingLoop = HousekeepAsync(node, housekeeping, loops.Token);
+            housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
             if (notifier.WatchdogInterval is { } watchdog)
             {
                 watchdogLoop = WatchdogAsync(notifier, watchdog, loops.Token);
@@ -235,27 +292,13 @@ public static class NodeHost
             var enforced = NodeCapabilities.FullyEnforced(node.Capabilities);
             await node.TransitionAsync(enforced ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded,
                 enforced ? "ready" : NodeCapabilities.DegradedReason).ConfigureAwait(false);
+            execution.Start();
             notifier.Notify("READY=1\nSTATUS=ArcForges node " + node.Lifecycle.State.ToString().ToLowerInvariant());
             ready?.Set();
             options.Ready?.Invoke(node);
             log.Info("node.ready", new LogField("state", node.Lifecycle.State), new LogField("endpoint", endpoint.Address),
-                new LogField("transport", endpoint.Transport));
-
-            keys = new NodeDataKeyRing(store, options.SecretStore(dataRoot));
-            var ring = keys;
-            keyLoad = Task.Run(() =>
-            {
-                var keyId = ring.Prepare(out var reason);
-                if (keyId is null)
-                {
-                    log.Warning("node.data_key.unavailable", new LogField("backend", ring.Backend), new LogField("reason", NodeLog.OneLine(reason)));
-                }
-                else
-                {
-                    log.Info("node.data_key.loaded", new LogField("keyId", keyId), new LogField("backend", ring.Backend),
-                        new LogField("protection", ring.Protection));
-                }
-            }, CancellationToken.None);
+                new LogField("transport", endpoint.Transport), new LogField("platform", platform?.Name ?? "none"),
+                new LogField("heartbeatInstance", heartbeat.Instance));
 
             try
             {
@@ -274,7 +317,9 @@ public static class NodeHost
                 await server.DisposeAsync().ConfigureAwait(false);
             }
 
-            keys?.Dispose();
+            await execution.DisposeAsync().ConfigureAwait(false);
+            platform?.Dispose();
+            keys.Dispose();
             await processor.DisposeAsync().ConfigureAwait(false);
         }
     }
@@ -315,6 +360,13 @@ public static class NodeHost
 
         await loops.CancelAsync().ConfigureAwait(false);
         await Task.WhenAny(Task.WhenAll(background), Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+
+        // Running attempts stay with their holders (their guards take over the disk limits); kill_with_node attempts end here.
+        if (node.Execution is { } execution)
+        {
+            await execution.StopAsync().ConfigureAwait(false);
+        }
+
         await processor.DisposeAsync().ConfigureAwait(false);
         node.Store.Checkpoint();
         var descriptorPath = NodeLocations.EndpointDescriptorFile(dataRoot);
@@ -327,7 +379,7 @@ public static class NodeHost
         return NodeExitCodes.Success;
     }
 
-    private static async Task HousekeepAsync(NodeRuntime node, PeriodicTimer timer, CancellationToken cancellationToken)
+    private static async Task HousekeepAsync(NodeRuntime node, NodeDataKeyRing keys, PeriodicTimer timer, CancellationToken cancellationToken)
     {
         try
         {
@@ -338,7 +390,12 @@ public static class NodeHost
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
-                    node.Log.Debug("node.housekeeping", new LogField("rowsRemoved", removed + commands));
+
+                    // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.
+                    var secrets = new TaskSecrets(node.Store, keys).PurgeDue();
+                    var temporary = node.Execution?.RemoveExpiredTemp() ?? 0;
+                    node.Log.Debug("node.housekeeping", new LogField("rowsRemoved", removed + commands), new LogField("secretsPurged", secrets),
+                        new LogField("tmpRemoved", temporary));
                 }
                 catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException)
                 {
@@ -363,6 +420,34 @@ public static class NodeHost
         }
         catch (OperationCanceledException)
         {
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance",
+        Justification = "The node drives the platform through its interface; Linux gets its own platform with AF-EXEC-02.")]
+    private static IExecutionPlatform? StartPlatform(NodeHostOptions options, NodeStore store, NodeLog log)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        var helper = options.HelperExecutable ?? Path.Combine(AppContext.BaseDirectory, "arcforges.exe");
+        var platform = new ArcForges.Node.Platform.Windows.WindowsExecutionPlatform();
+        try
+        {
+            var settings = new ExecutionSettings(store.Policies.Current().Document, platform.Capacity.LogicalProcessors, platform.Capacity.PhysicalMemoryBytes);
+            var limits = settings.RootLimits();
+            platform.Start(IdText.Format(store.Metadata.NodeId.Span), limits, helper);
+            log.Info("node.platform.started", new LogField("platform", platform.Name), new LogField("rootJob", platform.RootJobName),
+                new LogField("rootCpuRate", limits.CpuRate), new LogField("rootCommitLimit", limits.CommitLimitBytes), new LogField("helper", helper));
+            return platform;
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            log.Error("node.platform.failed", exception);
+            platform.Dispose();
+            return null;
         }
     }
 

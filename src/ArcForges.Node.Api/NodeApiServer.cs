@@ -16,6 +16,7 @@ public static class NodeApiServer
 {
     private const string Node = "arcforges.node.v1.NodeService";
     private const string Events = "arcforges.node.v1.NodeEventService";
+    private const string Tasks = "arcforges.node.v1.TaskService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -31,6 +32,7 @@ public static class NodeApiServer
         builder.Options = new LocalRpcServerOptions { Mode = LocalRpcServerMode.Service };
         builder.AddService(new NodeServiceHandler(node, sessions));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
+        builder.AddService(new TaskServiceHandler(node, sessions));
         builder.AuthorizeConnections(connection =>
         {
             // Reached only by same-user peers that LocalRpc identified (other users, exited and unresolvable peers are dropped
@@ -52,6 +54,25 @@ public static class NodeApiServer
         Profile(builder, "ListNotifications", 5);
         Profile(builder, "MarkNotificationsRead", 5);
         builder.RegisterMethod(Events, "ListEvents", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+
+        // TaskService deadlines (tasks.proto): WaitTask holds up to wait_ms (55 s) + 5 s.
+        foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("SubmitTask", 10), ("GetTask", 5), ("ListTasks", 5), ("WriteTaskInput", 5),
+            ("CloseTaskInput", 5), ("ReleaseCallerBinding", 5), ("CancelTask", 10), ("RetryTask", 5), ("PinTask", 5), ("PurgeTaskRecord", 30),
+            ("ReadTaskOutput", 10), ("GetAttempt", 5), ("ListAttempts", 5)])
+        {
+            builder.RegisterMethod(Tasks, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(seconds), TimeSpan.FromSeconds(Math.Max(seconds, 30))));
+        }
+
+        builder.RegisterMethod(Tasks, "WaitTask", new LocalRpcCallProfile(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60)));
+        foreach (var method in (ReadOnlySpan<string>)["AttachTask", "WatchTaskOutput"])
+        {
+            builder.RegisterStream(Tasks, method, new LocalRpcStreamProfile
+            {
+                HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
+                MaxBufferedMessages = streamBuffer,
+            });
+        }
+
         builder.RegisterStream(Events, "Subscribe", new LocalRpcStreamProfile
         {
             HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,

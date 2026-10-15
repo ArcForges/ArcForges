@@ -41,13 +41,16 @@ public static class CliApplication
             return ExitCodes.Usage;
         }
 
-        // Ctrl+C and SIGTERM cancel the command's token; the wait covers the node's own shutdown budget (10 s).
+        // Ctrl+C and SIGTERM cancel the command's token; the wait covers the node's own shutdown budget (10 s). `run` and the `tasks`
+        // commands handle Ctrl+C themselves (once cancels the task, twice detaches; cli.md C-01), so no termination timeout applies to them.
+        var command = result.CommandResult.Command;
+        var handlesInterrupts = command.Name == "run" || command.Parents.OfType<Command>().Any(parent => parent.Name == "tasks");
         return await result.InvokeAsync(new InvocationConfiguration
         {
             Output = output,
             Error = error,
             EnableDefaultExceptionHandler = false,
-            ProcessTerminationTimeout = TimeSpan.FromSeconds(12),
+            ProcessTerminationTimeout = handlesInterrupts ? null : TimeSpan.FromSeconds(12),
         }).ConfigureAwait(false);
     }
 
@@ -57,6 +60,8 @@ public static class CliApplication
         var root = new RootCommand("ArcForges: run, schedule and record local work under your control.");
         globals.AddTo(root);
         var factory = new Func<ParseResult, Cli>(result => globals.Create(result, output, error));
+        root.Subcommands.Add(RunCommand.Build(factory));
+        root.Subcommands.Add(TaskCommands.Build(factory));
         root.Subcommands.Add(StatusCommands.Status(factory));
         root.Subcommands.Add(NodeCommands.Build(factory, nodeRunner));
         root.Subcommands.Add(ConfigCommands.Build(factory));

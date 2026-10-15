@@ -6,6 +6,8 @@
     <Project Path="src/ArcForges.Host/ArcForges.Host.csproj" />
     <Project Path="src/ArcForges.Node.Api/ArcForges.Node.Api.csproj" />
     <Project Path="src/ArcForges.Node.Core/ArcForges.Node.Core.csproj" />
+    <Project Path="src/ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
+    <Project Path="src/ArcForges.Node.Platform.Windows/ArcForges.Node.Platform.Windows.csproj" />
     <Project Path="src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
     <Project Path="src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
   </Folder>

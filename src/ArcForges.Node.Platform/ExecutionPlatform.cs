@@ -1,0 +1,283 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Contracts.Node.V1;
+
+namespace ArcForges.Node.Platform;
+
+/// <summary>
+/// A command could not be prepared for execution: a catalogued <c>VALIDATION</c> code (errors.md) with the detail the error carries in
+/// <c>details.state.reason</c>: <c>program_not_found</c> (the program), <c>unsafe_batch_argument</c> (the argument index),
+/// <c>unsupported_shell</c> (the shell kind) or <c>invalid_argument</c> (the field and rule).
+/// </summary>
+public sealed class CommandRefusedException : Exception
+{
+    /// <summary>Creates the exception.</summary>
+    public CommandRefusedException(string code, string reason)
+        : base($"{code}: {reason}")
+    {
+        Code = code;
+        Reason = reason;
+    }
+
+    /// <summary>Creates the exception.</summary>
+    public CommandRefusedException()
+        : this("invalid_argument", string.Empty)
+    {
+    }
+
+    /// <summary>Creates the exception.</summary>
+    public CommandRefusedException(string message)
+        : this("invalid_argument", message)
+    {
+    }
+
+    /// <summary>Creates the exception.</summary>
+    public CommandRefusedException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+        Code = "invalid_argument";
+        Reason = message;
+    }
+
+    /// <summary>The catalogued VALIDATION code.</summary>
+    public string Code { get; } = "invalid_argument";
+
+    /// <summary><c>details.state.reason</c>.</summary>
+    public string Reason { get; } = string.Empty;
+}
+
+/// <summary>What to run: an argument vector or a shell script, in a working directory, with the resolved environment.</summary>
+public sealed class CommandRequest
+{
+    /// <summary>The argument vector (argv mode), or <see langword="null"/> in shell mode.</summary>
+    public IReadOnlyList<string>? Argv { get; init; }
+
+    /// <summary>The shell kind (shell mode).</summary>
+    public ShellKind Shell { get; init; }
+
+    /// <summary>The script (shell mode).</summary>
+    public string? Script { get; init; }
+
+    /// <summary>An absolute shell executable overriding the detected one (shell mode).</summary>
+    public string? ShellPath { get; init; }
+
+    /// <summary>The absolute working directory.</summary>
+    public required string WorkingDirectory { get; init; }
+
+    /// <summary>The resolved environment (its <c>PATH</c> and <c>PATHEXT</c> drive the program lookup).</summary>
+    public required IReadOnlyDictionary<string, string> Environment { get; init; }
+
+    /// <summary>The attempt's temporary directory, where long scripts are written; <see langword="null"/> while validating.</summary>
+    public string? TempDirectory { get; init; }
+}
+
+/// <summary>A prepared command: what the platform starts.</summary>
+public sealed class PreparedCommand
+{
+    /// <summary>The resolved executable (absolute path).</summary>
+    public required string Application { get; init; }
+
+    /// <summary>The complete command line (Windows), built with the quoting inverse to <c>CommandLineToArgvW</c>.</summary>
+    public required string CommandLine { get; init; }
+
+    /// <summary>The argument vector as the program receives it (Linux; informational on Windows).</summary>
+    public required IReadOnlyList<string> Argv { get; init; }
+
+    /// <summary>The program as the user named it, for summaries.</summary>
+    public required string Program { get; init; }
+
+    /// <summary>A script file the launch writes into the temporary directory first (long shell scripts, 04 section 2).</summary>
+    public string? ScriptFile { get; init; }
+
+    /// <summary>The script file's content.</summary>
+    public string? ScriptContent { get; init; }
+
+    /// <summary>The command runs a batch file through <c>cmd.exe /d /s /c</c>.</summary>
+    public bool ViaBatch { get; init; }
+}
+
+/// <summary>The stdin of an attempt (04 section 3: NUL, a temporary file, a file, or a pipe).</summary>
+public enum StdinKind
+{
+    /// <summary>The null device.</summary>
+    None = 0,
+
+    /// <summary>A file (FILE, or BYTES written to the temporary directory).</summary>
+    File = 1,
+
+    /// <summary>A pipe the node writes (STREAM).</summary>
+    Stream = 2,
+}
+
+/// <summary>The limits of an attempt's container (03 section 5.2).</summary>
+public sealed class ContainerLimits
+{
+    /// <summary>The CPU weight 1-9 (INTERACTIVE 9, HIGH 7, NORMAL 5, LOW 3, BACKGROUND 1), unless <see cref="CpuRateCap"/> is set.</summary>
+    public int CpuWeight { get; init; } = 5;
+
+    /// <summary>A hard CPU cap in 1/100 percent of the parent's allocation (replaces the weight; Windows cannot combine both).</summary>
+    public int? CpuRateCap { get; init; }
+
+    /// <summary>The commit limit (<c>commit_factor x mem_ceiling</c>), or 0 for none.</summary>
+    public long CommitLimitBytes { get; init; }
+
+    /// <summary>The active process limit when policy sets one.</summary>
+    public int? ActiveProcessLimit { get; init; }
+}
+
+/// <summary>The limits of the node's root container (03 section 5.1).</summary>
+/// <param name="CpuRate">The hard CPU cap in 1/100 percent of the machine (<c>round(B_cpu / C_cpu x 10000)</c>, at least 100).</param>
+/// <param name="CommitLimitBytes"><c>commit_factor x (C_mem - R_mem)</c>.</param>
+/// <param name="NotificationBytes">The soft-pressure notification limit (<c>B_mem</c>).</param>
+public sealed record RootLimits(int CpuRate, long CommitLimitBytes, long NotificationBytes);
+
+/// <summary>How to start one attempt.</summary>
+public sealed class AttemptLaunch
+{
+    /// <summary>The node ID's text (job names).</summary>
+    public required string NodeName { get; init; }
+
+    /// <summary>The attempt's files.</summary>
+    public required AttemptFiles Files { get; init; }
+
+    /// <summary>The prepared command.</summary>
+    public required PreparedCommand Command { get; init; }
+
+    /// <summary>The exact environment as <c>NAME=value</c> entries.</summary>
+    public required IReadOnlyList<string> Environment { get; init; }
+
+    /// <summary>The working directory.</summary>
+    public required string WorkingDirectory { get; init; }
+
+    /// <summary>The stdin kind.</summary>
+    public StdinKind Stdin { get; init; }
+
+    /// <summary>The stdin file (FILE, or the BYTES file).</summary>
+    public string? StdinPath { get; init; }
+
+    /// <summary>The container limits.</summary>
+    public required ContainerLimits Limits { get; init; }
+
+    /// <summary>Launched by the node itself without a holder, in a container that dies with the node (AD-0005 Windows section 5).</summary>
+    public bool KillWithNode { get; init; }
+
+    /// <summary>Output capture <c>DISCARD</c>: stdout and stderr go to the null device.</summary>
+    public bool DiscardOutput { get; init; }
+
+    /// <summary>Launch steps (04 section 3).</summary>
+    public IReadOnlyList<StepSpec> LaunchSteps { get; init; } = [];
+
+    /// <summary>End steps (04 section 3).</summary>
+    public IReadOnlyList<StepSpec> EndSteps { get; init; } = [];
+
+    /// <summary><c>leftover_grace</c>.</summary>
+    public int LeftoverGraceMs { get; init; } = 5_000;
+}
+
+/// <summary>The root process of an attempt.</summary>
+/// <param name="Pid">Its process ID.</param>
+/// <param name="StartTime">Its creation time.</param>
+public sealed record RootProcess(int Pid, DateTimeOffset StartTime);
+
+/// <summary>A container's accounting (04 section 3).</summary>
+public sealed record ContainerAccounting(long CpuUserMs, long CpuKernelMs, long MemPeakBytes, long IoReadBytes, long IoWriteBytes, int ActiveProcesses,
+    IReadOnlyList<string> LimitViolations);
+
+/// <summary>What the graceful phase did (04 section 6 step 1).</summary>
+/// <param name="ConsoleSignalled">CTRL_BREAK_EVENT reached the root's process group.</param>
+/// <param name="WindowsClosed">Top-level windows of processes in the container that received <c>WM_CLOSE</c>.</param>
+/// <param name="Reason">Why the console signal failed (the root exited, it is not a console program, or the attach failed).</param>
+public sealed record GracefulOutcome(bool ConsoleSignalled, int WindowsClosed, string? Reason);
+
+/// <summary>A process of an attempt's container.</summary>
+/// <param name="Pid">The process ID.</param>
+/// <param name="Image">Its image name.</param>
+public sealed record ContainerProcess(int Pid, string Image);
+
+/// <summary>A running (or recovered) attempt's container, as the node controls it.</summary>
+public interface IAttemptHandle : IDisposable
+{
+    /// <summary>The container's name (Windows job name).</summary>
+    string ContainerName { get; }
+
+    /// <summary>The root process once known.</summary>
+    RootProcess? Root { get; }
+
+    /// <summary>Completes once the root process runs (its identity), or with <see langword="null"/> when the launch failed.</summary>
+    Task<RootProcess?> Started { get; }
+
+    /// <summary>The write end of a STREAM stdin pipe.</summary>
+    Stream? StdinWriter { get; }
+
+    /// <summary>True while the root process (or, without one yet, the launch) has not finished.</summary>
+    bool RootRunning { get; }
+
+    /// <summary>True once the container reported a commit-limit (memory) event.</summary>
+    bool MemoryLimitHit { get; }
+
+    /// <summary>Raised on a platform thread when the attempt changed (started, root exited, record written, a limit event).</summary>
+    event Action? Changed;
+
+    /// <summary>The durable exit record, once written.</summary>
+    ExitRecord? TryReadExit();
+
+    /// <summary>The failed launch step, if any.</summary>
+    LaunchRecord? TryReadLaunchFailure();
+
+    /// <summary>The processes in the container now.</summary>
+    IReadOnlyList<ContainerProcess> Processes();
+
+    /// <summary>The container's accounting now.</summary>
+    ContainerAccounting Accounting();
+
+    /// <summary>Terminates every process in the container at once (the forced phase, and limit stops).</summary>
+    void Terminate();
+
+    /// <summary>The graceful phase: CTRL_BREAK_EVENT to the root's process group through the helper, and WM_CLOSE to GUI windows.</summary>
+    GracefulOutcome RequestGracefulStop();
+
+    /// <summary>Terminates same-user descendants of the attempt's processes that run outside the container (escaped); returns their images.</summary>
+    IReadOnlyList<string> TerminateEscaped();
+
+    /// <summary>The node recorded the attempt: the holder may release the container and exit.</summary>
+    void Acknowledge();
+}
+
+/// <summary>The machine's capacity as the platform sees it (03 section 2).</summary>
+/// <param name="LogicalProcessors">Logical processors.</param>
+/// <param name="PhysicalMemoryBytes">Physical memory.</param>
+public sealed record MachineCapacity(int LogicalProcessors, long PhysicalMemoryBytes);
+
+/// <summary>
+/// An execution platform (architecture 02 section 1 "Platform layer"; AD-0005): the root container, attempt containers with their
+/// holders, command preparation and recovery by name. The Windows platform is <c>WindowsExecutionPlatform</c>.
+/// </summary>
+public interface IExecutionPlatform : IDisposable
+{
+    /// <summary>The platform's name for logs.</summary>
+    string Name { get; }
+
+    /// <summary>How environment variable names compare (case-insensitive on Windows).</summary>
+    StringComparer EnvironmentNames { get; }
+
+    /// <summary>The machine's capacity.</summary>
+    MachineCapacity Capacity { get; }
+
+    /// <summary>The capability report (03 section 8) without its evaluation time, after <see cref="Start"/> verified the root container.</summary>
+    CapabilityReport Evaluate();
+
+    /// <summary>Creates or re-opens the root container and verifies enforcement with a probe container (02 section 2 step 6).</summary>
+    void Start(string nodeName, RootLimits limits, string helperExecutable);
+
+    /// <summary>Applies new root limits.</summary>
+    void UpdateRootLimits(RootLimits limits);
+
+    /// <summary>Resolves and builds the command (04 section 2).</summary>
+    /// <exception cref="CommandRefusedException">The program, shell or an argument is refused.</exception>
+    PreparedCommand Prepare(CommandRequest request);
+
+    /// <summary>Creates the attempt's container and starts it (through its holder, or directly for <c>kill_with_node</c>).</summary>
+    IAttemptHandle Launch(AttemptLaunch launch);
+
+    /// <summary>Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone.</summary>
+    IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root);
+}

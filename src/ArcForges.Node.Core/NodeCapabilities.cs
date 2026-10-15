@@ -6,15 +6,42 @@ using ArcForges.Contracts.Node.V1;
 namespace ArcForges.Node.Core;
 
 /// <summary>
-/// The node's capability report (architecture 02 section 2 step 6; 03 section 8). The enforcement platform layer (Windows jobs,
-/// Linux cgroups through the user manager, and its self-test) belongs to the execution and resource-control tasks; until it is part
-/// of the build, every enforcement capability is reported as OBSERVE_ONLY with that reason, and the node is DEGRADED (SM-NODE:
-/// RECOVERING -> DEGRADED when a capability is missing). The platform facts are read from the running system.
+/// The node's capability report (architecture 02 section 2 step 6; 03 section 8). On Windows the execution platform (job objects,
+/// AF-EXEC-01) reports its capabilities after its self-test (<see cref="FromPlatform"/>). Where this build has no execution platform
+/// (Linux until AF-EXEC-02), every enforcement capability is reported as OBSERVE_ONLY with that reason, and the node is DEGRADED
+/// (SM-NODE: RECOVERING -> DEGRADED when a capability is missing). The platform facts are read from the running system.
 /// </summary>
 public static class NodeCapabilities
 {
-    /// <summary>The reason recorded for every enforcement capability of this build.</summary>
-    public const string NotInBuild = "the enforcement platform layer is not part of this build";
+    /// <summary>The reason recorded for every enforcement capability where the build has no execution platform.</summary>
+    public const string NotInBuild = "the enforcement platform layer for this operating system is not part of this build";
+
+    /// <summary>The report of a started execution platform, stamped with the evaluation time.</summary>
+    public static CapabilityReport FromPlatform(ArcForges.Node.Platform.IExecutionPlatform platform, TimeProvider clock)
+    {
+        ArgumentNullException.ThrowIfNull(platform);
+        ArgumentNullException.ThrowIfNull(clock);
+        var report = platform.Evaluate();
+        report.EvaluatedAt = ProtoTime.ToInstant(clock.GetUtcNow());
+        return report;
+    }
+
+    /// <summary>The first missing capability's reason, or <see langword="null"/> when every capability is enforced.</summary>
+    public static string? MissingReason(CapabilityReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        if (report.Cpu is not (CpuControl.EnforcedShareAndCap or CpuControl.EnforcedShare))
+        {
+            return report.CpuReason;
+        }
+
+        if (report.Memory is not (MemoryControl.EnforcedSoftAndHard or MemoryControl.EnforcedCommit))
+        {
+            return report.MemoryReason;
+        }
+
+        return report.Pids == ProcessCountControl.Enforced ? null : report.PidsReason;
+    }
 
     /// <summary>The lifecycle reason of the DEGRADED state this report leads to.</summary>
     public const string DegradedReason = "capabilities_observe_only";

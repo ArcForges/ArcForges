@@ -160,8 +160,22 @@
           "ArcForges.Client": "[0.1.0-dev, )",
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
+          "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.Node.Store": "[0.1.0-dev, )",
           "ArcForges.Observability": "[1.0.0-ci.138.1, )"
+        }
+      },
+      "arcforges.node.platform": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )"
+        }
+      },
+      "arcforges.node.platform.windows": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
+          "ArcForges.Node.Platform": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.store": {

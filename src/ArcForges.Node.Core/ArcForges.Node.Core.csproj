@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="../ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
     <ProjectReference Include="../ArcForges.Client/ArcForges.Client.csproj" />
+    <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
     <PackageReference Include="ArcForges.Contracts.Node" />
     <!--
       ArcForges.Observability 1.0.0-ci.138.1 and its ArcForges.Capabilities and ArcForges.Foundation pin

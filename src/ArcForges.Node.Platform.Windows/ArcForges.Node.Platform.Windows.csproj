@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The Windows execution platform (AD-0005 Windows; architecture 04 sections 2, 3, 6 and 9): the per-node root job and nested attempt
+    jobs (root-then-child assignment, V-W01), command resolution with PATH/PATHEXT, quoting inverse to CommandLineToArgvW and the batch
+    refusal (T-03), windowless process creation with an explicit handle list, the attempt holder `arcforges node exec-wrap` (exit record,
+    launch and end steps, leftovers, disk guard), the `arcforges node signal` console helper (L-18) with the WM_CLOSE and forced
+    fallbacks, completion ports with clear-then-attach on restart (L-15) and job accounting. Source-generated P/Invoke (LibraryImport);
+    library of the AOT executable arcforges (AD-0003), so it is AOT- and trim-compatible. Every type that calls Windows is marked
+    SupportedOSPlatform("windows"); the pure command-line code is used and tested on every OS.
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.Node.Platform.Windows</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
+    <PackageReference Include="ArcForges.Contracts.Node" />
+    <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows.Tests" />
+    <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+  </ItemGroup>
+</Project>

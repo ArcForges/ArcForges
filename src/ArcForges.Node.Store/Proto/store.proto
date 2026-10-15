@@ -30,3 +30,9 @@ message SecretEnvironment {
   repeated EnvEntry caller = 1;
   repeated EnvEntry set = 2;
 }
+
+// finding.actions: the remedy actions of a finding. Each element is a serialized arcforges.node.v1.RemedyAction, so the
+// encoding is the same as `repeated RemedyAction actions = 1` without importing the contract protos here.
+message FindingActions {
+  repeated bytes actions = 1;
+}
