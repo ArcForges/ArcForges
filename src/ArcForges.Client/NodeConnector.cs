@@ -98,12 +98,18 @@ public static partial class NodeConnector
             }
         }
 
-        // CurrentUserOnly makes the runtime verify that the server end is owned by this user.
-        var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
-            TokenImpersonationLevel.Anonymous);
+        // Not PipeOptions.CurrentUserOnly: the runtime compares the pipe owner with the token's default owner, which is
+        // BUILTIN\Administrators in an elevated token, while the node's service pipe (LocalRpc ServicePipeSecurity) is owned by the
+        // user SID. The owner is checked below against the token's user SID instead; nothing is sent before that check.
+        var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Anonymous);
         try
         {
             await pipe.ConnectAsync((int)BusyWait.TotalMilliseconds, cancellationToken).ConfigureAwait(false);
+            if (!IsOwnedByCurrentUser(pipe, out var owner))
+            {
+                throw new UnauthorizedAccessException($"The pipe owner is {owner}, not this user.");
+            }
+
             return pipe;
         }
         catch (TimeoutException exception)
@@ -122,6 +128,24 @@ public static partial class NodeConnector
             throw;
         }
     }
+
+    /// <summary>
+    /// True when the server end of <paramref name="pipe"/> is owned by the user SID of this process's token, whether or not the token
+    /// is elevated; any other owner (another user, a group such as BUILTIN\Administrators, none) fails closed.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    internal static bool IsOwnedByCurrentUser(PipeStream pipe, out string owner)
+    {
+        ArgumentNullException.ThrowIfNull(pipe);
+        var remoteOwner = pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        owner = remoteOwner?.Value ?? "none";
+        using var identity = WindowsIdentity.GetCurrent();
+        return OwnerIsUser(remoteOwner, identity.User);
+    }
+
+    /// <summary>The ownership rule: the owner must be exactly the user SID; a missing owner or user fails closed.</summary>
+    internal static bool OwnerIsUser(SecurityIdentifier? owner, SecurityIdentifier? user) =>
+        owner is not null && user is not null && owner == user;
 
     private static async ValueTask<Stream> OpenSocketAsync(string path, CancellationToken cancellationToken)
     {
