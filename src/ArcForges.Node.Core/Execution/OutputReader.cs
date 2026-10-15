@@ -20,6 +20,12 @@ public sealed record OutputSlice(OutputStreamKind Stream, long Offset, byte[] Da
 /// <param name="StderrFrom">The stderr offset to continue from.</param>
 public readonly record struct OutputCursor(long Record, long StdoutFrom, long StderrFrom);
 
+/// <summary>One <see cref="OutputReader.Follow"/> step.</summary>
+/// <param name="Slices">The bytes read (possibly none).</param>
+/// <param name="Next">The cursor after them.</param>
+/// <param name="AtEnd">The cursor reached the end of the index as it was read: the follower is caught up.</param>
+public sealed record OutputFollow(List<OutputSlice> Slices, OutputCursor Next, bool AtEnd);
+
 /// <summary>
 /// Reads an attempt's captured output (04 section 4): one stream by its own offsets, or the merged view, which interleaves the two
 /// streams in index order with offsets that count the merged bytes. Only indexed bytes are visible, so every reader sees the same
@@ -117,13 +123,15 @@ public static class OutputReader
     /// Reads index records from <paramref name="cursor"/> and the bytes they name, split into chunks of at most 64 KiB, skipping bytes
     /// before the cursor's per-stream offsets. At most <paramref name="maxBytes"/> (rounded up to one chunk) are read, also inside one
     /// record, so a reader never holds more than its budget whatever the record sizes (a record written before the cap, or the backlog of
-    /// a node restart). Returns the slices and the cursor after them.
+    /// a node restart). Returns the slices, the cursor after them, and whether the cursor reached the end of the index: a call may
+    /// return no slices without being at the end (every record it read was before the follower's offsets or of another stream), so
+    /// only <see cref="OutputFollow.AtEnd"/> means caught up.
     /// </summary>
-    public static (List<OutputSlice> Slices, OutputCursor Next) Follow(AttemptFiles files, OutputCursor cursor, int maxBytes)
+    public static OutputFollow Follow(AttemptFiles files, OutputCursor cursor, int maxBytes)
     {
         ArgumentNullException.ThrowIfNull(files);
         var slices = new List<OutputSlice>();
-        var records = OutputIndexFile.Read(files.IndexPath, cursor.Record, out _, MaxFollowRecords);
+        var records = OutputIndexFile.Read(files.IndexPath, cursor.Record, out var completeBytes, MaxFollowRecords);
         var next = cursor;
         long total = 0;
         foreach (var record in records)
@@ -155,7 +163,7 @@ public static class OutputReader
             next = next with { Record = next.Record + 1 };
         }
 
-        return (slices, next);
+        return new OutputFollow(slices, next, next.Record >= completeBytes / IndexRecord.Size);
     }
 
     /// <summary>The most index records one <see cref="Follow"/> call reads (22 bytes each).</summary>

@@ -354,7 +354,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         var files = new AttemptFiles(_node.DataRoot, attemptName);
                         while (true)
                         {
-                            var (slices, following) = OutputReader.Follow(files, cursor, FollowBudget);
+                            var (slices, following, atEnd) = OutputReader.Follow(files, cursor, FollowBudget);
                             cursor = following;
                             foreach (var slice in slices)
                             {
@@ -367,7 +367,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                                 lastWrite = _node.Clock.GetTimestamp();
                             }
 
-                            if (slices.Count == 0)
+                            if (atEnd)
                             {
                                 break;
                             }
@@ -388,7 +388,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                             var files = new AttemptFiles(_node.DataRoot, attemptName);
                             while (true)
                             {
-                                var (slices, following) = OutputReader.Follow(files, cursor, FollowBudget);
+                                var (slices, following, atEnd) = OutputReader.Follow(files, cursor, FollowBudget);
                                 cursor = following;
                                 foreach (var slice in slices)
                                 {
@@ -396,7 +396,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                                     writer.TryWrite(new TaskServiceAttachTaskFrame { Meta = new ResponseMeta(), Output = Chunk(final!.CurrentAttempt!.AttemptId, slice) });
                                 }
 
-                                if (slices.Count == 0)
+                                if (atEnd)
                                 {
                                     break;
                                 }
@@ -799,7 +799,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 {
                     var next = pulse.Next;
                     var running = Execution.Running(name) is not null;
-                    var (slices, following) = OutputReader.Follow(files, cursor, FollowBudget);
+                    var (slices, following, atEnd) = OutputReader.Follow(files, cursor, FollowBudget);
                     cursor = following;
                     foreach (var slice in slices)
                     {
@@ -822,8 +822,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         lastWrite = _node.Clock.GetTimestamp();
                     }
 
-                    if (slices.Count > 0)
+                    if (!atEnd)
                     {
+                        // More index to read (possibly records this follower skips): only the end of the index means caught up.
                         continue;
                     }
 
