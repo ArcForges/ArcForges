@@ -17,7 +17,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     private readonly nuint _key;
     private readonly JobObject _job;
     private readonly TaskCompletionSource<RootProcess?> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly ConcurrentDictionary<int, long> _seen = new();
+    private readonly JobMembers _members = new();
     private volatile bool _launchFinished;
     private volatile bool _rootExited;
     private volatile bool _memoryLimit;
@@ -111,14 +111,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
 
         foreach (var pid in pids)
         {
-            using (var process = ProcessInfo.Open(pid))
-            {
-                if (process is not null)
-                {
-                    _seen.TryAdd(pid, ProcessInfo.CreationFileTime(process));
-                }
-            }
-
+            _members.Remember(pid);
             result.Add(new ContainerProcess(pid, ProcessInfo.ImageName(pid)));
         }
 
@@ -162,7 +155,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     public IReadOnlyList<EscapedProcess> ScanEscaped()
     {
         Processes();
-        return EscapedProcesses.Scan(_job, new Dictionary<int, long>(_seen));
+        return EscapedProcesses.Scan(_job, _members.Snapshot());
     }
 
     /// <inheritdoc />
@@ -191,6 +184,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         _rootHandle?.Dispose();
         Holder?.Dispose();
         Ack?.Dispose();
+        _members.Dispose();
         _job.Dispose();
         _started.TrySetResult(Root);
     }
@@ -242,7 +236,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         {
             case "started":
                 Volatile.Write(ref _root, new RootProcess(report.Pid, ProcessInfo.FromFileTime(report.StartFileTime)));
-                _seen.TryAdd(report.Pid, report.StartFileTime);
+                _members.Remember(report.Pid);
                 _launchFinished = true;
                 _started.TrySetResult(Root);
                 break;
@@ -279,18 +273,13 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
 
                 break;
             case Native.JobMsgNewProcess:
-                // Every member is remembered with its creation time, so the ancestry scan also finds children of members that exited.
-                using (var process = ProcessInfo.Open(data))
-                {
-                    if (process is not null)
-                    {
-                        _seen.TryAdd(data, ProcessInfo.CreationFileTime(process));
-                    }
-                }
-
+                // Every member is remembered with its exact lifetime, so the ancestry scan also finds children of members that exited
+                // and never mistakes the children of a process that reused a member's ID for the member's.
+                _members.Remember(data);
                 return;
             case Native.JobMsgExitProcess:
             case Native.JobMsgAbnormalExitProcess:
+                _members.Exited(data);
                 if (Root is { } root && root.Pid == data)
                 {
                     _rootExited = true;
