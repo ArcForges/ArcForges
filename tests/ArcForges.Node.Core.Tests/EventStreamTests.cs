@@ -271,6 +271,138 @@ public sealed class EventStreamTests
         Assert.Equal(LocalRpcStreamEndReason.Overflow, end);
     }
 
+    [Theory(Timeout = 240_000)]
+    [InlineData(6_000)]
+    [InlineData(70_000)]
+    public async Task AtTheProductionBufferAStalledSubscriberIsEndedWithTheTypedOverflowAndTheNodeHoldsNoMore(int events)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        // 02 section 1 / events.proto: the per-subscriber buffer is 2,048 events and overflow ends the stream with a reset.
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.Equal(2048, node.StreamBuffer);
+        await using var channel = await node.ChannelAsync();
+        using var call = channel.Events.Subscribe(new NodeEventServiceSubscribeRequest { Topics = { EventTopic.Node } }, cancellationToken: ct);
+        await ReadUntilAsync(call.ResponseStream, frame => frame.FrameCase == NodeEventServiceSubscribeFrame.FrameOneofCase.SnapshotComplete);
+
+        // The subscriber stops reading; the node keeps committing events.
+        await EmitAsync(node, events);
+        // The overflow is signalled when it happens; the typed status follows once the client takes the frame already on its way.
+        await WaitAsync(() => node.Runtime.Hub.Overflows >= 1, TimeSpan.FromSeconds(60));
+        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
+
+        // Reading again: what the transport already carried, then RESOURCE_EXHAUSTED with the x-af-stream-end trailer, far before the end.
+        var received = 0;
+        var exception = await Assert.ThrowsAsync<RpcException>(async () =>
+        {
+            while (await call.ResponseStream.MoveNext(ct))
+            {
+                received++;
+            }
+        });
+        Assert.Equal(StatusCode.ResourceExhausted, exception.StatusCode);
+        Assert.True(LocalRpcStreamEnd.TryRead(exception, out var end));
+        Assert.Equal(LocalRpcStreamEndReason.Overflow, end);
+        Assert.True(received < events, $"{received} of {events} frames arrived before the overflow");
+        await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
+        TestContext.Current.TestOutputHelper?.WriteLine($"{events} events: {received} frames reached the stalled subscriber before the typed overflow.");
+    }
+
+    [Theory(Timeout = 240_000)]
+    [InlineData(6_000)]
+    [InlineData(70_000)]
+    public async Task AtTheProductionBufferAStalledCacheIsResetAndCatchesUp(int events)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        using var stall = new ManualResetEventSlim(true);
+        await using var cache = new NodeStreamCache(_ => node.ChannelAsync(), [EventTopic.Node], new ReconnectBackoff(() => 0));
+        cache.Applied += (_, _) => stall.Wait(TimeSpan.FromSeconds(60));
+        cache.Start();
+        await WaitAsync(() => cache.SnapshotsApplied == 1);
+
+        stall.Reset();
+        var latest = await EmitAsync(node, events);
+        await WaitAsync(() => node.Runtime.Hub.Overflows >= 1, TimeSpan.FromSeconds(60));
+        stall.Set();
+
+        await WaitAsync(() => cache.Resets >= 1 && cache.SnapshotsApplied >= 2 && cache.LastSequence >= latest, TimeSpan.FromSeconds(120));
+        await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
+        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
+        Assert.Equal(ConnectionState.Connected, cache.Connection.State);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task LiveEventsBeyondTheBufferDuringAReplayAreCaughtUpFromTheJournal()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create(streamBuffer: 64).StartAsync();
+        await using var channel = await node.ChannelAsync();
+        var first = await EmitAsync(node, 1);
+
+        // A resume replays 5,000 events, written as the client reads (32 at a time with a buffer of 64), while 1,000 more arrive.
+        var replayed = await EmitAsync(node, 5_000);
+        using var call = channel.Events.Subscribe(new NodeEventServiceSubscribeRequest
+        {
+            Topics = { EventTopic.Node },
+            Cursor = new EventCursor(node.Runtime.Journal.Generation, first).ToString(),
+        }, cancellationToken: ct);
+        Assert.True(await call.ResponseStream.MoveNext(ct));
+        var live = EmitAsync(node, 1_000);
+        var expected = first + 1;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        var current = call.ResponseStream.Current;
+        var last = await live;
+        while (true)
+        {
+            if (current.FrameCase == NodeEventServiceSubscribeFrame.FrameOneofCase.Event)
+            {
+                Assert.Equal(expected, current.Event.Seq);
+                expected++;
+                if (current.Event.Seq == last)
+                {
+                    break;
+                }
+            }
+            else
+            {
+                Assert.Equal(NodeEventServiceSubscribeFrame.FrameOneofCase.Heartbeat, current.FrameCase);
+            }
+
+            Assert.True(await call.ResponseStream.MoveNext(timeout.Token));
+            current = call.ResponseStream.Current;
+        }
+
+        Assert.True(replayed < last);
+        // The pending buffer filled (64) and the rest of the 1,000 overflowed it, yet every event arrived once and in order.
+        Assert.Equal(64, node.Runtime.Hub.PeakPending);
+    }
+
+    /// <summary>Commits <paramref name="count"/> NODE events through the command processor (1,000 per command); returns the last sequence.</summary>
+    private static async Task<ulong> EmitAsync(InProcessNode node, int count)
+    {
+        ulong last = 0;
+        for (var done = 0; done < count; done += 1000)
+        {
+            var batch = Math.Min(1000, count - done);
+            last = await node.Runtime.Processor.ExecuteAsync(context =>
+            {
+                NodeEvent? item = null;
+                for (var i = 0; i < batch; i++)
+                {
+                    item = context.Emit(EventTopic.Node, new NodeEvent { Node = node.Runtime.Status() });
+                }
+
+                return item!.Seq;
+            });
+        }
+
+        return last;
+    }
+
+    private static double OverflowCount(InProcessNode node) => node.Runtime.ServerMetrics!()
+        .Where(metric => metric.Name == "rpc.streams_ended" && metric.Labels["reason"] == "Overflow").Sum(metric => metric.Value);
+
     private static async Task Rename(NodeChannel channel, string name)
     {
         var response = await channel.Node.RenameNodeAsync(new NodeServiceRenameNodeRequest { Meta = InProcessNode.Command(), Name = name },

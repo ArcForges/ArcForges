@@ -16,8 +16,11 @@ namespace ArcForges.Node.Api;
 /// <list type="bullet">
 /// <item><c>Subscribe</c>: a snapshot of the requested topics, then events in sequence order. A valid cursor resumes after it with no
 /// snapshot; a cursor from another generation or beyond retention gets <c>reset{snapshot_follows}</c> and a snapshot; a malformed
-/// one a terminal <c>VALIDATION/invalid_cursor</c> frame. Heartbeats every 15 s. The stream runs in LocalRpc's stream lane, whose
-/// per-subscriber buffer of 2,048 events ends the stream on overflow, so the client resubscribes for a snapshot.</item>
+/// one a terminal <c>VALIDATION/invalid_cursor</c> frame. Heartbeats every 15 s. The stream runs in LocalRpc's stream lane. Live events
+/// go straight from the hub to the stream writer, whose per-subscriber buffer of 2,048 events is the only place they wait: one more ends
+/// the stream with <c>RESOURCE_EXHAUSTED</c> and the <c>x-af-stream-end: overflow</c> trailer, so the client resubscribes and gets a
+/// reset. Opening frames are written as the client reads; live events that arrive meanwhile wait in a pending buffer of the same size,
+/// and when it fills the subscriber catches up from the journal instead.</item>
 /// <item><c>ListEvents</c>: the events after a cursor, or <c>reset_required</c>.</item>
 /// </list>
 /// The topics with event sources in this build are NODE, JOBS and NOTIFICATIONS; the other topics are valid and carry nothing yet.
@@ -27,11 +30,20 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
     /// <summary>The heartbeat interval (R-API-006).</summary>
     public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
 
-    private const int ReplayHighWater = 1024;
     private readonly NodeRuntime _node;
+    private readonly int _streamBuffer;
+    private readonly int _replayHighWater;
 
-    /// <summary>Creates the service over the running node.</summary>
-    public NodeEventServiceHandler(NodeRuntime node) => _node = node ?? throw new ArgumentNullException(nameof(node));
+    /// <summary>Creates the service over the running node; <paramref name="streamBuffer"/> is the per-subscriber buffer (02 section 1: 2,048).</summary>
+    public NodeEventServiceHandler(NodeRuntime node, int streamBuffer = 2048)
+    {
+        _node = node ?? throw new ArgumentNullException(nameof(node));
+        ArgumentOutOfRangeException.ThrowIfLessThan(streamBuffer, 1);
+        _streamBuffer = streamBuffer;
+
+        // Opening frames (snapshot, replay, catch-up) are written as the client reads and never fill the buffer themselves.
+        _replayHighWater = Math.Max(1, streamBuffer / 2);
+    }
 
     /// <inheritdoc />
     public override async Task Subscribe(NodeEventServiceSubscribeRequest request, IServerStreamWriter<NodeEventServiceSubscribeFrame> responseStream,
@@ -59,7 +71,7 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
                 return;
             }
 
-            using var subscription = _node.Hub.Subscribe(topics);
+            using var subscription = _node.Hub.Subscribe(topics, _streamBuffer);
             var start = _node.Store.Read(reader => Start(reader, topics, cursor));
             if (start.Error is not null)
             {
@@ -70,30 +82,43 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
 
             try
             {
-                foreach (var frame in start.Frames)
+                var live = new LiveState(_node.Clock.GetTimestamp());
+                while (true)
                 {
-                    await WaitForRoomAsync(writer, stop.Token).ConfigureAwait(false);
-                    if (!writer.TryWrite(frame))
+                    foreach (var frame in start.Frames)
+                    {
+                        await WaitForRoomAsync(writer, stop.Token).ConfigureAwait(false);
+                        if (!writer.TryWrite(frame))
+                        {
+                            break;
+                        }
+                    }
+
+                    live.LastSent = start.LastSent;
+                    live.LastWrite = _node.Clock.GetTimestamp();
+                    if (subscription.TryAttach(item => Deliver(writer, live, item)))
                     {
                         break;
                     }
+
+                    // More live events than the stream buffer arrived while the opening frames were written; they are in the journal.
+                    subscription.BeginPending();
+                    var after = new EventCursor(_node.Journal.Generation, live.LastSent);
+                    start = _node.Store.Read(reader => Start(reader, topics, after));
                 }
 
-                await LiveAsync(writer, subscription, start.LastSent, stop.Token).ConfigureAwait(false);
+                await HeartbeatsAsync(writer, subscription, live, stop.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
             }
 
-            if (subscription.Overflowed)
-            {
-                throw new RpcException(new Status(StatusCode.ResourceExhausted, "The subscription fell too far behind; subscribe again for a snapshot."));
-            }
-
+            // Detach before completing: an overflow (more than the stream buffer waiting for this subscriber) ends the stream through
+            // CompleteAsync with RESOURCE_EXHAUSTED and the x-af-stream-end trailer, so the client resubscribes and gets a reset.
+            subscription.Dispose();
             await writer.CompleteAsync().ConfigureAwait(false);
         }
     }
-
     /// <inheritdoc />
     public override Task<NodeEventServiceListEventsResponse> ListEvents(NodeEventServiceListEventsRequest request, ServerCallContext context)
     {
@@ -154,10 +179,10 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
     private static ulong Latest(StoreReader reader) =>
         Convert.ToUInt64(reader.Scalar("SELECT coalesce(max(seq), 0) FROM event_journal;"), CultureInfo.InvariantCulture);
 
-    private static async Task WaitForRoomAsync(LocalRpcStreamWriter<NodeEventServiceSubscribeFrame> writer, CancellationToken cancellationToken)
+    private async Task WaitForRoomAsync(LocalRpcStreamWriter<NodeEventServiceSubscribeFrame> writer, CancellationToken cancellationToken)
     {
-        // Replays and snapshots are larger than the stream's buffer; they are written as the client reads.
-        while (writer.Buffered > ReplayHighWater)
+        // Replays and snapshots can be larger than the stream's buffer; they are written as the client reads.
+        while (writer.Buffered >= _replayHighWater)
         {
             await Task.Delay(5, cancellationToken).ConfigureAwait(false);
         }
@@ -238,64 +263,81 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
         return new StartFrames(frames, latest, null);
     }
 
-    private async Task LiveAsync(LocalRpcStreamWriter<NodeEventServiceSubscribeFrame> writer, HubSubscription subscription, ulong lastSent,
+    /// <summary>
+    /// Writes one live event (the command processor's thread, under the subscription's lock). False when the stream ended: an overflow of
+    /// the stream buffer ends it in LocalRpc with the typed overflow, and the handler's wait wakes through <c>writer.Ended</c>.
+    /// </summary>
+    private bool Deliver(LocalRpcStreamWriter<NodeEventServiceSubscribeFrame> writer, LiveState live, NodeEvent item)
+    {
+        if (item.Seq <= live.LastSent)
+        {
+            return true;
+        }
+
+        if (!writer.TryWrite(EventFrame(item)))
+        {
+            if (writer.EndReason == LocalRpcStreamEndReason.Overflow)
+            {
+                _node.Hub.RecordOverflow();
+            }
+
+            return false;
+        }
+
+        live.LastSent = item.Seq;
+        live.LastWrite = _node.Clock.GetTimestamp();
+        return true;
+    }
+
+    /// <summary>Sends a heartbeat when the stream carried nothing for the heartbeat interval, until the stream ends.</summary>
+    private async Task HeartbeatsAsync(LocalRpcStreamWriter<NodeEventServiceSubscribeFrame> writer, HubSubscription subscription, LiveState live,
         CancellationToken cancellationToken)
     {
-        var lastWrite = _node.Clock.GetTimestamp();
+        // The wait wakes on a cancellation raised by the writer on the publishing thread; continuations run asynchronously, so the
+        // command processor never runs this handler inline.
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = cancellationToken.Register(static state => ((TaskCompletionSource)state!).TrySetResult(), ended);
         while (!cancellationToken.IsCancellationRequested)
         {
-            var due = HeartbeatInterval - _node.Clock.GetElapsedTime(lastWrite);
+            TimeSpan due = TimeSpan.Zero;
+            subscription.Exclusive(() => due = HeartbeatInterval - _node.Clock.GetElapsedTime(live.LastWrite));
             if (due > TimeSpan.Zero)
             {
-                using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                wait.CancelAfter(due);
                 try
                 {
-                    if (!await subscription.Reader.WaitToReadAsync(wait.Token).ConfigureAwait(false))
-                    {
-                        return;
-                    }
+                    await ended.Task.WaitAsync(due, CancellationToken.None).ConfigureAwait(false);
+                    return;
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                catch (TimeoutException)
                 {
-                    // The heartbeat is due.
+                    // The heartbeat may be due.
                 }
+
+                continue;
             }
 
-            while (subscription.Reader.TryRead(out var item))
+            var open = true;
+            subscription.Exclusive(() =>
             {
-                if (item.Seq <= lastSent)
-                {
-                    continue;
-                }
-
-                await WaitForRoomAsync(writer, cancellationToken).ConfigureAwait(false);
-                if (!writer.TryWrite(EventFrame(item)))
+                if (_node.Clock.GetElapsedTime(live.LastWrite) < HeartbeatInterval)
                 {
                     return;
                 }
 
-                lastSent = item.Seq;
-                lastWrite = _node.Clock.GetTimestamp();
-            }
-
-            if (_node.Clock.GetElapsedTime(lastWrite) >= HeartbeatInterval)
-            {
-                if (!writer.TryWrite(new NodeEventServiceSubscribeFrame
+                open = writer.TryWrite(new NodeEventServiceSubscribeFrame
                 {
                     Meta = new ResponseMeta(),
-                    Position = Position(lastSent),
+                    Position = Position(live.LastSent),
                     Heartbeat = new Heartbeat { At = ProtoTime.ToInstant(_node.Clock.GetUtcNow()) },
-                }))
-                {
-                    return;
-                }
-
-                lastWrite = _node.Clock.GetTimestamp();
+                });
+                live.LastWrite = _node.Clock.GetTimestamp();
+            });
+            if (!open)
+            {
+                return;
             }
         }
     }
-
     private NodeEventServiceSubscribeFrame EventFrame(NodeEvent item) => new()
     {
         Meta = new ResponseMeta(),
@@ -309,6 +351,14 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
         Sequence = sequence,
         Generation = _node.Journal.Generation,
     };
+
+    /// <summary>What the stream sent last and when; read and written under the subscription's lock.</summary>
+    private sealed class LiveState(long lastWrite)
+    {
+        public ulong LastSent { get; set; }
+
+        public long LastWrite { get; set; } = lastWrite;
+    }
 
     private sealed record StartFrames(IReadOnlyList<NodeEventServiceSubscribeFrame> Frames, ulong LastSent, ArcError? Error);
 }

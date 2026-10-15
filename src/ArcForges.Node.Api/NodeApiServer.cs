@@ -30,7 +30,7 @@ public static class NodeApiServer
         var builder = LocalRpcServer.CreateBuilder(endpoint);
         builder.Options = new LocalRpcServerOptions { Mode = LocalRpcServerMode.Service };
         builder.AddService(new NodeServiceHandler(node, sessions));
-        builder.AddService(new NodeEventServiceHandler(node));
+        builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         builder.AuthorizeConnections(connection =>
         {
             // Reached only by same-user peers that LocalRpc identified (other users, exited and unresolvable peers are dropped
