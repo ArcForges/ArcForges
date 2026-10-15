@@ -6,6 +6,7 @@ public sealed class RepositoryLayoutTests
 {
     [Theory]
     [InlineData("src/ArcForges.Host/ArcForges.Host.csproj", "arcforges")]
+    [InlineData("src/ArcForges.Supervisor/ArcForges.Supervisor.csproj", "arcforges-supervisor")]
     [InlineData("src/ArcForges.Desktop/ArcForges.Desktop.csproj", "arcforges-desktop")]
     [InlineData("tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj", "arcforges-testload")]
     [InlineData("tools/ArcForges.Bench/ArcForges.Bench.csproj", "arcforges-bench")]

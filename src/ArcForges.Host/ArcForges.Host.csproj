@@ -1,10 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    The multi-role native executable `arcforges` (AD-0003): node run, CLI, mcp serve, hook and
-    bridge wsl roles are added by their delivery tasks, starting with AF-NODE-01. Until then the
-    project is the empty AOT composition root whose zero-warning publish and size/startup
-    baselines CI measures.
+    The multi-role native executable `arcforges` (AD-0003): the CLI (ArcForges.CommandLine) and the node role
+    `arcforges node run` (ArcForges.Node.Api). Later roles (mcp serve, hook, bridge wsl, node exec-wrap) are added by their
+    delivery tasks. A CLI invocation never initializes the node's service code.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -13,4 +12,14 @@
     <PublishAot>true</PublishAot>
     <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.CommandLine/ArcForges.CommandLine.csproj" />
+    <ProjectReference Include="../ArcForges.Node.Api/ArcForges.Node.Api.csproj" />
+    <!--
+      The node's graph carries the exact ArcForges.Contracts.Foundation 1.0.0-ci.216.1 constraints of the DesktopPlatform
+      1.0.0-ci.138.1 packages; the CLI's path to the contracts does not suppress them, so the host records its own NU1608
+      exception (eng/policy/dependency-admissions.json).
+    -->
+    <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+  </ItemGroup>
 </Project>

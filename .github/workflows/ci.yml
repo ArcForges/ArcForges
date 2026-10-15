@@ -20,7 +20,8 @@ env:
   AVALONIA_TELEMETRY_OPTOUT: "1"
 
 # Platform-independent merge gate (16-testing-strategy section 3): build, analyzers, format,
-# tests, the node store's expand-only schema check (13-distribution-updates section 9), Native AOT
+# tests (with the closed-loop node and CLI tests on the JIT build and again on the Native AOT binaries),
+# the node store's expand-only schema check (13-distribution-updates section 9), Native AOT
 # publish with zero warnings, size gates, the startup regression gate and the store growth bound
 # (15-performance-targets) on win-x64, win-arm64, linux-x64 and linux-arm64.
 # No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
@@ -39,11 +40,11 @@ jobs:
           - os: windows-2025
             rid: win-x64
             full: true
-            components: host,desktop,testload,bench
+            components: host,supervisor,desktop,testload,bench
           - os: windows-11-arm
             rid: win-arm64
             full: false
-            components: host,desktop,bench
+            components: host,supervisor,desktop,bench
           - os: ubuntu-24.04
             rid: linux-x64
             full: true
@@ -99,6 +100,14 @@ jobs:
           $env:ARCFORGES_TESTLOAD_PATH = Join-Path $publish "testload/arcforges-testload$suffix"
           $env:ARCFORGES_BENCH_PATH = Join-Path $publish "bench/arcforges-bench$suffix"
           ./eng/test.ps1 -Suite tools -NoBuild
+      - name: Run the closed-loop suite against the native node and CLI
+        if: matrix.full
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+        run: |
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $env:ARCFORGES_HOST_PATH = Join-Path $env:GITHUB_WORKSPACE "artifacts/publish/$env:TARGET_RID/host/arcforges$suffix"
+          ./eng/test.ps1 -Suite closed-loop -NoBuild
       - name: Gate sizes and store growth, and record the startup benchmark
         env:
           TARGET_RID: ${{ matrix.rid }}

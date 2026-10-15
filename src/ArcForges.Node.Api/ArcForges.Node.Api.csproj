@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The node's API layer (architecture 02 section 1): NodeService and NodeEventService over the DesktopPlatform LocalRpc
+    service-endpoint mode (gRPC over HTTP/2 on the per-user named pipe or Unix socket), request validation, the client hello
+    and compatibility, ArcError mapping, and the node host that runs the startup and shutdown sequence (02 section 2).
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.Node.Api</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../ArcForges.Node.Core/ArcForges.Node.Core.csproj" />
+    <PackageReference Include="ArcForges.LocalRpc" />
+    <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+  </ItemGroup>
+</Project>

@@ -6,8 +6,10 @@ ArcForges puts AI-driven and heavy local work under your control: a local node t
 and records commands, a CLI and MCP adapter for people and AI agents, and an optional desktop.
 C# · Native AOT · Avalonia. Local and LAN use need no account.
 
-This repository is at its foundation stage: the solution layout, build policy, CI and test
-harness that later tasks fill with behaviour. The `arcforges` executable has no roles yet, and
+The `arcforges` executable runs the node (`arcforges node run`) and the CLI: the node host with its
+per-user endpoint, lifecycle, event journal and streams, the Windows supervisor, the shared client library
+and the CLI skeleton (`status`, `node`, `config`, `events`, `jobs`, `version`, `completion`).
+Execution, scheduling and the other node subsystems arrive with their delivery tasks, and
 `arcforges-desktop` still shows the bootstrap **Hello World** view until the desktop shell task
 replaces it. Product design: [ArcForges-Design](https://github.com/ArcForges/ArcForges-Design);
 delivery plan: [Plan](https://github.com/ArcForges/Plan).
@@ -16,13 +18,18 @@ delivery plan: [Plan](https://github.com/ArcForges/Plan).
 
 | Path | Contents |
 |---|---|
-| `src/ArcForges.Host` | `arcforges`, the multi-role node/CLI executable (empty composition root for now) |
+| `src/ArcForges.Host` | `arcforges`, the multi-role node/CLI executable |
+| `src/ArcForges.Node.Core` | The node's core: configuration and data root, single instance, logging with redaction, command processor, event journal and stream hub, lifecycle, settings, notifications, jobs |
+| `src/ArcForges.Node.Api` | The node's API on the LocalRpc service endpoint (NodeService, NodeEventService) and the node host (startup and shutdown) |
+| `src/ArcForges.Client` | The client library of the CLI, Desktop and MCP adapter: endpoint resolution, auto-start, hello, NodeStreamCache, command IDs, connection state |
+| `src/ArcForges.CommandLine` | The CLI (System.CommandLine): global options, human and JSON output, exit codes |
+| `src/ArcForges.Supervisor` | `arcforges-supervisor.exe`: the Windows GUI-subsystem supervisor that starts the node and restarts it after a crash |
 | `src/ArcForges.Desktop` | `arcforges-desktop`, the optional Avalonia desktop |
 | `src/ArcForges.Node.Store` | The node store: SQLite schema, migrations, backups, idempotency, sealed task secrets, default policy |
 | `tools/ArcForges.TestLoad` | `arcforges-testload`: deterministic CPU, memory, output and process-tree workloads |
 | `tools/ArcForges.Bench` | `arcforges-bench`: binary size, startup and node store growth benchmarks (JSON results) |
 | `tests/` | xUnit v3 test applications; suites selected by trait |
-| `eng/` | test, publish, benchmark and packaging scripts; dependency admissions |
+| `eng/` | test, publish, benchmark and packaging scripts; dependency admissions; the development systemd user unit (`eng/systemd`) |
 
 ## Build and test
 
@@ -46,6 +53,26 @@ Native AOT publish (fails on any build, trim or AOT warning), benchmarks and the
 Linux executables are published on Linux or WSL, for example
 `dotnet publish src/ArcForges.Host -c Release -r linux-x64 -warnaserror`.
 
+## The node and the CLI
+
+```sh
+arcforges status                 # starts the node when it is absent (not in CI jobs or sandboxes), then reports it
+arcforges status --json          # one JSON document (canonical protobuf JSON mapping; IDs as base32)
+arcforges node run               # run the node in this terminal (exit 3 if one already runs)
+arcforges node stop
+arcforges node info | health | capabilities [--reevaluate] | rename <name> | wait-ready [--timeout 30s]
+arcforges config list | get <key> | set logLevel debug
+arcforges events --topic node --since <cursor>    # JSON Lines; resumes after the cursor
+arcforges jobs list | show <id> | cancel <id>
+arcforges version
+eval "$(arcforges completion bash)"                # also zsh, fish, pwsh
+```
+
+On Windows the auto-start launches `arcforges-supervisor.exe` beside `arcforges.exe`; on Linux it runs
+`systemctl --user start arcforges-node.service` (see `eng/systemd/arcforges-node.service` for a development unit),
+or a `setsid` launch when no systemd user manager runs. Exit codes follow ArcForges-Design `experience/cli.md` section 3.
+Tests isolate each node with `--test-mode` and the `ARCFORGES_ENDPOINT` / `ARCFORGES_CONFIG_DIR` test hooks.
+
 ## Tools
 
 ```sh
@@ -54,15 +81,15 @@ arcforges-testload mem-ramp --target-mb 512 --step-mb 64 --step-ms 50 --hold-ms 
 arcforges-testload output --bytes 268435456 --line-bytes 120 --report out.json > captured.txt
 arcforges-testload fork --width 4 --depth 2 --hold-ms 1000
 arcforges-bench size --target arcforges --path artifacts/publish/win-x64/host/arcforges.exe
-arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --runs 50 --output now.json
+arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --arg --version --runs 50 --output now.json
 arcforges-bench compare-startup --current now.json --baseline before.json   # >25% and >5 ms fails
 arcforges-bench store-growth --environment tests/ArcForges.Node.Store.Tests/Fixtures/environments/env-wsl-debian-bash.json --attempts 10000
 ```
 
 Equal parameters give equal bytes and digests on every run and platform; `--help` lists the options.
 
-CI builds and tests on Windows and Ubuntu, publishes Native AOT for **win-x64, win-arm64,
-linux-x64 and linux-arm64**, gates binary sizes, node store growth and startup regressions against main,
+CI builds and tests on Windows and Ubuntu (the closed-loop node and CLI tests on the JIT build and on the native binaries),
+publishes Native AOT for **win-x64, win-arm64, linux-x64 and linux-arm64**, gates binary sizes, node store growth and CLI cold-start regressions against main,
 checks that the node store schema only expands, and checks formatting, analyzers, dependencies, secrets and CodeQL. Desktop archives are unsigned development previews, not releases.
 
 [Agent and contributor rules](AGENTS.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
