@@ -26,8 +26,11 @@ public static class NodeCapabilities
         return report;
     }
 
-    /// <summary>The first missing capability's reason (cpu, then memory), or <see langword="null"/> when both are enforced.</summary>
-    public static string? MissingReason(CapabilityReport report)
+    /// <summary>The first missing capability's reason, or <see langword="null"/> when the node is READY (<see cref="FullyEnforced(CapabilityReport)"/>).</summary>
+    public static string? MissingReason(CapabilityReport report) => MissingReason(report, OperatingSystem.IsWindows());
+
+    /// <summary>The first missing capability's reason under the readiness rule of the Windows job platform or of the other platforms.</summary>
+    public static string? MissingReason(CapabilityReport report, bool windowsJobs)
     {
         ArgumentNullException.ThrowIfNull(report);
         if (report.Cpu is not (CpuControl.EnforcedShareAndCap or CpuControl.EnforcedShare))
@@ -40,7 +43,7 @@ public static class NodeCapabilities
             return report.MemoryReason;
         }
 
-        return null;
+        return windowsJobs || report.Pids == ProcessCountControl.Enforced ? null : report.PidsReason;
     }
 
     /// <summary>The lifecycle reason of the DEGRADED state this report leads to.</summary>
@@ -74,16 +77,22 @@ public static class NodeCapabilities
         return report;
     }
 
+    /// <summary>True when the node is READY rather than DEGRADED on this operating system (<see cref="FullyEnforced(CapabilityReport, bool)"/>).</summary>
+    public static bool FullyEnforced(CapabilityReport report) => FullyEnforced(report, OperatingSystem.IsWindows());
+
     /// <summary>
-    /// True when the enforcement a task can require (03 section 8: <c>require_enforcement = {cpu, memory}</c>) is enforced: READY rather
-    /// than DEGRADED. <c>pids</c> and <c>io</c> are reported as they are but do not degrade the node: no policy field sets a process-count
-    /// limit in this build (Windows reports it OBSERVE_ONLY, counted by job accounting), and I/O limits are a privileged option.
+    /// The readiness rule, platform-explicit (SM-NODE: RECOVERING to DEGRADED when "some capability missing"). Every platform needs cpu
+    /// and memory enforced. Other platforms (Linux cgroups) also need <c>pids</c> enforced, as before this task. The Windows job platform
+    /// does not: no policy field sets a job active-process limit in this build, so it reports <c>pids</c> OBSERVE_ONLY (counted by job
+    /// accounting) and that alone does not degrade it. Whether the state machine means this is a Design clarification (PR body).
+    /// <c>io</c> never degrades a node (I/O limits are a privileged option).
     /// </summary>
-    public static bool FullyEnforced(CapabilityReport report)
+    public static bool FullyEnforced(CapabilityReport report, bool windowsJobs)
     {
         ArgumentNullException.ThrowIfNull(report);
         return report.Cpu is CpuControl.EnforcedShareAndCap or CpuControl.EnforcedShare
-            && report.Memory is MemoryControl.EnforcedSoftAndHard or MemoryControl.EnforcedCommit;
+            && report.Memory is MemoryControl.EnforcedSoftAndHard or MemoryControl.EnforcedCommit
+            && (windowsJobs || report.Pids == ProcessCountControl.Enforced);
     }
 
     private static KeyValue Fact(string name, string value) => new() { Name = name, Value = value };

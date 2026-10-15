@@ -18,6 +18,28 @@ public sealed class NodeServiceTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    [Theory]
+    [InlineData(true, ProcessCountControl.ObserveOnly, true)]
+    [InlineData(true, ProcessCountControl.Enforced, true)]
+    [InlineData(false, ProcessCountControl.ObserveOnly, false)]
+    [InlineData(false, ProcessCountControl.Enforced, true)]
+    public void ReadinessIsPlatformExplicitAboutProcessCounts(bool windowsJobs, ProcessCountControl pids, bool ready)
+    {
+        // cpu and memory enforced everywhere; pids decides only off the Windows job platform (a Linux node without pids delegation
+        // stays DEGRADED).
+        var report = new CapabilityReport
+        {
+            Cpu = CpuControl.EnforcedShareAndCap,
+            Memory = MemoryControl.EnforcedSoftAndHard,
+            Pids = pids,
+            PidsReason = "no pids controller",
+        };
+        Assert.Equal(ready, NodeCapabilities.FullyEnforced(report, windowsJobs));
+        Assert.Equal(ready ? null : "no pids controller", NodeCapabilities.MissingReason(report, windowsJobs));
+        report.Memory = MemoryControl.ObserveOnly;
+        Assert.False(NodeCapabilities.FullyEnforced(report, windowsJobs));
+    }
+
     [Fact(Timeout = 60_000)]
     public async Task TheHelloAssignsTheOriginAndChecksTheContract()
     {
