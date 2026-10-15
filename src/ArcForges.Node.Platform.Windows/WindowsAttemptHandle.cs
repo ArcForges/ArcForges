@@ -17,7 +17,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     private readonly nuint _key;
     private readonly JobObject _job;
     private readonly TaskCompletionSource<RootProcess?> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly JobMembers _members = new();
+    private readonly JobMembers _members;
     private volatile bool _launchFinished;
     private volatile bool _rootExited;
     private volatile bool _memoryLimit;
@@ -31,6 +31,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         _platform = platform;
         _key = key;
         _job = job;
+        _members = new JobMembers(job);
         Files = files;
         StdinWriter = stdinWriter;
         _root = root;

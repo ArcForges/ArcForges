@@ -14,10 +14,13 @@ public readonly record struct ProcessLifetime(long Created, long Exited);
 /// The members of an attempt's job the node has seen, each with its exact lifetime. A member's process handle is held while it runs, so
 /// its process ID cannot be reused meanwhile, and its exit time is read from that handle (<c>GetProcessTimes</c>) when it exits; only
 /// then is the handle closed. A member whose creation time could not be read (it exited before the node opened it) is not recorded:
-/// with an unknown lifetime its process ID is ambiguous, and the scan never treats a process as its child.
+/// with an unknown lifetime its process ID is ambiguous, and the scan never treats a process as its child. A process is recorded only
+/// when, once opened, it is in the job (<c>IsProcessInJob</c>): an ID freed and reused between a job message (or the process list)
+/// and the open, or a dropped job message (V-W03), never makes an unrelated process a member.
 /// </summary>
+/// <param name="job">The attempt's job.</param>
 [SupportedOSPlatform("windows")]
-public sealed class JobMembers : IDisposable
+public sealed class JobMembers(JobObject job) : IDisposable
 {
     private readonly ConcurrentDictionary<int, Member> _members = new();
     private readonly List<(int Pid, ProcessLifetime Life)> _retired = [];
@@ -37,6 +40,13 @@ public sealed class JobMembers : IDisposable
             var handle = ProcessInfo.Open(pid);
             if (handle is null)
             {
+                return;
+            }
+
+            if (!job.Contains(handle))
+            {
+                // Not (or no longer) this job's process: the ID was reused, or the message was not about this process.
+                handle.Dispose();
                 return;
             }
 

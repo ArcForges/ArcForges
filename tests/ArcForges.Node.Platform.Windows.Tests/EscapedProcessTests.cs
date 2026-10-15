@@ -52,7 +52,7 @@ public sealed class EscapedProcessTests
 
             Assert.True(job.Contains(attemptRoot.Process), "The root is in the attempt job.");
             Assert.False(job.Contains(escapedChild.Process), "The child runs outside the attempt job.");
-            using var members = new JobMembers();
+            using var members = new JobMembers(job);
             members.Remember(attemptRoot.ProcessId);
             var escaped = EscapedProcesses.Scan(job, members.Snapshot());
 
@@ -182,6 +182,76 @@ public sealed class EscapedProcessTests
         }
     }
 
+    /// <summary>
+    /// R1: a process that is not in the job is never recorded as a member, whatever ID a job message or process list named (an ID reused
+    /// between the message and the open, or a dropped message), so its children are never reported escaped or terminated.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void ALiveProcessOutsideTheJobIsNeverRecordedAsAMember()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job objects.");
+        var root = Directory.CreateTempSubdirectory("arcforges-member-").FullName;
+        using var job = JobObject.Create(null);
+        LaunchedProcess? stranger = null;
+        var children = new List<int>();
+        try
+        {
+            using var stdin = ProcessLauncher.OpenNull(write: false);
+            using var stdout = ProcessLauncher.OpenNull(write: true);
+            var marker = Path.Combine(root, "s.txt");
+            stranger = ProcessLauncher.Start(new LaunchOptions
+            {
+                Application = TestPrograms.TestLoad,
+                CommandLine = WindowsCommandLine.Build([TestPrograms.TestLoad, "signal", "--child", "same", "--hold-ms", "30000", "--marker", marker]),
+                Flags = Native.CreateNoWindow,
+                StdInput = stdin,
+                StdOutput = stdout,
+                StdError = stdout,
+            });
+            var pid = stranger.ProcessId;
+            PlatformHarness.WaitFor(() => ProcessInfo.Snapshot().Any(entry => entry.ParentPid == pid && entry.Image.Equals("arcforges-testload.exe", StringComparison.OrdinalIgnoreCase)),
+                TimeSpan.FromSeconds(20), "the stranger's child to run");
+            children.AddRange(ProcessInfo.Snapshot().Where(entry => entry.ParentPid == pid).Select(entry => entry.Pid));
+            Assert.False(job.Contains(stranger.Process));
+
+            using var members = new JobMembers(job);
+            members.Remember(pid);
+            Assert.Empty(members.Snapshot());
+            Assert.Empty(EscapedProcesses.Scan(job, members.Snapshot()));
+
+            // The same process once it is in the job is recorded (control).
+            job.Assign(stranger.Process);
+            members.Remember(pid);
+            var member = Assert.Single(members.Snapshot());
+            Assert.Equal(pid, member.Pid);
+            Assert.Equal(stranger.CreationFileTime, member.Life.Created);
+        }
+        finally
+        {
+            job.Terminate(AttemptRunner.TerminatedExitCode);
+            foreach (var child in children)
+            {
+                using var handle = ProcessInfo.Open(child, terminate: true);
+                if (handle is not null && ProcessInfo.IsRunning(handle))
+                {
+                    Native.TerminateProcess(handle, AttemptRunner.TerminatedExitCode);
+                    Native.WaitForSingleObject(handle, 10_000);
+                }
+            }
+
+            if (stranger is not null)
+            {
+                stranger.Kill(AttemptRunner.TerminatedExitCode);
+                Assert.True(stranger.WaitForExit(TimeSpan.FromSeconds(10)), "The stranger did not end.");
+                stranger.Dispose();
+            }
+
+            Assert.All(children, child => Assert.False(PlatformHarness.IsRunning(child), $"Child {child} was left running."));
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact(Timeout = 60_000)]
     public void AnEscapedChildOfAnExitedMemberIsStillFound()
     {
@@ -211,9 +281,11 @@ public sealed class EscapedProcessTests
                 Flags = Native.CreateNoWindow,
                 ParentProcess = attemptRoot.Process,
             });
-            using var members = new JobMembers();
-            members.Remember(attemptRoot.ProcessId);
+            using var members = new JobMembers(job);
             job.Assign(attemptRoot.Process);
+
+            // Remembered once in the job (the holder reports the root after the assignment), before it exits.
+            members.Remember(attemptRoot.ProcessId);
             attemptRoot.Resume();
             Assert.True(attemptRoot.WaitForExit(TimeSpan.FromSeconds(20)), "The root exits after 500 ms.");
             PlatformHarness.WaitFor(() => File.Exists(Path.Combine(root, "child.txt")), TimeSpan.FromSeconds(20), "the escaped child to run");
