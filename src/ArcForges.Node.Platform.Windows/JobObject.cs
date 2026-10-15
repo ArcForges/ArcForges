@@ -209,23 +209,26 @@ public sealed unsafe class JobObject : IDisposable
     public List<string> LimitViolations()
     {
         var info = default(Native.JobObjectLimitViolationInformation);
-        var violations = new List<string>();
-        if (!Native.QueryInformationJobObject(Handle, Native.JobObjectLimitViolationInformationClass, &info, sizeof(Native.JobObjectLimitViolationInformation), out _))
-        {
-            return violations;
-        }
+        return Native.QueryInformationJobObject(Handle, Native.JobObjectLimitViolationInformationClass, &info, sizeof(Native.JobObjectLimitViolationInformation), out _)
+            ? ViolationNames(info.ViolationLimitFlags)
+            : [];
+    }
 
-        if ((info.ViolationLimitFlags & Native.JobObjectLimitJobMemory) != 0)
+    /// <summary>The names of the limits in a violation flag set (winnt.h <c>JOB_OBJECT_LIMIT_*</c>).</summary>
+    public static List<string> ViolationNames(uint flags)
+    {
+        var violations = new List<string>();
+        if ((flags & Native.JobObjectLimitJobMemory) != 0)
         {
             violations.Add("job_memory");
         }
 
-        if ((info.ViolationLimitFlags & Native.JobObjectLimitJobTime) != 0)
+        if ((flags & Native.JobObjectLimitJobTime) != 0)
         {
             violations.Add("cpu_time");
         }
 
-        if ((info.ViolationLimitFlags & 0x00000400) != 0 || (info.ViolationLimitFlags & 0x00000800) != 0)
+        if ((flags & (Native.JobObjectLimitJobReadBytes | Native.JobObjectLimitJobWriteBytes)) != 0)
         {
             violations.Add("io");
         }

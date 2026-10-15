@@ -34,6 +34,22 @@ internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
 /// </summary>
 public sealed class FormatTests
 {
+    [Theory]
+    [InlineData(0x00000200u, "job_memory")]
+    [InlineData(0x00000004u, "cpu_time")]
+    [InlineData(0x00010000u, "io")]
+    [InlineData(0x00020000u, "io")]
+    [InlineData(0x00030204u, "job_memory,cpu_time,io")]
+    [InlineData(0x00000400u, "")]
+    [InlineData(0x00000800u, "")]
+    [InlineData(0x00002000u, "")]
+    public void LimitViolationFlagsMapToTheirLimits(uint flags, string expected)
+    {
+        // winnt.h: JOB_OBJECT_LIMIT_JOB_MEMORY 0x200, JOB_TIME 0x4, JOB_READ_BYTES 0x10000, JOB_WRITE_BYTES 0x20000; 0x400
+        // (DIE_ON_UNHANDLED_EXCEPTION), 0x800 (BREAKAWAY_OK) and 0x2000 (KILL_ON_JOB_CLOSE) are never violations.
+        Assert.Equal(expected, string.Join(',', JobObject.ViolationNames(flags)));
+    }
+
     [Fact]
     public void ExitRecordsUseTheSchemaOneFieldNames()
     {
