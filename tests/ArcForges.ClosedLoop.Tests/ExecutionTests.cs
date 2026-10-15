@@ -361,6 +361,23 @@ public sealed class ExecutionTests
         var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
         Assert.Equal(guardStop is null ? "NODE" : "GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
+
+        // The guard's record agrees with the recorded enforcer. GUARD: the guard took over before it stopped the attempt. NODE: the guard never stopped it, and whenever it took over, the node's fresh heartbeat made it stand down
+        // again before the node stopped the attempt (the guard is not in charge at the end).
+        var log = GuardEvent.ReadAll(events);
+        TestContext.Current.TestOutputHelper?.WriteLine("guard events: " + string.Join(", ", log.Select(item => item.Event)));
+        var lastTakeover = log.FindLastIndex(item => item.Event == GuardEventKinds.Takeover);
+        var lastStandDown = log.FindLastIndex(item => item.Event == GuardEventKinds.StandDown);
+        if (guardStop is not null)
+        {
+            var stopIndex = log.FindIndex(item => item.Event == GuardEventKinds.Terminate);
+            Assert.InRange(log.FindIndex(item => item.Event == GuardEventKinds.Takeover), 0, stopIndex - 1);
+        }
+        else
+        {
+            Assert.DoesNotContain(log, item => item.Event == GuardEventKinds.Terminate);
+            Assert.True(lastTakeover < 0 || lastStandDown > lastTakeover, "The guard took over and never stood down, yet the node recorded NODE.");
+        }
     }
 
     [Theory(Timeout = 240_000)]
