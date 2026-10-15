@@ -71,11 +71,6 @@ internal static unsafe partial class Native
     public const uint JobObjectLimitJobTime = 0x00000004;
     public const uint JobObjectLimitActiveProcess = 0x00000008;
     public const uint JobObjectLimitJobMemory = 0x00000200;
-
-    // JOBOBJECT_LIMIT_VIOLATION_INFORMATION / notification limit flags for I/O bytes (winnt.h); 0x400 and 0x800 are
-    // DIE_ON_UNHANDLED_EXCEPTION and BREAKAWAY_OK, never violations.
-    public const uint JobObjectLimitJobReadBytes = 0x00010000;
-    public const uint JobObjectLimitJobWriteBytes = 0x00020000;
     public const uint JobObjectLimitKillOnJobClose = 0x00002000;
 
     public const uint CpuRateControlEnable = 0x1;

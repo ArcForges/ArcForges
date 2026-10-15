@@ -210,30 +210,8 @@ public sealed unsafe class JobObject : IDisposable
     {
         var info = default(Native.JobObjectLimitViolationInformation);
         return Native.QueryInformationJobObject(Handle, Native.JobObjectLimitViolationInformationClass, &info, sizeof(Native.JobObjectLimitViolationInformation), out _)
-            ? ViolationNames(info.ViolationLimitFlags)
+            ? JobViolationFlags.Names(info.ViolationLimitFlags)
             : [];
-    }
-
-    /// <summary>The names of the limits in a violation flag set (winnt.h <c>JOB_OBJECT_LIMIT_*</c>).</summary>
-    public static List<string> ViolationNames(uint flags)
-    {
-        var violations = new List<string>();
-        if ((flags & Native.JobObjectLimitJobMemory) != 0)
-        {
-            violations.Add("job_memory");
-        }
-
-        if ((flags & Native.JobObjectLimitJobTime) != 0)
-        {
-            violations.Add("cpu_time");
-        }
-
-        if ((flags & (Native.JobObjectLimitJobReadBytes | Native.JobObjectLimitJobWriteBytes)) != 0)
-        {
-            violations.Add("io");
-        }
-
-        return violations;
     }
 
     /// <summary>The IDs of the processes in the job now.</summary>
@@ -305,5 +283,40 @@ public sealed unsafe class JobObject : IDisposable
         {
             throw new Win32Exception(Native.LastError, $"QueryInformationJobObject(class {informationClass}) on {Name ?? "unnamed"} failed.");
         }
+    }
+}
+
+/// <summary>
+/// The limit flags of <c>JOBOBJECT_LIMIT_VIOLATION_INFORMATION</c> (winnt.h <c>JOB_OBJECT_LIMIT_*</c>) the node reports: job memory 0x200,
+/// job time 0x4, job read bytes 0x10000 and job write bytes 0x20000. 0x400 (DIE_ON_UNHANDLED_EXCEPTION) and 0x800 (BREAKAWAY_OK) are
+/// never violations.
+/// </summary>
+public static class JobViolationFlags
+{
+    private const uint JobTime = 0x00000004;
+    private const uint JobMemory = 0x00000200;
+    private const uint JobReadBytes = 0x00010000;
+    private const uint JobWriteBytes = 0x00020000;
+
+    /// <summary>The names of the limits in a violation flag set (winnt.h <c>JOB_OBJECT_LIMIT_*</c>).</summary>
+    public static List<string> Names(uint flags)
+    {
+        var violations = new List<string>();
+        if ((flags & JobMemory) != 0)
+        {
+            violations.Add("job_memory");
+        }
+
+        if ((flags & JobTime) != 0)
+        {
+            violations.Add("cpu_time");
+        }
+
+        if ((flags & (JobReadBytes | JobWriteBytes)) != 0)
+        {
+            violations.Add("io");
+        }
+
+        return violations;
     }
 }

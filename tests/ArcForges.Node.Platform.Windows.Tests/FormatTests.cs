@@ -47,7 +47,7 @@ public sealed class FormatTests
     {
         // winnt.h: JOB_OBJECT_LIMIT_JOB_MEMORY 0x200, JOB_TIME 0x4, JOB_READ_BYTES 0x10000, JOB_WRITE_BYTES 0x20000; 0x400
         // (DIE_ON_UNHANDLED_EXCEPTION), 0x800 (BREAKAWAY_OK) and 0x2000 (KILL_ON_JOB_CLOSE) are never violations.
-        Assert.Equal(expected, string.Join(',', JobObject.ViolationNames(flags)));
+        Assert.Equal(expected, string.Join(',', JobViolationFlags.Names(flags)));
     }
 
     [Fact]
