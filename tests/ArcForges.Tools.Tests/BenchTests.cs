@@ -99,6 +99,19 @@ public sealed class BenchTests
         Assert.True(result.GetProperty("pass").GetBoolean());
     }
 
+    [Theory]
+    [InlineData("store-growth --attempts 10", "At least one '--environment <captured environment JSON>' is required.")]
+    [InlineData("store-growth --environment x.json --acks maybe", "Option '--acks' is true or false, found 'maybe'.")]
+    [InlineData("store-growth --environment x.json --attempts 0", "Option '--attempts' must be a whole number between 1 and 1000000, found '0'.")]
+    [InlineData("store-growth --environment x.json --unknown 1", "Unknown option(s): --unknown.")]
+    public async Task StoreGrowthRejectsAnInvalidCommandLine(string commandLine, string message)
+    {
+        var run = await ToolProcess.RunAsync(ToolProcess.Bench, commandLine.Split(' '), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, run.ExitCode);
+        Assert.Contains(message, run.StandardError, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task StartupFailsWhenTheCommandExitsWithAnUnexpectedCode()
     {

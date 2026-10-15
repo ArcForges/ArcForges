@@ -73,8 +73,8 @@ any change. They are binding; this file summarizes them and adds the repository 
   carry `tool=...` and skip with a reason when the tool is missing.
 - **Workloads and benchmarks:** `arcforges-testload` (cpu, mem-ramp, output, fork) is a
   deterministic synthetic workload, not a fake; evidence names the scenario and parameters.
-  `arcforges-bench` (size, startup, compare-startup) produces the JSON results of
-  15-performance-targets. CI gates sizes, and gates startup against the previous successful main
+  `arcforges-bench` (size, startup, compare-startup, store-growth) produces the JSON results of
+  15-performance-targets. CI gates sizes and node store growth, and gates startup against the previous successful main
   run (`eng/compare-startup.ps1`): the statistic is the p50 of 50 runs, and a regression must
   exceed both 25% and an absolute noise floor of 5 ms. Without a baseline, the result passes
   with its reason. On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms`.

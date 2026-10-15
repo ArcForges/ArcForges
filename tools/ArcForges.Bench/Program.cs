@@ -25,6 +25,11 @@ internal static class Program
           arcforges-bench compare-startup --current <startup.json> (--baseline <startup.json> | --reason text)
               [--baseline-source text] [--max-regression-percent N (25)] [--noise-floor-ms ms (5)] [--output file]
               a regression is a p50 increase above both the percentage and the noise floor
+          arcforges-bench store-growth --environment <captured environment JSON> [--environment ...] [--attempts N (10000)]
+              [--seed N (1)] [--max-mb-per-10000 MB (50)] [--data-root <new directory, kept>] [--acks true|false (false)]
+              [--name label] [--output file]
+              synthetic attempts through the node store's submit path; the database must stay within the limit,
+              scaled to the attempt count (node-store.md section 4); --acks prints "ack <command id>" per committed submission
 
         1 MB = 1,000,000 bytes; debug symbols are never counted.
         Exit codes: 0 within limits, 1 over a limit or failed, 2 invalid command line.
@@ -54,6 +59,11 @@ internal static class Program
                     options = BenchOptions.Parse(args[1..], "arg");
                     var startup = await StartupBenchmark.RunAsync(options).ConfigureAwait(false);
                     (json, pass) = (JsonSerializer.Serialize(startup, BenchJsonContext.Default.StartupResult), startup.Pass);
+                    break;
+                case "store-growth":
+                    options = BenchOptions.Parse(args[1..], "environment");
+                    var growth = StoreGrowthBenchmark.Run(options, Console.Out);
+                    (json, pass) = (JsonSerializer.Serialize(growth, BenchJsonContext.Default.StoreGrowthResult), growth.Pass);
                     break;
                 case "compare-startup":
                     options = BenchOptions.Parse(args[1..]);

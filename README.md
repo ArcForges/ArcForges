@@ -18,8 +18,9 @@ delivery plan: [Plan](https://github.com/ArcForges/Plan).
 |---|---|
 | `src/ArcForges.Host` | `arcforges`, the multi-role node/CLI executable (empty composition root for now) |
 | `src/ArcForges.Desktop` | `arcforges-desktop`, the optional Avalonia desktop |
+| `src/ArcForges.Node.Store` | The node store: SQLite schema, migrations, backups, idempotency, sealed task secrets, default policy |
 | `tools/ArcForges.TestLoad` | `arcforges-testload`: deterministic CPU, memory, output and process-tree workloads |
-| `tools/ArcForges.Bench` | `arcforges-bench`: binary size and startup benchmarks (JSON results) |
+| `tools/ArcForges.Bench` | `arcforges-bench`: binary size, startup and node store growth benchmarks (JSON results) |
 | `tests/` | xUnit v3 test applications; suites selected by trait |
 | `eng/` | test, publish, benchmark and packaging scripts; dependency admissions |
 
@@ -55,13 +56,14 @@ arcforges-testload fork --width 4 --depth 2 --hold-ms 1000
 arcforges-bench size --target arcforges --path artifacts/publish/win-x64/host/arcforges.exe
 arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --runs 50 --output now.json
 arcforges-bench compare-startup --current now.json --baseline before.json   # >25% and >5 ms fails
+arcforges-bench store-growth --environment tests/ArcForges.Node.Store.Tests/Fixtures/environments/env-wsl-debian-bash.json --attempts 10000
 ```
 
 Equal parameters give equal bytes and digests on every run and platform; `--help` lists the options.
 
 CI builds and tests on Windows and Ubuntu, publishes Native AOT for **win-x64, win-arm64,
-linux-x64 and linux-arm64**, gates binary sizes and startup regressions against main, and checks
-formatting, analyzers, dependencies, secrets and CodeQL. Desktop archives are unsigned development previews, not releases.
+linux-x64 and linux-arm64**, gates binary sizes, node store growth and startup regressions against main,
+checks that the node store schema only expands, and checks formatting, analyzers, dependencies, secrets and CodeQL. Desktop archives are unsigned development previews, not releases.
 
 [Agent and contributor rules](AGENTS.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

@@ -1,0 +1,124 @@
+{
+  "source": "wsl-debian-bash",
+  "note": "Captured shape of a real shell environment: names kept, every value synthetic (each letter/digit run replaced by a keyed-hash word of the same length and classes; the key was discarded). No real values.",
+  "entryCount": 29,
+  "valueBytes": 4813,
+  "entries": [
+    {
+      "name": "DBUS_SESSION_BUS_ADDRESS",
+      "value": "zttn:ynei=/zlm/gclx/7218/qdm"
+    },
+    {
+      "name": "DISPLAY",
+      "value": ":5"
+    },
+    {
+      "name": "DOTNET_ROOT",
+      "value": "/aals/ioexjenhn/.usojmx"
+    },
+    {
+      "name": "HOME",
+      "value": "/aals/ioexjenhn"
+    },
+    {
+      "name": "HOMEBREW_CELLAR",
+      "value": "/aals/nzjatgrlb/.nzjatgrlb/Jpvgtc"
+    },
+    {
+      "name": "HOMEBREW_PREFIX",
+      "value": "/aals/nzjatgrlb/.nzjatgrlb"
+    },
+    {
+      "name": "HOMEBREW_REPOSITORY",
+      "value": "/aals/nzjatgrlb/.nzjatgrlb/Emhtqxxg"
+    },
+    {
+      "name": "HOSTTYPE",
+      "value": "v61_42"
+    },
+    {
+      "name": "INFOPATH",
+      "value": "/aals/nzjatgrlb/.nzjatgrlb/iwnrq/ylru:/aals/nzjatgrlb/.nzjatgrlb/iwnrq/ylru:"
+    },
+    {
+      "name": "LANG",
+      "value": "rg_GY.AFG-5"
+    },
+    {
+      "name": "LOGNAME",
+      "value": "ioexjenhn"
+    },
+    {
+      "name": "NAME",
+      "value": "vabu"
+    },
+    {
+      "name": "OLDPWD",
+      "value": "/vfv/p/CfEhds/Lnxtsmma/CcmVqriym/CcmVqriym"
+    },
+    {
+      "name": "PATH",
+      "value": "/aals/ioexjenhn/.pqmtc/khl:/aals/ioexjenhn/tbw/hizyts141/khl:/aals/ioexjenhn/tbw/khl:/aals/ioexjenhn/tbw:/aals/ioexjenhn/tbw/rpedx:/aals/ioexjenhn/tbw/tjcgv:/aals/ioexjenhn/tbw/wbvxt/wbvxt-3.5.5-eeojp-v61_42/khl:/aals/ioexjenhn/tbw/eydllhhho:/aals/ioexjenhn/.usojmx:/aals/ioexjenhn/.usojmx/gpigi:/aals/ioexjenhn/.pqmtc/khl:/aals/nzjatgrlb/.nzjatgrlb/dvg/fsau/khl:/aals/nzjatgrlb/.nzjatgrlb/dvg/ezvrp/khl:/aals/nzjatgrlb/.nzjatgrlb/dvg/nyupqg/khl:/aals/nzjatgrlb/.nzjatgrlb/dvg/smib@50/khl:/aals/nzjatgrlb/.nzjatgrlb/khl:/aals/nzjatgrlb/.nzjatgrlb/ycry:/aals/nzjatgrlb/.nzjatgrlb/khl:/aals/nzjatgrlb/.nzjatgrlb/ycry:/alw/pqmtc/ycry:/alw/pqmtc/khl:/alw/ycry:/alw/khl:/ycry:/khl:/alw/mrbva:/alw/pqmtc/mrbva:/alw/vyt/pat/vyt:/alw/vyt/eeojp-gpigi/0.91.78.0-bmdjlrnkp-vjktcnoe-LUK7/khl:/vfv/p/CfEhds/Lnxtsmma/tbw/khl:/vfv/p/CfEhds/Lnxtsmma/tbw:/vfv/p/CfEhds/Lnxtsmma/tbw/hizyts141/Hpzvnsw:/vfv/p/CfEhds/Lnxtsmma/tbw/wbvxt/wbvxt-3.5.5-nimgfyn-v61_42/khl:/vfv/p/CfEhds/Lnxtsmma/tbw/tjcgv:/vfv/p/CfEhds/Lnxtsmma/tbw/eydllhhho:/vfv/p/Jwbgv/Z5Crk/.usojmx:/vfv/p/Jwbgv/Z5Crk/.usojmx/gpigi:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/erxpkb-ihc/jlrrcjr:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/mtbrnuamb16-fqk/jlrrcjr/khl:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/qxvn/jlrrcjr/khl:/vfv/p/Jwbgv/Z5Crk/bqebz/lzsgh:/vfv/p/rpedx:/vfv/p/Jwbgv/Z5Crk/khl:/vfv/p/Wwipdmb Fajyi/Vxx/npoqu40/khl:/vfv/p/Wwipdmb Fajyi/Vxx/alw/pqmtc/khl:/vfv/p/Wwipdmb Fajyi/Vxx/alw/khl:/vfv/p/Wwipdmb Fajyi/Vxx/alw/khl:/vfv/p/Wwipdmb Fajyi/Vxx/npoqu40/khl:/vfv/p/Wwipdmb Fajyi/Vxx/alw/khl:/vfv/p/Jwbgv/Z5Crk/khl:/vfv/p/MDUAPJH/rwexdk48:/vfv/p/MDUAPJH:/vfv/p/MDUAPJH/Tydyem52/Qtrv:/vfv/p/MDUAPJH/Tydyem52/NiriaydPqiocSyptk/s6.5:/vfv/p/MDUAPJH/Tydyem52/IphjDQN:/vfv/p/Wwipdmb Fajyi/usojmx:/vfv/p/Wwipdmb Fajyi/Olkslhdeu BTN Gfkkxb/Sufljm WXM/JJKE/252/Ukapi/Xaam:/vfv/p/Wwipdmb Fajyi/Lukyd Juda Uzgdjf/khl:/vfv/p/Wwipdmb Fajyi/Olkslhdeu BTN Gfkkxb/252/Ukapi/Xaam:/vfv/p/Wwipdmb Fajyi/GfynknozPhr/khl:/vfv/p/Wwipdmb Fajyi/Vxx/ogs:/vfv/p/Wwipdmb Fajyi (v61)/Eyqmzsc Rcic/59/Eyqmzsc Ajdiyhyglgf Dyiayou:/vfv/p/Wwipdmb Fajyi/SNA:/vfv/p/Jwbgv/Z5Crk/bqebz/zyslrrm/qxvn/brqoak/smib_zdtknxw/.khl:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/trnf/jlrrcjr/khl:/vfv/p/Jwbgv/Z5Crk/bqebz/zyslrrm/xi/gpigi/lzsgh:/vfv/p/Jwbgv/Z5Crk/bqebz/zyslrrm/xi/mrslky/lzsgh:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/nyupqg/jlrrcjr/.neybi/khl:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/mrslky/jlrrcjr/Hpzvnsw:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/mrslky/jlrrcjr:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/erxpkb-ihc/jlrrcjr/khl:/vfv/p/Jwbgv/Z5Crk/bqebz/mgwc/vbewpjyqbfs/jlrrcjr:/vfv/p/Jwbgv/Z5Crk/bqebz/zyslrrm/erxpkb-ihc/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Koodqlfz/WlveFW/Qxdli/khl:/vfv/p/Jwbgv/Z5Crk/.pqmtc/khl:/vfv/p/Jwbgv/Z5Crk/.avtx/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Olkslhdeu/NfkpfpvEoyi:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Koodqlfz/Ade/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/RzsLijeme/Hvrvela/qcgmbpa:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Koodqlfz/Olkslhdeu DE Xrln/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Olkslhdeu/DtiHxu/Dhvyd:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Koodqlfz/Mrsnpn:/vfv/p/Jwbgv/Z5Crk/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Gyqelst/Ufl/fjxvtaji-gpigi:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Gyqelst/Ufl/qlitnpaq:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Gyqelst/Ufl/dbbpnbq-gpigi/gdhflp/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Koodqlfz/Inebm/khl:/vfv/p/Yy/0.86.0/xvfv7959_42/khl:/vfv/p/Jwbgv/Z5Crk/bqebz/zyslrrm/nyupqg/.neybi/khl:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Djpa/CcmVqriym-HBJ71-UljcxHspe-92099266/Hoesdcep-22060663559/lgyabpos-zudmhal/usojmx-aals/.usojmx/gpigi:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Djpa/CcmVqriym-HBJ71-UljcxHspe-92099266/Hoesdcep-22060663559/lgyabpos-zudmhal-14318297391/usojmx-aals/.usojmx/gpigi:/vfv/p/Jwbgv/Z5Crk/GgzKalm/Zczak/Djpa/sdwrpt/V--CfEhds-Lnxtsmma-CcmVqriym/b08kp14y-8gf1-4n93-c73l-v29xlpz9089u/gphqktsytq/oyv-aals/.usojmx/gpigi:/vfv/p/Wwipdmb Fajyi/Vxx/npoqu40/khl:/vfv/p/Wwipdmb Fajyi/Vxx/alw/khl/thngjp_gyle:/vfv/p/Wwipdmb Fajyi/Vxx/alw/khl/vaio_gyle"
+    },
+    {
+      "name": "PERF_EXEC_PATH",
+      "value": "/alw/vyt/eeojp-gpigi/0.91.78.0-bmdjlrnkp-vjktcnoe-LUK7/ufhcgqh/jjdb-vaio"
+    },
+    {
+      "name": "PULSE_SERVER",
+      "value": "zttn:/vfv/oruj/OblyiMmmera"
+    },
+    {
+      "name": "PWD",
+      "value": "/aals/ioexjenhn/ep-smib-78-wdq"
+    },
+    {
+      "name": "SHELL",
+      "value": "/khl/ntlg"
+    },
+    {
+      "name": "SHLVL",
+      "value": "0"
+    },
+    {
+      "name": "TERM",
+      "value": "elgvw-256uumsg"
+    },
+    {
+      "name": "USER",
+      "value": "ioexjenhn"
+    },
+    {
+      "name": "VCPKG_ROOT",
+      "value": "/vfv/p/rpedx"
+    },
+    {
+      "name": "WAYLAND_DISPLAY",
+      "value": "mkjprkw-5"
+    },
+    {
+      "name": "WSL2_GUI_APPS_ENABLED",
+      "value": "0"
+    },
+    {
+      "name": "WSLENV",
+      "value": ""
+    },
+    {
+      "name": "WSL_DISTRO_NAME",
+      "value": "Snmdmy"
+    },
+    {
+      "name": "WSL_INTEROP",
+      "value": "/zlm/SNA/425_jxtpiuu"
+    },
+    {
+      "name": "XDG_RUNTIME_DIR",
+      "value": "/zlm/gclx/7218"
+    },
+    {
+      "name": "_",
+      "value": "/aals/ioexjenhn/tbw/hizyts141/khl/wavmzz3"
+    }
+  ]
+}

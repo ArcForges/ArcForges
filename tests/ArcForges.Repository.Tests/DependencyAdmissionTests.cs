@@ -60,6 +60,7 @@ public sealed partial class DependencyAdmissionTests
             .ToList();
 
         Assert.Contains(("ArcForges.Build.Policy", "1.0.0-ci.124.1"), forbidden);
+        Assert.Contains(("ArcForges.Contracts.Foundation", "1.0.0-ci.350.1"), forbidden);
         var central = RepositoryFiles.CentralVersions();
         foreach (var (id, version) in forbidden)
         {
@@ -103,6 +104,41 @@ public sealed partial class DependencyAdmissionTests
             Assert.True(framework.TryGetProperty("ArcForges.Build.Policy", out var entry), $"{lockFile} must restore ArcForges.Build.Policy.");
             Assert.Equal("Direct", entry.GetProperty("type").GetString());
         }
+    }
+
+    [Fact]
+    public void NuGetWarningExceptionsAreRecordedAndScopedToOneReference()
+    {
+        using var document = RepositoryFiles.Json(Admissions);
+        List<JsonElement> exceptions = document.RootElement.TryGetProperty("nugetWarningExceptions", out var list) ? [.. list.EnumerateArray()] : [];
+        var recorded = exceptions.Select(entry => (
+            Code: entry.GetProperty("code").GetString()!,
+            Project: entry.GetProperty("project").GetString()!,
+            Reference: entry.GetProperty("reference").GetString()!)).ToList();
+        foreach (var entry in exceptions)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("evidence").GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("removeWhen").GetString()));
+        }
+
+        var suppressed = new List<(string Code, string Project, string Reference)>();
+        foreach (var project in RepositoryFiles.Projects("src", "tools", "tests").Append("Directory.Build.props").Append("tests/Directory.Build.props"))
+        {
+            var xml = RepositoryFiles.Xml(project);
+            foreach (var element in xml.Descendants())
+            {
+                var noWarn = element.Name.LocalName == "NoWarn" ? element.Value : (string?)element.Attribute("NoWarn");
+                foreach (var code in (noWarn ?? string.Empty).Split((char[])[';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(code => code.StartsWith("NU", StringComparison.Ordinal)))
+                {
+                    suppressed.Add((code, project, element.Name.LocalName == "PackageReference" ? (string?)element.Attribute("Include") ?? string.Empty : string.Empty));
+                }
+            }
+        }
+
+        // Every NuGet warning suppression is a recorded package-specific exception, and every recorded exception is in place.
+        Assert.Equal(recorded.Order(), suppressed.Order());
+        Assert.All(recorded, entry => Assert.Contains(entry.Reference, RepositoryFiles.CentralVersions().Keys));
     }
 
     private static IEnumerable<string> LockFiles() =>
