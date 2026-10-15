@@ -208,7 +208,7 @@ public sealed class TaskServiceTests
         var script = Path.Combine(node.Root, "probe.cmd");
         File.WriteAllText(script, $"@\"{Tasks.TestLoad}\" args %*\r\n");
 
-        foreach (var unsafeArgument in (string[])["\"&calc.exe", "x\" | whoami", "!PATH!", "line\nbreak", "\"%PATH%\""])
+        foreach (var unsafeArgument in (string[])["\"&calc.exe", "x\" | whoami", "!PATH!", "line\nbreak", "\"%PATH%\"", "quote\"only", "\"", "\"two words\"", "a\\\"b"])
         {
             var refused = await Tasks.SubmitRawAsync(channel, Tasks.Argv(node.Root, script, "ok", unsafeArgument));
             Assert.Equal(("unsafe_batch_argument", ErrorCategory.Validation), (refused.Error.Code, refused.Error.Category));
@@ -216,7 +216,8 @@ public sealed class TaskServiceTests
             Assert.Equal(EffectCertainty.DidNotHappen, refused.Error.Effect);
         }
 
-        string[] safe = ["two words", "a&b", "x|y", "<in>", "caret^", "50%", "%PATH%", "(paren)", "comma,semi;eq="];
+        string[] safe = ["two words", "a&b", "x|y", "<in>", "caret^", "50%", "%PATH%", "(paren)", "comma,semi;eq=", "C:\\dir with space\\", "next",
+            "trailing\\\\ two", "\\\\server\\share x\\", "a\\b c", "C:\\nospace\\"];
         var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, [script, .. safe])));
         Assert.Equal(TaskState.Succeeded, task.State);
         using var document = JsonDocument.Parse(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout));

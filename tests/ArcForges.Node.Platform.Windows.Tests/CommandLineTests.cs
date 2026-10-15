@@ -57,6 +57,17 @@ public sealed class CommandLineTests
         "delayed!",
         "\"\"&echo pwned",
         "& \"",
+
+        // Any quote, with or without metacharacters: it cannot be represented for both cmd and a program reading %* (fail closed).
+        "quote\"only",
+        "\"",
+        "\"\"",
+        "a\"b",
+        "\\\"",
+        "\"two words\"",
+        "C:\\dir with space\\\"",
+        "\"C:\\dir\\\"",
+        "x\\\"y",
     };
 
     /// <summary>Arguments a batch file receives unchanged.</summary>
@@ -72,11 +83,28 @@ public sealed class CommandLineTests
         "comma,semi;equals=",
         "%PATH%",
         "50%",
-        "quote\"only",
         "",
         "unicode äöü 中文",
         "C:\\dir with space\\",
+        "trailing\\\\ two",
+        "\\\\server\\share\\",
+        "a\\b c",
     };
+
+    [Theory]
+    [InlineData("C:\\dir with space\\", "\"C:\\dir with space\\\\\"")]
+    [InlineData("x y\\\\", "\"x y\\\\\\\\\"")]
+    [InlineData("a\\b c", "\"a\\b c\"")]
+    [InlineData("C:\\nospace\\", "C:\\nospace\\")]
+    public void BackslashesBeforeTheClosingQuoteAreDoubled(string argument, string expected)
+    {
+        var line = WindowsCommandLine.BuildBatch("C:\\Windows\\System32\\cmd.exe", "C:\\tools\\run.bat", ["run.bat", argument, "next"]);
+        Assert.EndsWith(" " + expected + " next\"", line, StringComparison.Ordinal);
+
+        // A program receiving the batch file's %* reads the argument back unchanged and separate from the next one.
+        var forwarded = line[(line.IndexOf("run.bat\" ", StringComparison.Ordinal) + "run.bat\" ".Length)..^1];
+        Assert.Equal([argument, "next"], WindowsCommandLine.Parse("prog " + forwarded).Skip(1));
+    }
 
     [Theory]
     [MemberData(nameof(QuotingCorpus))]

@@ -12,12 +12,14 @@ namespace ArcForges.Node.Platform.Windows;
 /// argument is quoted when it is empty or holds a space, tab or quote; backslashes are doubled only where they precede a quote or
 /// the closing quote; an inner quote becomes <c>\"</c>. The program token is quoted without escapes (the first token has no escape
 /// processing) and may not contain a quote.</item>
-/// <item>Batch files (<c>.bat</c>, <c>.cmd</c>) run through <c>cmd.exe /d /s /c "..."</c>, whose own parsing sees the whole line. An
-/// argument that holds a line break or NUL, a <c>!</c> (delayed expansion may be on in the user's registry), or a quote together
-/// with a metacharacter (<c>% ! ^ &amp; | &lt; &gt;</c>) is refused with <c>VALIDATION/unsafe_batch_argument</c>, the class of risk
-/// behind CVE-2024-24576. Other arguments are quoted when they hold a space, tab, metacharacter or cmd delimiter, inner quotes are
-/// doubled, and every <c>%</c> is followed by <c>%cd:~,%</c> (an expansion to nothing), so cmd never expands a variable from
-/// argument text.</item>
+/// <item>Batch files (<c>.bat</c>, <c>.cmd</c>) run through <c>cmd.exe /d /s /c "..."</c>, whose own parsing sees the whole line. The
+/// rules fail closed (T-03): an argument that holds a quote, a line break or NUL, or a <c>!</c> (delayed expansion may be on in the
+/// user's registry) is refused with <c>VALIDATION/unsafe_batch_argument</c>, the class of risk behind CVE-2024-24576. A quote cannot
+/// be represented so that both cmd and a program receiving the batch file's <c>%*</c> read it back, so none is accepted, with or
+/// without metacharacters. Other arguments are quoted when they hold a space, tab, metacharacter or cmd delimiter; backslashes before
+/// the closing quote are doubled, so an argument ending in <c>\</c> (for example <c>C:\dir with space\</c>) does not merge with the next
+/// one when the batch file passes <c>%*</c> on to a program; and every <c>%</c> is followed by <c>%cd:~,%</c> (an expansion to nothing),
+/// so cmd never expands a variable from argument text.</item>
 /// </list>
 /// The whole command line must fit Windows' limit of 32,767 characters including the terminator.
 /// </summary>
@@ -26,7 +28,7 @@ public static class WindowsCommandLine
     /// <summary>The longest command line <c>CreateProcessW</c> accepts, without the terminating NUL.</summary>
     public const int MaxLength = 32_766;
 
-    private static readonly SearchValues<char> BatchMetacharacters = SearchValues.Create("%!^&|<>");
+    private static readonly SearchValues<char> BatchRefused = SearchValues.Create("\"!\r\n\0");
     private static readonly SearchValues<char> QuoteTriggers = SearchValues.Create(" \t\n\v\"");
     private static readonly SearchValues<char> BatchQuoteTriggers = SearchValues.Create(" \t\"^&|<>(),;=%");
 
@@ -79,12 +81,7 @@ public static class WindowsCommandLine
     public static bool IsBatchSafe(string argument)
     {
         ArgumentNullException.ThrowIfNull(argument);
-        if (argument.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0 || argument.Contains('!', StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return !(argument.Contains('"', StringComparison.Ordinal) && argument.AsSpan().IndexOfAny(BatchMetacharacters) >= 0);
+        return argument.AsSpan().IndexOfAny(BatchRefused) < 0;
     }
 
     /// <summary>
@@ -103,7 +100,7 @@ public static class WindowsCommandLine
             throw new CommandRefusedException("unsafe_batch_argument", unsafeIndex.ToString(CultureInfo.InvariantCulture));
         }
 
-        if (!IsBatchSafe(script) || script.Contains('"', StringComparison.Ordinal))
+        if (!IsBatchSafe(script))
         {
             throw new CommandRefusedException("unsafe_batch_argument", "0");
         }
@@ -337,6 +334,10 @@ public static class WindowsCommandLine
         AppendBatchText(builder, argument);
         if (quote)
         {
+            // Backslashes before the closing quote are doubled: a program reading the batch file's %* (CommandLineToArgvW) then sees
+            // them as literal backslashes and the quote as the end of the argument.
+            var trailing = argument.Length - argument.TrimEnd('\\').Length;
+            builder.Append('\\', trailing);
             builder.Append('"');
         }
     }
@@ -347,9 +348,6 @@ public static class WindowsCommandLine
         {
             switch (character)
             {
-                case '"':
-                    builder.Append("\"\"");
-                    break;
                 case '%':
                     // %cd:~,% expands to nothing, so this % never pairs with a later one into a variable reference.
                     builder.Append("%%cd:~,%");
