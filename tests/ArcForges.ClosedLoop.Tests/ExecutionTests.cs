@@ -235,11 +235,14 @@ public sealed class ExecutionTests
         first.Kill();
         await first.WaitForExitAsync(Ct);
 
-        // A node that crashes 300 ms after every start never enforces, so it never renews the heartbeat: the guard stays in charge.
+        // The node is killed 300 ms after every start. Whichever acts first stops the flood: the guard, when no node instance renews the
+        // heartbeat (a JIT node rarely gets that far), or a node instance that completed recovery and enforced the limit before it was
+        // killed (a fast Native AOT start). A heartbeat comes only from an enforcing node, so the restarts never leave the attempt unguarded.
         var events = Path.Combine(attempt, "guard-events.jsonl");
+        var exit = Path.Combine(attempt, "exit.json");
         var restarts = 0;
         var watch = Stopwatch.StartNew();
-        while (!GuardEvent.ReadAll(events).Any(item => item.Event == GuardEventKinds.Terminate) && watch.Elapsed < TimeSpan.FromSeconds(30))
+        while (!File.Exists(exit) && watch.Elapsed < TimeSpan.FromSeconds(30))
         {
             using var restarted = node.Start(TestNode.Host, ["node", "run", "--test-mode"]);
             await Task.Delay(300, Ct);
@@ -249,14 +252,15 @@ public sealed class ExecutionTests
         }
 
         var output = new FileInfo(Path.Combine(attempt, "stdout.bin")).Length;
-        TestContext.Current.TestOutputHelper?.WriteLine($"{restarts} restarts; output {output} for a {Limit} limit at {Rate} B/s");
-        Assert.Contains(GuardEvent.ReadAll(events), item => item.Event == GuardEventKinds.Terminate && item.Reason == "OUTPUT_LIMIT");
+        var guardStop = GuardEvent.ReadAll(events).FirstOrDefault(item => item.Event == GuardEventKinds.Terminate);
+        TestContext.Current.TestOutputHelper?.WriteLine($"{restarts} restarts; output {output} for a {Limit} limit at {Rate} B/s; stopped by {(guardStop is null ? "a node instance" : "the guard")}");
+        Assert.True(File.Exists(exit), "The flood was not stopped within 30 s of restarts.");
         Assert.True(output - Limit <= Rate * (Takeover + 600) / 1000, $"The overshoot {output - Limit} exceeds the stated bound.");
 
         await node.StartNodeAsync();
         var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
-        Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
+        Assert.Equal(guardStop is null ? "NODE" : "GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
     [Theory(Timeout = 240_000)]
