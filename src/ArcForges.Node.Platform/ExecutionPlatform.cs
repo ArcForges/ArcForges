@@ -287,4 +287,10 @@ public interface IExecutionPlatform : IDisposable
 
     /// <summary>Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone.</summary>
     IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root);
+
+    /// <summary>
+    /// Acknowledges the exit record of an attempt the store already records as finished, when its holder still waits (the node stopped
+    /// between the record's commit and the acknowledgement). Returns true when a waiting holder was released.
+    /// </summary>
+    bool AcknowledgeRecorded(string nodeName, string attemptName);
 }

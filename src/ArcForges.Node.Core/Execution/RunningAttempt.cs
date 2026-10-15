@@ -90,6 +90,12 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>The finalization started.</summary>
     internal bool Finalizing { get; set; }
 
+    /// <summary>The finalization found processes left after the forced phase (TERMINATION_INCOMPLETE).</summary>
+    internal bool FinalizeIncomplete { get; set; }
+
+    /// <summary>A failed finalization is retried no earlier than this (monotonic).</summary>
+    internal long? FinalizeNotBefore { get; set; }
+
     /// <summary>Why the node stops the attempt.</summary>
     internal TerminationReason? StopReason { get; set; }
 

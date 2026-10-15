@@ -113,6 +113,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     /// <summary>The verification window after the forced phase (04 section 6 step 5).</summary>
     public static readonly TimeSpan VerifyWindow = TimeSpan.FromSeconds(5);
 
+    /// <summary>The delay before a finalization that failed on a store error is retried.</summary>
+    public static readonly TimeSpan FinalizeRetry = TimeSpan.FromSeconds(5);
+
     /// <summary>How long a caller may be gone before its <c>cancel_when_caller_gone</c> tasks are cancelled (AD-0006 section 7).</summary>
     public static readonly TimeSpan CallerGoneGrace = TimeSpan.FromSeconds(5);
 
@@ -304,7 +307,42 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 new LogField("exitRecorded", File.Exists(files.ExitPath)), new LogField("portReassociated", handle is not null));
         }
 
+        AcknowledgeRecordedAttempts(live);
         Heartbeat.RecoveryDone = true;
+    }
+
+    /// <summary>
+    /// The exit acknowledgement follows the record's commit, so a node that stopped between the two leaves a holder waiting on an
+    /// attempt the store already records as finished. Every attempt directory with a durable exit record that is not live is
+    /// acknowledged again (an ack event that no longer opens has no holder left).
+    /// </summary>
+    private void AcknowledgeRecordedAttempts(List<AttemptRow> live)
+    {
+        if (Platform is null)
+        {
+            return;
+        }
+
+        var logs = Path.Combine(_dataRoot, "logs");
+        if (!Directory.Exists(logs))
+        {
+            return;
+        }
+
+        var liveNames = live.Select(row => IdText.Format(row.AttemptId)).ToHashSet(StringComparer.Ordinal);
+        foreach (var directory in Directory.EnumerateDirectories(logs))
+        {
+            var name = Path.GetFileName(directory);
+            if (liveNames.Contains(name) || !File.Exists(Path.Combine(directory, AttemptFiles.Exit)))
+            {
+                continue;
+            }
+
+            if (Platform.AcknowledgeRecorded(NodeName, name))
+            {
+                _log.Info("execution.recover.acknowledged", new LogField("attempt", name));
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------------------------------------------ lifecycle
@@ -1291,20 +1329,28 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     {
         lock (attempt)
         {
-            if (attempt.Finalizing)
+            attempt.FinalizeIncomplete |= incomplete;
+            if (attempt.Finalizing || (attempt.FinalizeNotBefore is { } notBefore && _clock.GetTimestamp() < notBefore))
             {
                 return;
             }
 
             attempt.Finalizing = true;
+            incomplete = attempt.FinalizeIncomplete;
         }
 
         _ = Task.Run(() => FinalizeAsync(attempt, incomplete));
     }
 
+    /// <summary>
+    /// Records a finished attempt and only then acknowledges its exit record, so the holder releases the jobs only after the result is
+    /// durable. A full command queue is waited out; a store error defers the attempt (it stays supervised and finalization is retried
+    /// after <see cref="FinalizeRetry"/>); at node shutdown it stays unacknowledged and the next start records it from its exit record.
+    /// An attempt is never dropped without either a record or a kept holder.
+    /// </summary>
     private async Task FinalizeAsync(RunningAttempt attempt, bool incomplete)
     {
-        attempt.Finalizing = true;
+        var recorded = false;
         try
         {
             attempt.Tail((_clock.GetUtcNow().UtcTicks - DateTime.UnixEpoch.Ticks) * 100);
@@ -1327,37 +1373,74 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             var remaining = incomplete && handle is not null ? handle.Processes() : [];
             var outcome = Outcome(attempt, exit, launch, guard, incomplete, remaining, handle?.MemoryLimitHit == true);
             var settings = Settings;
-            for (var tries = 0; ; tries++)
+            for (var tries = 0; !_stop.IsCancellationRequested; tries++)
             {
                 try
                 {
                     await _processor.ExecuteAsync(context => RecordFinished(context, attempt, exit, accounting, outcome, guard, settings, handle?.Root)).ConfigureAwait(false);
+                    recorded = true;
                     break;
                 }
-                catch (CommandQueueFullException) when (tries < 50)
+                catch (CommandQueueFullException)
                 {
-                    await Task.Delay(200).ConfigureAwait(false);
+                    // The queue drains; the attempt waits its turn (bounded backoff), however long that takes.
+                    if (tries % 50 == 49)
+                    {
+                        _log.Warning("execution.finalize.queue_full", new LogField("attempt", attempt.Name), new LogField("tries", tries + 1));
+                    }
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(200 * (1 << Math.Min(tries, 3)), 1_000))).ConfigureAwait(false);
                 }
             }
 
-            handle?.Acknowledge();
-            _log.Info("execution.finished", new LogField("attempt", attempt.Name), new LogField("reason", outcome.Reason),
-                new LogField("exitCode", exit?.ExitStatus ?? -1), new LogField("outputBytes", attempt.OutputBytes),
-                new LogField("limitEnforcedBy", outcome.LimitEnforcedBy ?? "-"));
+            if (recorded && _faults.Take("kill-before-ack") is { } killAfter)
+            {
+                _log.Warning("node.fault.kill_before_ack", new LogField("attempt", attempt.Name));
+                await Task.Delay(killAfter).ConfigureAwait(false);
+                using var self = System.Diagnostics.Process.GetCurrentProcess();
+                self.Kill();
+            }
+
+            if (recorded)
+            {
+                handle?.Acknowledge();
+                _log.Info("execution.finished", new LogField("attempt", attempt.Name), new LogField("reason", outcome.Reason),
+                    new LogField("exitCode", exit?.ExitStatus ?? -1), new LogField("outputBytes", attempt.OutputBytes),
+                    new LogField("limitEnforcedBy", outcome.LimitEnforcedBy ?? "-"));
+            }
+            else
+            {
+                _log.Info("execution.finalize.deferred_to_restart", new LogField("attempt", attempt.Name));
+            }
         }
         catch (Exception exception) when (exception is IOException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
         {
             _log.Error("execution.finalize.failed", exception);
         }
-        finally
+
+        if (!recorded && !_stop.IsCancellationRequested)
         {
-            _running.TryRemove(attempt.Name, out _);
-            attempt.Changed.Pulse();
-            attempt.Dispose();
-            TaskPulse(attempt.TaskId).Pulse();
-            CleanupTemp(attempt);
-            Kick();
+            // Not recorded: the attempt stays supervised, unacknowledged, and its finalization is retried later.
+            lock (attempt)
+            {
+                attempt.FinalizeNotBefore = _clock.GetTimestamp() + (long)(FinalizeRetry.TotalSeconds * TimeProvider.System.TimestampFrequency);
+                attempt.Finalizing = false;
+            }
+
+            return;
         }
+
+        // Recorded, or left unacknowledged for the next start at shutdown (the holder keeps the jobs and the exit record).
+        _running.TryRemove(attempt.Name, out _);
+        attempt.Changed.Pulse();
+        attempt.Dispose();
+        TaskPulse(attempt.TaskId).Pulse();
+        if (recorded)
+        {
+            CleanupTemp(attempt);
+        }
+
+        Kick();
     }
 
     private static AttemptOutcome Outcome(RunningAttempt attempt, ExitRecord? exit, LaunchRecord? launch, List<GuardEvent> guard, bool incomplete,

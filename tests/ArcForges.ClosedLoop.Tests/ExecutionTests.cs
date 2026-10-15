@@ -239,6 +239,36 @@ public sealed class ExecutionTests
         Assert.True(peak <= 150L << 20, $"The node peaked at {peak} private bytes while replaying the backlog (15 section 2: 150 MB).");
     }
 
+    /// <summary>
+    /// A node that dies between recording a finished attempt and acknowledging its exit record leaves the holder waiting; the next start
+    /// acknowledges recorded attempts whose ack event still opens, so the holder releases the jobs and exits.
+    /// </summary>
+    [Fact(Timeout = 300_000)]
+    public async Task AHolderLeftWaitingByACrashAfterTheRecordIsReleasedAtTheNextStart()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        await using var node = TestNode.Create();
+        node.Environment[ExecutionFaultVariable] = "kill-before-ack=0";
+        var first = await node.StartNodeAsync();
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var detached = await node.CliBytesAsync(Bound, "run", "--detach", "--", cmd, "/d", "/c", "exit 3");
+        var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
+        Assert.True(first.WaitForExit(TimeSpan.FromSeconds(30)), "The node did not kill itself after recording the attempt.");
+        var holders = node.LiveProcesses().Select(process => process.Id).ToList();
+        Assert.Single(holders);
+        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+        Assert.True(IsRunning(holders[0]), "The holder waits for the acknowledgement.");
+
+        await node.StartNodeAsync();
+        await TestNode.WaitAsync(() => !IsRunning(holders[0]), TimeSpan.FromSeconds(15), "the holder to be released");
+        Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.recover.acknowledged"));
+        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        Assert.Equal(3, task.GetProperty("currentAttempt").GetProperty("result").GetProperty("exitCode").GetInt32());
+    }
+
+    private const string ExecutionFaultVariable = "ARCFORGES_TEST_FAULT";
+
     [Fact(Timeout = 300_000)]
     public async Task TheHolderTakesOverTheOutputLimitWhileTheNodeIsDown()
     {

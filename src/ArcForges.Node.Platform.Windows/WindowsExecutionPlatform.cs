@@ -266,6 +266,13 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         return handle;
     }
 
+    /// <inheritdoc />
+    public bool AcknowledgeRecorded(string nodeName, string attemptName)
+    {
+        using var ack = Native.OpenEvent(Native.EventModifyState, inherit: false, AckName(nodeName, attemptName));
+        return !ack.IsInvalid && Native.SetEvent(ack);
+    }
+
     /// <summary>Stops the completion port thread. Attempt jobs are left to their holders.</summary>
     public void Dispose()
     {
