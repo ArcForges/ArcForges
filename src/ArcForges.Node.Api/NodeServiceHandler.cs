@@ -282,8 +282,9 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }).ConfigureAwait(false);
         if (result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
         {
-            _node.Log.Info("node.stop.requested", new LogField("origin", _sessions.OriginOf(context)), new LogField("reason", NodeLog.OneLine(reason)),
-                new LogField("cancelRunning", request.CancelRunning));
+            // The caller's free-text reason is not logged (it may carry anything); the log records that one was given and its length.
+            _node.Log.Info("node.stop.requested", new LogField("origin", _sessions.OriginOf(context)), new LogField("reasonGiven", request.HasReason && request.Reason.Length > 0),
+                new LogField("reasonLength", request.Reason.Length), new LogField("cancelRunning", request.CancelRunning));
             _node.RequestStop("stop_node");
         }
 
@@ -490,7 +491,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _node.Log.Error("api.command.failed", exception);
-            return (default!, NodeErrors.Internal());
+            return (default!, NodeErrors.Internal(_node.Clock.GetUtcNow()));
         }
     }
 

@@ -164,7 +164,8 @@ public sealed class NodeDataKeyRing : IDisposable
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 CryptographicOperations.ZeroMemory(created);
-                unavailableReason = $"the node data key could not be stored in {_selection.Backend}: {exception.Message}";
+                // A reason code and the exception type only: secret-store messages are not logged (R-SEC-003, reason codes only).
+                unavailableReason = $"secret_store_write_failed backend={_selection.Backend} errorType={exception.GetType().Name}";
                 return null;
             }
         }

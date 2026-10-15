@@ -228,10 +228,14 @@ public sealed class NodeServiceTests
         await using var node = await InProcessNode.Create().StartAsync();
         var descriptor = NodeLocations.EndpointDescriptorFile(node.DataRoot);
         Assert.True(File.Exists(descriptor));
+
+        // A free-text reason may carry anything; it never reaches the log (R-SEC-003).
+        var value = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
+        var reason = "token=" + value;
         await using (var channel = await node.ChannelAsync(helloAsHuman: true))
         {
             var meta = InProcessNode.Command();
-            var response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = "test" }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            var response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = reason }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
             Assert.Equal(meta.CommandId, response.Value.Receipt.CommandId);
             Assert.Equal(EffectCertainty.Happened, response.Value.Receipt.Effect);
         }
@@ -242,6 +246,8 @@ public sealed class NodeServiceTests
         Assert.True(store.Metadata.PreviousShutdownClean);
         var log = File.ReadAllText(Path.Combine(node.DataRoot, "logs", "node", "node.log"));
         Assert.Contains("\"event\":\"node.stopped\"", log, StringComparison.Ordinal);
+        Assert.Contains("\"reasonLength\":" + reason.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), log, StringComparison.Ordinal);
+        Assert.DoesNotContain(value, log, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = 60_000)]

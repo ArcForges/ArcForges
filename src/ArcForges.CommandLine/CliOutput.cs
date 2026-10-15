@@ -249,8 +249,11 @@ public sealed class CliOutput
                 },
                 Effect = EffectCertainty.DidNotHappen,
             };
-            var document = new JsonObject { ["error"] = ToJsonNode(error), ["message"] = message };
-            Document(document);
+            error.MessageKey = error.MessageKey.Length > 0 ? error.MessageKey : "error." + error.Category.ToString().ToLowerInvariant() + "." + error.Code;
+
+            // cli.md section 2: stdout carries only {"error": <ArcError JSON>}; the human sentence goes to stderr.
+            Document(new JsonObject { ["error"] = ToJsonNode(error) });
+            _error.WriteLine("arcforges: " + message);
         }
         else
         {

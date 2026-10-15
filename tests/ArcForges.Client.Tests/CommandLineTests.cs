@@ -156,6 +156,25 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public void AnUnreachableNodeInJsonModePrintsOnlyTheErrorObject()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new CliOutput(output, error, json: true, quiet: false, color: false, verbose: false, width: 120);
+
+        var exit = cli.Fail(new NodeUnavailableException(NodeUnavailableReason.AutoStartRefused, "refused (CI job (CI))", "ignored"));
+
+        // cli.md section 2: stdout is exactly {"error": <ArcError JSON>}; nothing beside it.
+        Assert.Equal(75, exit);
+        using var document = System.Text.Json.JsonDocument.Parse(output.ToString());
+        var property = Assert.Single(document.RootElement.EnumerateObject());
+        Assert.Equal("error", property.Name);
+        Assert.Equal("node_not_running", property.Value.GetProperty("code").GetString());
+        Assert.Equal("error.state.node_not_running", property.Value.GetProperty("messageKey").GetString());
+        Assert.Contains("node not running", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ErrorsGoToStderrInHumanModeAndToStdoutAsJson()
     {
         var correlation = CommandIds.New();

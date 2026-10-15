@@ -89,10 +89,10 @@ public sealed partial class WindowsTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task TheRunKeyStartsTheSupervisorWhichStartsTheNodeWithoutAWindow()
+    public async Task TheRegisteredAutostartCommandStartsTheSupervisorWhichStartsTheNodeWithoutAWindow()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The HKCU Run autostart.");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The HKCU Run autostart registration.");
         var realRun = Snapshot(AutostartRegistration.RunKey);
         var testRoot = @"Software\ArcForges-Test\" + Guid.NewGuid().ToString("N");
         var testKey = testRoot + @"\Run";
@@ -108,7 +108,8 @@ public sealed partial class WindowsTests
                 Assert.Equal(RegistryValueKind.String, key!.GetValueKind(AutostartRegistration.ValueName));
             }
 
-            // Start it as the logon does: the command line of the value, nothing else.
+            // Start the registered command line, nothing else. This proves the value the installer writes starts the supervisor; it is not a
+            // logon: the user's real Run key is never written here, and the start at logon stays the human-attended check H-15.
             using var supervisor = node.Start(command!.Trim('"'), [NodeLocations.TestModeOption]);
             await node.WaitReadyAsync();
             var nodePid = node.NodePid();
@@ -196,13 +197,13 @@ public sealed partial class WindowsTests
             Assert.Contains(delay, log, StringComparison.Ordinal);
         }
 
-        // The next client auto-start tries again (02 section 2): a new supervisor starts a node.
-        if (NodeAutoStart.WindowsSandboxReason(out _) is null)
-        {
-            var status = await node.CliAsync("status", "--json");
-            Assert.True(status.ExitCode == 0, status.ToString());
-            Assert.True(status.Json().GetProperty("autoStarted").GetBoolean());
-        }
+        // The next client auto-start tries again (02 section 2): a new supervisor starts a node. Inside a job without breakaway the
+        // client refuses auto-start by design, so this last step is reported as skipped with that reason, never passed silently.
+        var sandbox = NodeAutoStart.WindowsSandboxReason(out _);
+        Assert.SkipWhen(sandbox is not null, $"The crash loop was verified; the re-auto-start step needs a shell outside a job without breakaway ({sandbox}).");
+        var status = await node.CliAsync("status", "--json");
+        Assert.True(status.ExitCode == 0, status.ToString());
+        Assert.True(status.Json().GetProperty("autoStarted").GetBoolean());
     }
 
     private static int Subsystem(string path)

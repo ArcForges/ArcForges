@@ -64,10 +64,14 @@ public static class NodeErrors
         return error;
     }
 
-    /// <summary><c>INTERNAL/internal</c>: an unexpected failure; the effect is unknown.</summary>
-    public static ArcError Internal()
+    /// <summary>
+    /// <c>INTERNAL/internal</c>: an unexpected failure; retry <c>AFTER_TIME</c> once (errors.md; 1 s), effect <c>UNKNOWN</c>. A retry
+    /// with the same command ID returns the recorded outcome if the first attempt did take effect.
+    /// </summary>
+    public static ArcError Internal(DateTimeOffset now)
     {
-        var error = Create(ErrorCategory.Internal, "internal", RetryMode.SameCommand, null);
+        var error = Create(ErrorCategory.Internal, "internal", RetryMode.AfterTime, null);
+        error.Retry.RetryAt = ArcForges.Client.ProtoTime.ToInstant(now.AddSeconds(1));
         error.Effect = EffectCertainty.Unknown;
         return error;
     }
