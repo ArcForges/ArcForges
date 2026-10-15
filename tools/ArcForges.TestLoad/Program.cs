@@ -29,6 +29,10 @@ internal static class Program
                     --child-hold-ms ms (hold-ms)   (Windows only)
                     (records ready/break/close lines in the marker; break exits 3, WM_CLOSE exits 4)
 
+        probes:
+          args      [anything...]  prints {"argv": [...], "cwd": "..."} (the arguments it received)
+          echo      copies standard input to standard output until end-of-file
+
         Every scenario accepts --report <file>. The JSON report goes to that file; without it,
         cpu, mem-ramp, fork and `output --stream none` print it on standard output.
         Exit codes: 0 success, 1 failure, 2 invalid command line.
@@ -40,6 +44,17 @@ internal static class Program
         {
             await Console.Out.WriteAsync(Usage).ConfigureAwait(false);
             return args.Length == 0 ? ExitCodes.Usage : ExitCodes.Success;
+        }
+
+        // The I/O probes take free arguments, not options.
+        if (args[0] == "args")
+        {
+            return EchoScenarios.PrintArguments(args[1..]);
+        }
+
+        if (args[0] == "echo")
+        {
+            return args.Length == 1 ? EchoScenarios.CopyInput() : ExitCodes.Usage;
         }
 
         try

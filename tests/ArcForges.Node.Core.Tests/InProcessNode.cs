@@ -6,6 +6,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
 using Google.Protobuf;
@@ -24,8 +25,11 @@ internal sealed class InProcessNode : IAsyncDisposable
     private TaskCompletionSource<NodeRuntime> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task<int>? _run;
 
-    private InProcessNode(string root, int streamBuffer)
+    private readonly HashSet<int> _childrenBefore = OperatingSystem.IsWindows() ? ExecutionCleanup.Children() : [];
+
+    private InProcessNode(string root, int streamBuffer, ILaunchStepProvider? steps)
     {
+        Steps = steps;
         Root = root;
         DataRoot = Path.Combine(root, "data");
         ConfigPath = Path.Combine(root, "config", "node.json");
@@ -44,6 +48,17 @@ internal sealed class InProcessNode : IAsyncDisposable
 
     public int StreamBuffer { get; }
 
+    /// <summary>Launch and end steps the node's attempts get (synthetic steps in tests).</summary>
+    public ILaunchStepProvider? Steps { get; }
+
+    /// <summary>The lifecycle state a started node reaches: READY with the Windows job platform, DEGRADED (observe-only) elsewhere.</summary>
+    public static NodeLifecycleState ExpectedState => OperatingSystem.IsWindows() ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded;
+
+    /// <summary>The <c>arcforges</c> executable whose helper roles the node starts: <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
+    public static string HelperExecutable => Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH") is { Length: > 0 } configured
+        ? configured
+        : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
+
     public LocalRpcEndpoint Endpoint { get; }
 
     public NodeRuntime Runtime => _ready.Task.Result;
@@ -51,10 +66,10 @@ internal sealed class InProcessNode : IAsyncDisposable
     public Task<int> Exit => _run ?? Task.FromResult(-1);
 
     /// <summary>Creates the node's files; <paramref name="seed"/> may write store rows before the node opens the store.</summary>
-    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null)
+    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, ILaunchStepProvider? steps = null)
     {
         var root = Directory.CreateTempSubdirectory("arcforges-node-tests-").FullName;
-        var node = new InProcessNode(root, streamBuffer);
+        var node = new InProcessNode(root, streamBuffer, steps);
         Directory.CreateDirectory(Path.GetDirectoryName(node.ConfigPath)!);
         File.WriteAllText(node.ConfigPath, "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");
         if (seed is not null)
@@ -98,6 +113,8 @@ internal sealed class InProcessNode : IAsyncDisposable
             SecretStore = SecretStore,
             Output = TextWriter.Null,
             Error = TextWriter.Null,
+            HelperExecutable = HelperExecutable,
+            LaunchSteps = Steps,
         };
         var stop = _stop.Token;
         _run = Task.Run(() => NodeHost.RunAsync(options, stop));
@@ -143,6 +160,7 @@ internal sealed class InProcessNode : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        var leftovers = new List<string>();
         try
         {
             if (_run is { IsCompleted: false })
@@ -157,17 +175,38 @@ internal sealed class InProcessNode : IAsyncDisposable
             if (File.Exists(StorePaths.Database(DataRoot)))
             {
                 using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" });
+                if (OperatingSystem.IsWindows())
+                {
+                    // Attempts outlive a stopped node under their holders; the fixture ends them and fails on anything left (16 section 4).
+                    leftovers = ExecutionCleanup.Run(store, _childrenBefore);
+                }
+
                 using var keys = new NodeDataKeyRing(store, SecretStore(DataRoot));
                 keys.DeleteKeys();
             }
 
             SqliteConnection.ClearAllPools();
-            Directory.Delete(Root, recursive: true);
+            for (var tries = 0; ; tries++)
+            {
+                try
+                {
+                    Directory.Delete(Root, recursive: true);
+                    break;
+                }
+                catch (Exception exception) when ((exception is IOException or UnauthorizedAccessException) && tries < 50)
+                {
+                    // Holders that just exited may still close their files.
+                    await Task.Delay(100);
+                }
+            }
+
             if (!OperatingSystem.IsWindows() && Directory.Exists(Path.GetDirectoryName(Endpoint.Address)))
             {
                 Directory.Delete(Path.GetDirectoryName(Endpoint.Address)!, recursive: true);
             }
         }
+
+        Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
     }
 
     /// <summary>Inserts a job row (jobs have no producers in this build; their runners arrive with later tasks).</summary>

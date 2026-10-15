@@ -251,19 +251,35 @@ public sealed class NodeServiceTests
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task HealthAndCapabilitiesReportTheObserveOnlyBuild()
+    public async Task HealthAndCapabilitiesReportTheBuildsEnforcement()
     {
+        // Windows enforces through job objects (AF-EXEC-01) and is READY; Linux execution arrives with AF-EXEC-02, so it is observe-only.
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
 
         var health = await channel.Node.GetHealthAsync(new NodeServiceGetHealthRequest(), deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
-        Assert.Equal(NodeLifecycleState.Degraded, health.Value.State);
-        Assert.Contains(health.Value.Checks, check => check.CheckId == "node.enforcement" && check.Status == CheckStatus.Warn);
+        Assert.Equal(InProcessNode.ExpectedState, health.Value.State);
+        Assert.Contains(health.Value.Checks, check => check.CheckId == "node.enforcement"
+            && check.Status == (OperatingSystem.IsWindows() ? CheckStatus.Pass : CheckStatus.Warn));
         Assert.Contains(health.Value.Metrics, metric => metric.Name == "rpc.peers_admitted" && metric.Value >= 1);
         var capabilities = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Reevaluate = true }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
-        Assert.Equal(CpuControl.ObserveOnly, capabilities.Value.Capabilities.Cpu);
-        Assert.Contains(capabilities.Value.Capabilities.PlatformFacts, fact => fact.Name == "os");
+        var report = capabilities.Value.Capabilities;
+        Assert.Contains(report.PlatformFacts, fact => fact.Name == "os");
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
+            Assert.Equal(MemoryControl.EnforcedCommit, report.Memory);
+            Assert.Equal(ProcessCountControl.Enforced, report.Pids);
+            Assert.Equal(PauseSupport.Unsupported, report.Pause);
+            Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
+            Assert.True(report.RestartSurvival);
+            Assert.Contains(report.PlatformFacts, fact => fact.Name == "root_job");
+        }
+        else
+        {
+            Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
+        }
     }
 
     private static Id Id(byte[] bytes) => new() { Value = Google.Protobuf.ByteString.CopyFrom(bytes) };

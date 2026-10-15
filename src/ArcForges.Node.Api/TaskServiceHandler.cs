@@ -745,8 +745,10 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var name = IdText.Format(id);
         var finished = attempt.State == AttemptState.Finished && Execution.Running(name) is null;
+        // A response must fit the 4 MiB message bound with its index records, so a read returns at most 4 MiB - 256 KiB of data.
+        var maxBytes = Math.Min(request.HasMaxBytes ? (int)request.MaxBytes : 256 * 1024, (4 * 1024 * 1024) - (256 * 1024));
         var value = OutputReader.Read(new AttemptFiles(_node.DataRoot, name), request.HasStream ? request.Stream : OutputStream.Merged, request.FromOffset,
-            request.HasMaxBytes ? (int)request.MaxBytes : 256 * 1024, finished);
+            maxBytes, finished);
         value.TruncatedByRetention = _node.Store.Read(reader => reader.Scalar("SELECT output_purged FROM attempt WHERE attempt_id = $id;", ("$id", id)) is 1L);
         response.Value = value;
         return Task.FromResult(response);
