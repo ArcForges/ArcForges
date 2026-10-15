@@ -200,6 +200,14 @@ public sealed record GracefulOutcome(bool ConsoleSignalled, int WindowsClosed, s
 /// <param name="Image">Its image name.</param>
 public sealed record ContainerProcess(int Pid, string Image);
 
+/// <summary>A process outside an attempt's container that descends from one of its processes (03 section 9: <c>ESCAPED</c>).</summary>
+/// <param name="Pid">The process ID.</param>
+/// <param name="ParentPid">The parent process ID (a member of the container or another escaped process).</param>
+/// <param name="StartTime">Its creation time.</param>
+/// <param name="Image">Its image name.</param>
+/// <param name="SameUser">It runs as the node's user (only such processes are ever terminated).</param>
+public sealed record EscapedProcess(int Pid, int ParentPid, DateTimeOffset StartTime, string Image, bool SameUser);
+
 /// <summary>A running (or recovered) attempt's container, as the node controls it.</summary>
 public interface IAttemptHandle : IDisposable
 {
@@ -242,7 +250,10 @@ public interface IAttemptHandle : IDisposable
     /// <summary>The graceful phase: CTRL_BREAK_EVENT to the root's process group through the helper, and WM_CLOSE to GUI windows.</summary>
     GracefulOutcome RequestGracefulStop();
 
-    /// <summary>Terminates same-user descendants of the attempt's processes that run outside the container (escaped); returns their images.</summary>
+    /// <summary>The ancestry scan (04 section 3): descendants of the attempt's processes, running or exited, that run outside the container.</summary>
+    IReadOnlyList<EscapedProcess> ScanEscaped();
+
+    /// <summary>Terminates the same-user escaped processes (04 section 6 step 4); returns them as <c>image (pid)</c>.</summary>
     IReadOnlyList<string> TerminateEscaped();
 
     /// <summary>The node recorded the attempt: the holder may release the container and exit.</summary>

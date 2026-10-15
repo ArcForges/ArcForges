@@ -46,6 +46,9 @@ internal static unsafe partial class Native
     public const uint CreateNoWindow = 0x08000000;
     public const int StartfUseStdHandles = 0x00000100;
     public const nint ProcThreadAttributeHandleList = 0x00020002;
+    public const nint ProcThreadAttributeParentProcess = 0x00020000;
+    public const uint ProcessCreateProcess = 0x0080;
+    public const uint TokenQuery = 0x0008;
 
     public const uint JobObjectAllAccess = 0x1F001F;
     public const uint ProcessQueryLimitedInformation = 0x1000;
@@ -334,6 +337,10 @@ internal static unsafe partial class Native
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetProcessTimes(SafeHandle process, out long creation, out long exit, out long kernel, out long user);
+
+    [LibraryImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool OpenProcessToken(SafeHandle process, uint access, out SafeKernelHandle token);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial SafeKernelHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, int processId);

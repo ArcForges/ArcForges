@@ -96,6 +96,12 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>A failed finalization is retried no earlier than this (monotonic).</summary>
     internal long? FinalizeNotBefore { get; set; }
 
+    /// <summary>When the ancestry scan for escaped processes last ran (monotonic).</summary>
+    internal long LastEscapeScan { get; set; } = long.MinValue;
+
+    /// <summary>Escaped processes already recorded: (pid, creation ticks).</summary>
+    internal HashSet<(int Pid, long StartTicks)> KnownEscaped { get; } = [];
+
     /// <summary>Why the node stops the attempt.</summary>
     internal TerminationReason? StopReason { get; set; }
 

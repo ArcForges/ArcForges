@@ -113,6 +113,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     /// <summary>The verification window after the forced phase (04 section 6 step 5).</summary>
     public static readonly TimeSpan VerifyWindow = TimeSpan.FromSeconds(5);
 
+    /// <summary>The ancestry scan interval (04 section 3).</summary>
+    public static readonly TimeSpan EscapeScanInterval = TimeSpan.FromSeconds(5);
+
     /// <summary>The delay before a finalization that failed on a store error is retried.</summary>
     public static readonly TimeSpan FinalizeRetry = TimeSpan.FromSeconds(5);
 
@@ -538,6 +541,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             if (!graceful || attempt.Handle is null || attempt.Handle.Root is null)
             {
                 attempt.Handle?.Terminate();
+                TerminateEscaped(attempt, reason);
                 attempt.Forced = true;
                 attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
                 _loopWake.Pulse();
@@ -978,19 +982,19 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             }
         }
 
+        if (attempt.LastEscapeScan == long.MinValue || _clock.GetElapsedTime(attempt.LastEscapeScan) >= EscapeScanInterval)
+        {
+            attempt.LastEscapeScan = _clock.GetTimestamp();
+            ScanEscaped(attempt, handle);
+        }
+
         lock (attempt)
         {
             var now = _clock.GetTimestamp();
             if (attempt.StopReason is not null && !attempt.Forced && attempt.GraceDeadline is { } grace && now >= grace)
             {
                 handle.Terminate();
-                var escaped = handle.TerminateEscaped();
-                if (escaped.Count > 0)
-                {
-                    attempt.StopDetail = (attempt.StopDetail is null ? string.Empty : attempt.StopDetail + "; ")
-                        + "escaped processes terminated: " + string.Join(", ", escaped);
-                }
-
+                TerminateEscaped(attempt, attempt.StopReason.Value);
                 attempt.Forced = true;
                 attempt.VerifyDeadline = now + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
             }
@@ -998,6 +1002,87 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             {
                 BeginFinalize(attempt, incomplete: true);
             }
+        }
+    }
+
+    /// <summary>
+    /// The ancestry scan (04 section 3, every 5 s): a process outside the attempt's job that descends from one of its processes is
+    /// recorded as <c>ESCAPED</c> (process_record, label 3) and raises an <c>ESCAPED_PROCESS</c> finding about the attempt (R-RES-012).
+    /// It is not controlled; the stop sequence terminates it when it runs as the node's user (04 section 6 step 4).
+    /// </summary>
+    private void ScanEscaped(RunningAttempt attempt, IAttemptHandle handle)
+    {
+        IReadOnlyList<EscapedProcess> escaped;
+        try
+        {
+            escaped = handle.ScanEscaped();
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _log.Warning("execution.escape_scan.failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+            return;
+        }
+
+        var found = escaped.Where(process => attempt.KnownEscaped.Add((process.Pid, process.StartTime.UtcTicks))).ToList();
+        if (found.Count == 0)
+        {
+            return;
+        }
+
+        _log.Warning("execution.escaped", new LogField("attempt", attempt.Name),
+            new LogField("processes", string.Join(", ", found.Select(process => $"{process.Image} ({process.Pid}, parent {process.ParentPid})"))));
+        _ = _processor.ExecuteAsync(context =>
+        {
+            var now = context.Transaction.NowMicroseconds;
+            foreach (var process in found)
+            {
+                context.Transaction.Execute(
+                    """
+                    INSERT INTO process_record (attempt_id, pid, start_at, parent_pid, executable, arguments_redacted, first_seen, last_seen, mem_peak_bytes, label)
+                    VALUES ($attempt, $pid, $start, $parent, $image, NULL, $now, $now, 0, $label)
+                    ON CONFLICT (attempt_id, pid, start_at) DO UPDATE SET last_seen = $now, label = $label;
+                    """,
+                    ("$attempt", attempt.AttemptId), ("$pid", process.Pid), ("$start", StoreTime.ToMicroseconds(process.StartTime)),
+                    ("$parent", process.ParentPid), ("$image", process.Image), ("$now", now), ("$label", (int)ProcessLabel.Escaped));
+                ExecutionFindings.Raise(context, FindingKind.EscapedProcess, Severity.Warning, "attempt", attempt.AttemptId,
+                    "A process escaped its attempt's job",
+                    "A descendant of the attempt runs outside its job (created through WMI, a service broker or another parent), so the job's limits "
+                    + "and kill do not reach it. The stop sequence terminates it when it runs as your user (04 section 6).",
+                    [("attempt", attempt.Name), ("pid", process.Pid.ToString(CultureInfo.InvariantCulture)),
+                        ("parent_pid", process.ParentPid.ToString(CultureInfo.InvariantCulture)), ("image", process.Image),
+                        ("same_user", process.SameUser ? "true" : "false")]);
+            }
+
+            return 0;
+        });
+    }
+
+    /// <summary>
+    /// Terminates the attempt's same-user escaped processes when the node stops it (04 section 6 step 4: <c>terminate_escaped</c>, true for
+    /// cancellation, timeouts and limit stops; false for node shutdown, where the attempt itself is left to run or dies with the node).
+    /// </summary>
+    private void TerminateEscaped(RunningAttempt attempt, TerminationReason reason)
+    {
+        if (reason == TerminationReason.NodeShutdown || attempt.Handle is not { } handle)
+        {
+            return;
+        }
+
+        IReadOnlyList<string> terminated;
+        try
+        {
+            terminated = handle.TerminateEscaped();
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _log.Warning("execution.escaped.terminate_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+            return;
+        }
+
+        if (terminated.Count > 0)
+        {
+            attempt.StopDetail = (attempt.StopDetail is null ? string.Empty : attempt.StopDetail + "; ") + "escaped processes terminated: " + string.Join(", ", terminated);
+            _log.Info("execution.escaped.terminated", new LogField("attempt", attempt.Name), new LogField("processes", string.Join(", ", terminated)));
         }
     }
 

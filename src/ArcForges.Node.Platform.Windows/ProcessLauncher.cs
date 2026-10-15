@@ -92,6 +92,13 @@ public sealed class LaunchOptions
     /// caller owns and closes after the call; their values are the same in the new process.
     /// </summary>
     public IReadOnlyList<nint> InheritableHandles { get; init; } = [];
+
+    /// <summary>
+    /// The process to create the new one as a child of (<c>PROC_THREAD_ATTRIBUTE_PARENT_PROCESS</c>; needs PROCESS_CREATE_PROCESS on it).
+    /// The new process takes that parent's job membership at creation. Only without inherited handles, since those would have to exist
+    /// in the parent's handle table.
+    /// </summary>
+    public SafeHandle? ParentProcess { get; init; }
 }
 
 /// <summary>
@@ -111,6 +118,7 @@ public static unsafe class ProcessLauncher
         var duplicates = new List<nint>();
         nint attributeList = 0;
         nint listMemory = 0;
+        nint parentMemory = 0;
         try
         {
             nint Inheritable(SafeHandle handle)
@@ -152,12 +160,18 @@ public static unsafe class ProcessLauncher
             }
 
             var inherit = listed.Count > 0;
-            if (inherit)
+            if (inherit && options.ParentProcess is not null)
+            {
+                throw new ArgumentException("A process created under another parent cannot inherit handles from this one.", nameof(options));
+            }
+
+            var attributes = (inherit ? 1 : 0) + (options.ParentProcess is null ? 0 : 1);
+            if (attributes > 0)
             {
                 nint size = 0;
-                Native.InitializeProcThreadAttributeList(0, 1, 0, ref size);
+                Native.InitializeProcThreadAttributeList(0, attributes, 0, ref size);
                 attributeList = (nint)NativeMemory.Alloc((nuint)size);
-                if (!Native.InitializeProcThreadAttributeList(attributeList, 1, 0, ref size))
+                if (!Native.InitializeProcThreadAttributeList(attributeList, attributes, 0, ref size))
                 {
                     var error = Native.LastError;
                     NativeMemory.Free((void*)attributeList);
@@ -165,6 +179,22 @@ public static unsafe class ProcessLauncher
                     throw new Win32Exception(error, "InitializeProcThreadAttributeList failed.");
                 }
 
+                startup.AttributeList = attributeList;
+            }
+
+            if (options.ParentProcess is { } parent)
+            {
+                var value = (nint*)NativeMemory.Alloc((nuint)IntPtr.Size);
+                parentMemory = (nint)value;
+                *value = parent.DangerousGetHandle();
+                if (!Native.UpdateProcThreadAttribute(attributeList, 0, Native.ProcThreadAttributeParentProcess, value, IntPtr.Size, 0, 0))
+                {
+                    throw new Win32Exception(Native.LastError, "UpdateProcThreadAttribute(PARENT_PROCESS) failed.");
+                }
+            }
+
+            if (inherit)
+            {
                 var array = (nint*)NativeMemory.Alloc((nuint)(listed.Count * IntPtr.Size));
                 for (var index = 0; index < listed.Count; index++)
                 {
@@ -177,8 +207,6 @@ public static unsafe class ProcessLauncher
                 {
                     throw new Win32Exception(Native.LastError, "UpdateProcThreadAttribute(HANDLE_LIST) failed.");
                 }
-
-                startup.AttributeList = attributeList;
             }
 
             var commandLine = (options.CommandLine + "\0").ToCharArray();
@@ -206,6 +234,11 @@ public static unsafe class ProcessLauncher
             if (listMemory != 0)
             {
                 NativeMemory.Free((void*)listMemory);
+            }
+
+            if (parentMemory != 0)
+            {
+                NativeMemory.Free((void*)parentMemory);
             }
 
             foreach (var copy in duplicates)

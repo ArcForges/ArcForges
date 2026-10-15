@@ -159,55 +159,14 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<string> TerminateEscaped()
+    public IReadOnlyList<EscapedProcess> ScanEscaped()
     {
-        // Same-user descendants by ancestry of processes seen in the job that run outside it (WMI- or broker-created; 03 section 9).
         Processes();
-        var known = new Dictionary<int, long>(_seen);
-        var terminated = new List<string>();
-        if (known.Count == 0)
-        {
-            return terminated;
-        }
-
-        var snapshot = ProcessInfo.Snapshot();
-        var frontier = new Queue<int>(known.Keys);
-        var visited = new HashSet<int>(known.Keys);
-        while (frontier.Count > 0)
-        {
-            var parent = frontier.Dequeue();
-            known.TryGetValue(parent, out var parentCreated);
-            foreach (var (pid, parentPid, image) in snapshot)
-            {
-                if (parentPid != parent || !visited.Add(pid))
-                {
-                    continue;
-                }
-
-                using var process = ProcessInfo.Open(pid, terminate: true);
-                if (process is null)
-                {
-                    continue;
-                }
-
-                var created = ProcessInfo.CreationFileTime(process);
-                if (parentCreated != 0 && created < parentCreated)
-                {
-                    // The parent ID was reused: not a descendant.
-                    continue;
-                }
-
-                known[pid] = created;
-                frontier.Enqueue(pid);
-                if (!_job.Contains(process) && Native.TerminateProcess(process, AttemptRunner.TerminatedExitCode))
-                {
-                    terminated.Add(image);
-                }
-            }
-        }
-
-        return terminated;
+        return EscapedProcesses.Scan(_job, new Dictionary<int, long>(_seen));
     }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> TerminateEscaped() => EscapedProcesses.Terminate(ScanEscaped(), AttemptRunner.TerminatedExitCode);
 
     /// <inheritdoc />
     public void Acknowledge()
@@ -319,6 +278,17 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
                 }
 
                 break;
+            case Native.JobMsgNewProcess:
+                // Every member is remembered with its creation time, so the ancestry scan also finds children of members that exited.
+                using (var process = ProcessInfo.Open(data))
+                {
+                    if (process is not null)
+                    {
+                        _seen.TryAdd(data, ProcessInfo.CreationFileTime(process));
+                    }
+                }
+
+                return;
             case Native.JobMsgExitProcess:
             case Native.JobMsgAbnormalExitProcess:
                 if (Root is { } root && root.Pid == data)
