@@ -191,19 +191,25 @@ public sealed class UnitPlatformTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8), $"The attempt took {watch.Elapsed} (leftover_grace 1 s; TimeoutStopSec would be 16 s).");
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 240_000)]
     public async Task AFrozenUnitBlockingTheManagerIsThawedByAStartingPlatformAndByTheGuard()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        // A node or guard that died between killing a frozen unit's processes and thawing it leaves the user manager blocked: it spawns
-        // ExecStop into the frozen cgroup. Neither the platform's start nor the guard needs the (blocked) manager to release it.
+        // A node or guard that died between killing a frozen unit's processes and thawing it leaves the cgroup frozen while the manager
+        // spawns ExecStop into it (systemd 257: the manager blocks until the cgroup is thawed). Neither the platform's start nor the guard
+        // needs the manager to release it. What the running systemd does is printed (L-24) and asserted as observed.
         RequireUnits();
         using var harness = LinuxHarness.Start();
 
         var first = (LinuxAttemptHandle)harness.Launch(["sleep", "60"]);
-        LeaveStuck(first);
+        var firstFrozen = LeaveStuck(first);
         var restarted = harness.NewPlatform();
-        Assert.Contains(first.CgroupDirectory!, restarted.ReleasedFreezes);
+        if (firstFrozen)
+        {
+            Assert.Contains(first.CgroupDirectory!, restarted.ReleasedFreezes);
+        }
+
+        Assert.Equal("0", File.ReadAllText(Path.Combine(first.CgroupDirectory!, "cgroup.freeze")).Trim());
         var firstExit = LinuxHarness.WaitExit(first, Bound);
         Assert.Equal(("killed", 9), (firstExit.ExitCodeKind, firstExit.ExitStatus));
 
@@ -223,7 +229,8 @@ public sealed class UnitPlatformTests
             Assert.Equal(0, await guard.WaitAsync(Bound, Ct));
         }
 
-        static void LeaveStuck(LinuxAttemptHandle handle)
+        // Returns whether the cgroup is still frozen once the manager reacted: then only its spawn (or nothing) may be left in it.
+        static bool LeaveStuck(LinuxAttemptHandle handle)
         {
             LinuxHarness.WaitFor(() => handle.Root is not null && handle.CgroupDirectory is not null && handle.Processes().Count > 0, Bound, "the unit");
             var directory = handle.CgroupDirectory!;
@@ -234,10 +241,102 @@ public sealed class UnitPlatformTests
                 _ = Libc.Kill(pid, Libc.SigKill);
             }
 
-            // The manager now spawns ExecStop into the frozen cgroup and blocks: only its own child is left there.
-            LinuxHarness.WaitFor(() => ProcFs.Procs(directory) is { Count: > 0 } pids
-                && pids.All(pid => ProcFs.Image(pid) is var image && (image == "systemd" || image.StartsWith("(sd-", StringComparison.Ordinal))), Bound, "the manager's spawn");
+            // Give the manager time to react to the dead main process (spawn ExecStop into the frozen cgroup, or anything else).
+            Thread.Sleep(1_500);
+            var manager = UnitControl.ManagerPid(UnitControl.ManagerCgroup());
+            var observation = Observe(directory, handle.Unit, manager);
+            TestContext.Current.TestOutputHelper?.WriteLine(observation);
+            var settled = Stopwatch.StartNew();
+            while (!(Frozen(directory) is false || UnitControl.OnlyManagerSpawns(directory, manager)))
+            {
+                Assert.True(settled.Elapsed < TimeSpan.FromSeconds(20),
+                    "Processes other than the manager's spawn stay in the frozen cgroup: " + Observe(directory, handle.Unit, manager));
+                Thread.Sleep(100);
+            }
+
+            return Frozen(directory) is true;
         }
+
+        static bool? Frozen(string directory) => ProcFs.Text(Path.Combine(directory, "cgroup.freeze")) is { } value ? value == "1" : null;
+    }
+
+    [Fact(Timeout = 120_000)]
+    public void APausedAttemptStaysFrozenAcrossAPlatformStart()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // The release of stuck freezes never thaws a paused attempt: its own processes are still in the cgroup.
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var handle = (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c", "sleep 60 & sleep 60"]);
+        LinuxHarness.WaitFor(() => handle.Processes().Count >= 3, Bound, "the tree");
+        handle.Freeze();
+        var directory = handle.CgroupDirectory!;
+        LinuxHarness.WaitFor(() => File.ReadAllText(Path.Combine(directory, "cgroup.events")).Contains("frozen 1", StringComparison.Ordinal), Bound, "the freeze");
+        var restarted = harness.NewPlatform();
+        Assert.DoesNotContain(directory, restarted.ReleasedFreezes);
+        Assert.Empty(UnitControl.ReleaseStuckFreezes());
+        Assert.Contains("frozen 1", File.ReadAllText(Path.Combine(directory, "cgroup.events")), StringComparison.Ordinal);
+        handle.Thaw();
+        LinuxHarness.WaitFor(() => File.ReadAllText(Path.Combine(directory, "cgroup.events")).Contains("frozen 0", StringComparison.Ordinal), Bound, "the thaw");
+        handle.Terminate();
+        Assert.Equal(9, LinuxHarness.WaitExit(handle, Bound).ExitStatus);
+    }
+
+    /// <summary>What the frozen cgroup holds and whether the manager answers (bounded), for the test output and failure messages.</summary>
+    private static string Observe(string directory, string unit, int manager)
+    {
+        var text = new System.Text.StringBuilder();
+        text.Append(SystemdVersion()).Append("; manager pid ").Append(manager).Append("; ").Append(unit).Append(": ");
+        text.Append(File.ReadAllText(Path.Combine(directory, "cgroup.events")).ReplaceLineEndings(" ").Trim()).Append("; processes:");
+        foreach (var pid in ProcFs.Procs(directory))
+        {
+            var exe = new FileInfo($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/exe");
+            string target;
+            try
+            {
+                target = exe.LinkTarget ?? "-";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                target = "(unreadable)";
+            }
+
+            var stat = ProcFs.Stat(pid);
+            text.Append(CultureInfo.InvariantCulture, $" [{pid} comm={ProcFs.Image(pid)} exe={target} ppid={stat?.ParentPid} state={stat?.State} spawn={UnitControl.IsManagerSpawn(pid, manager)}]");
+        }
+
+        text.Append("; manager answers: ").Append(ManagerAnswer(unit));
+        return text.ToString();
+    }
+
+    private static string SystemdVersion()
+    {
+        var start = new ProcessStartInfo("systemctl", "--version") { RedirectStandardOutput = true, UseShellExecute = false };
+        using var process = Process.Start(start)!;
+        var line = process.StandardOutput.ReadLine() ?? "?";
+        process.WaitForExit(5_000);
+        return line;
+    }
+
+    /// <summary><c>systemctl --user show -P ActiveState</c> within 3 s, or "blocked" (the process is killed).</summary>
+    private static string ManagerAnswer(string unit)
+    {
+        var start = new ProcessStartInfo("systemctl") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var argument in (string[])["--user", "show", "-P", "ActiveState", unit])
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        if (!process.WaitForExit(3_000))
+        {
+            process.Kill();
+            process.WaitForExit(5_000);
+            return "no (blocked for 3 s)";
+        }
+
+        return "yes (" + output.Result.Trim() + ")";
     }
 
     [Fact(Timeout = 120_000)]

@@ -75,22 +75,23 @@ public static class UnitControl
         return new LimitStop(frozenAt is not null, killed, frozenAt, killedAt) { DirectThaw = thawed, ThawedAt = DateTimeOffset.UtcNow };
     }
     /// <summary>
-    /// Thaws attempt cgroups left frozen with nothing but the user manager's own spawn in them, without the user manager (it is blocked in
-    /// that state): a node or guard that died between killing the processes of a frozen unit and thawing it leaves the manager spawning
-    /// <c>ExecStop</c> into the frozen cgroup, which blocks the whole manager until the cgroup is thawed. A frozen cgroup whose processes
-    /// are the attempt's own (a paused attempt) is left alone. Every <c>arcforges-a-*.service</c> cgroup under the user's manager is
-    /// checked (<paramref name="managerCgroup"/>: <c>user@&lt;uid&gt;.service</c>); returns the directories thawed.
+    /// Thaws attempt cgroups left frozen with nothing but the user manager's own spawn in them, without the user manager (it may be blocked
+    /// in that state): a node or guard that died between killing the processes of a frozen unit and thawing it leaves the manager spawning
+    /// <c>ExecStop</c>/<c>ExecStopPost</c> into the frozen cgroup, where the spawn cannot run (systemd 257 blocks the whole manager until the
+    /// cgroup is thawed; otherwise the unit waits for its stop timeout and its exit record is lost). A frozen cgroup with any process of the
+    /// attempt's own (a paused attempt) is left alone; an empty frozen one is thawed. Every <c>arcforges-a-*.service</c> cgroup under the
+    /// user's manager is checked (<paramref name="managerCgroup"/>: <c>user@&lt;uid&gt;.service</c>); returns the directories thawed.
     /// </summary>
     public static List<string> ReleaseStuckFreezes(string? managerCgroup = null)
     {
         var released = new List<string>();
-        var root = managerCgroup ?? Path.Combine("/sys/fs/cgroup/user.slice", $"user-{ProcFs.UserId}.slice", $"user@{ProcFs.UserId}.service");
+        var root = managerCgroup ?? ManagerCgroup();
         if (!Directory.Exists(root))
         {
             return released;
         }
 
-        var manager = ProcFs.Procs(Path.Combine(root, "init.scope")).FirstOrDefault();
+        var manager = ManagerPid(root);
         IEnumerable<string> units;
         try
         {
@@ -104,20 +105,41 @@ public static class UnitControl
         foreach (var directory in units)
         {
             var freeze = Path.Combine(directory, "cgroup.freeze");
-            if (ProcFs.Text(freeze) != "1")
-            {
-                continue;
-            }
-
-            // The manager's spawn is its child still named after it ("systemd", or "(sd-...)" before it renames itself).
-            var stuck = ProcFs.Procs(directory).All(pid => ProcFs.Stat(pid) is { } stat && (manager == 0 || stat.ParentPid == manager)
-                && ProcFs.Image(pid) is var image && (image == "systemd" || image.StartsWith("(sd-", StringComparison.Ordinal)));
-            if (stuck && ProcFs.WriteControl(freeze, "0"))
+            if (ProcFs.Text(freeze) == "1" && OnlyManagerSpawns(directory, manager) && ProcFs.WriteControl(freeze, "0"))
             {
                 released.Add(directory);
             }
         }
 
         return released;
+    }
+
+    /// <summary>The user manager's cgroup directory (<c>user@&lt;uid&gt;.service</c>).</summary>
+    internal static string ManagerCgroup() =>
+        Path.Combine("/sys/fs/cgroup/user.slice", $"user-{ProcFs.UserId}.slice", $"user@{ProcFs.UserId}.service");
+
+    /// <summary>The user manager's PID (the process of its <c>init.scope</c>), or 0.</summary>
+    internal static int ManagerPid(string managerCgroup) => ProcFs.Procs(Path.Combine(managerCgroup, "init.scope")).FirstOrDefault();
+
+    /// <summary>True when every process of <paramref name="directory"/> is the manager's spawn (or there is none).</summary>
+    internal static bool OnlyManagerSpawns(string directory, int manager) => ProcFs.Procs(directory).All(pid => IsManagerSpawn(pid, manager));
+
+    /// <summary>
+    /// Whether <paramref name="pid"/> is a process the user manager forked to run a unit's command that has not become that command:
+    /// its parent is the manager, and its name is the manager's own (<c>systemd</c>: frozen right after the fork, systemd 257), the
+    /// executor's (<c>systemd-executo</c>[r], systemd 255 and later) or systemd's name for a child before its <c>execve</c>, the command's
+    /// name in parentheses (<c>(arcforges)</c>, <c>(env)</c>, <c>(sd-...)</c>). An attempt's own main process is a child of the manager
+    /// too, but it carries its command's name (or <c>arcforges</c> while <c>exec-launch</c> runs), never one of these.
+    /// </summary>
+    internal static bool IsManagerSpawn(int pid, int manager)
+    {
+        if (ProcFs.Stat(pid) is not { } stat || (manager != 0 && stat.ParentPid != manager))
+        {
+            return false;
+        }
+
+        var name = ProcFs.Image(pid);
+        return name is "systemd" or "systemd-executo" or "systemd-executor"
+            || (name.Length > 2 && name[0] == '(' && name[^1] == ')');
     }
 }
