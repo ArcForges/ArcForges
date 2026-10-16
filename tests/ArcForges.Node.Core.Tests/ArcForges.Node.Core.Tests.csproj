@@ -12,6 +12,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Fixtures report leftovers to the test (not from their disposal, which would hide the test's own failure). -->
+    <Compile Include="../Shared/Leftovers.cs" Link="Shared/Leftovers.cs" />
     <!-- Tests run in parallel: a node's fixture finds its own holders by the attempt names on their command lines. -->
     <Compile Include="../Shared/ProcessInspection.cs" Link="Shared/ProcessInspection.cs" />
     <ProjectReference Include="../../src/ArcForges.Node.Api/ArcForges.Node.Api.csproj" />

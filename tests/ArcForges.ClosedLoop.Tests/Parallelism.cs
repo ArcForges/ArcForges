@@ -7,3 +7,6 @@
 // [Trait("isolation", "exclusive")] and DisableParallelization = true: xUnit runs it alone after the others, and the scripts run the
 // exclusive suite after every other suite (eng/test-suites.conf).
 [assembly: Xunit.v3.Parallelization(Mode = Xunit.Sdk.ParallelMode.All)]
+
+// A fixture reports what its test left running; this fails the test after it ran, next to the test's own failure.
+[assembly: ArcForges.Tests.FailOnLeftovers]

@@ -185,7 +185,7 @@ internal sealed class LinuxHarness : IDisposable
         }
 
         var leftovers = Release();
-        Assert.True(leftovers.Count == 0, "Left running after the test: " + string.Join(", ", leftovers));
+        Leftovers.Report(leftovers);
     }
 
     private List<string> Release()

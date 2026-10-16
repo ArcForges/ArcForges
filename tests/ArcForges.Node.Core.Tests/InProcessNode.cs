@@ -243,7 +243,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             }
         }
 
-        Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
+        ArcForges.Tests.Leftovers.Report(leftovers);
     }
 
     /// <summary>The attempts of the store (their unit names on Linux).</summary>

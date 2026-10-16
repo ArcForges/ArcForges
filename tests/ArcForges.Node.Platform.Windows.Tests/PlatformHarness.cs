@@ -254,7 +254,7 @@ internal sealed partial class PlatformHarness : IDisposable
             }
         }
 
-        Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
+        ArcForges.Tests.Leftovers.Report(leftovers);
     }
 
     /// <summary>True when this process runs with an elevated token (the evidence records whether a job test ran non-elevated).</summary>

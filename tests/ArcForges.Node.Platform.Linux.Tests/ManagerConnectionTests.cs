@@ -13,7 +13,9 @@ namespace ArcForges.Node.Platform.Linux.Tests;
 [SupportedOSPlatform("linux")]
 public sealed class ManagerConnectionTests
 {
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: it bounds the user manager's connection latency (1 s), which every other Linux test loads.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public void ConnectionsToTheUserManagerNeverStall()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
