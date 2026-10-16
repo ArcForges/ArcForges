@@ -8,7 +8,8 @@
   (or after a bare '--') is passed to each test application. The script parses its own arguments so that
   pass-through works both as `./eng/test.ps1 ...` and as `pwsh -File eng/test.ps1 ...`.
 
-  -Parallel <n> runs up to n test projects at once (default: half the logical processors, at least 2).
+  -Parallel <n> runs up to n test projects at once (default 2: measured on 18 logical processors, the ci suite takes as long
+  at 2 as at 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel).
   Each project's output goes to artifacts/test-logs/ and is printed when the project completes.
   -Parallel 1 runs the projects one after another with live output. A suite that selects
   isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time.
@@ -29,7 +30,7 @@ $Kind = $null
 $Configuration = 'Release'
 $NoBuild = $false
 $List = $false
-$Parallel = [Math]::Max(2, [int][Math]::Floor([Environment]::ProcessorCount / 2))
+$Parallel = 2
 $Repeat = 1
 $PassThru = @()
 # -Command mode passes 'a,b' as one array argument; -File mode passes it as one string.

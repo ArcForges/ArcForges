@@ -9,7 +9,8 @@
 #   eng/test.sh --suite ci --suite exclusive --no-build --repeat 5
 #   eng/test.sh --list
 #
-# --parallel N runs up to N test projects at once (default: half the logical processors, at least 2); each project's output goes
+# --parallel N runs up to N test projects at once (default 2: measured on 18 logical processors, the ci suite takes as long at 2 as at
+# 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel); each project's output goes
 # to artifacts/test-logs/ and is printed when the project completes. --parallel 1 runs them one after another with live output.
 # A suite that selects isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time.
 # --repeat N runs the selected suites N times, stops at the first failing iteration and prints every iteration's duration.
@@ -22,7 +23,7 @@ export AVALONIA_TELEMETRY_OPTOUT=1
 configuration=Release
 build=1
 list=0
-parallel=$(( $(nproc) / 2 > 2 ? $(nproc) / 2 : 2 ))
+parallel=2
 repeat=1
 kind=
 selected=()

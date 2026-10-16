@@ -70,7 +70,7 @@ any change. They are binding; this file summarizes them and adds the repository 
   (clang and zlib). linux-arm64 links only on an arm64 host or with an arm64 sysroot (hosted CI).
 - **Tests:** select suites by trait with `eng/test.ps1` or `eng/test.sh` (`-List` / `--list`
   shows suites and task kinds; definitions in `eng/test-suites.conf`). The scripts run up to `-Parallel` / `--parallel` test
-  projects at once (default: half the logical processors, at least 2; each project's log in `artifacts/test-logs/`); `-Repeat` /
+  projects at once (default 2, measured: the longest project bounds the run; each project's log in `artifacts/test-logs/`); `-Repeat` /
   `--repeat N` reruns the selected suites until the first failing iteration. Tests run in parallel inside their projects too, each
   with its own node, platform, data root, endpoint and slice; never add a serial collection. A timing-, CPU-share- or memory-sensitive
   test, or one that changes machine-wide state, carries `isolation=exclusive` and `DisableParallelization = true`; the parallel suites
