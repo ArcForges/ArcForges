@@ -149,7 +149,7 @@ public sealed class FaultInjectionTests
         Assert.Contains("TASK_STATE_RUNNING", (await node.CliAsync("tasks", "show", id, "--json")).Output, StringComparison.Ordinal);
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
         Assert.Contains("TASK_STATE_CANCELLED", (await node.CliAsync("tasks", "wait", id, "--json")).Output, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+        await node.StopNodeAsync();
     }
 
     private sealed record Health(double Subscribers, double Sessions);

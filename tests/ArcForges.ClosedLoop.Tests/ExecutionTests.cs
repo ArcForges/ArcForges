@@ -440,7 +440,7 @@ public sealed class ExecutionTests
         await node.WaitReadyAsync();
         await node.WaitHeartbeatChangeAsync(restarted, TestNode.FaultHorizon(fault, 3));
         Assert.Single(File.ReadAllText(node.SupervisorLog).Split("node.hung").Skip(1));
-        Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+        await node.StopNodeAsync();
         Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
         Assert.Equal(0, supervisor.ExitCode);
     }
@@ -465,7 +465,7 @@ public sealed class ExecutionTests
         Assert.DoesNotContain("node.hung", log, StringComparison.Ordinal);
         Assert.DoesNotContain("node.crashed", log, StringComparison.Ordinal);
         Assert.Contains("node.first_heartbeat", log, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+        await node.StopNodeAsync();
         Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
         Assert.Equal(0, supervisor.ExitCode);
     }

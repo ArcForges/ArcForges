@@ -233,7 +233,28 @@ internal sealed class TestNode : IAsyncDisposable
     public async Task WaitReadyAsync(Process? node = null)
     {
         var run = await CliAsync("node", "wait-ready", "--timeout", "30s");
-        Assert.True(run.ExitCode == 0, $"The node did not become ready: {run}" + (node is { HasExited: true } ? $" (node exited {node.ExitCode})" : string.Empty));
+        Assert.True(run.ExitCode == 0, $"The node did not become ready: {run}" + (node is { HasExited: true } ? $" (node exited {node.ExitCode})" : string.Empty)
+            + Diagnostics());
+    }
+
+    /// <summary>Runs <c>node stop --verbose</c> (its transport attempts on stderr) and fails with <see cref="Diagnostics"/> unless it exits 0.</summary>
+    public async Task<ProcessRun> StopNodeAsync()
+    {
+        var run = await CliAsync("node", "stop", "--verbose");
+        Assert.True(run.ExitCode == 0, run + Diagnostics());
+        return run;
+    }
+
+    /// <summary>
+    /// What a failed CLI call against this environment's node needs next to it: the descriptor's process and whether it is alive, the
+    /// supervisor log and the end of the node log.
+    /// </summary>
+    public string Diagnostics()
+    {
+        var descriptor = Descriptor();
+        var process = descriptor is null ? "no endpoint descriptor" : $"descriptor pid {descriptor.ProcessId}, alive {descriptor.ProcessIsAlive()}";
+        static string Tail(string path, int lines) => string.Join('\n', ReadShared(path).Split('\n').TakeLast(lines));
+        return $"\n--- {process}\n--- supervisor log:\n{Tail(SupervisorLog, 60)}\n--- node log (last 40 lines):\n{Tail(NodeLog, 40)}";
     }
 
     /// <summary>The node's endpoint descriptor, or null.</summary>
