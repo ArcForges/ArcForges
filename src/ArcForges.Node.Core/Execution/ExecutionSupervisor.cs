@@ -1688,7 +1688,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         bool? coreDumped = signalled ? exit!.ExitCodeKind == "dumped" : null;
         if (launch is not null)
         {
-            return new AttemptOutcome(TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, launch.ExitCode, $"launch step {launch.Step} failed: {launch.Error}", null);
+            // A stop (a cancel, a timeout) during the launch steps ends them, and they fail as stopped: the attempt ends for the stop's reason
+            // (SM-TASK RUNNING -> CANCELLED for a cancel), not as SPAWN_FAILED, and its command never ran.
+            return attempt.StopReason is { } stopped
+                ? new AttemptOutcome(stopped, EffectCertainty.DidNotHappen, null, $"stopped during launch step {launch.Step}; the command did not start", null)
+                : new AttemptOutcome(TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, launch.ExitCode, $"launch step {launch.Step} failed: {launch.Error}", null);
         }
 
         if (incomplete && attempt.StopReason != TerminationReason.NodeShutdown)
