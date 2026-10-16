@@ -201,12 +201,6 @@ internal sealed class LinuxHarness : IDisposable
         {
         }
 
-        if (Environment.GetEnvironmentVariable("DEBUG_LEFTOVERS") == "1")
-        {
-            TestContext.Current.TestOutputHelper?.WriteLine("LEFTOVERS: " + string.Join(", ", leftovers));
-            return;
-        }
-
         Assert.True(leftovers.Count == 0, "Left running after the test: " + string.Join(", ", leftovers));
     }
 }

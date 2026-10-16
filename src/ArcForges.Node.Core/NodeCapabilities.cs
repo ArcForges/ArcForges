@@ -6,9 +6,10 @@ using ArcForges.Contracts.Node.V1;
 namespace ArcForges.Node.Core;
 
 /// <summary>
-/// The node's capability report (architecture 02 section 2 step 6; 03 section 8). On Windows the execution platform (job objects,
-/// AF-EXEC-01) reports its capabilities after its self-test (<see cref="FromPlatform"/>). Where this build has no execution platform
-/// (Linux until AF-EXEC-02), every enforcement capability is reported as OBSERVE_ONLY with that reason, and the node is DEGRADED
+/// The node's capability report (architecture 02 section 2 step 6; 03 section 8). The execution platform (Windows job objects, AF-EXEC-01;
+/// Linux transient units of the user manager, AF-EXEC-02, observe-only without a user manager) reports its capabilities after its probe
+/// (<see cref="FromPlatform"/>). Where no execution platform could be started, every enforcement capability is reported as OBSERVE_ONLY
+/// with that reason, and the node is DEGRADED
 /// (SM-NODE: RECOVERING -> DEGRADED when a capability is missing). The platform facts are read from the running system.
 /// </summary>
 public static class NodeCapabilities

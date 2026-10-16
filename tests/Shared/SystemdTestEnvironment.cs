@@ -146,7 +146,9 @@ internal static class SystemdTestEnvironment
             foreach (var procs in Directory.EnumerateFiles(sliceDirectory, "cgroup.procs", SearchOption.AllDirectories))
             {
                 var pids = File.ReadAllText(procs).Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                if (pids.Length > 0)
+
+                // A node killed during its startup leaves its enforcement probe (sleep 3, RuntimeMaxSec 3 s) to end by itself.
+                if (pids.Length > 0 && !Path.GetFileName(Path.GetDirectoryName(procs)!).StartsWith("arcforges-probe-", StringComparison.Ordinal))
                 {
                     leftovers.Add($"processes {string.Join(' ', pids)} in {Path.GetDirectoryName(procs)}");
                 }

@@ -47,7 +47,7 @@ public sealed class Benchmarks
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireNativeHost();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Linux execution is AF-EXEC-02's; the Windows target is measured here.");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows holder; Linux is AdmissionLatencyAndGuardFootprintOnLinux.");
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
         await using var channel = ArcForges.Client.NodeChannel.Create(ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(node.Endpoint));
@@ -115,6 +115,82 @@ public sealed class Benchmarks
     }
 
     /// <summary>
+    /// Linux admission latency (15 section 2: submit to <c>STARTED</c> when capacity exists, p95 at most 250 ms including the transient-unit
+    /// job, 500 submissions) and the disk guard's footprint (<c>arcforges node guard</c>, at most 8 MB private, idle while the heartbeat is
+    /// fresh): each task runs <c>/bin/true</c> after the previous one finished; the guard runs against the node's data root while it measures.
+    /// </summary>
+    [Fact(Timeout = 900_000)]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    public async Task AdmissionLatencyAndGuardFootprintOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireNativeHost();
+        Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        await using var channel = ArcForges.Client.NodeChannel.Create(ArcForges.LocalRpc.LocalRpcEndpoint.UnixDomainSocket(node.Endpoint));
+        var hello = ArcForges.Client.ClientProcess.Hello(ArcForges.Contracts.Node.V1.ClientKind.Cli);
+        hello.CiMarkers.Clear();
+        Assert.Null((await channel.Node.HelloAsync(new ArcForges.Contracts.Node.V1.NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow.AddSeconds(10),
+            cancellationToken: TestContext.Current.CancellationToken)).Error);
+        using var guard = node.Start(TestNode.Host, ["node", "guard", "--test-mode"]);
+        var latencies = new List<double>();
+        for (var index = 0; index < 510; index++)
+        {
+            var task = await RunAsync(channel, ["/bin/true"]);
+            var created = ArcForges.Client.ProtoTime.ToDateTimeOffset(task.CreatedAt)!.Value;
+            var started = ArcForges.Client.ProtoTime.ToDateTimeOffset(task.CurrentAttempt.StartedAt)!.Value;
+            if (index >= 10)
+            {
+                latencies.Add((started - created).TotalMilliseconds);
+            }
+        }
+
+        latencies.Sort();
+        var p50 = latencies[(int)Math.Ceiling(0.50 * latencies.Count) - 1];
+        var p95 = latencies[(int)Math.Ceiling(0.95 * latencies.Count) - 1];
+        var guardPrivate = PrivateBytes(guard.Id);
+        var guardCpu = File.ReadAllText($"/proc/{guard.Id}/stat").Split(") ")[1].Split(' ');
+        guard.Kill();
+        await guard.WaitForExitAsync(TestContext.Current.CancellationToken);
+        var result = new System.Text.Json.Nodes.JsonObject
+        {
+            ["name"] = "admission-latency-linux",
+            ["runs"] = latencies.Count,
+            ["p50Ms"] = Math.Round(p50, 2),
+            ["p95Ms"] = Math.Round(p95, 2),
+            ["maxMs"] = Math.Round(latencies[^1], 2),
+            ["guardPrivateBytes"] = guardPrivate,
+            ["guardCpuTicks"] = long.Parse(guardCpu[12], System.Globalization.CultureInfo.InvariantCulture) + long.Parse(guardCpu[13], System.Globalization.CultureInfo.InvariantCulture),
+            ["host"] = TestNode.Host,
+        };
+        TestContext.Current.TestOutputHelper?.WriteLine(result.ToJsonString());
+        if (Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 } directory)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "admission-latency-linux.json"), result.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        Assert.True(p95 <= 250, $"admission latency p95 {p95:0.0} ms (p50 {p50:0.0} ms) exceeds 250 ms");
+        Assert.True(guardPrivate <= 8L << 20, $"the guard uses {guardPrivate} private bytes (target 8 MB)");
+    }
+
+    /// <summary>Private bytes of a Linux process (<c>Private_Clean + Private_Dirty</c> of <c>smaps_rollup</c>).</summary>
+    private static long PrivateBytes(int pid)
+    {
+        long total = 0;
+        foreach (var line in File.ReadAllLines($"/proc/{pid}/smaps_rollup"))
+        {
+            if (line.StartsWith("Private_", StringComparison.Ordinal))
+            {
+                total += long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], System.Globalization.CultureInfo.InvariantCulture) * 1024;
+            }
+        }
+
+        return total;
+    }
+
+    /// <summary>
     /// Output capture (15 section 1: at least 200 MB/s sustained, no loss): <c>arcforges-testload output</c> writes 1.5 GiB at the maximum
     /// rate under the node (below the default 2 GiB output limit); the captured <c>stdout.bin</c> must hash to the digest the writer computed
     /// itself, and the bytes over the attempt's run time give the sustained rate.
@@ -124,11 +200,12 @@ public sealed class Benchmarks
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireNativeHost();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Linux execution is AF-EXEC-02's; the Windows target is measured here.");
         const long Bytes = 3L << 29;
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
-        await using var channel = ArcForges.Client.NodeChannel.Create(ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(node.Endpoint));
+        await using var channel = ArcForges.Client.NodeChannel.Create(OperatingSystem.IsWindows()
+            ? ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(node.Endpoint)
+            : ArcForges.LocalRpc.LocalRpcEndpoint.UnixDomainSocket(node.Endpoint));
         var hello = ArcForges.Client.ClientProcess.Hello(ArcForges.Contracts.Node.V1.ClientKind.Cli);
         hello.CiMarkers.Clear();
         Assert.Null((await channel.Node.HelloAsync(new ArcForges.Contracts.Node.V1.NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow.AddSeconds(10),
@@ -161,7 +238,7 @@ public sealed class Benchmarks
         if (Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 } directory)
         {
             Directory.CreateDirectory(directory);
-            File.WriteAllText(Path.Combine(directory, "output-capture-windows.json"), result.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(Path.Combine(directory, "output-capture-" + (OperatingSystem.IsWindows() ? "windows" : "linux") + ".json"), result.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
 
         Assert.Equal(expected, digest);

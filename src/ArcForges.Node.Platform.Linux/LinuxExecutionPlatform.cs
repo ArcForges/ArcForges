@@ -681,8 +681,11 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             new("Description", "ArcForges enforcement probe"),
             new("Slice", Slice),
             new("Type", "exec"),
-            new("ExecStartEx", (IReadOnlyList<ExecCommand>)[new ExecCommand(sleep, [sleep, "30"], false)]),
+            new("ExecStartEx", (IReadOnlyList<ExecCommand>)[new ExecCommand(sleep, [sleep, "3"], false)]),
             new("CollectMode", "inactive-or-failed"),
+
+            // A node that dies during its startup leaves no probe behind for long.
+            new("RuntimeMaxUSec", 3_000_000UL),
         };
         if (_controllers.Contains("cpu"))
         {

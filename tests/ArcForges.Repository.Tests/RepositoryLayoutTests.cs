@@ -90,6 +90,23 @@ public sealed class RepositoryLayoutTests
         Assert.DoesNotContain(target.Elements(), element => element.Name.LocalName != "Message");
     }
 
+    [Theory]
+    [InlineData("packaging/linux/arcforges-node.service", "Type=notify", "NotifyAccess=main", "WatchdogSec=30",
+        "ExecStart=%h/.local/share/arcforges/app/current/arcforges node run --systemd", "Restart=on-failure", "RestartSec=2", "RestartForceExitStatus=75",
+        "SuccessExitStatus=75", "TimeoutStopSec=30", "StartLimitIntervalSec=600", "StartLimitBurst=5", "WantedBy=default.target")]
+    [InlineData("packaging/linux/arcforges.slice", "[Slice]", "Description=ArcForges managed executions")]
+    [InlineData("packaging/linux/arcforges-guard.service", "Type=simple", "ExecStart=%h/.local/share/arcforges/app/current/arcforges node guard",
+        "Restart=always", "RestartSec=2", "StartLimitIntervalSec=0", "WantedBy=default.target")]
+    public void TheLinuxUnitFilesCarryTheDesignedSettings(string file, params string[] lines)
+    {
+        // 13 section 3.4. The slice carries no limits (the node sets them at runtime); the node unit names no rollback unit until the
+        // updater ships it.
+        var content = File.ReadAllLines(RepositoryFiles.PathOf(file)).Where(line => !line.StartsWith('#')).ToList();
+        Assert.All(lines, line => Assert.Contains(line, content));
+        Assert.DoesNotContain(content, line => line.StartsWith("OnFailure=", StringComparison.Ordinal) || line.StartsWith("Memory", StringComparison.Ordinal)
+            || line.StartsWith("CPUQuota", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void TestProjectsDoNotPublishNativeAot()
     {
