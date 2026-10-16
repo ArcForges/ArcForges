@@ -423,7 +423,10 @@ public sealed class LinuxExecutionTests
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "NRestarts") is var restarts && restarts.Length > 0 && restarts != "0", TimeSpan.FromSeconds(120),
             "systemd to restart the hung node");
         TestContext.Current.TestOutputHelper?.WriteLine($"restarted after {watch.Elapsed.TotalSeconds:0.0} s");
-        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(50));
+        // The fault (3 s), for the probe up to three missed probes (5 s timeout each, one a second), WatchdogSec (30 s),
+        // TimeoutAbortSec (5 s), RestartSec (2 s) and a few seconds of slack for the restart.
+        var bound = fault == "hang-probe-after" ? TimeSpan.FromSeconds(66) : TimeSpan.FromSeconds(45);
+        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(25), bound);
         Assert.NotEqual(first, SystemdTestEnvironment.Property(unit, "MainPID"));
         var journal = Journal(unit);
         Assert.Contains("Watchdog timeout (limit 30s)", journal, StringComparison.Ordinal);
