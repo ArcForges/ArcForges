@@ -45,7 +45,8 @@ public sealed class JobTests
         // The child job is nested in the root: the root's accounting includes it, and ending the root ends the child's processes (V-W02).
         Assert.True(harness.Platform.RootJob!.Accounting().ActiveProcesses >= 1);
         Assert.True(harness.Platform.RootJob.Terminate(AttemptRunner.TerminatedExitCode));
-        PlatformHarness.WaitFor(() => !PlatformHarness.IsRunning(root.Pid), TimeSpan.FromSeconds(5), "the nested attempt to end with the root job");
+        var rootProcess = PlatformHarness.Identity(root);
+        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), TimeSpan.FromSeconds(5), "the nested attempt to end with the root job");
         var exit = harness.WaitExit(handle, Bound);
         Assert.Equal((int)AttemptRunner.TerminatedExitCode, exit.ExitStatus);
     }
@@ -139,11 +140,11 @@ public sealed class JobTests
         using var harness = PlatformHarness.Start();
         var handle = harness.Launch([TestPrograms.TestLoad, "fork", "--width", "3", "--depth", "2", "--hold-ms", "60000"]);
         PlatformHarness.WaitFor(() => handle.Processes().Count >= 13, Bound, "the 13-process tree");
-        var pids = handle.Processes().Select(process => process.Pid).ToList();
+        var pids = handle.Processes().Select(process => ArcForges.Tests.ProcessIdentity.Capture(process.Pid)).OfType<ArcForges.Tests.ProcessIdentity>().ToList();
         harness.Track(handle);
         handle.Terminate();
         PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, TimeSpan.FromSeconds(5), "the job to be empty");
-        Assert.All(pids, pid => Assert.False(PlatformHarness.IsRunning(pid)));
+        Assert.All(pids, process => Assert.False(process.IsRunning()));
         Assert.Equal((int)AttemptRunner.TerminatedExitCode, harness.WaitExit(handle, Bound).ExitStatus);
     }
 
@@ -173,14 +174,14 @@ public sealed class JobTests
         var marker = Path.Combine(harness.Root, "marker.txt");
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--marker", marker], killWithNode: true);
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
-        var pid = handle.Root!.Pid;
+        var rootProcess = PlatformHarness.Identity(handle.Root!);
         Assert.Null(handle.Holder);
         Assert.True((handle.Job.Limits().Flags & Native.JobObjectLimitKillOnJobClose) != 0);
         PlatformHarness.WaitFor(() => PlatformHarness.Marker(marker).Any(line => line.Event == "ready"), Bound, "the workload to be ready");
 
         // The node's handle is the only one: closing it (the node exiting) ends the attempt.
         handle.Dispose();
-        PlatformHarness.WaitFor(() => !PlatformHarness.IsRunning(pid), TimeSpan.FromSeconds(5), "the kill_with_node attempt to end");
+        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), TimeSpan.FromSeconds(5), "the kill_with_node attempt to end");
     }
 
     private static TimeSpan Cpu(JobAccounting accounting) => accounting.UserTime + accounting.KernelTime;

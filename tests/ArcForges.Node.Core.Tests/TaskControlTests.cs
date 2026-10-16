@@ -61,7 +61,7 @@ public sealed class TaskControlTests
         var taskId = await Tasks.SubmitAsync(channel, spec);
         await Tasks.RunningAsync(channel, taskId);
         await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "ready") == 2, Tasks.Bound, "the tree");
-        var pids = Tasks.Marker(marker).Select(line => line.Pid).Distinct().ToList();
+        var processes = Tasks.Processes(marker);
 
         var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Reason = "test" }, cancellationToken: Ct);
         Assert.Equal(TaskState.Running, cancel.Value.State);
@@ -70,7 +70,7 @@ public sealed class TaskControlTests
         Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
         Assert.Contains("CTRL_BREAK_EVENT delivered", task.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
-        Assert.All(pids, pid => Assert.False(Tasks.IsRunning(pid)));
+        Assert.All(processes, process => Assert.False(process.IsRunning(), $"{process} is still running."));
 
         // Cancelling a terminal task returns its state.
         var again = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
@@ -270,19 +270,26 @@ public sealed class TaskControlTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await using var node = await InProcessNode.Create().StartAsync();
         Id taskId;
-        int pid;
+        ArcForges.Tests.ProcessIdentity root;
         await using (var channel = await node.ChannelAsync())
         {
             var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", Path.Combine(node.Root, "m.txt"));
             spec.Resources = new ResourceSpec { KillWithNode = true };
             taskId = await Tasks.SubmitAsync(channel, spec);
             await Tasks.RunningAsync(channel, taskId);
-            pid = node.Runtime.Store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT root_pid FROM attempt WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray())), CultureInfo.InvariantCulture));
+            root = node.Runtime.Store.Read(reader =>
+            {
+                using var command = reader.CreateCommand("SELECT root_pid, root_start FROM attempt WHERE task_id = $id;");
+                command.Parameters.AddWithValue("$id", taskId.Value.ToByteArray());
+                using var rows = command.ExecuteReader();
+                Assert.True(rows.Read());
+                return ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(rows.GetInt32(0), ArcForges.Node.Store.StoreTime.FromMicroseconds(rows.GetInt64(1)));
+            });
             Assert.Empty(ExecutionCleanup.Children());
         }
 
         await node.StopAsync();
-        Assert.False(Tasks.IsRunning(pid), "A kill_with_node attempt does not outlive the node.");
+        Assert.False(root.IsRunning(), "A kill_with_node attempt does not outlive the node.");
         await node.StartAsync();
         await using var after = await node.ChannelAsync();
         var task = await Tasks.GetAsync(after, taskId);
@@ -311,9 +318,10 @@ public sealed class TaskControlTests
         }
 
         await node.StopAsync();
-        var longPid = Tasks.Marker(longMarker).Single().Pid;
-        Assert.True(Tasks.IsRunning(longPid), "The attempt keeps running while the node is stopped.");
-        await Tasks.WaitForAsync(() => !Tasks.IsRunning(Tasks.Marker(shortMarker).Single().Pid), TimeSpan.FromSeconds(10), "the short task to finish while the node is down");
+        var longProcess = Tasks.Processes(longMarker).Single();
+        Assert.True(longProcess.IsRunning(), "The attempt keeps running while the node is stopped.");
+        var shortProcess = Tasks.Processes(shortMarker).Single();
+        await Tasks.WaitForAsync(() => !shortProcess.IsRunning(), TimeSpan.FromSeconds(10), "the short task to finish while the node is down");
         await Task.Delay(500, Ct);
 
         await node.StartAsync();
@@ -334,7 +342,7 @@ public sealed class TaskControlTests
         Assert.Equal(TaskState.Cancelled, cancelled.State);
         Assert.Equal(3, cancelled.CurrentAttempt.Result.ExitCode);
         Assert.True(cancelled.CurrentAttempt.Usage.MemPeakBytes > 0, "The recovered attempt's accounting was read.");
-        Assert.False(Tasks.IsRunning(longPid));
+        Assert.False(longProcess.IsRunning());
         var segments = node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM timeline_segment WHERE category = 'node_gap';"));
         Assert.Equal(2L, segments);
         using var logStream = new FileStream(Path.Combine(node.DataRoot, "logs", "node", "node.log"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

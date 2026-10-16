@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ArcForges.TestLoad;
+using ArcForges.Tests;
 
 namespace ArcForges.Tools.Tests;
 
@@ -163,11 +164,11 @@ public sealed class TestLoadProcessTests
         Assert.StartsWith("arcforges-testload: ", run.StandardError, StringComparison.Ordinal);
     }
 
-    /// <summary>Polls the root's descendants until it completes: the largest count seen and every descendant seen.</summary>
-    private static async Task<(int Largest, HashSet<int> Seen)> WatchDescendantsAsync(int root, Task<ToolRun> run)
+    /// <summary>Polls the root's descendants until it completes: the largest count seen and every descendant seen (by identity).</summary>
+    private static async Task<(int Largest, HashSet<ProcessIdentity> Seen)> WatchDescendantsAsync(int root, Task<ToolRun> run)
     {
         var largest = 0;
-        var seen = new HashSet<int>();
+        var seen = new HashSet<ProcessIdentity>();
         var watch = Stopwatch.StartNew();
         while (!run.IsCompleted && watch.Elapsed < TimeSpan.FromSeconds(60))
         {
@@ -180,20 +181,22 @@ public sealed class TestLoadProcessTests
         return (largest, seen);
     }
 
-    /// <summary>Every observed descendant has exited (orphans are found by PID, not by parent link).</summary>
-    private static void AssertExited(IEnumerable<int> processIds)
+    /// <summary>
+    /// Every observed descendant has exited (orphans are found by identity, not by parent link). A process that now holds a recorded ID
+    /// but was created at another time is another process (the ID was reused) and does not count; the recorded process itself still
+    /// running after 5 s fails.
+    /// </summary>
+    private static void AssertExited(IEnumerable<ProcessIdentity> processes)
     {
-        foreach (var processId in processIds)
+        foreach (var process in processes)
         {
-            try
+            var watch = Stopwatch.StartNew();
+            while (process.IsRunning() && watch.Elapsed < TimeSpan.FromSeconds(5))
             {
-                using var process = Process.GetProcessById(processId);
-                Assert.True(process.WaitForExit(TimeSpan.FromSeconds(5)), $"Process {processId} of the tree is still running.");
+                Thread.Sleep(20);
             }
-            catch (ArgumentException)
-            {
-                // Already gone.
-            }
+
+            Assert.False(process.IsRunning(), $"{process} of the tree is still running.");
         }
     }
 

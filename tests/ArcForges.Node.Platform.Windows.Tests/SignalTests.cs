@@ -57,19 +57,19 @@ public sealed class SignalTests
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
         PlatformHarness.WaitFor(() => Ready(marker).Count == 2, Bound, "the root and its child");
         var rootPid = handle.Root!.Pid;
-        var childPid = Ready(marker).Single(pid => pid != rootPid);
+        var childProcess = Ready(marker).Single(process => process.Pid != rootPid);
 
         var outcome = handle.RequestGracefulStop();
         Assert.True(outcome.ConsoleSignalled, outcome.Reason);
         PlatformHarness.WaitFor(() => Events(marker, "break").Contains(rootPid), TimeSpan.FromSeconds(5), "CTRL_BREAK in the root");
         await Task.Delay(1_000, TestContext.Current.CancellationToken);
-        Assert.DoesNotContain(childPid, Events(marker, "break"));
-        Assert.True(PlatformHarness.IsRunning(childPid), $"The {child} child ignores the root's group event and keeps running.");
+        Assert.DoesNotContain(childProcess.Pid, Events(marker, "break"));
+        Assert.True(childProcess.IsRunning(), $"The {child} child ignores the root's group event and keeps running.");
 
         // The forced phase ends the whole job either way.
         handle.Terminate();
         PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, TimeSpan.FromSeconds(5), "the job to be empty");
-        Assert.False(PlatformHarness.IsRunning(childPid));
+        Assert.False(childProcess.IsRunning());
     }
 
     [Fact(Timeout = 120_000)]
@@ -83,16 +83,16 @@ public sealed class SignalTests
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
         PlatformHarness.WaitFor(() => Ready(marker).Count == 2, Bound, "the root and its window child");
         var rootPid = handle.Root!.Pid;
-        var childPid = Ready(marker).Single(pid => pid != rootPid);
-        PlatformHarness.WaitFor(() => GuiWindows.TopLevelWindows().Any(window => window.ProcessId == childPid), Bound, "the child's hidden window");
-        Assert.DoesNotContain(GuiWindows.TopLevelWindows(), window => window.ProcessId == childPid && IsWindowVisible(window.Window));
+        var childProcess = Ready(marker).Single(process => process.Pid != rootPid);
+        PlatformHarness.WaitFor(() => GuiWindows.TopLevelWindows().Any(window => window.ProcessId == childProcess.Pid), Bound, "the child's hidden window");
+        Assert.DoesNotContain(GuiWindows.TopLevelWindows(), window => window.ProcessId == childProcess.Pid && IsWindowVisible(window.Window));
 
         var outcome = handle.RequestGracefulStop();
         Assert.True(outcome.ConsoleSignalled, outcome.Reason);
         Assert.True(outcome.WindowsClosed >= 1, "WM_CLOSE was posted to the child's window.");
-        PlatformHarness.WaitFor(() => Events(marker, "close").Contains(childPid), TimeSpan.FromSeconds(5), "WM_CLOSE in the window child");
-        PlatformHarness.WaitFor(() => !PlatformHarness.IsRunning(childPid), TimeSpan.FromSeconds(5), "the window child to exit");
-        Assert.DoesNotContain(childPid, Events(marker, "break"));
+        PlatformHarness.WaitFor(() => Events(marker, "close").Contains(childProcess.Pid), TimeSpan.FromSeconds(5), "WM_CLOSE in the window child");
+        PlatformHarness.WaitFor(() => !childProcess.IsRunning(), TimeSpan.FromSeconds(5), "the window child to exit");
+        Assert.DoesNotContain(childProcess.Pid, Events(marker, "break"));
         harness.WaitExit(handle, Bound);
     }
 
@@ -111,7 +111,7 @@ public sealed class SignalTests
         var outcome = handle.RequestGracefulStop();
         Assert.False(outcome.ConsoleSignalled);
         Assert.Contains("could not attach", outcome.Reason, StringComparison.Ordinal);
-        Assert.True(PlatformHarness.IsRunning(handle.Root!.Pid));
+        Assert.True(PlatformHarness.Identity(handle.Root!).IsRunning());
         handle.Terminate();
         Assert.Equal((int)AttemptRunner.TerminatedExitCode, harness.WaitExit(handle, Bound).ExitStatus);
     }
@@ -126,8 +126,8 @@ public sealed class SignalTests
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "500", "--child", "group", "--child-hold-ms", "60000", "--marker", marker],
             leftoverGraceMs: 30_000);
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
-        var rootPid = handle.Root!.Pid;
-        PlatformHarness.WaitFor(() => !PlatformHarness.IsRunning(rootPid), Bound, "the root to exit");
+        var rootProcess = PlatformHarness.Identity(handle.Root!);
+        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), Bound, "the root to exit");
         var outcome = handle.RequestGracefulStop();
         Assert.False(outcome.ConsoleSignalled);
         Assert.Equal("the root process exited", outcome.Reason);
@@ -151,13 +151,13 @@ public sealed class SignalTests
         PlatformHarness.WaitFor(() => Events(marker, "break").Count == 2, TimeSpan.FromSeconds(5),
             "both to see the event: " + PlatformHarness.ReadShared(marker).ReplaceLineEndings(" | "));
         await Task.Delay(500, TestContext.Current.CancellationToken);
-        Assert.All(pids, pid => Assert.True(PlatformHarness.IsRunning(pid)));
+        Assert.All(pids, process => Assert.True(process.IsRunning()));
         handle.Terminate();
         PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, TimeSpan.FromSeconds(5), "the job to be empty");
-        Assert.All(pids, pid => Assert.False(PlatformHarness.IsRunning(pid)));
+        Assert.All(pids, process => Assert.False(process.IsRunning()));
     }
 
-    private static List<int> Ready(string marker) => [.. PlatformHarness.Marker(marker).Where(line => line.Event == "ready").Select(line => line.Pid).Distinct()];
+    private static List<ArcForges.Tests.ProcessIdentity> Ready(string marker) => PlatformHarness.MarkerProcesses(marker, "ready");
 
     private static List<int> Events(string marker, string name) => [.. PlatformHarness.Marker(marker).Where(line => line.Event == name).Select(line => line.Pid)];
 

@@ -45,7 +45,7 @@ internal static class TestPrograms
 internal sealed partial class PlatformHarness : IDisposable
 {
     private readonly List<WindowsAttemptHandle> _handles = [];
-    private readonly HashSet<int> _seen = [];
+    private readonly HashSet<ArcForges.Tests.ProcessIdentity> _seen = [];
 
     private PlatformHarness(string root, RootLimits limits)
     {
@@ -136,7 +136,10 @@ internal sealed partial class PlatformHarness : IDisposable
         {
             foreach (var process in handle.Processes())
             {
-                _seen.Add(process.Pid);
+                if (ArcForges.Tests.ProcessIdentity.Capture(process.Pid) is { } identity)
+                {
+                    _seen.Add(identity);
+                }
             }
         }
         catch (ObjectDisposedException)
@@ -183,22 +186,17 @@ internal sealed partial class PlatformHarness : IDisposable
         return reader.ReadToEnd();
     }
 
-    public static bool IsRunning(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-    }
+    /// <summary>The identity of an attempt's root process (it was alive at its recorded start).</summary>
+    public static ArcForges.Tests.ProcessIdentity Identity(RootProcess root) => ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(root.Pid, root.StartTime);
+
+    /// <summary>The identity of a process this test started.</summary>
+    public static ArcForges.Tests.ProcessIdentity Identity(LaunchedProcess process) =>
+        ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(process.ProcessId, ProcessInfo.FromFileTime(process.CreationFileTime));
+
+    /// <summary>The processes that wrote <paramref name="eventName"/> lines to a marker, each identified by its first such line.</summary>
+    public static List<ArcForges.Tests.ProcessIdentity> MarkerProcesses(string marker, string eventName) =>
+        [.. Marker(marker).Where(line => line.Event == eventName).GroupBy(line => line.Pid)
+            .Select(group => ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(group.Key, group.Min(line => line.At)))];
 
     public void Dispose()
     {
@@ -222,7 +220,7 @@ internal sealed partial class PlatformHarness : IDisposable
                 handle.Acknowledge();
                 if (handle.Holder is { } holder)
                 {
-                    _seen.Add(holder.ProcessId);
+                    _seen.Add(ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(holder.ProcessId, ProcessInfo.FromFileTime(holder.CreationFileTime)));
                     if (!holder.WaitForExit(TimeSpan.FromSeconds(15)))
                     {
                         leftovers.Add($"holder {holder.ProcessId}");
@@ -235,22 +233,16 @@ internal sealed partial class PlatformHarness : IDisposable
 
             Platform.Dispose();
             var deadline = Stopwatch.StartNew();
-            while (_seen.Any(IsRunning) && deadline.Elapsed < TimeSpan.FromSeconds(10))
+            while (_seen.Any(process => process.IsRunning()) && deadline.Elapsed < TimeSpan.FromSeconds(10))
             {
                 Thread.Sleep(50);
             }
 
-            foreach (var pid in _seen.Where(IsRunning))
+            // Recorded by identity: a process that reused a recorded ID is neither reported nor killed.
+            foreach (var process in _seen.Where(process => process.IsRunning()))
             {
-                leftovers.Add($"process {pid}");
-                try
-                {
-                    using var process = Process.GetProcessById(pid);
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Win32Exception)
-                {
-                }
+                leftovers.Add(process.ToString());
+                process.Kill();
             }
         }
         finally

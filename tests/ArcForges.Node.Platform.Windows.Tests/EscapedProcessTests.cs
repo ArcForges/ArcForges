@@ -71,7 +71,7 @@ public sealed class EscapedProcessTests
             Assert.Contains(terminated, text => text.Contains($"({escapedChild.ProcessId})", StringComparison.Ordinal));
             Assert.True(escapedChild.WaitForExit(TimeSpan.FromSeconds(5)), "The escaped child was terminated.");
             Assert.Equal(AttemptRunner.TerminatedExitCode, escapedChild.ExitCode);
-            Assert.True(PlatformHarness.IsRunning(attemptRoot.ProcessId), "Terminating the escaped child leaves the job's processes alone.");
+            Assert.True(PlatformHarness.Identity(attemptRoot).IsRunning(), "Terminating the escaped child leaves the job's processes alone.");
 
             // With the escaped child gone, nothing is reported.
             Assert.Empty(EscapedProcesses.Scan(job, members.Snapshot()));
@@ -109,7 +109,7 @@ public sealed class EscapedProcessTests
         var root = Directory.CreateTempSubdirectory("arcforges-reuse-").FullName;
         using var job = JobObject.Create(null);
         LaunchedProcess? reuser = null;
-        var children = new List<int>();
+        var children = new List<ArcForges.Tests.ProcessIdentity>();
         ProcessLifetime reuserLife = default;
         try
         {
@@ -131,7 +131,8 @@ public sealed class EscapedProcessTests
             PlatformHarness.WaitFor(() => PlatformHarness.Marker(marker).Any(line => line.Event == "ready")
                 && ProcessInfo.Snapshot().Any(entry => entry.ParentPid == pid && entry.Image.Equals("arcforges-testload.exe", StringComparison.OrdinalIgnoreCase)),
                 TimeSpan.FromSeconds(20), "P and its child to run");
-            children.AddRange(ProcessInfo.Snapshot().Where(entry => entry.ParentPid == pid).Select(entry => entry.Pid));
+            children.AddRange(ProcessInfo.Snapshot().Where(entry => entry.ParentPid == pid).Select(entry => ArcForges.Tests.ProcessIdentity.Capture(entry.Pid))
+                .OfType<ArcForges.Tests.ProcessIdentity>().Where(child => child.StartKey >= ProcessInfo.FromFileTime(created).UtcTicks));
             if (!parentStillRuns)
             {
                 // P exits and this test releases its handle (its console host may still hold P's object, which only keeps the ID).
@@ -140,7 +141,7 @@ public sealed class EscapedProcessTests
                 reuserLife = new ProcessLifetime(created, exited);
                 reuser.Dispose();
                 reuser = null;
-                Assert.False(PlatformHarness.IsRunning(pid), "P has exited.");
+                Assert.False(ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(pid, ProcessInfo.FromFileTime(created)).IsRunning(), "P has exited.");
             }
             else
             {
@@ -153,7 +154,7 @@ public sealed class EscapedProcessTests
 
             // Control: had P itself been the member, its child (outside the job) would be found escaped.
             var control = EscapedProcesses.Scan(job, [(pid, reuserLife)]);
-            Assert.Contains(control, process => children.Contains(process.Pid) && process.Image.Equals("arcforges-testload.exe", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(control, process => children.Any(child => child.Pid == process.Pid) && process.Image.Equals("arcforges-testload.exe", StringComparison.OrdinalIgnoreCase));
 
             // A member whose lifetime is unknown (exit time unreadable) is never a parent.
             Assert.Empty(EscapedProcesses.Scan(job, [(pid, new ProcessLifetime(created, -1))]));
@@ -162,12 +163,7 @@ public sealed class EscapedProcessTests
         {
             foreach (var child in children)
             {
-                using var handle = ProcessInfo.Open(child, terminate: true);
-                if (handle is not null && ProcessInfo.IsRunning(handle))
-                {
-                    Native.TerminateProcess(handle, AttemptRunner.TerminatedExitCode);
-                    Native.WaitForSingleObject(handle, 10_000);
-                }
+                child.Kill();
             }
 
             if (reuser is not null)
@@ -177,7 +173,7 @@ public sealed class EscapedProcessTests
                 reuser.Dispose();
             }
 
-            Assert.All(children, child => Assert.False(PlatformHarness.IsRunning(child), $"Child {child} was left running."));
+            Assert.All(children, child => Assert.False(child.IsRunning(), $"{child} was left running."));
             Directory.Delete(root, recursive: true);
         }
     }
@@ -194,7 +190,7 @@ public sealed class EscapedProcessTests
         var root = Directory.CreateTempSubdirectory("arcforges-member-").FullName;
         using var job = JobObject.Create(null);
         LaunchedProcess? stranger = null;
-        var children = new List<int>();
+        var children = new List<ArcForges.Tests.ProcessIdentity>();
         try
         {
             using var stdin = ProcessLauncher.OpenNull(write: false);
@@ -210,9 +206,11 @@ public sealed class EscapedProcessTests
                 StdError = stdout,
             });
             var pid = stranger.ProcessId;
+            var created = stranger.CreationFileTime;
             PlatformHarness.WaitFor(() => ProcessInfo.Snapshot().Any(entry => entry.ParentPid == pid && entry.Image.Equals("arcforges-testload.exe", StringComparison.OrdinalIgnoreCase)),
                 TimeSpan.FromSeconds(20), "the stranger's child to run");
-            children.AddRange(ProcessInfo.Snapshot().Where(entry => entry.ParentPid == pid).Select(entry => entry.Pid));
+            children.AddRange(ProcessInfo.Snapshot().Where(entry => entry.ParentPid == pid).Select(entry => ArcForges.Tests.ProcessIdentity.Capture(entry.Pid))
+                .OfType<ArcForges.Tests.ProcessIdentity>().Where(child => child.StartKey >= ProcessInfo.FromFileTime(created).UtcTicks));
             Assert.False(job.Contains(stranger.Process));
 
             using var members = new JobMembers(job);
@@ -232,12 +230,7 @@ public sealed class EscapedProcessTests
             job.Terminate(AttemptRunner.TerminatedExitCode);
             foreach (var child in children)
             {
-                using var handle = ProcessInfo.Open(child, terminate: true);
-                if (handle is not null && ProcessInfo.IsRunning(handle))
-                {
-                    Native.TerminateProcess(handle, AttemptRunner.TerminatedExitCode);
-                    Native.WaitForSingleObject(handle, 10_000);
-                }
+                child.Kill();
             }
 
             if (stranger is not null)
@@ -247,7 +240,7 @@ public sealed class EscapedProcessTests
                 stranger.Dispose();
             }
 
-            Assert.All(children, child => Assert.False(PlatformHarness.IsRunning(child), $"Child {child} was left running."));
+            Assert.All(children, child => Assert.False(child.IsRunning(), $"{child} was left running."));
             Directory.Delete(root, recursive: true);
         }
     }

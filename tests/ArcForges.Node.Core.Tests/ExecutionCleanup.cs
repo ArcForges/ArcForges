@@ -67,13 +67,11 @@ internal static class ExecutionCleanup
         foreach (var pid in holders)
         {
             leftovers.Add($"arcforges holder {pid}");
-            try
+
+            // Killed only while it is still this process's child (an ID reused meanwhile belongs to another process).
+            if (ArcForges.Tests.ProcessIdentity.Capture(pid) is { } holder && Children().Contains(pid))
             {
-                using var process = Process.GetProcessById(pid);
-                process.Kill(entireProcessTree: true);
-            }
-            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
+                holder.Kill();
             }
         }
 
@@ -91,7 +89,11 @@ internal static class ExecutionCleanup
     }
 
     /// <summary>This process's child <c>arcforges</c> processes (the holders of in-process test nodes).</summary>
-    public static HashSet<int> Children() =>
-        [.. ProcessInfo.Snapshot().Where(entry => entry.ParentPid == Environment.ProcessId && entry.Image.Equals("arcforges.exe", StringComparison.OrdinalIgnoreCase))
-            .Select(entry => entry.Pid)];
+    /// <remarks>An orphan of an earlier process that had this process's ID names it as parent too; it is older than this process and left out.</remarks>
+    public static HashSet<int> Children()
+    {
+        var self = ArcForges.Tests.ProcessIdentity.Capture(Environment.ProcessId)!.Value.StartKey;
+        return [.. ProcessInfo.Snapshot().Where(entry => entry.ParentPid == Environment.ProcessId && entry.Image.Equals("arcforges.exe", StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.Pid).Where(pid => ArcForges.Tests.ProcessIdentity.StartKeyOf(pid) is { } start && start >= self)];
+    }
 }
