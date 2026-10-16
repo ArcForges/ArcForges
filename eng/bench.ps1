@@ -9,9 +9,8 @@
   artifacts/bench/<rid>/. Sizes gate (exit 1 when over a target). Store growth gates at 50 MB per
   10,000 attempts (-StoreAttempts, default 10000) submitted from the captured environments in
   tests/ArcForges.Node.Store.Tests/Fixtures/environments (node-store.md section 4). Startup has no absolute limit
-  on hosted runners; CI gates it with eng/compare-startup.ps1 against the previous successful
-  main run's CLI measured on the same runner, interleaved (a regression is a p50 increase above both 25% and
-  5 ms); this result is what a run without such a baseline records. Pass
+  on hosted runners and is only recorded here; eng/compare-startup.ps1 gates it against the base commit's CLI
+  measured on the same machine, interleaved (a regression is a p50 increase above both 25% and 5 ms). Pass
   -StartupP50Ms 40 -StartupP95Ms 80 to check the absolute CLI cold-start targets on the workstation.
   The status round trip (`arcforges status --json` with a running node, p50 at most 60 ms) is a workstation
   benchmark: tests/ArcForges.ClosedLoop.Tests, category=perf (StatusRoundTrip).

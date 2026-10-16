@@ -1,5 +1,7 @@
 * text=auto eol=lf
 *.cs text diff=csharp
+.githooks/* text eol=lf
+eng/*.py text eol=lf
 *.png binary
 *.ico binary
 *.zip binary

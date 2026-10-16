@@ -1,9 +1,13 @@
 name: CI
 
+# Owner (deku2026) PRs are verified by the local pre-push hook (eng/verify.py, AD-0016), which runs the win-x64 and
+# linux-x64 legs below on the workstation, so both jobs are skipped for them. External PRs (Dependabot included), the
+# merge queue and manual dispatch run everything. Push to main runs nothing: this repository has no delivery job, and
+# every main commit arrived through a PR verified one way or the other.
+# merge_group runs the jobs for every author, but only matters if a merge queue is configured (none is today).
 on:
   pull_request:
-  push:
-    branches: [main]
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -22,18 +26,16 @@ env:
 # Platform-independent merge gate (16-testing-strategy section 3): build, analyzers, format,
 # tests (with the closed-loop node and CLI tests on the JIT build and again on the Native AOT binaries),
 # the node store's expand-only schema check (13-distribution-updates section 9), Native AOT
-# publish with zero warnings, size gates, the startup regression gate (this run's CLI against the previous
-# main run's CLI, both measured on the same runner) and the store growth bound (15-performance-targets) on
+# publish with zero warnings, size gates, the startup regression gate (this run's CLI against the base commit's
+# CLI, both built and measured on the same runner) and the store growth bound (15-performance-targets) on
 # win-x64, win-arm64, linux-x64 and linux-arm64.
 # No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
 jobs:
   native:
     name: Native (${{ matrix.rid }})
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
-    permissions:
-      contents: read
-      actions: read # eng/compare-startup.ps1 reads the previous main run's bench artifact
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +63,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: 2 # the parent of the head is the startup gate's base on manual dispatch
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
@@ -116,12 +119,35 @@ jobs:
         env:
           TARGET_RID: ${{ matrix.rid }}
         run: ./eng/bench.ps1 -RuntimeIdentifier $env:TARGET_RID
-      - name: Gate startup against the previous main run
-        # Same runner: the previous main run's CLI (its startup-host artifact) and this run's CLI are measured here, interleaved.
+      - name: Name the base commit for the startup gate
+        id: base
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          base="${PR_BASE:-$QUEUE_BASE}"
+          base="${base:-$(git rev-parse HEAD^)}"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+      - name: Check out the base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.base.outputs.sha }}
+          path: artifacts/base-commit
+          persist-credentials: false
+      - name: Publish the base commit's CLI
         env:
           TARGET_RID: ${{ matrix.rid }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: ./eng/compare-startup.ps1 -RuntimeIdentifier $env:TARGET_RID
+        run: ./artifacts/base-commit/eng/publish.ps1 -RuntimeIdentifier $env:TARGET_RID -Component host
+      - name: Gate startup against the base commit
+        # Same runner: the base commit's CLI and this run's CLI are measured here, interleaved.
+        env:
+          TARGET_RID: ${{ matrix.rid }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $baseline = "artifacts/base-commit/artifacts/publish/$env:TARGET_RID/host/arcforges$suffix"
+          ./eng/compare-startup.ps1 -RuntimeIdentifier $env:TARGET_RID -BaselineExecutable $baseline -BaselineSource "base commit $env:BASE_SHA, built and measured on this runner"
       - name: Package the complete desktop directory
         env:
           TARGET_RID: ${{ matrix.rid }}
@@ -140,21 +166,10 @@ jobs:
           path: artifacts/bench/${{ matrix.rid }}/*.json
           if-no-files-found: warn
           retention-days: 90
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        # The CLI that later runs measure against on their own runner (eng/compare-startup.ps1); main pushes only.
-        if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        with:
-          name: startup-host-${{ matrix.rid }}-${{ github.sha }}
-          path: |
-            artifacts/publish/${{ matrix.rid }}/host/*
-            !artifacts/publish/${{ matrix.rid }}/host/*.pdb
-            !artifacts/publish/${{ matrix.rid }}/host/*.dbg
-          if-no-files-found: error
-          retention-days: 90
 
   verify:
     name: Verify
-    if: always()
+    if: ${{ always() && !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
     needs: native
     runs-on: ubuntu-24.04
     timeout-minutes: 2

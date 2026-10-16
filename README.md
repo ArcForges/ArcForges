@@ -99,15 +99,18 @@ arcforges-bench size --target arcforges --path artifacts/publish/win-x64/host/ar
 arcforges-bench startup --exe artifacts/publish/win-x64/host/arcforges.exe --arg --version --runs 50 --output now.json
 arcforges-bench compare-startup --baseline-exe main/arcforges.exe --current-exe artifacts/publish/win-x64/host/arcforges.exe --arg --version
                                        # both measured here, interleaved; a p50 increase >25% and >5 ms fails
-./eng/compare-startup.ps1 -RuntimeIdentifier win-x64 -BaselineExecutable main/arcforges.exe   # the CI gate, locally
+./eng/compare-startup.ps1 -RuntimeIdentifier win-x64 -BaselineExecutable base/arcforges.exe   # the startup gate (base commit's CLI)
 arcforges-bench store-growth --environment tests/ArcForges.Node.Store.Tests/Fixtures/environments/env-wsl-debian-bash.json --attempts 10000
 ```
 
 Equal parameters give equal bytes and digests on every run and platform; `--help` lists the options.
 
-CI builds and tests on Windows and Ubuntu (the closed-loop node and CLI tests on the JIT build and on the native binaries),
-publishes Native AOT for **win-x64, win-arm64, linux-x64 and linux-arm64**, gates binary sizes, node store growth and CLI cold-start regressions against main,
-checks that the node store schema only expands, and checks formatting, analyzers, dependencies, secrets and CodeQL. Desktop archives are unsigned development previews, not releases.
+The owner's pushes are verified locally by the pre-push hook (`python eng/verify.py install` once, then `python eng/verify.py run`;
+[AGENTS.md](AGENTS.md) §5) on Windows and WSL2 Debian. CI verifies external pull requests the same way on Windows and Ubuntu
+(the closed-loop node and CLI tests on the JIT build and on the native binaries), publishes Native AOT for
+**win-x64, win-arm64, linux-x64 and linux-arm64**, gates binary sizes, node store growth and CLI cold-start regressions against
+the base commit, checks that the node store schema only expands, and checks formatting, analyzers, dependencies, secrets and
+CodeQL. Desktop archives are unsigned development previews, not releases.
 
 [Agent and contributor rules](AGENTS.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
