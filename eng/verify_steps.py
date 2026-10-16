@@ -93,6 +93,28 @@ def linux_tests(*suites: str, native: bool = False) -> str:
     return f"set -e; {host}bash eng/test.sh --suite {','.join(suites)} --no-build"
 
 
+# Native AOT publish with zero warnings, in two concurrent groups that share no project (host and bench both build
+# ArcForges.Node.Store, so they stay in one group); measured on linux-x64 for a new commit: 85 s in sequence, 56 s in two
+# groups. On Windows each group is one eng/publish.ps1 run with its own log; the supervisor is copied beside the host
+# once both have ended, as eng/publish.ps1 does.
+PUBLISH_GROUPS_WIN = ("host,bench", "supervisor,desktop,testload")
+PUBLISH_GROUPS_LINUX = ("host,bench", "desktop,testload")
+WIN_PUBLISH = (
+    "$root = $PWD.Path; "
+    f"$results = @({', '.join(repr(group) for group in PUBLISH_GROUPS_WIN)}) | ForEach-Object -ThrottleLimit 2 -Parallel {{ "
+    "$log = Join-Path $using:root \"artifacts/publish-$($_.Replace(',', '-')).log\"; "
+    "$null = New-Item -ItemType Directory -Force -Path (Split-Path $log); "
+    "& pwsh -NoProfile -NonInteractive -Command "
+    f"\"Set-Location -LiteralPath '$($using:root)'; ./eng/publish.ps1 -RuntimeIdentifier {RID_WIN} -Component $_ -NoRestore\" *> $log; "
+    "[pscustomobject]@{ Group = $_; Exit = $LASTEXITCODE; Log = $log } }; "
+    "foreach ($result in $results) { Get-Content -LiteralPath $result.Log | Write-Host; "
+    "Write-Host \"==> group $($result.Group): exit $($result.Exit)\" }; "
+    "if (@($results | Where-Object Exit -ne 0).Count -gt 0) { throw 'Native AOT publish failed.' }; "
+    f"$publish = Join-Path $root 'artifacts/publish/{RID_WIN}'; "
+    "Copy-Item -LiteralPath (Join-Path $publish 'supervisor/arcforges-supervisor.exe') -Destination (Join-Path $publish 'host') -Force; "
+    "Write-Host '==> copied arcforges-supervisor.exe beside arcforges.exe'; $global:LASTEXITCODE = 0"
+)
+
 # The merge base's host, Native AOT, built in its own persistent checkout with the base's own SDK (global.json) and
 # skipped when that checkout already holds the build of this base.
 WIN_BASE_HOST = (
@@ -176,8 +198,7 @@ STEPS = [
     win("win-build", ["dotnet", "build", "ArcForges.slnx", "-c", "Release", "--no-restore"], 900),
     win("win-ci", tests("ci"), 1200),
     win("win-store-schema", tests("store-schema"), 300),
-    win("win-publish", pwsh(f"./eng/publish.ps1 -RuntimeIdentifier {RID_WIN} "
-                            "-Component host,supervisor,desktop,testload,bench -NoRestore", devshell=True), 900),
+    win("win-publish", pwsh(WIN_PUBLISH, devshell=True), 900),
     win("win-tools-native", pwsh(
         f"$p = Join-Path $PWD 'artifacts/publish/{RID_WIN}'; "
         "$env:ARCFORGES_TESTLOAD_PATH = Join-Path $p 'testload/arcforges-testload.exe'; "
@@ -192,7 +213,7 @@ STEPS = [
     wsl("wsl-build", "dotnet build ArcForges.slnx -c Release --no-restore", 900),
     wsl("wsl-ci", linux_tests("ci"), 1200),
     wsl("wsl-store-schema", linux_tests("store-schema"), 300),
-    wsl("wsl-publish", "python eng/verify_linux.py publish host desktop testload bench", 900),
+    wsl("wsl-publish", f"python eng/verify_linux.py publish {' '.join(PUBLISH_GROUPS_LINUX)}", 900),
     wsl("wsl-tools-native", f"set -e; export ARCFORGES_TESTLOAD_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/testload/arcforges-testload\" "
         f"ARCFORGES_BENCH_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/bench/arcforges-bench\"; "
         "bash eng/test.sh --suite tools --no-build", 300),

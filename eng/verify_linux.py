@@ -4,13 +4,14 @@
 
 WSL Debian has no PowerShell, so each command does for linux-x64 exactly what the named script does (keep them in step):
 
-  python eng/verify_linux.py publish <component>...      eng/publish.ps1 -RuntimeIdentifier linux-x64 -NoRestore
+  python eng/verify_linux.py publish <group>...          eng/publish.ps1 -RuntimeIdentifier linux-x64 -NoRestore
   python eng/verify_linux.py bench                        eng/bench.ps1 -RuntimeIdentifier linux-x64
   python eng/verify_linux.py compare-startup <baseline>   eng/compare-startup.ps1 -RuntimeIdentifier linux-x64 -BaselineExecutable <baseline>
   python eng/verify_linux.py package                      eng/package.ps1 -RuntimeIdentifier linux-x64
 
-Components: host, desktop, testload, bench (the supervisor is Windows only). Output and results go to the same artifacts/
-paths as the scripts'.
+Components: host, desktop, testload, bench (the supervisor is Windows only); a group is a comma-separated list of
+components published in order, and several groups are published concurrently. Output and results go to the same
+artifacts/ paths as the scripts'.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -53,29 +55,53 @@ def run(argv: list[str]) -> None:
         raise Failure(f"{Path(argv[0]).name} {argv[1] if len(argv) > 1 else ''} failed with exit code {code}.")
 
 
-def publish(components: list[str]) -> None:
-    """eng/publish.ps1: Native AOT publish per component; any build, trim or AOT warning fails it."""
+def publish_group(components: list[str], out: list[str]) -> str:
+    """eng/publish.ps1 for the components of one group, in order: Native AOT publish per component; any build, trim or
+    AOT warning fails it. Output goes to `out`; returns the failure, or an empty string."""
     for name in components:
         output = PUBLISH / name
         shutil.rmtree(output, ignore_errors=True)
         argv = ["dotnet", "publish", str(REPOSITORY / PROJECTS[name]), "-c", "Release", "-r", RID, "-o", str(output),
                 "-warnaserror", "-tl:off", "-clp:Summary;ForceNoAlign", "-p:TrimmerSingleWarn=false", "--no-restore"]
-        print(f"==> publish {name} ({RID})", flush=True)
-        process = subprocess.Popen(argv, cwd=REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                   encoding="utf-8", errors="replace")
-        lines = []
-        assert process.stdout is not None
-        for line in process.stdout:
-            print(line, end="", flush=True)
-            lines.append(line.rstrip("\n"))
-        if process.wait() != 0:
-            raise Failure(f"Publishing {name} for {RID} failed with exit code {process.returncode}.")
+        out.append(f"==> publish {name} ({RID})")
+        result = subprocess.run(argv, cwd=REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace")
+        lines = result.stdout.splitlines()
+        out.extend(lines)
+        if result.returncode != 0:
+            return f"Publishing {name} for {RID} failed with exit code {result.returncode}."
         warnings = sorted({line for line in lines if WARNING.search(line)})
         if warnings:
-            raise Failure(f"Publishing {name} for {RID} reported {len(warnings)} warning(s).")
+            return f"Publishing {name} for {RID} reported {len(warnings)} warning(s)."
         if not any(WARNING_COUNT.match(line) for line in lines):
-            raise Failure(f"Publishing {name} for {RID} did not report its warning count.")
-        print(f"==> {name} ({RID}): Native AOT publish with 0 warnings -> {output}", flush=True)
+            return f"Publishing {name} for {RID} did not report its warning count."
+        out.append(f"==> {name} ({RID}): Native AOT publish with 0 warnings -> {output}")
+    return ""
+
+
+def publish(groups: list[str]) -> None:
+    """Each argument is a comma-separated group of components. Groups are published concurrently (they must not share a
+    project: host and bench both build ArcForges.Node.Store), the components of a group one after another; each group's
+    output is printed when it ends."""
+    components = [name for group in groups for name in group.split(",")]
+    unknown = sorted(set(components) - set(PROJECTS))
+    if unknown or len(components) != len(set(components)):
+        raise Failure(f"unknown or repeated components: {', '.join(unknown) or ', '.join(components)}")
+    outputs: list[list[str]] = [[] for _ in groups]
+    failures: list[str] = ["" for _ in groups]
+
+    def work(index: int) -> None:
+        failures[index] = publish_group(groups[index].split(","), outputs[index])
+
+    threads = [threading.Thread(target=work, args=(index,)) for index in range(len(groups))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for output in outputs:
+        print("\n".join(output), flush=True)
+    if any(failures):
+        raise Failure(" ".join(failure for failure in failures if failure))
 
 
 def bench() -> None:
@@ -171,7 +197,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="eng/verify_linux.py", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("publish").add_argument("components", nargs="+", choices=sorted(PROJECTS))
+    commands.add_parser("publish").add_argument("groups", nargs="+", metavar="component[,component...]")
     commands.add_parser("bench")
     compare = commands.add_parser("compare-startup")
     compare.add_argument("baseline")
@@ -184,7 +210,7 @@ def main() -> int:
     os.environ["AVALONIA_TELEMETRY_OPTOUT"] = "1"
     try:
         if args.command == "publish":
-            publish(args.components)
+            publish(args.groups)
         elif args.command == "bench":
             bench()
         elif args.command == "compare-startup":
