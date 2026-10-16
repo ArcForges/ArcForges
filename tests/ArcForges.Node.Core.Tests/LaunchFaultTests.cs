@@ -46,6 +46,34 @@ public sealed class LaunchFaultTests
         Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
     }
 
+    /// <summary>
+    /// Cancels racing the admission and the launch (16 section 1: cancellation during launch): tasks cancelled as soon as they are
+    /// submitted, many at once, all end CANCELLED, whether the cancel found them queued, admitted but not yet supervised, being launched,
+    /// or started; none runs on to its own end (a lost cancel left a task RUNNING for its whole 120 s hold).
+    /// </summary>
+    [Fact(Timeout = 300_000)]
+    public async Task TasksCancelledAsSoonAsSubmittedAllEndCancelled()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
+        }
+
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var channel = await node.ChannelAsync();
+        var tasks = await Task.WhenAll(Enumerable.Range(0, 24).Select(async index =>
+        {
+            var id = await Tasks.SubmitAsync(channel, OperatingSystem.IsWindows()
+                ? Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", Path.Combine(node.Root, $"m{index}.txt"))
+                : Tasks.Argv(node.Root, "/bin/sleep", "120"));
+            Assert.Null((await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct)).Error);
+            return await Tasks.WaitAsync(channel, id, bound: TimeSpan.FromSeconds(60));
+        }));
+
+        Assert.All(tasks, task => Assert.True(task.State == TaskState.Cancelled, $"{task.State}: {task.CurrentAttempt?.Result}"));
+    }
+
     /// <summary>A launch step that marks it started and then holds for 30 s (the attempt is being launched meanwhile).</summary>
     private static StepSpec Step(string name, string marker)
     {

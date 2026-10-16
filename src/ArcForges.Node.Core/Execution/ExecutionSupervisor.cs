@@ -1315,6 +1315,18 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             }
 
             _running[name] = attempt;
+
+            // A cancel committed between the admission and this registration found no running attempt to stop and only marked the attempt
+            // STOPPING: it is taken over here, and the launch applies the forced phase once the handle exists (the stop is never lost).
+            if (_store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)), CultureInfo.InvariantCulture))
+                == (int)AttemptState.Stopping)
+            {
+                lock (attempt)
+                {
+                    attempt.StopReason ??= TerminationReason.Cancelled;
+                }
+            }
+
             Launch(attempt, admitted, platform, settings);
         }
         catch (CommandRefusedException exception)
