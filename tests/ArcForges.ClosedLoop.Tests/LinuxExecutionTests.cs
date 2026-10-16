@@ -343,8 +343,10 @@ public sealed class LinuxExecutionTests
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
-    [Fact(Timeout = 300_000)]
-    public async Task TheGuardUnitStopsTheFloodWhileTheNodeRestartsFasterThanTheTakeover()
+    [Theory(Timeout = 300_000)]
+    [InlineData(300)]
+    [InlineData(40)]
+    public async Task TheGuardUnitStopsTheFloodWhileTheNodeRestartsFasterThanTheTakeover(int lifetimeMs)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
@@ -360,8 +362,10 @@ public sealed class LinuxExecutionTests
         first.Kill();
         await first.WaitForExitAsync(Ct);
 
-        // The node is killed 300 ms after every start: whichever acts first stops the flood, the guard (no instance renews the heartbeat) or
-        // an instance that completed recovery and enforced the limit before it was killed. A heartbeat comes only from an enforcing node.
+        // The node is killed lifetimeMs after every start. At 300 ms whichever acts first stops the flood: the guard (no instance renews the
+        // heartbeat) or an instance that completed recovery and enforced the limit before it was killed (a Native AOT start gets that far).
+        // At 40 ms no instance reaches enforcement, so the guard must stop it although nodes keep starting. A heartbeat comes only from an
+        // enforcing node.
         var events = Path.Combine(attempt, AttemptFiles.GuardEvents);
         var exit = Path.Combine(attempt, AttemptFiles.Exit);
         var restarts = 0;
@@ -369,7 +373,7 @@ public sealed class LinuxExecutionTests
         while (!File.Exists(exit) && watch.Elapsed < TimeSpan.FromSeconds(30))
         {
             using var restarted = node.Start(TestNode.Host, ["node", "run", "--test-mode"]);
-            await Task.Delay(300, Ct);
+            await Task.Delay(lifetimeMs, Ct);
             restarted.Kill();
             await restarted.WaitForExitAsync(Ct);
             restarts++;
@@ -380,6 +384,11 @@ public sealed class LinuxExecutionTests
         TestContext.Current.TestOutputHelper?.WriteLine($"{restarts} restarts; output {output} for a {Limit} limit at {Rate} B/s; stopped by {(guardStop is null ? "a node instance" : "the guard")}");
         Assert.True(File.Exists(exit), "The flood was not stopped within 30 s of restarts.");
         Assert.True(output - Limit <= Rate * (Takeover + 600) / 1000, $"The overshoot {output - Limit} exceeds the stated bound.");
+        if (lifetimeMs < 100)
+        {
+            Assert.NotNull(guardStop);
+        }
+
         await node.StartNodeAsync();
         var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
