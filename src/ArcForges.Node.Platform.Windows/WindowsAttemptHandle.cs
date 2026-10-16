@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 
@@ -141,16 +142,33 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         }
 
         var handle = RootHandle(root);
-        if (handle is null || !ProcessInfo.IsRunning(handle))
+        if (handle is null || Exiting(handle))
         {
             return new GracefulOutcome(false, windows, "the root process exited");
         }
 
         var exit = _platform.RunSignalHelper(root.Pid);
+        if (exit == SignalRole.AttachFailed && (Exiting(handle) || Native.WaitForSingleObject(handle, (uint)ExitingBound.TotalMilliseconds) != Native.WaitTimeout))
+        {
+            // The root was exiting while the helper attached (its console already gone, its process object not yet signalled): the
+            // attach failure means it exited, not that it has no console.
+            return new GracefulOutcome(false, windows, "the root process exited");
+        }
+
         return exit == SignalRole.Delivered
             ? new GracefulOutcome(true, windows, null)
             : new GracefulOutcome(false, windows, SignalRole.Describe(exit));
     }
+
+    /// <summary>How long an attach failure waits for the root to finish exiting before it is classified as "not a console program".</summary>
+    private static readonly TimeSpan ExitingBound = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// True once the root exited or is exiting: its process object is signalled, or its exit code is already set (Windows sets the exit
+    /// code during the process's teardown, before the object is signalled).
+    /// </summary>
+    private static bool Exiting(SafeHandle handle) =>
+        !ProcessInfo.IsRunning(handle) || (Native.GetExitCodeProcess(handle, out var code) && code != Native.StillActive);
 
     /// <inheritdoc />
     public IReadOnlyList<EscapedProcess> ScanEscaped()
