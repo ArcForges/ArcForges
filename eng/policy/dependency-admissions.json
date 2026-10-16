@@ -223,7 +223,7 @@
       "nuspecSha256": "72830040b14d42de24d85be271fce22d608614360bc6bbc46762fd4a5039651a",
       "licence": "MIT",
       "class": "runtime",
-      "usedBy": "src/ArcForges.Node.Platform.Linux (SystemdManager: the client of the systemd user manager over its private socket for StartTransientUnit with file descriptors, SetUnitProperties, KillUnit, FreezeUnit, ThawUnit, ResetFailedUnit, unit state and the JobRemoved and PropertiesChanged signals), and through it arcforges (node, exec-launch, guard) and the tests. Already in the graph transitively through ArcForges.Security.Secrets (Secret Service backend) and Avalonia (AT-SPI).",
+      "usedBy": "src/ArcForges.Node.Platform.Linux (SystemdManager: the client of the systemd user manager over the user bus ($XDG_RUNTIME_DIR/bus; the manager's private socket only when no user bus runs) for StartTransientUnit with file descriptors, SetUnitProperties, KillUnit, FreezeUnit, ThawUnit, ResetFailedUnit, unit state and the JobRemoved and PropertiesChanged signals), and through it arcforges (node, exec-launch, guard) and the tests. Already in the graph transitively through ArcForges.Security.Secrets (Secret Service backend) and Avalonia (AT-SPI).",
       "source": "https://github.com/tmds/Tmds.DBus",
       "sourceCommit": "b4a7fed0b878f74cb54f7cca84d2889af4e596ba",
       "provenance": "nuget.org; nuspec repository commit b4a7fed (refs/heads/main of tmds/Tmds.DBus). The same version and content hash DesktopPlatform admits for ArcForges.Security.Secrets (eng/policy/dependency-policy.json at 4e20932, AF-DP-02) and that the committed locks of this repository already resolve transitively. Its only net8.0+ dependency, System.IO.Pipelines 8.0.0, is part of Microsoft.NETCore.App and pruned from the net10.0 graph.",

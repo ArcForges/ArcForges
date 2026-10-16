@@ -17,7 +17,7 @@ public sealed class LinuxPlatformOptions
     /// <summary>The root slice (13 section 3.4: <c>arcforges.slice</c>; tests: <c>arcforges-test-&lt;id&gt;.slice</c>, 16 section 4).</summary>
     public string Slice { get; init; } = LinuxExecutionPlatform.DefaultSlice;
 
-    /// <summary>The user manager's D-Bus address; null for its private socket.</summary>
+    /// <summary>The user manager's D-Bus address; null for the default (the user bus, else the manager's private socket).</summary>
     public string? ManagerAddress { get; init; }
 
     /// <summary>

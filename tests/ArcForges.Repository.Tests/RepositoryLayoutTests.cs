@@ -93,7 +93,7 @@ public sealed class RepositoryLayoutTests
     [Theory]
     [InlineData("packaging/linux/arcforges-node.service", "Type=notify", "NotifyAccess=main", "WatchdogSec=30",
         "ExecStart=%h/.local/share/arcforges/app/current/arcforges node run --systemd", "Restart=on-failure", "RestartSec=2", "RestartForceExitStatus=75",
-        "SuccessExitStatus=75", "TimeoutStopSec=30", "StartLimitIntervalSec=600", "StartLimitBurst=5", "WantedBy=default.target")]
+        "SuccessExitStatus=75", "TimeoutStopSec=30", "TimeoutAbortSec=5s", "StartLimitIntervalSec=600", "StartLimitBurst=5", "WantedBy=default.target")]
     [InlineData("packaging/linux/arcforges.slice", "[Slice]", "Description=ArcForges managed executions")]
     [InlineData("packaging/linux/arcforges-guard.service", "Type=simple", "ExecStart=%h/.local/share/arcforges/app/current/arcforges node guard",
         "Restart=always", "RestartSec=2", "StartLimitIntervalSec=0", "WantedBy=default.target")]

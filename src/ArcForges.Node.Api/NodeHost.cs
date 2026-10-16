@@ -77,7 +77,7 @@ public sealed record NodeHostOptions
     /// <summary>Linux: the root slice (component tests give each node its own; default <c>arcforges.slice</c>, or the test hook in test mode).</summary>
     public string? LinuxSlice { get; init; }
 
-    /// <summary>Linux: the user manager's D-Bus address (component tests may name an absent one; default its private socket).</summary>
+    /// <summary>Linux: the user manager's D-Bus address (component tests may name an absent one; default the user bus, else the manager's private socket).</summary>
     public string? SystemdAddress { get; init; }
 
     /// <summary>Linux: the controllers treated as delegated (component tests simulate a manager without a controller; default as read).</summary>
@@ -219,6 +219,16 @@ public static class NodeHost
         // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
         var platform = StartPlatform(options, store, log);
         var capabilities = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        if (OperatingSystem.IsLinux())
+        {
+            // An in-memory data root: captured output and temporary files count against the attempts' memory (no swap to reclaim into).
+            var inMemory = NodeCapabilities.AddDataRootFact(capabilities, dataRoot);
+            foreach (var (path, kind) in inMemory)
+            {
+                log.Warning("node.data_root_in_memory", new LogField("path", path), new LogField("filesystem", kind));
+            }
+        }
+
         using var heartbeat = new NodeHeartbeatWriter(dataRoot, log, clock);
         if (notifier.WatchdogInterval is { } watchdogInterval)
         {

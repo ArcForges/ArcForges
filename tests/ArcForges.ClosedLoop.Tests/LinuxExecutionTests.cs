@@ -410,7 +410,7 @@ public sealed class LinuxExecutionTests
     {
         // 13 section 3.4: WatchdogSec=30, pinged with each heartbeat renewal; a hung enforcement loop, or three missed cache-store probes,
         // stop the pings and systemd restarts the node (Result watchdog). The fault fires once per data root. systemd sends SIGABRT at the
-        // watchdog timeout; a .NET process that does not end on it is killed after TimeoutStopSec (30 s, the unit's TimeoutAbortSec).
+        // watchdog timeout; a .NET process that does not end on it is killed after the unit's TimeoutAbortSec (5 s), then RestartSec (2 s).
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
         await using var node = TestNode.Create();
@@ -423,7 +423,7 @@ public sealed class LinuxExecutionTests
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "NRestarts") is var restarts && restarts.Length > 0 && restarts != "0", TimeSpan.FromSeconds(120),
             "systemd to restart the hung node");
         TestContext.Current.TestOutputHelper?.WriteLine($"restarted after {watch.Elapsed.TotalSeconds:0.0} s");
-        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(100));
+        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(50));
         Assert.NotEqual(first, SystemdTestEnvironment.Property(unit, "MainPID"));
         var journal = Journal(unit);
         Assert.Contains("Watchdog timeout (limit 30s)", journal, StringComparison.Ordinal);

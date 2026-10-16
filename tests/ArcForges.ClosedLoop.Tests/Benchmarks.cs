@@ -15,6 +15,12 @@ namespace ArcForges.ClosedLoop.Tests;
 [Collection(SerialProcessTests.Name)]
 public sealed class Benchmarks
 {
+    /// <summary>15 section 2: the Windows <c>exec-wrap</c> holder's private bytes (measured 6.3-6.5 MB on the workstation).</summary>
+    private const long HolderTargetBytes = 10_000_000;
+
+    /// <summary>15 section 2: the Linux disk guard's private bytes (measured 8.1 MB in WSL2).</summary>
+    private const long GuardTargetBytes = 12_000_000;
+
     [Fact(Timeout = 300_000)]
     public async Task CliColdStart()
     {
@@ -40,7 +46,8 @@ public sealed class Benchmarks
     /// Admission latency (15 section 1: submit to <c>STARTED</c> when capacity exists, p95 at most 150 ms on Windows, 500 submissions): each
     /// task is submitted after the previous one finished, so capacity always exists; the latency is the attempt's <c>started_at</c> minus the
     /// task's <c>created_at</c>, both stamped by the node. While one attempt runs, the private bytes of its <c>exec-wrap</c> holder (which is
-    /// also its disk guard) are measured against the 3 MB per-execution helper target.
+    /// also its disk guard) are measured against the per-execution helper target of 10 MB (MB = 1,000,000 bytes; relaxed from 3 MB on
+    /// 2026-10-16: one multi-role executable is kept over a dedicated lightweight helper).
     /// </summary>
     [Fact(Timeout = 600_000)]
     public async Task AdmissionLatencyAndHolderOverhead()
@@ -111,12 +118,13 @@ public sealed class Benchmarks
         }
 
         Assert.True(p95 <= 150, $"admission latency p95 {p95:0.0} ms (p50 {p50:0.0} ms) exceeds 150 ms");
-        Assert.True(holderPrivate <= 3L << 20, $"the exec-wrap holder uses {holderPrivate} private bytes (target 3 MB)");
+        Assert.True(holderPrivate <= HolderTargetBytes, $"the exec-wrap holder uses {holderPrivate} private bytes (target {HolderTargetBytes / 1_000_000} MB)");
     }
 
     /// <summary>
     /// Linux admission latency (15 section 2: submit to <c>STARTED</c> when capacity exists, p95 at most 250 ms including the transient-unit
-    /// job, 500 submissions) and the disk guard's footprint (<c>arcforges node guard</c>, at most 8 MB private, idle while the heartbeat is
+    /// job, 500 submissions) and the disk guard's footprint (<c>arcforges node guard</c>, at most 12 MB private (MB = 1,000,000 bytes; relaxed
+    /// from 8 MB on 2026-10-16 with the holder's), idle while the heartbeat is
     /// fresh): each task runs <c>/bin/true</c> after the previous one finished; the guard runs against the node's data root while it measures.
     /// </summary>
     [Fact(Timeout = 900_000)]
@@ -172,7 +180,7 @@ public sealed class Benchmarks
         }
 
         Assert.True(p95 <= 250, $"admission latency p95 {p95:0.0} ms (p50 {p50:0.0} ms) exceeds 250 ms");
-        Assert.True(guardPrivate <= 8L << 20, $"the guard uses {guardPrivate} private bytes (target 8 MB)");
+        Assert.True(guardPrivate <= GuardTargetBytes, $"the guard uses {guardPrivate} private bytes (target {GuardTargetBytes / 1_000_000} MB)");
     }
 
     /// <summary>

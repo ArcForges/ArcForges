@@ -96,5 +96,20 @@ public static class NodeCapabilities
             && (windowsJobs || report.Pids == ProcessCountControl.Enforced);
     }
 
+    /// <summary>
+    /// Linux: adds the fact <c>data_root_filesystem</c> (<c>disk</c>, or the in-memory file systems under the data root and why that
+    /// matters) and returns the in-memory (path, kind) pairs; see <see cref="Platform.MemoryFileSystems"/>.
+    /// </summary>
+    public static List<(string Path, string Kind)> AddDataRootFact(CapabilityReport report, string dataRoot)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        var inMemory = Platform.MemoryFileSystems.UnderDataRoot(dataRoot);
+        report.PlatformFacts.Add(Fact("data_root_filesystem", inMemory.Count == 0
+            ? "disk"
+            : string.Join(", ", inMemory.Select(item => $"{item.Kind} ({item.Path})"))
+                + ": in memory, so captured output and temporary files count against each attempt's memory limits"));
+        return inMemory;
+    }
+
     private static KeyValue Fact(string name, string value) => new() { Name = name, Value = value };
 }

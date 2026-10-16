@@ -80,9 +80,11 @@ internal sealed class InProcessNode : IAsyncDisposable
     public Task<int> Exit => _run ?? Task.FromResult(-1);
 
     /// <summary>Creates the node's files; <paramref name="seed"/> may write store rows before the node opens the store.</summary>
-    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, ILaunchStepProvider? steps = null)
+    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, ILaunchStepProvider? steps = null, string? parent = null)
     {
-        var root = Directory.CreateTempSubdirectory("arcforges-node-tests-").FullName;
+        var root = parent is null
+            ? Directory.CreateTempSubdirectory("arcforges-node-tests-").FullName
+            : Directory.CreateDirectory(Path.Combine(parent, "arcforges-node-tests-" + Guid.NewGuid().ToString("N")[..12])).FullName;
         var node = new InProcessNode(root, streamBuffer, steps);
         Directory.CreateDirectory(Path.GetDirectoryName(node.ConfigPath)!);
         File.WriteAllText(node.ConfigPath, "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");

@@ -12,7 +12,7 @@ public sealed class GuardOptions
     /// <summary>The node data root whose attempts it guards.</summary>
     public required string DataRoot { get; init; }
 
-    /// <summary>The user manager's D-Bus address; null for its private socket.</summary>
+    /// <summary>The user manager's D-Bus address; null for the default (the user bus, else the manager's private socket).</summary>
     public string? ManagerAddress { get; init; }
 
     /// <summary>Stops the guard (tests); the unit runs it until systemd stops it.</summary>

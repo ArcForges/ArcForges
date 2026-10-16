@@ -21,6 +21,9 @@ RestartSec=2
 RestartForceExitStatus=75
 SuccessExitStatus=75
 TimeoutStopSec=30
+# On a watchdog timeout systemd sends SIGABRT and waits TimeoutAbortSec (default: TimeoutStopSec) before SIGKILL; a hung .NET process
+# does not always end on SIGABRT, so the restart waits at most 5 s more instead of 30 s.
+TimeoutAbortSec=5s
 
 [Install]
 WantedBy=default.target
