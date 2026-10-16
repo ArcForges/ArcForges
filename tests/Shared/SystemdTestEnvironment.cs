@@ -17,6 +17,16 @@ internal static class SystemdTestEnvironment
     private static readonly Lazy<HashSet<string>> s_controllers = new(ReadControllers);
     private static readonly string[] DropInRoots = ["user.control", "user"];
 
+    static SystemdTestEnvironment()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            // Workloads and helpers the tests kill (the JIT builds next to the tests) would leave the runtime's diagnostic endpoints in
+            // /tmp; the processes this test process starts from now on run without them (its own endpoints are set up already).
+            Environment.SetEnvironmentVariable("DOTNET_EnableDiagnostics", "0");
+        }
+    }
+
     /// <summary>True when a systemd user manager runs for this user (its private socket exists) and <c>systemctl</c> is installed.</summary>
     public static bool UserManagerAvailable => OperatingSystem.IsLinux() && PrivateSocket() is not null
         && (File.Exists("/usr/bin/systemctl") || File.Exists("/bin/systemctl"));
