@@ -80,9 +80,10 @@ public sealed class HolderTests
         Assert.True(end[0].At <= DateTimeOffset.Parse(exit.RecordedAt, System.Globalization.CultureInfo.InvariantCulture).ToUnixTimeMilliseconds());
 
         // The root's group child was a leftover: alive while the end step ran, terminated after it, and listed.
-        var leftover = root.Where(line => line.Event == "ready").Select(line => line.Pid).Distinct().Single(pid => pid != handle.Root!.Pid);
+        var leftover = root.Where(line => line.Event == "ready").GroupBy(line => line.Pid).Where(group => group.Key != handle.Root!.Pid)
+            .Select(group => ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(group.Key, group.Min(line => line.At))).Single();
         Assert.Contains("arcforges-testload.exe", exit.LeftoversTerminated);
-        Assert.False(PlatformHarness.IsRunning(leftover));
+        Assert.False(leftover.IsRunning());
         Assert.Equal(0, exit.ExitStatus);
     }
 

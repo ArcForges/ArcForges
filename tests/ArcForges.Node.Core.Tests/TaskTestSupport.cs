@@ -189,18 +189,12 @@ internal static class Tasks
             .Select(parts => (parts[0], int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture), long.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)))];
     }
 
-    public static bool IsRunning(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-        {
-            return false;
-        }
-    }
+    /// <summary>
+    /// The processes of a marker file, each identified by its ID and the first moment it wrote a line (so a process that later reused the
+    /// ID is never mistaken for it).
+    /// </summary>
+    public static List<ArcForges.Tests.ProcessIdentity> Processes(string marker) =>
+        [.. Marker(marker).GroupBy(line => line.Pid).Select(group => ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(group.Key, group.Min(line => line.At)))];
 
     public static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout, string what)
     {
