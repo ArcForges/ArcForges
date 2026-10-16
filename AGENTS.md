@@ -84,8 +84,10 @@ any change. They are binding; this file summarizes them and adds the repository 
   against the previous successful main run (`eng/compare-startup.ps1`) on the same runner: main-push runs upload their
   CLI (`startup-host-<rid>-<sha>`), and a run downloads the previous main run's CLI and measures it and its own CLI
   interleaved (alternating runs, same warm-up and count; never a p50 recorded on another VM). The statistic is the p50
-  of 50 runs, and a regression must exceed both 25% and an absolute noise floor of 5 ms. Without a main run or its CLI
-  artifact (the first main run after the change), the result passes with its reason; other API failures fail the step.
+  of 50 runs, and a regression must exceed both 25% and an absolute noise floor of 5 ms. The baseline is the newest of
+  the last 20 successful main-push runs with the CLI artifact, and the download must match the artifact's SHA-256 digest;
+  only when none of them has one (the first main run after the change) does the result pass, with the runs checked in its
+  reason. Other API failures fail the step; the token never reaches the benchmark or the measured CLIs.
   Locally, `eng/compare-startup.ps1 -RuntimeIdentifier <rid> -BaselineExecutable <main build>` runs the same comparison.
   On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms 40 -StartupP95Ms 80`;
   the status round trip is the `category=perf` test `StatusRoundTrip` with `ARCFORGES_HOST_PATH` set.

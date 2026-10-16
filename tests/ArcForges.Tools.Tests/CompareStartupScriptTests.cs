@@ -14,6 +14,8 @@ namespace ArcForges.Tools.Tests;
 /// the GitHub REST API (a loopback HTTP server answering the three requests the script makes). The previous main run's CLI comes from its
 /// <c>startup-host</c> artifact and is measured on this machine with the current CLI, interleaved; without a main run or without the
 /// artifact the current result passes with the stated reason; any other API failure fails the step; the token reaches only the API.
+/// The newest run that has the artifact is used, the download is checked against the artifact's digest, nothing is left in the
+/// temporary directory, and the token never reaches the benchmark or the measured CLIs.
 /// <c>arcforges-testload</c> stands in for both CLIs (the measured command is a parameter).
 /// </summary>
 [Trait("tool", "pwsh")]
@@ -44,29 +46,18 @@ public sealed class CompareStartupScriptTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task ThePreviousMainRunsCliIsDownloadedAndMeasuredHereAndTheTokenReachesOnlyTheApi()
+    public async Task ThePreviousMainRunsCliIsDownloadedVerifiedMeasuredHereAndRemovedAndTheTokenReachesOnlyTheApi()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         var pwsh = RequirePwsh();
         using var directory = new TemporaryDirectory();
-        var archive = Path.Combine(directory.Path, "artifact.zip");
-        using (var zip = ZipFile.Open(archive, ZipArchiveMode.Create))
-        {
-            // The stand-in CLI: testload under the CLI's name, with its managed files when it is the JIT build (its apphost loads them).
-            zip.CreateEntryFromFile(ToolProcess.TestLoad, "arcforges" + Suffix);
-            foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(ToolProcess.TestLoad)!, "arcforges-testload.*")
-                .Where(file => Path.GetExtension(file) is ".dll" or ".json"))
-            {
-                zip.CreateEntryFromFile(file, Path.GetFileName(file));
-            }
-        }
-
+        var archive = CliArchive(directory.Path);
         await using var api = FakeApi.Start(request => request.Path switch
         {
             var path when path.StartsWith($"/repos/{Repository}/actions/workflows/ci.yml/runs", StringComparison.Ordinal) =>
                 FakeApi.Json("""{"workflow_runs":[{"id":101,"head_sha":"abc123"}]}"""),
             var path when path.StartsWith($"/repos/{Repository}/actions/runs/101/artifacts?name=startup-host-{Rid}-abc123", StringComparison.Ordinal) =>
-                FakeApi.Json($$"""{"artifacts":[{"expired":false,"archive_download_url":"{{request.Origin}}/download/1"}]}"""),
+                FakeApi.Json(ArtifactJson("abc123", request.Origin, Digest(archive))),
             "/download/1" => FakeApi.Redirect($"{request.Origin}/blob/1"),
             "/blob/1" => FakeApi.File(archive),
             _ => FakeApi.Status(404),
@@ -83,12 +74,43 @@ public sealed class CompareStartupScriptTests
         Assert.All(api.Requests.Where(request => !request.Path.StartsWith("/blob/", StringComparison.Ordinal)),
             request => Assert.Equal("Bearer " + Token, request.Authorization));
         Assert.Null(Assert.Single(api.Requests, request => request.Path == "/blob/1").Authorization);
+        AssertNothingLeftInTemp(directory.Path);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task AnExpiredOrMissingCliOfTheNewestRunFallsBackToTheNewestRunThatHasOne()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var pwsh = RequirePwsh();
+        using var directory = new TemporaryDirectory();
+        var archive = CliArchive(directory.Path);
+        await using var api = FakeApi.Start(request => request.Path switch
+        {
+            var path when path.Contains("/actions/workflows/ci.yml/runs", StringComparison.Ordinal) =>
+                FakeApi.Json("""{"workflow_runs":[{"id":201,"head_sha":"aaa111"},{"id":202,"head_sha":"bbb222"},{"id":203,"head_sha":"ccc333"}]}"""),
+
+            // The newest run's artifact expired; the second-newest has one; the third must not be needed.
+            var path when path.Contains("/actions/runs/201/artifacts", StringComparison.Ordinal) =>
+                FakeApi.Json($$"""{"artifacts":[{"name":"startup-host-{{Rid}}-aaa111","expired":true,"digest":"{{Digest(archive)}}","archive_download_url":"{{request.Origin}}/expired"}]}"""),
+            var path when path.Contains("/actions/runs/202/artifacts", StringComparison.Ordinal) => FakeApi.Json(ArtifactJson("bbb222", request.Origin, Digest(archive))),
+            "/download/1" => FakeApi.File(archive),
+            _ => FakeApi.Status(404),
+        });
+
+        var run = await RunScriptAsync(pwsh, directory.Path, [], api.Environment);
+
+        Assert.True(run.ExitCode == 0, run.Output);
+        var source = Comparison(directory.Path).GetProperty("baselineSource").GetString();
+        Assert.Contains("CI run 202 on main at bbb222", source, StringComparison.Ordinal);
+        Assert.Contains("newer runs without it: 201 (aaa111)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain(api.Requests, request => request.Path.Contains("/runs/203/", StringComparison.Ordinal) || request.Path == "/expired");
+        AssertNothingLeftInTemp(directory.Path);
     }
 
     [Theory(Timeout = 120_000)]
     [InlineData(false, "No successful main-push CI run exists yet")]
-    [InlineData(true, "has no unexpired startup-host-")]
-    public async Task WithoutAMainRunOrItsCliTheCurrentResultPassesWithTheReason(bool runExists, string reason)
+    [InlineData(true, "None of the last 2 successful main-push CI runs has an unexpired startup-host-")]
+    public async Task WithoutAnyMainRunWithItsCliTheCurrentResultPassesWithTheRunsChecked(bool runsExist, string reason)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         var pwsh = RequirePwsh();
@@ -97,8 +119,8 @@ public sealed class CompareStartupScriptTests
         await using var api = FakeApi.Start(request => request.Path switch
         {
             var path when path.Contains("/actions/workflows/ci.yml/runs", StringComparison.Ordinal) =>
-                FakeApi.Json(runExists ? """{"workflow_runs":[{"id":7,"head_sha":"def456"}]}""" : """{"workflow_runs":[]}"""),
-            var path when path.Contains("/actions/runs/7/artifacts", StringComparison.Ordinal) => FakeApi.Json("""{"artifacts":[]}"""),
+                FakeApi.Json(runsExist ? """{"workflow_runs":[{"id":7,"head_sha":"def456"},{"id":8,"head_sha":"fed654"}]}""" : """{"workflow_runs":[]}"""),
+            var path when path.Contains("/actions/runs/", StringComparison.Ordinal) => FakeApi.Json("""{"artifacts":[]}"""),
             _ => FakeApi.Status(404),
         });
 
@@ -107,8 +129,59 @@ public sealed class CompareStartupScriptTests
         Assert.True(run.ExitCode == 0, run.Output);
         var comparison = Comparison(directory.Path);
         Assert.Equal("no-baseline", comparison.GetProperty("status").GetString());
-        Assert.Contains(reason, comparison.GetProperty("reason").GetString(), StringComparison.Ordinal);
+        var recorded = comparison.GetProperty("reason").GetString();
+        Assert.Contains(reason, recorded, StringComparison.Ordinal);
+        if (runsExist)
+        {
+            Assert.Contains("Checked: 7 (def456), 8 (fed654)", recorded, StringComparison.Ordinal);
+        }
+
         Assert.Equal(14, comparison.GetProperty("currentP50Ms").GetDouble());
+    }
+
+    [Theory(Timeout = 120_000)]
+    [InlineData("sha256:0000000000000000000000000000000000000000000000000000000000000000", "does not match the artifact digest")]
+    [InlineData(null, "has no SHA-256 digest")]
+    public async Task ADownloadThatDoesNotMatchTheArtifactDigestFailsTheStepAndIsRemoved(string? digest, string message)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var pwsh = RequirePwsh();
+        using var directory = new TemporaryDirectory();
+        var archive = CliArchive(directory.Path);
+        await using var api = FakeApi.Start(request => request.Path switch
+        {
+            var path when path.Contains("/actions/workflows/ci.yml/runs", StringComparison.Ordinal) =>
+                FakeApi.Json("""{"workflow_runs":[{"id":101,"head_sha":"abc123"}]}"""),
+            var path when path.Contains("/actions/runs/101/artifacts", StringComparison.Ordinal) => FakeApi.Json(ArtifactJson("abc123", request.Origin, digest)),
+            "/download/1" => FakeApi.File(archive),
+            _ => FakeApi.Status(404),
+        });
+
+        var run = await RunScriptAsync(pwsh, directory.Path, [], api.Environment);
+
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Contains(message, run.Output, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(directory.Path, "startup-comparison.json")));
+        AssertNothingLeftInTemp(directory.Path);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task NeitherTheBenchmarkNorTheMeasuredCliSeesTheToken()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var pwsh = RequirePwsh();
+        using var directory = new TemporaryDirectory();
+
+        // The measured command exits 3 (a failed run, so a failed step) when it sees GITHUB_TOKEN or GH_TOKEN.
+        var (shell, measured) = OperatingSystem.IsWindows()
+            ? (Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+                (string[])["/d", "/c", "if defined GITHUB_TOKEN (exit 3) else if defined GH_TOKEN (exit 3) else (exit 0)"])
+            : ("/bin/sh", (string[])["-c", "test -z \"$GITHUB_TOKEN$GH_TOKEN\" || exit 3"]);
+        var run = await RunScriptAsync(pwsh, directory.Path, ["-BaselineExecutable", shell], new Dictionary<string, string?> { ["GITHUB_TOKEN"] = Token, ["GH_TOKEN"] = Token },
+            current: shell, measured: measured);
+
+        Assert.True(run.ExitCode == 0, run.Output);
+        Assert.Equal("pass", Comparison(directory.Path).GetProperty("status").GetString());
     }
 
     [Fact(Timeout = 120_000)]
@@ -138,6 +211,31 @@ public sealed class CompareStartupScriptTests
         Assert.Contains("GITHUB_TOKEN and GITHUB_REPOSITORY are required", run.Output, StringComparison.Ordinal);
     }
 
+    /// <summary>A startup-host artifact: testload under the CLI's name, with its managed files when it is the JIT build (its apphost loads them).</summary>
+    private static string CliArchive(string directory)
+    {
+        var archive = Path.Combine(directory, "artifact.zip");
+        using var zip = ZipFile.Open(archive, ZipArchiveMode.Create);
+        zip.CreateEntryFromFile(ToolProcess.TestLoad, "arcforges" + Suffix);
+        foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(ToolProcess.TestLoad)!, "arcforges-testload.*")
+            .Where(file => Path.GetExtension(file) is ".dll" or ".json"))
+        {
+            zip.CreateEntryFromFile(file, Path.GetFileName(file));
+        }
+
+        return archive;
+    }
+
+    private static string Digest(string file) => "sha256:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
+
+    /// <summary>The artifacts listing of one run as the REST API returns it (name, expiry, digest and download URL).</summary>
+    private static string ArtifactJson(string sha, string origin, string? digest) =>
+        $$"""{"artifacts":[{"name":"startup-host-{{Rid}}-{{sha}}","expired":false,{{(digest is null ? string.Empty : $"\"digest\":\"{digest}\",")}}"archive_download_url":"{{origin}}/download/1"}]}""";
+
+    /// <summary>The script runs with its temporary directory under the test's directory: nothing of its own may be left there.</summary>
+    private static void AssertNothingLeftInTemp(string directory) =>
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(directory, "temp")));
+
     private static string RequirePwsh()
     {
         var name = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
@@ -153,7 +251,8 @@ public sealed class CompareStartupScriptTests
         return document.RootElement.Clone();
     }
 
-    private static async Task<(int ExitCode, string Output)> RunScriptAsync(string pwsh, string results, string[] extra, IReadOnlyDictionary<string, string?> environment)
+    private static async Task<(int ExitCode, string Output)> RunScriptAsync(string pwsh, string results, string[] extra, IReadOnlyDictionary<string, string?> environment,
+        string? current = null, string[]? measured = null)
     {
         var script = Path.Combine(RepositoryRoot(), "eng", "compare-startup.ps1");
         var start = new ProcessStartInfo(pwsh)
@@ -167,12 +266,12 @@ public sealed class CompareStartupScriptTests
         static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         var invocation = new StringBuilder("& ").Append(Quote(script));
         foreach (var argument in (string[])["-RuntimeIdentifier", Rid, "-ResultsDirectory", results, "-Bench", ToolProcess.Bench,
-            "-CurrentExecutable", ToolProcess.TestLoad, "-Runs", "4", "-NoiseFloorMs", "60000", "-Name", "testload cpu", .. extra])
+            "-CurrentExecutable", current ?? ToolProcess.TestLoad, "-Runs", "4", "-NoiseFloorMs", "60000", "-Name", "testload cpu", .. extra])
         {
             invocation.Append(' ').Append(argument.StartsWith('-') ? argument : Quote(argument));
         }
 
-        invocation.Append(" -Arguments @('cpu', '--iterations', '1'); exit $LASTEXITCODE");
+        invocation.Append(" -Arguments @(").AppendJoin(", ", (measured ?? ["cpu", "--iterations", "1"]).Select(Quote)).Append("); exit $LASTEXITCODE");
         foreach (var argument in (string[])["-NoProfile", "-NonInteractive", "-Command", invocation.ToString()])
         {
             start.ArgumentList.Add(argument);
@@ -181,6 +280,13 @@ public sealed class CompareStartupScriptTests
         foreach (var name in (string[])["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_API_URL", "GITHUB_RUN_ID"])
         {
             start.Environment.Remove(name);
+        }
+
+        // The script's temporary files go under the test's directory, so leftovers are found.
+        var temp = Directory.CreateDirectory(Path.Combine(results, "temp")).FullName;
+        foreach (var name in (string[])["TEMP", "TMP", "TMPDIR"])
+        {
+            start.Environment[name] = temp;
         }
 
         foreach (var (name, value) in environment)
