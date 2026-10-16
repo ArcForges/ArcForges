@@ -23,7 +23,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// </summary>
 [Trait("loop", "local")]
 [Trait("env", "linux-real")]
-[Collection(SerialProcessTests.Name)]
 [SupportedOSPlatform("linux")]
 public sealed class LinuxExecutionTests
 {
@@ -127,7 +126,7 @@ public sealed class LinuxExecutionTests
         var pidFile = Path.Combine(node.Root, "long.pid");
         var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "echo $$ > \"$1\"; echo before; sleep 3; echo while-down; exec sleep 120", "sh", pidFile)).Stdout).Trim();
         var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "sleep 2; echo done; exit 5")).Stdout).Trim();
-        await RunningAttemptAsync(node, id);
+        var longAttempt = await RunningAttemptAsync(node, id);
         var shortAttempt = await RunningAttemptAsync(node, shortId);
         await TestNode.WaitAsync(() => File.Exists(pidFile), Bound, "the long attempt");
 
@@ -138,7 +137,10 @@ public sealed class LinuxExecutionTests
         await TestNode.WaitAsync(() => File.Exists(Path.Combine(node.DataRoot, "logs", shortAttempt, AttemptFiles.Exit)), Bound, "the short attempt's exit record");
         var record = ExitRecord.TryRead(Path.Combine(node.DataRoot, "logs", shortAttempt, AttemptFiles.Exit))!;
         Assert.Equal(("exited", 5, "exit-record"), (record.ExitCodeKind, record.ExitStatus, record.RecordedBy));
-        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+
+        // The long attempt keeps running while the node is down: it writes its next line (3 s after its start) into the captured output.
+        await TestNode.WaitAsync(() => TestNode.ReadShared(Path.Combine(node.DataRoot, "logs", longAttempt, AttemptFiles.Stdout)).Contains("while-down", StringComparison.Ordinal),
+            Bound, "the long attempt's output while the node is down");
         Assert.True(root.IsRunning(), "The attempt survived the node.");
 
         await node.StartNodeAsync();
@@ -253,6 +255,8 @@ public sealed class LinuxExecutionTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"The hand-off took {watch.Elapsed}.");
         var message = Encoding.UTF8.GetString(handoff.Stderr);
         var handedOff = message.Split("arcforges tasks wait ")[1].Split('\n')[0].Trim();
+
+        // A deliberate hold longer than the 5 s caller-gone window (AD-0006 section 7): the handed-off task is not cancelled.
         await Task.Delay(TimeSpan.FromSeconds(7), Ct);
         Assert.Contains("TASK_STATE_RUNNING", (await node.CliAsync("tasks", "show", handedOff, "--json")).Output, StringComparison.Ordinal);
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", handedOff)).ExitCode);
@@ -270,7 +274,9 @@ public sealed class LinuxExecutionTests
         await TestNode.WaitAsync(() => !root.IsRunning(), TimeSpan.FromSeconds(20), "the interrupted run's task to stop");
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the takeover delay (takeover + 1 s) and the overshoot (rate over 500 ms) are timing bounds.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheGuardUnitStopsAFloodWhileTheNodeIsKilled()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -305,7 +311,9 @@ public sealed class LinuxExecutionTests
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the overshoot (rate over 500 ms) is a timing bound.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheGuardUnitStopsAFloodWithTheNodeUnitFailedAfterRepeatedCrashes()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -351,7 +359,9 @@ public sealed class LinuxExecutionTests
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
-    [Theory(Timeout = 300_000)]
+    // isolation=exclusive: the overshoot bound depends on short node lifetimes and the guard's timing.
+    [Theory(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [InlineData(300)]
     [InlineData(40)]
     public async Task TheGuardUnitStopsTheFloodWhileTheNodeRestartsFasterThanTheTakeover(int lifetimeMs)
@@ -422,6 +432,7 @@ public sealed class LinuxExecutionTests
         var watch = Stopwatch.StartNew();
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "NRestarts") is var restarts && restarts.Length > 0 && restarts != "0", TimeSpan.FromSeconds(120),
             "systemd to restart the hung node");
+        var restarted = Stopwatch.StartNew();
         TestContext.Current.TestOutputHelper?.WriteLine($"restarted after {watch.Elapsed.TotalSeconds:0.0} s");
         // The fault (3 s), for the probe up to three missed probes (5 s timeout each, one a second), WatchdogSec (30 s),
         // TimeoutAbortSec (5 s), RestartSec (2 s) and a few seconds of slack for the restart.
@@ -431,8 +442,10 @@ public sealed class LinuxExecutionTests
         var journal = Journal(unit);
         Assert.Contains("Watchdog timeout (limit 30s)", journal, StringComparison.Ordinal);
         Assert.Contains("Failed with result 'watchdog'", journal, StringComparison.Ordinal);
+
+        // The fault fires once per data root: the restarted node's heartbeat still changes after the moment the fault would have stopped it.
         await node.WaitReadyAsync();
-        await Task.Delay(TimeSpan.FromSeconds(3), Ct);
+        await node.WaitHeartbeatChangeAsync(restarted, TestNode.FaultHorizon(fault, 3));
         Assert.Equal("1", SystemdTestEnvironment.Property(unit, "NRestarts"));
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "ActiveState") is "inactive" or "failed", Bound, "the node unit to stop");

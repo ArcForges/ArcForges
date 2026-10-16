@@ -13,7 +13,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// </summary>
 [Trait("env", "linux-real")]
 [UnsupportedOSPlatform("windows")]
-[Collection(SerialProcessTests.Name)]
 public sealed class LinuxTests
 {
     private const UnixFileMode GroupOrOther = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
@@ -84,6 +83,7 @@ public sealed class LinuxTests
             Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
             await TestNode.WaitAsync(async () => (await SystemctlAsync("is-active", unit)).Output.Trim() is "inactive", TimeSpan.FromSeconds(30),
                 "the unit to become inactive");
+            // A deliberate hold longer than RestartSec (2 s): the absence of a restart cannot be awaited.
             await Task.Delay(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
             Assert.Equal("inactive", (await SystemctlAsync("is-active", unit)).Output.Trim());
         }

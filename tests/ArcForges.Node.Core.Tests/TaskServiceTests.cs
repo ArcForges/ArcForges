@@ -16,7 +16,6 @@ namespace ArcForges.Node.Core.Tests;
 /// retry, pin and purge.
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialNodeTests.Name)]
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class TaskServiceTests
 {

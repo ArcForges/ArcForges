@@ -14,7 +14,6 @@ namespace ArcForges.Node.Core.Tests;
 /// state 4): snapshot then ordered events, resume by cursor without a snapshot, reset with a snapshot on a generation change, on a
 /// stale or foreign cursor and on overflow, and many subscribers resetting at once.
 /// </summary>
-[Collection(SerialNodeTests.Name)]
 public sealed class EventStreamTests
 {
     private static readonly EventTopic[] Topics = [EventTopic.Node, EventTopic.Jobs, EventTopic.Notifications];

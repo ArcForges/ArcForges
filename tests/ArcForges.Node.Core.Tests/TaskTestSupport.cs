@@ -207,4 +207,19 @@ internal static class Tasks
     }
 
     public static ByteString Bytes(string text) => ByteString.CopyFromUtf8(text);
+
+    /// <summary>A file another process still writes, or an empty string while it is missing.</summary>
+    public static string ReadShared(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
 }

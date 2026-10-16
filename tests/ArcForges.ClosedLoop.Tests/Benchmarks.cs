@@ -12,7 +12,8 @@ namespace ArcForges.ClosedLoop.Tests;
 /// directory) when it is set.
 /// </summary>
 [Trait("category", "perf")]
-[Collection(SerialProcessTests.Name)]
+[Trait("isolation", "exclusive")]
+[TestClass(DisableParallelization = true)]
 public sealed class Benchmarks
 {
     /// <summary>15 section 2: the Windows <c>exec-wrap</c> holder's private bytes (measured 6.3-6.5 MB on the workstation).</summary>

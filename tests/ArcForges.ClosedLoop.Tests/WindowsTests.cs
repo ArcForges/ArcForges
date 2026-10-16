@@ -18,7 +18,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// </summary>
 [Trait("env", "windows-real")]
 [SupportedOSPlatform("windows")]
-[Collection(SerialProcessTests.Name)]
 public sealed partial class WindowsTests
 {
     private static string Supervisor => Path.Combine(Path.GetDirectoryName(TestNode.Host)!, "arcforges-supervisor.exe");

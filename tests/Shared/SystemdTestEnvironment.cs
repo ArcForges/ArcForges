@@ -88,19 +88,15 @@ internal static class SystemdTestEnvironment
     /// <summary>A unit property (<c>systemctl --user show -P</c>), or empty.</summary>
     public static string Property(string unit, string property) => Systemctl("show", "-P", property, unit).Output.Trim();
 
-    /// <summary>The loaded units matching <paramref name="pattern"/>.</summary>
-    public static List<string> Units(string pattern) =>
-        [.. Systemctl("list-units", "--all", "--plain", "--no-legend", pattern).Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(line => line.Split(' ', 2)[0]).Where(name => name.Length > 0)];
-
     /// <summary>The cgroup directory of a loaded unit, or null.</summary>
     public static string? CgroupDirectory(string unit) =>
         Property(unit, "ControlGroup") is { Length: > 0 } cgroup ? "/sys/fs/cgroup" + cgroup : null;
 
     /// <summary>
     /// Removes what a test's node created in the user manager: every attempt unit of <paramref name="attempts"/> (reported when still
-    /// active: an attempt the test left running), stopped and reset; the slice (stopped; its runtime drop-ins removed); the parent test slice
-    /// when no other test slice remains; and the extra units the test installed. Returns the leftovers found.
+    /// active: an attempt the test left running), stopped and reset; the slice (stopped; its runtime drop-ins removed); and the extra units
+    /// the test installed. Returns the leftovers found. The shared parents (<c>arcforges-test.slice</c>, <c>arcforges.slice</c>) stay: tests
+    /// run in parallel, and stopping a parent would stop the slice of a test that starts at that moment (an empty slice runs nothing).
     /// </summary>
     public static List<string> Cleanup(string slice, IEnumerable<string> attempts, IEnumerable<string>? extraUnits = null)
     {
@@ -184,17 +180,6 @@ internal static class SystemdTestEnvironment
         if (reload)
         {
             Systemctl("daemon-reload");
-        }
-
-        if (!Units("arcforges-test-*.slice").Any(unit => unit != TestParentSlice && unit != slice))
-        {
-            Systemctl("stop", TestParentSlice);
-
-            // arcforges.slice exists only as the test slices' parent unless an installed node uses it (a unit file); left empty, it is ours.
-            if (Units("arcforges*").All(unit => unit is "arcforges.slice" or TestParentSlice) && Property("arcforges.slice", "FragmentPath").Length == 0)
-            {
-                Systemctl("stop", "arcforges.slice");
-            }
         }
 
         return leftovers;

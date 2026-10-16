@@ -25,8 +25,6 @@ internal sealed class InProcessNode : IAsyncDisposable
     private TaskCompletionSource<NodeRuntime> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task<int>? _run;
 
-    private readonly HashSet<int> _childrenBefore = OperatingSystem.IsWindows() ? ExecutionCleanup.Children() : [];
-
     private InProcessNode(string root, int streamBuffer, ILaunchStepProvider? steps)
     {
         Steps = steps;
@@ -212,7 +210,7 @@ internal sealed class InProcessNode : IAsyncDisposable
                 if (OperatingSystem.IsWindows())
                 {
                     // Attempts outlive a stopped node under their holders; the fixture ends them and fails on anything left (16 section 4).
-                    leftovers = ExecutionCleanup.Run(store, _childrenBefore);
+                    leftovers = ExecutionCleanup.Run(store);
                 }
                 else
                 {

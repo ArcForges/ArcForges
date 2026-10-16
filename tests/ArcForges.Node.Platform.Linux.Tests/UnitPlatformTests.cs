@@ -12,7 +12,6 @@ namespace ArcForges.Node.Platform.Linux.Tests;
 /// A-L03): every attempt is a transient unit started over D-Bus by the platform itself, never by <c>systemd-run</c>.
 /// </summary>
 [Trait("env", "linux-real")]
-[Collection(SerialLinuxTests.Name)]
 [SupportedOSPlatform("linux")]
 public sealed class UnitPlatformTests
 {
@@ -191,7 +190,9 @@ public sealed class UnitPlatformTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8), $"The attempt took {watch.Elapsed} (leftover_grace 1 s; TimeoutStopSec would be 16 s).");
     }
 
-    [Fact(Timeout = 240_000)]
+    // isolation=exclusive: a spawn into a frozen cgroup blocks the whole user manager, and every platform start releases stuck freezes machine-wide.
+    [Fact(Timeout = 240_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AFrozenUnitBlockingTheManagerIsThawedByAStartingPlatformAndByTheGuard()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -243,7 +244,8 @@ public sealed class UnitPlatformTests
                 _ = Libc.Kill(pid, Libc.SigKill);
             }
 
-            // Give the manager time to react to the dead main process (spawn ExecStop into the frozen cgroup, or anything else).
+            // A deliberate hold (the scenario): give the manager time to react to the dead main process (spawn ExecStop into the frozen
+            // cgroup, or anything else; what it does depends on the systemd version, so there is no single event to await).
             Thread.Sleep(1_500);
             var manager = UnitControl.ManagerPid(UnitControl.ManagerCgroup());
             var observation = Observe(directory, handle.Unit, manager);
@@ -262,7 +264,9 @@ public sealed class UnitPlatformTests
         static bool? Frozen(string directory) => ProcFs.Text(Path.Combine(directory, "cgroup.freeze")) is { } value ? value == "1" : null;
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: it asserts that the machine-wide release of stuck freezes finds nothing.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public void APausedAttemptStaysFrozenAcrossAPlatformStart()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -347,6 +351,8 @@ public sealed class UnitPlatformTests
         var events = Path.Combine(handle.CgroupDirectory!, "cgroup.events");
         Assert.Contains("frozen 1", File.ReadAllText(events), StringComparison.Ordinal);
         var (parent, descendant) = (new FileInfo(counter).Length, new FileInfo(child).Length);
+
+        // A deliberate hold (no write can be awaited from a frozen tree): over 500 ms, 25 writes per process would have happened.
         Thread.Sleep(500);
         Assert.Equal(parent, new FileInfo(counter).Length);
         Assert.Equal(descendant, new FileInfo(child).Length);
@@ -377,6 +383,8 @@ public sealed class UnitPlatformTests
         Assert.NotNull(await stubborn.Started.WaitAsync(Bound, Ct));
         LinuxHarness.WaitFor(() => stubborn.Processes().Count >= 3, Bound, "the tree");
         Assert.True(stubborn.RequestGracefulStop("SIGINT").ConsoleSignalled);
+
+        // A deliberate hold: the tree that ignores the signal is still whole 700 ms later (its survival cannot be awaited).
         Thread.Sleep(700);
         Assert.Equal(3, stubborn.Processes().Count);
         var watch = Stopwatch.StartNew();
@@ -409,6 +417,8 @@ public sealed class UnitPlatformTests
         var exit = LinuxHarness.WaitExit(handle, Bound);
         Assert.Equal(("killed", 9), (exit.ExitCodeKind, exit.ExitStatus));
         var size = new FileInfo(output).Length;
+
+        // A deliberate hold: nothing writes the output any more 300 ms after the exit record (an absence cannot be awaited).
         Thread.Sleep(300);
         Assert.Equal(size, new FileInfo(output).Length);
     }
@@ -552,7 +562,9 @@ public sealed class UnitPlatformTests
         Assert.Equal(9, LinuxHarness.WaitExit(reopened, Bound).ExitStatus);
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: daemon-reexec restarts the user manager every other test uses.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AttemptsSurviveARestartOfTheUserManagerAndThePlatformKeepsControllingThem()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -580,7 +592,9 @@ public sealed class UnitPlatformTests
         Assert.NotNull(ExitRecord.TryRead(((LinuxAttemptHandle)running).Files.ExitPath));
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the heartbeat age (2-3 s) and the overshoot (rate over 500 ms) are timing bounds.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheGuardFreezesAndKillsAFloodOnceTheHeartbeatIsStale()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -627,7 +641,6 @@ public sealed class UnitPlatformTests
 
 /// <summary>The observe-only platform without a user manager (AD-0005 Linux section 4): attempts are plain child processes.</summary>
 [Trait("env", "linux-real")]
-[Collection(SerialLinuxTests.Name)]
 [SupportedOSPlatform("linux")]
 public sealed class DirectPlatformTests
 {

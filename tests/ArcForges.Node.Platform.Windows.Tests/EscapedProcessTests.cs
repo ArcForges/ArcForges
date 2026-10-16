@@ -11,7 +11,6 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// the root's. Everything runs inside the test's own process tree and job; nothing is left running.
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialPlatformTests.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class EscapedProcessTests
 {

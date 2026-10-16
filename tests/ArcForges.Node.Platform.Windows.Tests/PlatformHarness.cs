@@ -8,13 +8,6 @@ using ArcForges.Node.Platform.Windows;
 
 namespace ArcForges.Node.Platform.Windows.Tests;
 
-/// <summary>Real-OS tests of one class run one after another: they create jobs, holders and CPU or memory load.</summary>
-[CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class SerialPlatformTests
-{
-    public const string Name = "platform";
-}
-
 /// <summary>The executables under test: <c>ARCFORGES_HOST_PATH</c> / <c>ARCFORGES_TESTLOAD_PATH</c>, or the JIT builds next to the tests.</summary>
 internal static class TestPrograms
 {

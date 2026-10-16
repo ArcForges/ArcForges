@@ -11,7 +11,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// crash recovery, stream resume and reset through <c>arcforges events</c>, a busy endpoint, and the CLI's output and exit codes.
 /// </summary>
 [Trait("loop", "local")]
-[Collection(SerialProcessTests.Name)]
 public sealed class NodeLifecycleTests
 {
     [Fact(Timeout = 120_000)]

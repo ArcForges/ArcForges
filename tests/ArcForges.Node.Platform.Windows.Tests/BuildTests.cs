@@ -14,7 +14,6 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// terminated as leftovers and listed in the exit record. Each test is skipped, with its reason, when its tool is missing.
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialPlatformTests.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class BuildTests
 {

@@ -14,7 +14,6 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// attempts. Each test reports whether it ran elevated (the workstation runs them non-elevated; hosted runners are administrators).
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialPlatformTests.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class JobTests
 {
@@ -51,7 +50,9 @@ public sealed class JobTests
         Assert.Equal((int)AttemptRunner.TerminatedExitCode, exit.ExitStatus);
     }
 
-    [Fact(Timeout = 180_000)]
+    // isolation=exclusive: it measures CPU shares of the whole machine.
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheRootHardCapBoundsWeightedAttemptJobs()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -68,6 +69,7 @@ public sealed class JobTests
         Assert.Equal((Native.CpuRateControlEnable | Native.CpuRateControlWeightBased, 1u), light.Job.CpuRateControl());
         Assert.Equal((Native.CpuRateControlEnable | Native.CpuRateControlHardCap, (uint)RootRate), harness.Platform.RootJob!.CpuRateControl());
 
+        // The measurement window is the scenario: 1 s for the load to reach the cap, then 5 s of accounted CPU time.
         Thread.Sleep(1_000);
         var rootBefore = Cpu(harness.Platform.RootJob.Accounting());
         var heavyBefore = Cpu(heavy.Job.Accounting());

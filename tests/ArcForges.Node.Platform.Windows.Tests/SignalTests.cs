@@ -14,7 +14,6 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// windowless supervisor at logon (H-15) is the user's end-to-end check and is not part of these tests.
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialPlatformTests.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class SignalTests
 {
@@ -62,6 +61,8 @@ public sealed class SignalTests
         var outcome = handle.RequestGracefulStop();
         Assert.True(outcome.ConsoleSignalled, outcome.Reason);
         PlatformHarness.WaitFor(() => Events(marker, "break").Contains(rootPid), TimeSpan.FromSeconds(5), "CTRL_BREAK in the root");
+
+        // A deliberate hold: the child still has not seen the event 1 s after the root did (an absence cannot be awaited).
         await Task.Delay(1_000, TestContext.Current.CancellationToken);
         Assert.DoesNotContain(childProcess.Pid, Events(marker, "break"));
         Assert.True(childProcess.IsRunning(), $"The {child} child ignores the root's group event and keeps running.");
@@ -150,6 +151,8 @@ public sealed class SignalTests
         Assert.True(handle.RequestGracefulStop().ConsoleSignalled);
         PlatformHarness.WaitFor(() => Events(marker, "break").Count == 2, TimeSpan.FromSeconds(5),
             "both to see the event: " + PlatformHarness.ReadShared(marker).ReplaceLineEndings(" | "));
+
+        // A deliberate hold: both still run 500 ms after the event they ignore (their survival cannot be awaited).
         await Task.Delay(500, TestContext.Current.CancellationToken);
         Assert.All(pids, process => Assert.True(process.IsRunning()));
         handle.Terminate();

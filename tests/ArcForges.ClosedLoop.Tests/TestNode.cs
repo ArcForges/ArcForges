@@ -10,12 +10,6 @@ using Microsoft.Data.Sqlite;
 
 namespace ArcForges.ClosedLoop.Tests;
 
-/// <summary>Closed-loop tests run one after another: the leftover-process check counts every node and supervisor of the binaries under test.</summary>
-[CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class SerialProcessTests
-{
-    public const string Name = "processes";
-}
 
 /// <summary>One run of a CLI or node process.</summary>
 internal sealed record ProcessRun(int ExitCode, string Output, string Error)
@@ -259,6 +253,46 @@ internal sealed class TestNode : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// How long after its start a node with the hang fault <paramref name="fault"/> (<c>name=seconds</c>, ExecutionFaults) would have
+    /// stopped renewing its heartbeat: the fault's delay; for a hung probe, the probe timeout (5 s) and up to three missed probes one second
+    /// apart; and two heartbeat intervals (1 s each).
+    /// </summary>
+    public static TimeSpan FaultHorizon(string fault, int seconds) =>
+        TimeSpan.FromSeconds(seconds + (fault == "hang-probe-after" ? 8 : 0) + 2);
+
+    /// <summary>
+    /// Waits until the node heartbeat (<c>run/node-heartbeat</c>) changes once <paramref name="horizon"/> has passed on
+    /// <paramref name="since"/>: a condition that proves the node still renews it, instead of a fixed wait. Bounded by 30 s past the horizon.
+    /// </summary>
+    public async Task WaitHeartbeatChangeAsync(Stopwatch since, TimeSpan horizon)
+    {
+        var path = ArcForges.Node.Platform.AttemptFiles.HeartbeatPath(DataRoot);
+        var seen = ReadShared(path);
+        await WaitAsync(() =>
+        {
+            var current = ReadShared(path);
+            var changed = current.Length > 0 && current != seen;
+            seen = current;
+            return changed && since.Elapsed > horizon;
+        }, horizon + TimeSpan.FromSeconds(30), $"the heartbeat to change more than {horizon.TotalSeconds:0} s after the start");
+    }
+
+    /// <summary>A file another process replaces or writes, or an empty string while it is missing.</summary>
+    public static string ReadShared(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
     /// <summary>Waits for <paramref name="condition"/> (bounded).</summary>
     public static async Task WaitAsync(Func<bool> condition, TimeSpan timeout, string what)
     {
@@ -288,7 +322,11 @@ internal sealed class TestNode : IAsyncDisposable
         return new ProcessRun(process.ExitCode, await output, await error);
     }
 
-    /// <summary>Running processes of the binaries under test started since this environment was created.</summary>
+    /// <summary>
+    /// Running processes of the binaries under test started since this environment was created that belong to it: they carry its
+    /// endpoint in their environment (every node, supervisor, holder and helper it started inherits it), or on Linux run in its slice
+    /// (the helpers of its attempt units). Tests run in parallel, so the processes of another environment are never counted.
+    /// </summary>
     public List<Process> LiveProcesses()
     {
         var binaries = new[] { Host, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
@@ -298,7 +336,8 @@ internal sealed class TestNode : IAsyncDisposable
         {
             try
             {
-                if (!process.HasExited && process.MainModule?.FileName is { } file && binaries.Contains(Path.GetFullPath(file)) && process.StartTime >= _created)
+                if (!process.HasExited && process.MainModule?.FileName is { } file && binaries.Contains(Path.GetFullPath(file)) && process.StartTime >= _created
+                    && Owns(process.Id))
                 {
                     live.Add(process);
                     continue;
@@ -313,6 +352,22 @@ internal sealed class TestNode : IAsyncDisposable
         }
 
         return live;
+    }
+
+    private bool Owns(int pid) =>
+        ArcForges.Tests.ProcessInspection.EnvironmentValue(pid, NodeLocations.EndpointVariable) == Endpoint
+        || (!OperatingSystem.IsWindows() && ProcessCgroup(pid) is { } cgroup && cgroup.Contains("/" + Slice + "/", StringComparison.Ordinal));
+
+    private static string? ProcessCgroup(int pid)
+    {
+        try
+        {
+            return File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public async ValueTask DisposeAsync()

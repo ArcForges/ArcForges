@@ -17,7 +17,6 @@ namespace ArcForges.Node.Core.Tests;
 /// <c>ReleaseCallerBinding</c> (R-AI-010).
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialNodeTests.Name)]
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class TaskControlTests
 {
@@ -129,7 +128,9 @@ public sealed class TaskControlTests
         Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(channel, running)).State);
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the overshoot (rate over 500 ms) is a timing bound of the enforcement loop.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task OutputBeyondTheLimitStopsTheAttemptAtOnceWithinTheStatedBound()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -293,7 +294,7 @@ public sealed class TaskControlTests
                 Assert.True(rows.Read());
                 return ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(rows.GetInt32(0), ArcForges.Node.Store.StoreTime.FromMicroseconds(rows.GetInt64(1)));
             });
-            Assert.Empty(ExecutionCleanup.Children());
+            Assert.Empty(ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)));
         }
 
         await node.StopAsync();
@@ -313,13 +314,13 @@ public sealed class TaskControlTests
         await using var node = await InProcessNode.Create().StartAsync();
         var longMarker = Path.Combine(node.Root, "long.txt");
         var shortMarker = Path.Combine(node.Root, "short.txt");
-        Id longId, shortId;
+        Id longId, shortId, shortAttempt;
         await using (var channel = await node.ChannelAsync())
         {
             longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", longMarker));
             shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "2000", "--marker", shortMarker));
             await Tasks.RunningAsync(channel, longId);
-            await Tasks.RunningAsync(channel, shortId);
+            shortAttempt = (await Tasks.RunningAsync(channel, shortId)).AttemptId;
 
             // RUNNING records the root process; its marker follows once the workload started.
             await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0 && Tasks.Marker(shortMarker).Count > 0, Tasks.Bound, "the workloads to start");
@@ -330,7 +331,7 @@ public sealed class TaskControlTests
         Assert.True(longProcess.IsRunning(), "The attempt keeps running while the node is stopped.");
         var shortProcess = Tasks.Processes(shortMarker).Single();
         await Tasks.WaitForAsync(() => !shortProcess.IsRunning(), TimeSpan.FromSeconds(10), "the short task to finish while the node is down");
-        await Task.Delay(500, Ct);
+        await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath), TimeSpan.FromSeconds(10), "its holder to record the exit");
 
         await node.StartAsync();
         await using var after = await node.ChannelAsync();
@@ -395,7 +396,6 @@ public sealed class TaskControlTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await using var node = await InProcessNode.Create().StartAsync();
         var marker = Path.Combine(node.Root, "m.txt");
-        var holdersBefore = ExecutionCleanup.Children();
         Id taskId;
         await using (var channel = await node.ChannelAsync())
         {
@@ -403,7 +403,7 @@ public sealed class TaskControlTests
             await Tasks.RunningAsync(channel, taskId);
         }
 
-        var holders = ExecutionCleanup.Children().Except(holdersBefore).ToList();
+        var holders = ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)).ToList();
         Assert.Single(holders);
         await node.StopAsync();
 
@@ -458,6 +458,8 @@ public sealed class TaskControlTests
         // (a client reconnecting after a lost connection), so nothing is cancelled. A caller whose process ends is cancelled within 5 s:
         // ExecutionTests.AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels kills a real CLI process.
         TaskState State(Id id) => (TaskState)node.Runtime.Store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM task WHERE task_id = $id;", ("$id", id.Value.ToByteArray())), CultureInfo.InvariantCulture));
+
+        // A deliberate hold longer than the 5 s caller-gone window: the absence of a cancellation cannot be awaited.
         await Task.Delay(TimeSpan.FromSeconds(6), Ct);
         Assert.Equal(TaskState.Running, State(bound));
         Assert.Equal(TaskState.Running, State(released));

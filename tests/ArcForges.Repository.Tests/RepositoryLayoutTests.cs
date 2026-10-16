@@ -46,6 +46,7 @@ public sealed class RepositoryLayoutTests
     public void TestSuitesReferenceExistingProjectsAndSuites()
     {
         var suites = new Dictionary<string, string>(StringComparer.Ordinal);
+        var filters = new Dictionary<string, string[]>(StringComparer.Ordinal);
         var kinds = new Dictionary<string, string[]>(StringComparer.Ordinal);
         foreach (var line in File.ReadAllLines(RepositoryFiles.PathOf("eng/test-suites.conf")))
         {
@@ -59,6 +60,7 @@ public sealed class RepositoryLayoutTests
             if (fields[0] == "suite")
             {
                 suites.Add(fields[1], fields[2]);
+                filters.Add(fields[1], fields[3..]);
                 Assert.All(fields.Skip(3).Where((_, index) => index % 2 == 0), option =>
                     Assert.Contains(option, (string[])["--filter-trait", "--filter-not-trait"]));
             }
@@ -77,6 +79,25 @@ public sealed class RepositoryLayoutTests
         Assert.All(kinds.Values.SelectMany(names => names), suite => Assert.Contains(suite, suites.Keys));
         Assert.Equal("*", suites["unit"]);
         Assert.Equal("*", suites["ci"]);
+
+        // ci and exclusive together select exactly what ci selected before the exclusive tests were split out: the same filters, with
+        // isolation=exclusive excluded from one and required by the other, and the exclusive suite names every project that has an
+        // exclusive test (and no other, so it starts no empty test application). The other suites of every project leave them out.
+        var exclusiveProjects = RepositoryFiles.Projects("tests").Where(project => Directory
+                .EnumerateFiles(RepositoryFiles.PathOf(Path.GetDirectoryName(project)!), "*.cs", SearchOption.AllDirectories)
+                .Any(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                    && File.ReadAllText(file).Contains("[Trait(\"isolation\", \"exclusive\")]", StringComparison.Ordinal)))
+            .Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal);
+        Assert.Equal(exclusiveProjects, suites["exclusive"].Split(',').Order(StringComparer.Ordinal));
+        var exclude = (string[])["--filter-not-trait", "isolation=exclusive"];
+        var require = (string[])["--filter-trait", "isolation=exclusive"];
+        Assert.Equal(filters["ci"][^2..], exclude);
+        Assert.Equal(filters["exclusive"][..2], require);
+        Assert.Equal(filters["ci"][..^2], filters["exclusive"][2..]);
+        foreach (var name in (string[])["unit", "windows-real", "linux-real", "closed-loop"])
+        {
+            Assert.Equal(exclude, filters[name][^2..]);
+        }
     }
 
     [Fact]
