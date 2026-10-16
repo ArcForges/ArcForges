@@ -115,9 +115,11 @@ internal sealed class TestNode : IAsyncDisposable
 
     public string SupervisorLog => Path.Combine(DataRoot, "logs", "supervisor", "supervisor.log");
 
-    public static TestNode Create()
+    public static TestNode Create(string? parent = null)
     {
-        var root = Directory.CreateTempSubdirectory("arcforges-closed-loop-").FullName;
+        var root = parent is null
+            ? Directory.CreateTempSubdirectory("arcforges-closed-loop-").FullName
+            : Directory.CreateDirectory(Path.Combine(parent, "arcforges-closed-loop-" + Guid.NewGuid().ToString("N")[..12])).FullName;
         var node = new TestNode(root);
         Directory.CreateDirectory(node.ConfigDirectory);
         File.WriteAllText(Path.Combine(node.ConfigDirectory, "node.json"), "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");

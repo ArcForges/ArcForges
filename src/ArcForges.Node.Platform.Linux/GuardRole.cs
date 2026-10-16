@@ -74,7 +74,7 @@ public static partial class GuardRole
                 }
 
                 var age = watch.Age;
-                if (age < TimeSpan.FromMilliseconds(2_000) && attempts.Values.All(attempt => !attempt.InCharge))
+                if (age < TimeSpan.FromMilliseconds(2_000) && !AnyInCharge(attempts))
                 {
                     // Fresh (below the smallest takeover time) and nothing to stand down: idle.
                     continue;
@@ -98,6 +98,20 @@ public static partial class GuardRole
         }
 
         return 0;
+    }
+
+    private static bool AnyInCharge(Dictionary<string, Guarded> attempts)
+    {
+        // A loop over the struct enumerator: the idle path allocates nothing.
+        foreach (var attempt in attempts.Values)
+        {
+            if (attempt.InCharge)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void Scan(string dataRoot, Dictionary<string, Guarded> attempts)

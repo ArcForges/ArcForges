@@ -175,13 +175,17 @@ public sealed class Benchmarks
         Assert.True(guardPrivate <= 8L << 20, $"the guard uses {guardPrivate} private bytes (target 8 MB)");
     }
 
-    /// <summary>Private bytes of a Linux process (<c>Private_Clean + Private_Dirty</c> of <c>smaps_rollup</c>).</summary>
+    /// <summary>
+    /// Private bytes of a Linux process, the counterpart of the Windows private bytes (commit charge): <c>Private_Dirty + Swap</c> of
+    /// <c>smaps_rollup</c>. Clean pages of the executable image are left out; they are page cache the kernel can drop and re-read, shared
+    /// with every other <c>arcforges</c> process (the Windows figure leaves the image out the same way).
+    /// </summary>
     private static long PrivateBytes(int pid)
     {
         long total = 0;
         foreach (var line in File.ReadAllLines($"/proc/{pid}/smaps_rollup"))
         {
-            if (line.StartsWith("Private_", StringComparison.Ordinal))
+            if (line.StartsWith("Private_Dirty:", StringComparison.Ordinal) || line.StartsWith("Swap:", StringComparison.Ordinal))
             {
                 total += long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], System.Globalization.CultureInfo.InvariantCulture) * 1024;
             }
@@ -201,7 +205,10 @@ public sealed class Benchmarks
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireNativeHost();
         const long Bytes = 3L << 29;
-        await using var node = TestNode.Create();
+
+        // On Linux the captured output lives on a disk-backed file system like a real data root: on tmpfs (/tmp in WSL Debian) the file's
+        // pages are shared memory charged to the attempt's cgroup, which cannot reclaim them without swap and throttles at MemoryHigh.
+        await using var node = TestNode.Create(OperatingSystem.IsWindows() ? null : AppContext.BaseDirectory);
         await node.StartNodeAsync();
         await using var channel = ArcForges.Client.NodeChannel.Create(OperatingSystem.IsWindows()
             ? ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(node.Endpoint)

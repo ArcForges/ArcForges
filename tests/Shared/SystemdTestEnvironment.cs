@@ -179,6 +179,12 @@ internal static class SystemdTestEnvironment
         if (!Units("arcforges-test-*.slice").Any(unit => unit != TestParentSlice && unit != slice))
         {
             Systemctl("stop", TestParentSlice);
+
+            // arcforges.slice exists only as the test slices' parent unless an installed node uses it (a unit file); left empty, it is ours.
+            if (Units("arcforges*").All(unit => unit is "arcforges.slice" or TestParentSlice) && Property("arcforges.slice", "FragmentPath").Length == 0)
+            {
+                Systemctl("stop", "arcforges.slice");
+            }
         }
 
         return leftovers;

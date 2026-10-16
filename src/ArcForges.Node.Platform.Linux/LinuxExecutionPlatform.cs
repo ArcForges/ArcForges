@@ -56,6 +56,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <summary>The conventional soft open-file limit passed to attempts (the kernel default a login shell has).</summary>
     public const ulong DefaultNoFileSoft = 1024;
 
+    /// <summary>
+    /// Added to <c>TimeoutStopSec</c> beyond the end-step budget and <c>leftover_grace</c>: the <c>exec-stop</c> role's own start and the
+    /// write of <c>stop.json</c>, so systemd never stops the role while it records the leftovers.
+    /// </summary>
+    public const int StopRecordMarginMs = 5_000;
+
     private readonly LinuxPlatformOptions _options;
     private readonly Lock _gate = new();
     private SystemdManager? _manager;
@@ -445,7 +451,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             new("LimitNOFILE", nofileHard),
             new("LimitNOFILESoft", nofileSoft),
             new("KillMode", "control-group"),
-            new("TimeoutStopUSec", (ulong)(10_000 + launch.LeftoverGraceMs) * 1000),
+            new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + StopRecordMarginMs) * 1000),
             // Failed units stay loaded (systemd skips ExecStopPost when OOMPolicy=kill fires), so the node records them from the unit.
             new("CollectMode", "inactive"),
             new("IgnoreSIGPIPE", false),

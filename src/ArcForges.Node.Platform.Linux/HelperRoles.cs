@@ -220,11 +220,14 @@ public static class ExecStopRole
             record.EndSteps.Add(new StepOutcome { Name = step.Name, Outcome = result.Outcome, ExitCode = result.ExitCode, ElapsedMs = result.ElapsedMs });
         }
 
-        // leftover_grace: the unit's other processes may still end on their own.
+        // leftover_grace: the unit's other processes may still end on their own. The end steps' outcomes are recorded first, so a
+        // stop that outlasts TimeoutStopSec still leaves them.
         var cgroup = ProcFs.OwnCgroup() is { } path ? ProcFs.CgroupDirectory(path) : null;
         var grace = Stopwatch.StartNew();
         var self = Environment.ProcessId;
         List<int> others = cgroup is null ? [] : [.. ProcFs.Procs(cgroup).Where(pid => pid != self)];
+        record.Leftovers = [.. others.Select(ProcFs.Image)];
+        Write(directory, record);
         while (others.Count > 0 && grace.ElapsedMilliseconds < steps.LeftoverGraceMs)
         {
             Thread.Sleep(50);
@@ -232,6 +235,12 @@ public static class ExecStopRole
         }
 
         record.Leftovers = [.. others.Select(ProcFs.Image)];
+        Write(directory, record);
+        return 0;
+    }
+
+    private static void Write(string directory, StopRecord record)
+    {
         record.RecordedAt = HelperFiles.Now();
         try
         {
@@ -241,8 +250,6 @@ public static class ExecStopRole
         {
             Console.Error.WriteLine("arcforges: stop.json cannot be written: " + exception.Message);
         }
-
-        return 0;
     }
 }
 

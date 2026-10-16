@@ -157,12 +157,12 @@ public sealed class LinuxTaskTests
 
         // Three attempts expecting 400 MiB (MemoryHigh 500 MiB) with 512 MiB ceilings, ramping to 600 MiB each: 1.8 GiB of demand on a
         // 768 MiB slice (the interim admission does not count memory yet, AF-SCHED-01). The .NET workload's own heap limit (75% of its
-        // cgroup's) is lifted, so the kernel bounds are what stop it.
+        // cgroup's) is lifted to 3 GiB (hex without 0x, the form both the JIT runtime and Native AOT accept), so the kernel bounds stop it.
         var ids = new List<Id>();
         for (var index = 0; index < 3; index++)
         {
             var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "600", "--step-mb", "16", "--step-ms", "20", "--hold-ms", "3000");
-            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = "0xC0000000";
+            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
             spec.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 400L << 20, MemCeilingBytes = 512L << 20 } };
             ids.Add(await Tasks.SubmitAsync(channel, spec));
         }

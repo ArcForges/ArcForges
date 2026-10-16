@@ -341,6 +341,34 @@ public sealed class UnitPlatformTests
     }
 
     [Fact(Timeout = 120_000)]
+    public async Task AttemptsSurviveARestartOfTheUserManagerAndThePlatformKeepsControllingThem()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // F-L03 (risk mitigation: the user manager restarts): systemctl --user daemon-reexec serializes and restores the units; the
+        // attempt keeps running in its unit, the platform keeps controlling it, and units started afterwards leave their records.
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var running = harness.Launch(["sleep", "60"]);
+        var root = (await running.Started.WaitAsync(Bound, Ct))!;
+        var unit = ((LinuxAttemptHandle)running).Unit;
+
+        var reexec = SystemdTestEnvironment.Systemctl("daemon-reexec");
+        Assert.True(reexec.ExitCode == 0, reexec.Output);
+        Assert.Equal("active", SystemdTestEnvironment.Property(unit, "ActiveState"));
+        Assert.Equal(root.Pid.ToString(CultureInfo.InvariantCulture), SystemdTestEnvironment.Property(unit, "MainPID"));
+
+        running.Refresh();
+        Assert.True(running.RootRunning);
+        Assert.Contains(root.Pid, running.Processes().Select(process => process.Pid));
+        var after = harness.Launch(["/bin/sh", "-c", "exit 4"]);
+        Assert.Equal(4, LinuxHarness.WaitExit(after, Bound).ExitStatus);
+        running.Terminate();
+        var exit = LinuxHarness.WaitExit(running, Bound);
+        Assert.Equal(("killed", 9), (exit.ExitCodeKind, exit.ExitStatus));
+        Assert.NotNull(ExitRecord.TryRead(((LinuxAttemptHandle)running).Files.ExitPath));
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task TheGuardFreezesAndKillsAFloodOnceTheHeartbeatIsStale()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
