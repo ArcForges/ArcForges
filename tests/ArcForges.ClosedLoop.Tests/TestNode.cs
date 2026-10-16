@@ -59,6 +59,9 @@ internal sealed class TestNode : IAsyncDisposable
 
             // 16 section 4: each test node gets its own slice.
             Environment["ARCFORGES_SLICE"] = Slice;
+
+            // A JIT process the test kills would leave the runtime's diagnostic sockets in /tmp.
+            Environment["DOTNET_EnableDiagnostics"] = "0";
         }
     }
 

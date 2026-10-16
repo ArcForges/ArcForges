@@ -54,10 +54,19 @@ internal sealed class LinuxHarness : IDisposable
         Limits = limits;
         NodeName = "t" + Guid.NewGuid().ToString("N")[..20];
         Options = options ?? new LinuxPlatformOptions { Slice = slice };
-        Platform = NewPlatform();
-        if (options is null)
+        try
         {
-            Assert.True(Platform.UnitMode, "The platform did not reach the user manager: " + Platform.ManagerUnavailableReason);
+            Platform = NewPlatform();
+            if (options is null)
+            {
+                Assert.True(Platform.UnitMode, "The platform did not reach the user manager: " + Platform.ManagerUnavailableReason);
+            }
+        }
+        catch
+        {
+            // The test never gets the harness to dispose: remove what it created already.
+            Release();
+            throw;
         }
     }
 
@@ -87,8 +96,8 @@ internal sealed class LinuxHarness : IDisposable
     public LinuxExecutionPlatform NewPlatform()
     {
         var platform = new LinuxExecutionPlatform(Options);
-        platform.Start(NodeName, Limits, TestPrograms.Host);
         _platforms.Add(platform);
+        platform.Start(NodeName, Limits, TestPrograms.Host);
         return platform;
     }
 
@@ -182,6 +191,12 @@ internal sealed class LinuxHarness : IDisposable
             TestContext.Current.TestOutputHelper?.WriteLine($"{handle.Unit}: {handle.LastLimitStop!.Describe()}");
         }
 
+        var leftovers = Release();
+        Assert.True(leftovers.Count == 0, "Left running after the test: " + string.Join(", ", leftovers));
+    }
+
+    private List<string> Release()
+    {
         foreach (var handle in _handles)
         {
             handle.Dispose();
@@ -199,8 +214,9 @@ internal sealed class LinuxHarness : IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            leftovers.Add($"files under {Root} ({exception.Message})");
         }
 
-        Assert.True(leftovers.Count == 0, "Left running after the test: " + string.Join(", ", leftovers));
+        return leftovers;
     }
 }

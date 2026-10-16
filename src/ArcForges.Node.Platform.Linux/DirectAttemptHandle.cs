@@ -83,6 +83,13 @@ public sealed class DirectAttemptHandle : IAttemptHandle
                 argv.AddRange(["--unset", "DOTNET_ROOT"]);
             }
 
+            if (platform.HelperRuntime is not null && !environment.Any(entry => entry.StartsWith(LinuxExecutionPlatform.DiagnosticsVariable + "=", StringComparison.Ordinal)))
+            {
+                // Nor its diagnostic endpoints, which would outlive it in the temporary directory once it becomes the command.
+                environment.Add(LinuxExecutionPlatform.DiagnosticsVariable + "=0");
+                argv.AddRange(["--unset", LinuxExecutionPlatform.DiagnosticsVariable]);
+            }
+
             argv.Add("--");
             argv.AddRange(launch.Command.Argv);
             var pid = Libc.Spawn(platform.Helper, argv, environment,

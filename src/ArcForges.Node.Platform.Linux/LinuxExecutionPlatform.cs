@@ -62,6 +62,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// </summary>
     public const int StopRecordMarginMs = 5_000;
 
+    /// <summary>The .NET runtime's switch for its diagnostic endpoints (framework-dependent helpers only).</summary>
+    internal const string DiagnosticsVariable = "DOTNET_EnableDiagnostics";
+
     private readonly LinuxPlatformOptions _options;
     private readonly Lock _gate = new();
     private SystemdManager? _manager;
@@ -421,11 +424,18 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             start.Add(name);
         }
 
+        var helperDiagnosticsOff = HelperRuntime is not null && !resolved.Contains(DiagnosticsVariable);
         if (HelperRuntime is not null && !resolved.Contains("DOTNET_ROOT"))
         {
             // A framework-dependent helper (the JIT build next to the tests) gets DOTNET_ROOT for itself only.
             start.Add("--unset");
             start.Add("DOTNET_ROOT");
+        }
+
+        if (helperDiagnosticsOff)
+        {
+            start.Add("--unset");
+            start.Add(DiagnosticsVariable);
         }
 
         start.Add("--");
@@ -435,9 +445,11 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             new("Description", "ArcForges attempt " + files.AttemptName),
             new("Slice", Slice),
             new("Type", "exec"),
-            new("ExecStartEx", (IReadOnlyList<ExecCommand>)[HelperCommand(start, false)]),
-            new("ExecStopEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exec-stop", "--attempt", files.AttemptName, "--dir", files.Directory], true)]),
-            new("ExecStopPostEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exit-record", "--attempt", files.AttemptName, "--dir", files.Directory], false)]),
+            new("ExecStartEx", (IReadOnlyList<ExecCommand>)[HelperCommand(start, false, helperDiagnosticsOff)]),
+            new("ExecStopEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exec-stop", "--attempt", files.AttemptName, "--dir", files.Directory], true,
+                helperDiagnosticsOff)]),
+            new("ExecStopPostEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exit-record", "--attempt", files.AttemptName, "--dir", files.Directory], false,
+                helperDiagnosticsOff)]),
             // Every exit status and signal is a success of the unit, so ExecStop (the end steps) runs after any exit; the attempt's result
             // is taken from $EXIT_CODE and $EXIT_STATUS by exit-record (04 section 3).
             new("SuccessExitStatus", new ExitStatusSet([.. Enumerable.Range(1, 255)], [.. Enumerable.Range(1, 31)])),
@@ -518,9 +530,13 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// </summary>
     internal string? HelperRuntime => File.Exists(Path.ChangeExtension(_helper, ".dll")) ? Environment.GetEnvironmentVariable("DOTNET_ROOT") : null;
 
-    /// <summary>A helper command line; a framework-dependent helper is started through <c>env DOTNET_ROOT=...</c>.</summary>
-    private ExecCommand HelperCommand(List<string> argv, bool ignoreFailure) => HelperRuntime is { } runtime && File.Exists("/usr/bin/env")
-        ? new ExecCommand("/usr/bin/env", ["env", "DOTNET_ROOT=" + runtime, .. argv], ignoreFailure)
+    /// <summary>
+    /// A helper command line; a framework-dependent helper is started through <c>env DOTNET_ROOT=...</c>, and without the runtime's
+    /// diagnostic endpoints (<c>DOTNET_EnableDiagnostics=0</c>, unless the attempt sets it), so a helper that becomes the command
+    /// (<c>execve</c>) or is killed leaves no IPC socket behind in the temporary directory.
+    /// </summary>
+    private ExecCommand HelperCommand(List<string> argv, bool ignoreFailure, bool diagnosticsOff) => HelperRuntime is { } runtime && File.Exists("/usr/bin/env")
+        ? new ExecCommand("/usr/bin/env", ["env", "DOTNET_ROOT=" + runtime, .. diagnosticsOff ? (string[])[DiagnosticsVariable + "=0"] : [], .. argv], ignoreFailure)
         : new ExecCommand(_helper, argv, ignoreFailure);
 
     /// <summary>
