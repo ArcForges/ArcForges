@@ -8,6 +8,12 @@ namespace ArcForges.TestLoad;
 /// waiting <c>step-ms</c> after each step, then holds the memory for <c>hold-ms</c> and exits.
 /// Every allocated byte is written with deterministic content, so the memory is committed and
 /// resident (not merely reserved), and the content digest is reproducible.
+/// <para>
+/// The memory is managed. Inside a container with a memory limit (a Windows job, a Linux cgroup) the .NET GC sets its own heap hard
+/// limit to 75% of that limit and throws <see cref="OutOfMemoryException"/> there, before the container refuses anything. A test that
+/// needs the container's limit to stop the ramp sets <c>DOTNET_GCHeapHardLimit</c> above it for the workload (for example
+/// <c>C0000000</c>, 3 GiB, hex without <c>0x</c>, the form the JIT runtime and Native AOT both read).
+/// </para>
 /// </summary>
 internal static class MemoryRampScenario
 {

@@ -88,6 +88,14 @@ public sealed class JobTests
         Assert.True(heavyUsed > lightUsed * 2, $"Weight 9 got {heavyUsed.TotalSeconds:0.00} s against weight 1's {lightUsed.TotalSeconds:0.00} s.");
     }
 
+    /// <summary>
+    /// The job, not the workload's runtime, must refuse the commit (V-W05). Inside a job with a memory limit the .NET GC sets its own
+    /// heap hard limit to 75% of that limit and throws <see cref="OutOfMemoryException"/> there, before the job refuses anything (a hosted
+    /// run ended at 167.5 MiB under a 256 MiB limit, below the 170.7 MiB notification limit, so nothing was classified). The mem-ramp
+    /// workload therefore runs with its heap limit lifted to 3 GiB (hex without 0x, the form the JIT runtime and Native AOT both read).
+    /// </summary>
+    private static readonly Dictionary<string, string> LiftedHeapLimit = WithEnvironment("DOTNET_GCHeapHardLimit", "C0000000");
+
     [Fact(Timeout = 120_000)]
     public void AnAttemptNeverCommitsBeyondItsCommitLimit()
     {
@@ -95,18 +103,27 @@ public sealed class JobTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job commit limits.");
         Report();
         const long Limit = 256L << 20;
+        const long Step = 32L << 20;
         using var harness = PlatformHarness.Start();
-        var handle = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "1024", "--step-mb", "32"], new ContainerLimits { CommitLimitBytes = Limit, CommitNotificationBytes = Limit * 2 / 3 });
+        var handle = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "1024", "--step-mb", "32"],
+            new ContainerLimits { CommitLimitBytes = Limit, CommitNotificationBytes = Limit * 2 / 3 }, environment: LiftedHeapLimit);
         using var sampler = new CommitSampler(handle.Job);
         var exit = harness.WaitExit(handle, Bound);
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"exit {exit.ExitStatus}, sampled commit max {sampler.Max} and peak {exit.MemPeakBytes} of {Limit}, violations [{string.Join(",", exit.LimitViolations)}], limit event {handle.MemoryLimitHit}");
+
+        // The refused allocation fails the attempt; the committed memory never passes the limit.
         Assert.NotEqual(0, exit.ExitStatus);
         Assert.True(sampler.Max <= Limit, $"The attempt committed {sampler.Max}, over its limit {Limit}.");
 
-        // PeakJobMemoryUsed counts a refused request before refusing it, so it may pass the limit by at most one request (one step).
-        Assert.True(exit.MemPeakBytes <= Limit + (32L << 20), $"Peak commit {exit.MemPeakBytes} is more than one request over the limit {Limit}.");
-        Assert.True(handle.MemoryLimitHit || exit.LimitViolations.Contains("job_memory"), "The commit limit event was not observed.");
+        // PeakJobMemoryUsed counts a refused request before refusing it, so it may pass the limit by at most one request (one step), and it
+        // reaches the limit only when the job refused: a peak far below it means something else (the runtime) stopped the workload.
+        Assert.True(exit.MemPeakBytes <= Limit + Step, $"Peak commit {exit.MemPeakBytes} is more than one request over the limit {Limit}.");
+        Assert.True(exit.MemPeakBytes >= Limit - Step, $"Peak commit {exit.MemPeakBytes} never reached the limit {Limit}: the job did not refuse the workload.");
+
+        // The holder's exit record classifies the violation from the job's peak accounting, which covers exited processes (V-W03); the
+        // completion-port limit message (MemoryLimitHit) is not guaranteed and is only reported above.
+        Assert.Contains("job_memory", exit.LimitViolations);
     }
 
     [Fact(Timeout = 120_000)]
@@ -117,10 +134,12 @@ public sealed class JobTests
         Report();
         const long RootLimit = 384L << 20;
         using var harness = PlatformHarness.Start(new RootLimits(10_000, RootLimit, RootLimit));
+        // Each attempt alone fits its own 512 MiB limit; together they exceed the root's 384 MiB, so only the root can refuse (the heap
+        // limit is lifted as in AnAttemptNeverCommitsBeyondItsCommitLimit, or the runtime would stop each workload at 384 MiB itself).
         var first = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--hold-ms", "4000"],
-            new ContainerLimits { CommitLimitBytes = 512L << 20 });
+            new ContainerLimits { CommitLimitBytes = 512L << 20 }, environment: LiftedHeapLimit);
         var second = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--step-ms", "50", "--hold-ms", "4000"],
-            new ContainerLimits { CommitLimitBytes = 512L << 20 });
+            new ContainerLimits { CommitLimitBytes = 512L << 20 }, environment: LiftedHeapLimit);
         using var sampler = new CommitSampler(harness.Platform.RootJob!);
         var exits = new[] { harness.WaitExit(first, Bound), harness.WaitExit(second, Bound) };
         var rootPeak = harness.Platform.RootJob!.Accounting().PeakJobMemory;
@@ -128,6 +147,7 @@ public sealed class JobTests
             $"exits {exits[0].ExitStatus}/{exits[1].ExitStatus}; root commit sampled max {sampler.Max}, peak {rootPeak} of {RootLimit} ({sampler.Samples} samples)");
         Assert.True(sampler.Max <= RootLimit, $"The root job committed {sampler.Max}, over its limit {RootLimit}.");
         Assert.True(rootPeak <= RootLimit + (20L << 20), $"The root's peak {rootPeak} is more than one refused request over its limit {RootLimit}.");
+        Assert.True(rootPeak >= RootLimit - (20L << 20), $"The root's peak {rootPeak} never reached its limit {RootLimit}: the root did not refuse.");
         Assert.Contains(exits, exit => exit.ExitStatus != 0);
     }
 
@@ -185,6 +205,14 @@ public sealed class JobTests
     }
 
     private static TimeSpan Cpu(JobAccounting accounting) => accounting.UserTime + accounting.KernelTime;
+
+    private static Dictionary<string, string> WithEnvironment(string name, string value)
+    {
+        var environment = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+            .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+        environment[name] = value;
+        return environment;
+    }
 
     /// <summary>Samples a job's committed memory every 2 ms until disposed (the bound is checked on what was committed).</summary>
     private sealed class CommitSampler : IDisposable
