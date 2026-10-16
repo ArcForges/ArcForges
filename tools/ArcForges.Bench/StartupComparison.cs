@@ -5,13 +5,13 @@ using System.Text.Json;
 namespace ArcForges.Bench;
 
 /// <summary>
-/// <c>compare-startup</c>: the CI startup regression gate of 15-performance-targets ("startup
-/// regressions above 25% against the previous main run"). Hosted runners are noisy and the
+/// <c>compare-startup</c>: the startup regression gate of 15-performance-targets ("startup
+/// regressions above 25% against the PR's base commit built on the same machine"). Hosted runners are noisy and the
 /// current startup is a few milliseconds, so the rule uses the median (p50 of the runs) and a
 /// regression must exceed both the relative limit (default 25%) and an absolute noise floor
 /// (default 5 ms). Without a baseline the result is recorded as passing with the stated reason.
 /// <list type="bullet">
-/// <item>Same-runner mode (<c>--baseline-exe</c>, <c>--current-exe</c>; the CI gate): both executables are measured here, interleaved,
+/// <item>Same-runner mode (<c>--baseline-exe</c>, <c>--current-exe</c>; the gate): both executables are measured here, interleaved,
 /// with the same arguments, warm-up and run count, so the comparison is free of the machine-to-machine variance of hosted runners.</item>
 /// <item>Recorded mode (<c>--current</c>, <c>--baseline</c>): two saved startup results, meaningful only when both were measured on the
 /// same machine; <c>--current</c> with <c>--reason</c> records a result without a baseline.</item>

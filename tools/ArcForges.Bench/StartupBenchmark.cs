@@ -9,7 +9,7 @@ namespace ArcForges.Bench;
 /// <c>warmup</c> unmeasured runs that warm the file cache (15 section 1). A run whose exit code
 /// differs from <c>expect-exit</c>, or that does not exit within <c>timeout-ms</c>, fails the
 /// benchmark (a hung run is killed with its process tree). Limits are optional: hosted runners
-/// only report startup and compare it with the previous main run, the workstation checks the targets.
+/// only report startup and compare it with the base commit's CLI, the workstation checks the targets.
 /// </summary>
 internal static class StartupBenchmark
 {

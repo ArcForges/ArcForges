@@ -1,9 +1,13 @@
 name: Security
 
+# Owner (deku2026) PRs are verified by the local pre-push hook (eng/verify.py, AD-0016: actionlint when a workflow
+# changed, gitleaks over the pushed range), so every job is skipped for them; CodeQL and dependency review are GitHub
+# services the hook does not reproduce. External PRs (Dependabot included), the merge queue and manual dispatch run the
+# jobs; the weekly schedule runs the security analysis (secret scan, CodeQL), not the workflow lint. Push to main runs nothing: every main commit arrived through a verified PR.
+# merge_group runs the jobs for every author, but only matters if a merge queue is configured (none is today).
 on:
   pull_request:
-  push:
-    branches: [main]
+  merge_group:
   schedule:
     - cron: '23 7 * * 2'
   workflow_dispatch:
@@ -24,6 +28,8 @@ env:
 jobs:
   workflow-lint:
     name: Workflow lint
+    # Validation, not security analysis: the schedule skips it (workflows change only through PRs, which run it).
+    if: ${{ github.event_name != 'schedule' && !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -39,6 +45,7 @@ jobs:
 
   secret-scan:
     name: Secret scan
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -51,7 +58,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'deku2026'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -64,6 +71,7 @@ jobs:
 
   codeql:
     name: CodeQL (${{ matrix.language }})
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

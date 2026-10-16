@@ -33,9 +33,10 @@ matching machine. No macOS support or verification is claimed.
 Create branches and worktrees beneath `.worktree/`; it is intentionally ignored.
 Do not commit build output, local settings, secrets or signing keys. Explain what changed
 and what you actually verified, with exact commands. CI publishes build artifacts only: no
-automatic release, deployment, privileged code execution or merge. The expected checks are
+automatic release, deployment, privileged code execution or merge. The expected checks on a contributor's pull request are
 `Native (win-x64)`, `Native (win-arm64)`, `Native (linux-x64)`, `Native (linux-arm64)`, `Verify`, `Workflow lint`,
-`Secret scan`, `Dependency review`, and both `CodeQL` jobs.
+`Secret scan`, `Dependency review`, and both `CodeQL` jobs; contributors need no local hook. The maintainer's own pull
+requests are verified by the local pre-push hook instead ([AGENTS.md](AGENTS.md) §5).
 
 Do not bypass failing security checks or silence AOT and trim warnings without investigating them.
 Do not rerun the whole build matrix locally just to duplicate hosted CI.
