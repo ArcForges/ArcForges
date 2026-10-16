@@ -74,6 +74,8 @@ public sealed class ExecutionSettings
         SecretRetention = TimeSpan.FromHours(storage.HasSecretRetentionHours ? storage.SecretRetentionHours : 24);
         KeepFailedTmp = !storage.HasKeepFailedTmp || storage.KeepFailedTmp;
         KeepFailedTmpHours = storage.HasKeepFailedTmpHours ? (int)storage.KeepFailedTmpHours : 24;
+        SwapAllowance = resources.HasSwapAllowanceBytes ? (long)Math.Min(resources.SwapAllowanceBytes, long.MaxValue) : 0;
+        AllowUnenforced = resources.HasAllowUnenforced ? resources.AllowUnenforced : null;
         SecretNames = new SecretNameMatcher(policy.Privacy?.SecretNamePatterns.Count > 0 ? policy.Privacy.SecretNamePatterns : DefaultPolicy.SecretNamePatterns);
         Pools = policy.Pools.Count > 0 ? [.. policy.Pools.Select(pool => pool.Name)] : [.. DefaultPolicy.BuiltInPools];
         AcceptAgentAssertions = policy.RetrySafety?.AcceptAgentAssertions ?? false;
@@ -142,11 +144,28 @@ public sealed class ExecutionSettings
     /// <summary><c>retry_safety.accept_agent_assertions</c>.</summary>
     public bool AcceptAgentAssertions { get; }
 
-    /// <summary>The root container's limits (03 section 5.1).</summary>
+    /// <summary><c>resources.swap_allowance_bytes</c> (default 0): Linux <c>MemorySwapMax</c> of the slice and of each attempt (03 section 5.4).</summary>
+    public long SwapAllowance { get; }
+
+    /// <summary>
+    /// <c>resources.allow_unenforced</c>, or null when the policy does not set it (03 section 8: then true on an observe-only node, so tasks
+    /// run with <c>unenforced=true</c>; false refuses every task while enforcement is missing).
+    /// </summary>
+    public bool? AllowUnenforced { get; }
+
+    /// <summary>
+    /// The root container's limits (03 section 5.1): Windows a CPU rate, a commit limit of <c>commit_factor x (C_mem - R_mem)</c> and a
+    /// notification limit at <c>B_mem</c>; Linux <c>CPUQuota</c> from the same rate, <c>MemoryHigh = B_mem</c>, the hard bound
+    /// <c>MemoryMax = C_mem - R_mem</c> and <c>MemorySwapMax = swap_allowance</c>.
+    /// </summary>
     public ArcForges.Node.Platform.RootLimits RootLimits() => new(
         (int)Math.Clamp(Math.Round((double)BudgetCpu / CapacityCpu * 10_000), 100, 10_000),
         (long)(CommitFactor * ManagedMemory),
-        ManagedMemory);
+        ManagedMemory)
+    {
+        HardMemoryBytes = ManagedMemory,
+        SwapAllowanceBytes = SwapAllowance,
+    };
 
     /// <summary>The CPU weight of a priority (03 section 5.2).</summary>
     public static int Weight(Priority priority) => priority switch

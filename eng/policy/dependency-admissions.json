@@ -217,6 +217,22 @@
       "reviewedOn": "2026-10-15"
     },
     {
+      "id": "Tmds.DBus.Protocol",
+      "version": "0.94.1",
+      "contentHash": "11YMr7FnAbL83bQmVxlhbIKHvSLxjO81D12Ej0QMSGXMDTxNA9MTOa4MQxx43nv5el/efuPHwzyrj6a5ha2gug==",
+      "nuspecSha256": "72830040b14d42de24d85be271fce22d608614360bc6bbc46762fd4a5039651a",
+      "licence": "MIT",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.Platform.Linux (SystemdManager: the client of the systemd user manager over its private socket for StartTransientUnit with file descriptors, SetUnitProperties, KillUnit, FreezeUnit, ThawUnit, ResetFailedUnit, unit state and the JobRemoved and PropertiesChanged signals), and through it arcforges (node, exec-launch, guard) and the tests. Already in the graph transitively through ArcForges.Security.Secrets (Secret Service backend) and Avalonia (AT-SPI).",
+      "source": "https://github.com/tmds/Tmds.DBus",
+      "sourceCommit": "b4a7fed0b878f74cb54f7cca84d2889af4e596ba",
+      "provenance": "nuget.org; nuspec repository commit b4a7fed (refs/heads/main of tmds/Tmds.DBus). The same version and content hash DesktopPlatform admits for ArcForges.Security.Secrets (eng/policy/dependency-policy.json at 4e20932, AF-DP-02) and that the committed locks of this repository already resolve transitively. Its only net8.0+ dependency, System.IO.Pipelines 8.0.0, is part of Microsoft.NETCore.App and pruned from the net10.0 graph.",
+      "aot": "NativeAOT compatible by its description (no reflection-based marshalling; message readers and writers are explicit). Re-verified here (AD-0003 obligation): arcforges publishes Native AOT with zero warnings on linux-x64 with the Linux platform, and the published binary runs the Linux real suite (transient units with file descriptors passed over D-Bus, freeze and kill, the guard).",
+      "reason": "AD-0005 Linux section 2: execution containers are transient systemd user units created through the user manager's D-Bus API with the AOT-compatible Tmds.DBus.Protocol. AF-EXEC-02 scope: pin it directly for the Linux platform at the version the DesktopPlatform cohort already admits.",
+      "admittedBy": "AF-EXEC-02",
+      "reviewedOn": "2026-10-16"
+    },
+    {
       "id": "xunit.v3.mtp-v2",
       "version": "4.0.1",
       "contentHash": "s88KiWwDDYgOWV3A+ViJiqCe9cLU/Rt6Gb5TfOC7Abv/HKSoj4IHVPcOQk7jPt7HhZHHEts5IuaVpB30eO5B1w==",
@@ -260,6 +276,15 @@
       "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT.",
       "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
       "reviewedOn": "2026-10-15"
+    },
+    {
+      "code": "NU1608",
+      "project": "tests/ArcForges.Node.Platform.Linux.Tests/ArcForges.Node.Platform.Linux.Tests.csproj",
+      "reference": "ArcForges.Contracts.Foundation",
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.138.1 (DesktopPlatform 4e20932) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins. The project references the arcforges host (its exec-launch, exec-stop, exit-record and guard roles run in the tests), so it carries the host's graph.",
+      "evidence": "The same graph as tests/ArcForges.Node.Platform.Windows.Tests (AF-EXEC-02 adds Tmds.DBus.Protocol 0.94.1 as a direct reference of the Linux platform, already resolved transitively at the same version): the 436-reference System.Reflection.Metadata comparison recorded for AF-NODE-01 applies unchanged. The Linux platform tests (transient units, freeze, guard) run against it in WSL2 Debian, JIT and Native AOT.",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
+      "reviewedOn": "2026-10-16"
     },
     {
       "code": "NU1608",

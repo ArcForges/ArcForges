@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    The Linux execution platform (AD-0005 Linux; architecture 04 sections 2, 3, 6 and 9; 03 sections 5 and 8): attempts as transient
+    systemd user services arcforges-a-<attempt>.service in arcforges.slice, created through the user manager's D-Bus API with
+    Tmds.DBus.Protocol (StartTransientUnit with file descriptors for stdio, the exact environment, rlimits, limits, ExecStart through
+    `arcforges node exec-launch`, ExecStop through `arcforges node exec-stop` and ExecStopPost through `arcforges node exit-record`),
+    the slice's runtime limits (SetUnitProperties), freeze and kill, recovery by unit name and exit.json, the capability report with
+    its degraded modes, `arcforges node guard` (the disk guard of every attempt unit while the node is down), and execvp-style command
+    resolution. Source-generated P/Invoke (LibraryImport) into libc; library of the AOT executable arcforges (AD-0003), so it is AOT-
+    and trim-compatible. Every type that calls Linux is marked SupportedOSPlatform("linux"); the pure parts are tested on every OS.
+  -->
+  <PropertyGroup>
+    <RootNamespace>ArcForges.Node.Platform.Linux</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
+    <PackageReference Include="ArcForges.Contracts.Node" />
+    <PackageReference Include="Tmds.DBus.Protocol" />
+    <InternalsVisibleTo Include="ArcForges.Node.Platform.Linux.Tests" />
+    <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+    <InternalsVisibleTo Include="ArcForges.ClosedLoop.Tests" />
+  </ItemGroup>
+</Project>

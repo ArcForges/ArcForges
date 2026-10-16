@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    The multi-role native executable `arcforges` (AD-0003): the CLI (ArcForges.CommandLine) and the node role
-    `arcforges node run` (ArcForges.Node.Api). Later roles (mcp serve, hook, bridge wsl, node exec-wrap) are added by their
+    The multi-role native executable `arcforges` (AD-0003): the CLI (ArcForges.CommandLine), the node role
+    `arcforges node run` (ArcForges.Node.Api) and the node's helper roles (Windows: node exec-wrap, node signal; Linux: node
+    exec-launch, node exec-stop, node exit-record, node guard). Later roles (mcp serve, hook, bridge wsl) are added by their
     delivery tasks. A CLI invocation never initializes the node's service code.
   -->
   <PropertyGroup>

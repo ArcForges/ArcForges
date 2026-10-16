@@ -3,10 +3,10 @@
   <!--
     The platform-neutral side of execution (architecture 04 sections 3-4, 06 section 5): the execution platform interface the
     node's supervisor drives, and the stable internal contract shared by the node and its helper roles (exec-wrap, exit-record,
-    exec-launch, exec-stop, node guard): the formats of exit.json, launch.json, guard.json, guard-events.jsonl, the node heartbeat
-    and the output index, the attempt file layout, and the guard's takeover rule. No operating-system calls; the Windows platform
-    is ArcForges.Node.Platform.Windows (AF-EXEC-01), the Linux platform arrives with AF-EXEC-02. Library of the AOT executable
-    arcforges (AD-0003), so it is AOT- and trim-compatible.
+    exec-launch, exec-stop, node guard): the formats of exit.json, launch.json, guard.json, guard-events.jsonl, steps.json, stop.json,
+    the node heartbeat and the output index, the attempt file layout, and the guard's takeover rule. No operating-system calls; the
+    Windows platform is ArcForges.Node.Platform.Windows (AF-EXEC-01), the Linux platform ArcForges.Node.Platform.Linux (AF-EXEC-02).
+    Library of the AOT executable arcforges (AD-0003), so it is AOT- and trim-compatible.
   -->
   <PropertyGroup>
     <RootNamespace>ArcForges.Node.Platform</RootNamespace>
@@ -16,6 +16,8 @@
   <ItemGroup>
     <PackageReference Include="ArcForges.Contracts.Node" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows" />
+    <InternalsVisibleTo Include="ArcForges.Node.Platform.Linux" />
+    <InternalsVisibleTo Include="ArcForges.Node.Platform.Linux.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
   </ItemGroup>

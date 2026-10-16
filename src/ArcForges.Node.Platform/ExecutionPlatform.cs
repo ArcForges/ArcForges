@@ -129,13 +129,35 @@ public sealed class ContainerLimits
 
     /// <summary>The active process limit when policy sets one.</summary>
     public int? ActiveProcessLimit { get; init; }
+
+    /// <summary>Linux <c>MemoryHigh</c> (<c>1.25 x mem_expected</c>, 03 section 5.2), or 0 for none.</summary>
+    public long MemoryHighBytes { get; init; }
+
+    /// <summary>Linux <c>MemoryMax</c> (<c>mem_ceiling</c>, 03 section 5.2), or 0 for none.</summary>
+    public long MemoryMaxBytes { get; init; }
+
+    /// <summary>Linux <c>MemorySwapMax</c> (<c>swap_allowance</c>, default 0), or <see langword="null"/> to leave it unset.</summary>
+    public long? SwapMaxBytes { get; init; }
+
+    /// <summary>Linux <c>TasksMax</c> (03 section 5.2: default 4096; the active process limit when policy sets one).</summary>
+    public int TasksMax { get; init; } = 4096;
 }
 
 /// <summary>The limits of the node's root container (03 section 5.1).</summary>
 /// <param name="CpuRate">The hard CPU cap in 1/100 percent of the machine (<c>round(B_cpu / C_cpu x 10000)</c>, at least 100).</param>
 /// <param name="CommitLimitBytes"><c>commit_factor x (C_mem - R_mem)</c>.</param>
-/// <param name="NotificationBytes">The soft-pressure notification limit (<c>B_mem</c>).</param>
-public sealed record RootLimits(int CpuRate, long CommitLimitBytes, long NotificationBytes);
+/// <param name="NotificationBytes">The soft-pressure notification limit (<c>B_mem</c>; Linux <c>MemoryHigh</c>).</param>
+public sealed record RootLimits(int CpuRate, long CommitLimitBytes, long NotificationBytes)
+{
+    /// <summary>Linux <c>MemoryMax</c> of the slice: the hard bound <c>C_mem - R_mem</c> (03 section 5.4); 0 leaves it unset.</summary>
+    public long HardMemoryBytes { get; init; }
+
+    /// <summary>Linux <c>MemorySwapMax</c> of the slice: <c>swap_allowance</c> (default 0).</summary>
+    public long SwapAllowanceBytes { get; init; }
+
+    /// <summary>Linux <c>TasksMax</c> of the slice (03 section 5.1: 32768).</summary>
+    public int TasksMax { get; init; } = 32_768;
+}
 
 /// <summary>How to start one attempt.</summary>
 public sealed class AttemptLaunch
@@ -258,6 +280,24 @@ public interface IAttemptHandle : IDisposable
 
     /// <summary>The node recorded the attempt: the holder may release the container and exit.</summary>
     void Acknowledge();
+
+    /// <summary>
+    /// A limit stop (04 section 6 step 4: <c>OUTPUT_LIMIT</c>, <c>DISK_LIMIT</c>, critical pressure): no graceful phase. Linux freezes the
+    /// unit and then kills it; Windows terminates the job at once. Returns what was done, for the record and the log.
+    /// </summary>
+    string StopAtLimit()
+    {
+        Terminate();
+        return "terminated at once";
+    }
+
+    /// <summary>The graceful phase with the task's <c>stop_signal</c> (Linux only; Windows ignores it).</summary>
+    GracefulOutcome RequestGracefulStop(string? stopSignal) => RequestGracefulStop();
+
+    /// <summary>Called on every enforcement cycle: a platform that observes its containers by polling does it here.</summary>
+    void Refresh()
+    {
+    }
 }
 
 /// <summary>The machine's capacity as the platform sees it (03 section 2).</summary>
@@ -304,4 +344,7 @@ public interface IExecutionPlatform : IDisposable
     /// between the record's commit and the acknowledgement). Returns true when a waiting holder was released.
     /// </summary>
     bool AcknowledgeRecorded(string nodeName, string attemptName);
+
+    /// <summary>The container name of an attempt (the Windows job name; the Linux unit name), recorded with the attempt.</summary>
+    string ContainerName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
 }

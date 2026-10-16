@@ -18,8 +18,8 @@ namespace ArcForges.Node.Api;
 /// <c>arcforges.node.v1.TaskService</c> (tasks.proto; architecture 04; AD-0006): Submit, Get, List, Wait, Attach (with STREAM stdin
 /// through Write/CloseTaskInput), ReleaseCallerBinding, Cancel, Retry (manual), Pin, PurgeTaskRecord, ReadTaskOutput, WatchTaskOutput,
 /// GetAttempt and ListAttempts. Mutations are idempotent by <c>meta.command_id</c> (24 h; the payload digest of the request's wire
-/// bytes). <c>SetTaskPriority</c>, <c>PauseTask</c>, <c>ResumeTask</c> and <c>GetTimeline</c> belong to later tasks; the generated base
-/// answers them <c>UNIMPLEMENTED</c>.
+/// bytes). <c>SetTaskPriority</c>, <c>PauseTask</c>, <c>ResumeTask</c> and <c>GetTimeline</c> belong to later tasks (pause with the pressure
+/// actions of AF-SCHED-01; the Linux platform already freezes and thaws units); the generated base answers them <c>UNIMPLEMENTED</c>.
 /// </summary>
 public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 {
@@ -53,7 +53,13 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             ?? TaskValidation.Submit(request, origin, settings, _node.NodeId.Span, _node.Capabilities);
         if (refused is null && execution.Platform is null)
         {
-            refused = NodeErrors.EnforcementUnavailable("execution on this operating system arrives with AF-EXEC-02");
+            refused = NodeErrors.EnforcementUnavailable("no execution platform could be started on this node (see the node log)");
+        }
+
+        // 03 section 8 (R-RES-008): an observe-only or partial node runs tasks unenforced unless the policy forbids it.
+        if (refused is null && execution.Unenforced && settings.AllowUnenforced == false)
+        {
+            refused = NodeErrors.EnforcementUnavailable("resources.allow_unenforced is false and this node does not enforce cpu and memory limits");
         }
 
         var spec = request.Spec;
@@ -99,6 +105,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             warnings.Add($"The agent's side-effect class {sideEffect.ToString().ToUpperInvariant()} is not accepted (retry_safety.accept_agent_assertions is false); the task is UNKNOWN.");
             sideEffect = SideEffectClass.Unknown;
             source = SideEffectSource.Default;
+        }
+
+        if (execution.Unenforced)
+        {
+            warnings.Add("This node does not enforce every resource limit (" + (NodeCapabilities.MissingReason(_node.Capabilities) ?? "observe only")
+                + "); the task runs unenforced (03 section 8).");
         }
 
         if (request.JoinExisting)

@@ -55,6 +55,16 @@ public sealed class ExitRecord
     /// <summary>Image names of the processes terminated after the root exited (one entry per process).</summary>
     public List<string> LeftoversTerminated { get; set; } = [];
 
+    /// <summary>The peak swap use of the container (Linux <c>memory.swap.peak</c>); absent where the platform has none.</summary>
+    public long? SwapPeakBytes { get; set; }
+
+    /// <summary>
+    /// Who wrote the record (additive, schema 1): <c>exit-record</c> (the unit's <c>ExecStopPost</c>), <c>unit</c> (the node, from the
+    /// properties of a failed unit whose <c>ExecStopPost</c> systemd skipped), <c>node</c> (an attempt the node ran itself), or absent
+    /// (the Windows holder).
+    /// </summary>
+    public string? RecordedBy { get; set; }
+
     /// <summary>Serializes the record (one JSON object).</summary>
     public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.ExitRecord);
 
@@ -321,6 +331,9 @@ public sealed class StepSpec
     /// <summary>The complete command line (Windows) as the program receives it.</summary>
     public string CommandLine { get; set; } = string.Empty;
 
+    /// <summary>The argument vector (Linux; <c>Argv[0]</c> as the program receives it, <see cref="Application"/> is the file executed).</summary>
+    public List<string> Argv { get; set; } = [];
+
     /// <summary>The working directory, or empty for the attempt's.</summary>
     public string WorkingDirectory { get; set; } = string.Empty;
 
@@ -377,6 +390,92 @@ public sealed class HolderSpec
     /// <summary>Parses a spec.</summary>
     public static HolderSpec Parse(string json) => JsonSerializer.Deserialize(json, HelperJsonContext.Default.HolderSpec)
         ?? throw new JsonException("The holder spec is empty.");
+}
+
+/// <summary>
+/// <c>logs/&lt;attempt&gt;/steps.json</c>, schema 1 (Linux; 04 section 3): the attempt's launch and end steps, written by the node before
+/// it starts the unit. <c>arcforges node exec-launch</c> runs the launch steps inside the unit's cgroup before it replaces itself with the
+/// command; <c>arcforges node exec-stop</c> (the unit's <c>ExecStop</c>) runs the end steps. Steps carry no environment: they inherit the
+/// unit's exact environment. Additive changes only.
+/// </summary>
+public sealed class StepsFile
+{
+    /// <summary>The format version.</summary>
+    public int Schema { get; set; } = 1;
+
+    /// <summary>The attempt ID (base32).</summary>
+    public string AttemptId { get; set; } = string.Empty;
+
+    /// <summary>Launch steps, in order.</summary>
+    public List<StepSpec> LaunchSteps { get; set; } = [];
+
+    /// <summary>End steps, in order.</summary>
+    public List<StepSpec> EndSteps { get; set; } = [];
+
+    /// <summary>The end-step budget (04 section 3: 10 s).</summary>
+    public int EndStepBudgetMs { get; set; } = 10_000;
+
+    /// <summary><c>leftover_grace</c> (04 section 3: default 5 s).</summary>
+    public int LeftoverGraceMs { get; set; } = 5_000;
+
+    /// <summary>Serializes the file.</summary>
+    public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.StepsFile);
+
+    /// <summary>Parses the file.</summary>
+    public static StepsFile Parse(string json) => JsonSerializer.Deserialize(json, HelperJsonContext.Default.StepsFile)
+        ?? throw new JsonException("steps.json is empty.");
+
+    /// <summary>Reads <paramref name="path"/>, or <see langword="null"/>.</summary>
+    public static StepsFile? TryRead(string path) => HelperFiles.TryRead(path, Parse);
+}
+
+/// <summary>What one end step did (<c>stop.json</c>).</summary>
+public sealed class StepOutcome
+{
+    /// <summary>The step's name.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary><c>exited</c>, <c>failed</c>, <c>timed_out</c>, <c>not_started</c> or <c>skipped</c> (the budget was spent).</summary>
+    public string Outcome { get; set; } = string.Empty;
+
+    /// <summary>The step's exit code when it exited.</summary>
+    public int? ExitCode { get; set; }
+
+    /// <summary>How long it ran.</summary>
+    public long ElapsedMs { get; set; }
+}
+
+/// <summary>
+/// <c>logs/&lt;attempt&gt;/stop.json</c>, schema 1 (Linux): written by <c>arcforges node exec-stop</c> after the end steps ran and
+/// <c>leftover_grace</c> passed, while the unit's remaining processes still run; <c>exit-record</c> copies the leftovers into
+/// <c>exit.json</c> after systemd stopped them. Additive changes only.
+/// </summary>
+public sealed class StopRecord
+{
+    /// <summary>The format version.</summary>
+    public int Schema { get; set; } = 1;
+
+    /// <summary>The attempt ID (base32).</summary>
+    public string AttemptId { get; set; } = string.Empty;
+
+    /// <summary>The end steps and what they did.</summary>
+    public List<StepOutcome> EndSteps { get; set; } = [];
+
+    /// <summary>Image names of the processes still in the unit after <c>leftover_grace</c> (systemd stops them next).</summary>
+    public List<string> Leftovers { get; set; } = [];
+
+    /// <summary>When it was written (RFC 3339 UTC).</summary>
+    public string RecordedAt { get; set; } = string.Empty;
+
+    /// <summary>Serializes the record.</summary>
+    public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.StopRecord);
+
+    /// <summary>Parses a record.</summary>
+    public static StopRecord Parse(string json) => JsonSerializer.Deserialize(json, HelperJsonContext.Default.StopRecord)
+        ?? throw new JsonException("stop.json is empty.");
+
+    /// <summary>Reads <paramref name="path"/>, or <see langword="null"/>.</summary>
+    public static StopRecord? TryRead(string path) => HelperFiles.TryRead(path, Parse);
 }
 
 /// <summary>A line the holder writes to the node on its standard output while the node listens.</summary>
@@ -462,4 +561,6 @@ public static class HelperFiles
 [JsonSerializable(typeof(NodeHeartbeat))]
 [JsonSerializable(typeof(HolderSpec))]
 [JsonSerializable(typeof(HolderReport))]
+[JsonSerializable(typeof(StepsFile))]
+[JsonSerializable(typeof(StopRecord))]
 internal sealed partial class HelperJsonContext : JsonSerializerContext;

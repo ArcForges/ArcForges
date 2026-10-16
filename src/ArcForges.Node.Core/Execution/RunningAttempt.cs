@@ -66,6 +66,9 @@ public sealed class RunningAttempt : IDisposable
     /// <summary><c>cancel_grace_ms</c>.</summary>
     public TimeSpan CancelGrace { get; internal set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary><c>resources.stop_signal</c> (Linux; default SIGTERM).</summary>
+    public string? StopSignal { get; internal set; }
+
     /// <summary>Recovered after a node restart.</summary>
     public bool NodeGap { get; internal set; }
 

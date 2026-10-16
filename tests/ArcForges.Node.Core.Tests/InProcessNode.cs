@@ -51,8 +51,22 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>Launch and end steps the node's attempts get (synthetic steps in tests).</summary>
     public ILaunchStepProvider? Steps { get; }
 
-    /// <summary>The lifecycle state a started node reaches: READY with the Windows job platform, DEGRADED (observe-only) elsewhere.</summary>
-    public static NodeLifecycleState ExpectedState => OperatingSystem.IsWindows() ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded;
+    /// <summary>
+    /// The lifecycle state a started node reaches: READY with the Windows job platform, and on Linux with a user manager that delegates
+    /// cpu, memory and pids; DEGRADED (observe only) otherwise (a hosted runner without a user manager).
+    /// </summary>
+    public static NodeLifecycleState ExpectedState => OperatingSystem.IsWindows() || ArcForges.Tests.SystemdTestEnvironment.FullyEnforced
+        ? NodeLifecycleState.Ready
+        : NodeLifecycleState.Degraded;
+
+    /// <summary>Linux: the user manager's address (an absent one runs the node observe-only).</summary>
+    public string? SystemdAddress { get; set; }
+
+    /// <summary>Linux: the controllers treated as delegated (simulated missing delegation).</summary>
+    public IReadOnlyCollection<string>? LinuxControllers { get; set; }
+
+    /// <summary>The node's own slice on Linux (16 section 4).</summary>
+    public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
 
     /// <summary>The <c>arcforges</c> executable whose helper roles the node starts: <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
     public static string HelperExecutable => Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH") is { Length: > 0 } configured
@@ -115,6 +129,9 @@ internal sealed class InProcessNode : IAsyncDisposable
             Error = TextWriter.Null,
             HelperExecutable = HelperExecutable,
             LaunchSteps = Steps,
+            LinuxSlice = Slice,
+            SystemdAddress = SystemdAddress,
+            LinuxControllers = LinuxControllers,
         };
         var stop = _stop.Token;
         _run = Task.Run(() => NodeHost.RunAsync(options, stop));
@@ -180,6 +197,11 @@ internal sealed class InProcessNode : IAsyncDisposable
                     // Attempts outlive a stopped node under their holders; the fixture ends them and fails on anything left (16 section 4).
                     leftovers = ExecutionCleanup.Run(store, _childrenBefore);
                 }
+                else
+                {
+                    // Attempts outlive a stopped node as transient units: the fixture stops the node's units and slice and fails on anything left.
+                    leftovers = ArcForges.Tests.SystemdTestEnvironment.Cleanup(Slice, AttemptNames(store));
+                }
 
                 using var keys = new NodeDataKeyRing(store, SecretStore(DataRoot));
                 keys.DeleteKeys();
@@ -208,6 +230,20 @@ internal sealed class InProcessNode : IAsyncDisposable
 
         Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
     }
+
+    /// <summary>The attempts of the store (their unit names on Linux).</summary>
+    public static List<string> AttemptNames(NodeStore store) => store.Read(reader =>
+    {
+        var names = new List<string>();
+        using var command = reader.CreateCommand("SELECT attempt_id FROM attempt;");
+        using var rows = command.ExecuteReader();
+        while (rows.Read())
+        {
+            names.Add(IdText.Format((byte[])rows.GetValue(0)));
+        }
+
+        return names;
+    });
 
     /// <summary>Inserts a job row (jobs have no producers in this build; their runners arrive with later tasks).</summary>
     public static byte[] SeedJob(StoreTransaction transaction, JobKind kind, JobState state, long createdAt)
