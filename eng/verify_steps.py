@@ -3,11 +3,13 @@
 
 The full profile is what the hosted `Native (win-x64)` and `Native (linux-x64)` jobs of .github/workflows/ci.yml and the
 `Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, on this workstation:
-- lane `win` (Windows, in <main checkout>/.worktree/_verify): locked restore, format, Release build with analyzers as
-  errors, the ci suite, the store schema check, Native AOT publish of every win-x64 component with zero warnings (in the
-  Visual Studio developer environment), the tools suite against the native TestLoad and Bench, the closed-loop suite
-  against the native host, the size and store-growth gates, packaging.
-- lane `wsl` (WSL Debian, in ~/.cache/arcforges-verify/ArcForges): the same for linux-x64; format runs once, on Windows.
+- lane `win` (Windows, in <main checkout>/.worktree/_verify): locked restore, Release build with analyzers as errors,
+  the ci suite, the store schema check, Native AOT publish of every win-x64 component with zero warnings (in the Visual
+  Studio developer environment), the tools suite against the native TestLoad and Bench, the closed-loop suite against
+  the native host, the size and store-growth gates, packaging.
+- lane `wsl` (WSL Debian, in ~/.cache/arcforges-verify/ArcForges): the same for linux-x64, plus the format check, which
+  runs once, here, as hosted CI runs it on linux-x64 (measured warm: 29 s here against 47 s on Windows, where the win
+  lane is the longer one).
 - lanes `win-base` and `wsl-base`: the Native AOT host of the merge base, for the startup gate, in
   <main checkout>/.worktree/_verify-base and ~/.cache/arcforges-verify/ArcForges-base; rebuilt only when the merge base
   changed since the last run.
@@ -66,8 +68,8 @@ FINGERPRINT = {
 # The environment of ci.yml, without CI=true (see above).
 ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1", "AVALONIA_TELEMETRY_OPTOUT": "1"}
 
-# Timeouts are about three to five times the durations measured on this workstation (18 logical processors, Windows and
-# WSL lanes concurrently; cold and warm runs in PR-BODY.md), with a floor of five minutes.
+# Timeouts are five to ten times the cold durations measured on this workstation (18 logical processors, Windows and WSL
+# lanes concurrently, fresh verification checkouts), with a floor of five minutes.
 
 # Paths of the merge base's host.
 WIN_BASE = "(Join-Path (Split-Path (git rev-parse --path-format=absolute --git-common-dir) -Parent) '.worktree/_verify-base')"
@@ -171,47 +173,47 @@ LINUX_HOST = f"{WSL_BASE}/artifacts/publish/{RID_LINUX}/host/arcforges"
 STEPS = [
     # ci.yml, Native (win-x64)
     win("win-restore", ["dotnet", "restore", "ArcForges.slnx", "--locked-mode"], 600),
-    win("win-format", ["dotnet", "format", "ArcForges.slnx", "--verify-no-changes", "--no-restore"], 900),
-    win("win-build", ["dotnet", "build", "ArcForges.slnx", "-c", "Release", "--no-restore"], 1800),
-    win("win-ci", tests("ci"), 3600),
-    win("win-store-schema", tests("store-schema"), 600),
+    win("win-build", ["dotnet", "build", "ArcForges.slnx", "-c", "Release", "--no-restore"], 900),
+    win("win-ci", tests("ci"), 1200),
+    win("win-store-schema", tests("store-schema"), 300),
     win("win-publish", pwsh(f"./eng/publish.ps1 -RuntimeIdentifier {RID_WIN} "
-                            "-Component host,supervisor,desktop,testload,bench -NoRestore", devshell=True), 2400),
+                            "-Component host,supervisor,desktop,testload,bench -NoRestore", devshell=True), 900),
     win("win-tools-native", pwsh(
         f"$p = Join-Path $PWD 'artifacts/publish/{RID_WIN}'; "
         "$env:ARCFORGES_TESTLOAD_PATH = Join-Path $p 'testload/arcforges-testload.exe'; "
         "$env:ARCFORGES_BENCH_PATH = Join-Path $p 'bench/arcforges-bench.exe'; "
-        "./eng/test.ps1 -Suite tools -NoBuild"), 900),
-    win("win-closed-loop-native", tests("closed-loop", native=True), 2400),
-    win("win-bench", pwsh(f"./eng/bench.ps1 -RuntimeIdentifier {RID_WIN}"), 1800),
-    win("win-package", pwsh(f"./eng/package.ps1 -RuntimeIdentifier {RID_WIN}"), 600),
+        "./eng/test.ps1 -Suite tools -NoBuild"), 300),
+    win("win-closed-loop-native", tests("closed-loop", native=True), 600),
+    win("win-bench", pwsh(f"./eng/bench.ps1 -RuntimeIdentifier {RID_WIN}"), 600),
+    win("win-package", pwsh(f"./eng/package.ps1 -RuntimeIdentifier {RID_WIN}"), 300),
     # ci.yml, Native (linux-x64)
     wsl("wsl-restore", "dotnet restore ArcForges.slnx --locked-mode", 600),
-    wsl("wsl-build", "dotnet build ArcForges.slnx -c Release --no-restore", 1800),
-    wsl("wsl-ci", linux_tests("ci"), 3600),
-    wsl("wsl-store-schema", linux_tests("store-schema"), 600),
-    wsl("wsl-publish", "python eng/verify_linux.py publish host desktop testload bench", 2400),
+    wsl("wsl-format", "dotnet format ArcForges.slnx --verify-no-changes --no-restore", 600),
+    wsl("wsl-build", "dotnet build ArcForges.slnx -c Release --no-restore", 900),
+    wsl("wsl-ci", linux_tests("ci"), 1200),
+    wsl("wsl-store-schema", linux_tests("store-schema"), 300),
+    wsl("wsl-publish", "python eng/verify_linux.py publish host desktop testload bench", 900),
     wsl("wsl-tools-native", f"set -e; export ARCFORGES_TESTLOAD_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/testload/arcforges-testload\" "
         f"ARCFORGES_BENCH_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/bench/arcforges-bench\"; "
-        "bash eng/test.sh --suite tools --no-build", 900),
-    wsl("wsl-closed-loop-native", linux_tests("closed-loop", native=True), 2400),
-    wsl("wsl-bench", "python eng/verify_linux.py bench", 1800),
-    wsl("wsl-package", "python eng/verify_linux.py package", 600),
+        "bash eng/test.sh --suite tools --no-build", 300),
+    wsl("wsl-closed-loop-native", linux_tests("closed-loop", native=True), 600),
+    wsl("wsl-bench", "python eng/verify_linux.py bench", 600),
+    wsl("wsl-package", "python eng/verify_linux.py package", 300),
     # The merge base's host for the startup gate
-    win("win-base-host", pwsh(WIN_BASE_HOST, devshell=True), 2400, lane="win-base"),
-    wsl("wsl-base-host", WSL_BASE_HOST, 2400, lane="wsl-base"),
+    win("win-base-host", pwsh(WIN_BASE_HOST, devshell=True), 1200, lane="win-base"),
+    wsl("wsl-base-host", WSL_BASE_HOST, 1200, lane="wsl-base"),
     # security.yml, Secret scan (over the pushed range) and Workflow lint (when a workflow changed)
-    wsl("secret-scan", SECRET_SCAN, 600, lane="scan", profiles=frozenset({"full", "docs"})),
+    wsl("secret-scan", SECRET_SCAN, 300, lane="scan", profiles=frozenset({"full", "docs"})),
     wsl("actionlint", ACTIONLINT, 300, lane="actionlint", when=workflows_changed),
     # Exclusive phase: timing-, CPU-share- and memory-sensitive tests and the startup gates, alone
-    win("win-exclusive", tests("exclusive"), 1800, exclusive=True),
-    win("win-exclusive-native", tests("exclusive", native=True), 1800, exclusive=True),
-    wsl("wsl-exclusive", linux_tests("exclusive"), 1800, exclusive=True),
-    wsl("wsl-exclusive-native", linux_tests("exclusive", native=True), 1800, exclusive=True),
+    win("win-exclusive", tests("exclusive"), 600, exclusive=True),
+    win("win-exclusive-native", tests("exclusive", native=True), 600, exclusive=True),
+    wsl("wsl-exclusive", linux_tests("exclusive"), 600, exclusive=True),
+    wsl("wsl-exclusive-native", linux_tests("exclusive", native=True), 600, exclusive=True),
     win("win-startup-gate", pwsh(
         f"./eng/compare-startup.ps1 -RuntimeIdentifier {RID_WIN} "
         f"-BaselineExecutable (Join-Path {WIN_BASE} 'artifacts/publish/{RID_WIN}/host/arcforges.exe') "
-        f"-BaselineSource '{BASE_SOURCE}'"), 600, exclusive=True),
+        f"-BaselineSource '{BASE_SOURCE}'"), 300, exclusive=True),
     wsl("wsl-startup-gate", f"python eng/verify_linux.py compare-startup \"{LINUX_HOST}\" --baseline-source '{BASE_SOURCE}'",
-        600, exclusive=True),
+        300, exclusive=True),
 ]

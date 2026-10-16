@@ -123,11 +123,11 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
 - **What runs.** Each pushed commit, never the working tree: on Windows in `.worktree/_verify` of the main checkout, in
   WSL Debian in `~/.cache/arcforges-verify/ArcForges`, both checked out at the commit; ignored build output stays, so
   builds are incremental. The steps are in `eng/verify_steps.py`.
-  - `full` profile, lanes concurrently: `win` (locked restore, `dotnet format --verify-no-changes`, Release build with
-    analyzers as errors, the `ci` suite, the store schema check, Native AOT publish of host, supervisor, desktop,
-    testload and bench for win-x64 with zero warnings in the Visual Studio developer environment, the `tools` suite
-    against the native TestLoad and Bench, the `closed-loop` suite against the native host, `eng/bench.ps1`,
-    `eng/package.ps1`); `wsl` (the same for linux-x64, without format); `win-base` and `wsl-base` (the merge base's
+  - `full` profile, lanes concurrently: `win` (locked restore, Release build with analyzers as errors, the `ci` suite,
+    the store schema check, Native AOT publish of host, supervisor, desktop, testload and bench for win-x64 with zero
+    warnings in the Visual Studio developer environment, the `tools` suite against the native TestLoad and Bench, the
+    `closed-loop` suite against the native host, `eng/bench.ps1`, `eng/package.ps1`); `wsl` (the same for linux-x64,
+    plus `dotnet format --verify-no-changes`, once, where hosted CI runs it); `win-base` and `wsl-base` (the merge base's
     Native AOT host in `.worktree/_verify-base` and `~/.cache/arcforges-verify/ArcForges-base`, rebuilt only when the
     merge base changed); `scan` (the pinned gitleaks image over the pushed range with `.gitleaksignore`, in WSL Docker
     without network); `actionlint` when `.github/workflows/**` changed. Then, alone: the `exclusive` suite on the JIT
