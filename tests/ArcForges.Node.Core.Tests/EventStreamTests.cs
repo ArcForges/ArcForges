@@ -296,6 +296,8 @@ public sealed class EventStreamTests
         await WaitAsync(() => node.Runtime.Hub.Overflows >= 1, TimeSpan.FromSeconds(60));
         var overflowAt = clock.Elapsed;
         var received = 0;
+        // The reader starts reading again at once, well inside the settle window, so only the typed overflow is acceptable here.
+        var held = clock.Elapsed - overflowAt;
         var exception = await Assert.ThrowsAsync<RpcException>(async () =>
         {
             while (await call.ResponseStream.MoveNext(ct))
@@ -303,12 +305,11 @@ public sealed class EventStreamTests
                 received++;
             }
         });
-        var held = clock.Elapsed - overflowAt;
         await emitting;
         Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
 
         // What the transport already carried, then RESOURCE_EXHAUSTED with the x-af-stream-end trailer, far before the end.
-        AssertSettleBranch(held, () => IsTypedOverflow(exception), () => !IsTypedOverflow(exception), $"held {held.TotalMilliseconds:0} ms; {exception.Status}");
+        Assert.True(IsTypedOverflow(exception), $"A reader that reads again {held.TotalMilliseconds:0} ms after the overflow must get the typed overflow; got {exception.Status}");
         Assert.True(received < events, $"{received} of {events} frames arrived before the overflow");
         Assert.Equal(1, node.Runtime.Hub.Overflows);
         await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
