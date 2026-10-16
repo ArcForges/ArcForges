@@ -26,7 +26,7 @@ any change. They are binding; this file summarizes them and adds the repository 
 | Author | Targeted and affected tests, affected real Windows and WSL2 Debian tests, build, format, analyzers and Native AOT publish of affected components. Records exact commands and results in the PR. |
 | Reviewer (one, after the author) | Full diff review at the exact head against the design references and acceptance criteria; re-runs only doubted tests, changed scripts or workflows, or real-environment tests the author could not run. |
 | Local verification (pre-push hook, the owner merge gate) | The CI-equivalent profile of every pushed commit on Windows and WSL2 Debian ([§5](#5-local-verification-ad-0016)). For the owner's (`deku2026`) PRs, its `arcforges-verify: PASS` line at the pushed head plus the review is the merge gate; hosted validation is skipped for them. |
-| Hosted CI (external PRs, ARM64, weekly security) | The merge gate of PRs by anyone else (Dependabot included), the merge queue and manual dispatch: build, analyzers, format, tests, AOT publish on win-x64, win-arm64, linux-x64 and linux-arm64, size and startup gates, packaging, workflow lint, secret scan, dependency review, CodeQL. The Security workflow also runs weekly. Push to main runs nothing. |
+| Hosted CI (external PRs, ARM64, weekly security) | The merge gate of PRs by anyone else (Dependabot included), the merge queue and manual dispatch: build, analyzers, format, tests, AOT publish on win-x64, win-arm64, linux-x64 and linux-arm64, size and startup gates, packaging, workflow lint, secret scan, dependency review, CodeQL. CodeQL and the secret scan also run weekly. Push to main runs nothing. |
 
 - Tests follow [16-testing-strategy](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/16-testing-strategy.md).
   Fakes are allowed only where the task's `fakes_allowed` lists them, never for the behaviour under test.
@@ -104,7 +104,7 @@ any change. They are binding; this file summarizes them and adds the repository 
 - Keep the CI check names stable: `Native (<rid>)` for win-x64, win-arm64, linux-x64 and
   linux-arm64, `Verify`, `Workflow lint`, `Secret scan`,
   `Dependency review`, `CodeQL (csharp)`, `CodeQL (actions)`. They run for external PRs, the merge queue and manual
-  dispatch (Security also weekly) and show as skipped on the owner's PRs. No status check is required on this
+  dispatch (CodeQL and the secret scan also weekly) and show as skipped on the owner's PRs. No status check is required on this
   repository. `Verify` requires every `Native (<rid>)` job, not the Security jobs or code scanning's separate `CodeQL`
   alert check: an external PR merges only when none of them is failing.
 
@@ -137,7 +137,7 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
     (and not `THIRD_PARTY_NOTICES.md`, which the desktop ships): the secret scan.
   - WSL Debian has no PowerShell, so `eng/verify_linux.py` does there what `eng/publish.ps1`, `bench.ps1`,
     `compare-startup.ps1` and `package.ps1` do; keep them in step. The `tool=pwsh` tests run on Windows only.
-  - Not reproduced: CodeQL and dependency review (GitHub services; external PRs and the weekly schedule), win-arm64
+  - Not reproduced: CodeQL (external PRs and weekly) and dependency review (external PRs), GitHub services; win-arm64
     and linux-arm64 (removed from the owner path by the user's instruction; a manual `workflow_dispatch` runs them).
 - **Prerequisites** (installs are the user's): Windows with the .NET SDK selected by `global.json`, PowerShell 7,
   Python and Visual Studio with the MSVC x64 tools; WSL Debian with the same .NET SDK, clang and zlib, Python, the

@@ -61,9 +61,12 @@ foreach ($name in $Component) {
 }
 
 # The install layout puts arcforges-supervisor.exe beside arcforges.exe (13 section 3.1); the auto-start finds it there.
+# Only a run that published the host or the supervisor copies it, so a concurrent run of other components never writes
+# into a host directory that is being published.
 $hostDirectory = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/host"
 $supervisorBinary = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/supervisor/arcforges-supervisor.exe"
-if ((Test-Path -LiteralPath $hostDirectory) -and (Test-Path -LiteralPath $supervisorBinary)) {
+if (($Component -contains 'host' -or $Component -contains 'supervisor') -and
+  (Test-Path -LiteralPath $hostDirectory) -and (Test-Path -LiteralPath $supervisorBinary)) {
   Copy-Item -LiteralPath $supervisorBinary -Destination $hostDirectory -Force
   Write-Host "==> copied arcforges-supervisor.exe beside arcforges.exe in $hostDirectory"
 }

@@ -405,10 +405,18 @@ def upstream_ref(remote: str) -> str:
 
 def plan(repo: Repository, sha: str, remote: str) -> tuple[str, str, list[str], list[Step]]:
     upstream = upstream_ref(remote)
+    # A stale remote-tracking branch would give an older base, so it is refreshed first (pushing is online anyway).
+    branch = upstream.removeprefix(f"refs/remotes/{remote}/")
+    fetched = subprocess.run(["git", "fetch", "--quiet", "--no-tags", remote, f"+refs/heads/{branch}:{upstream}"],
+                             capture_output=True, text=True)
+    if fetched.returncode != 0:
+        raise VerifyError(f"cannot refresh {upstream} from {remote}: {fetched.stderr.strip()}; check the network "
+                          "access to the remote and push again")
     if not git("rev-parse", "--verify", "--quiet", upstream, check=False):
-        raise VerifyError(f"{upstream} is missing; run `git fetch {remote}` first")
+        raise VerifyError(f"{upstream} is missing after fetching {remote}")
     base = git("merge-base", sha, upstream)
-    changed = [line for line in git("diff", "--name-only", base, sha).splitlines() if line]
+    # Without renames a moved file lists both paths, so a rename out of a code directory cannot select a lighter profile.
+    changed = [line for line in git("diff", "--name-only", "--no-renames", base, sha).splitlines() if line]
     profile = repo.steps.select_profile(changed)
     steps = [s for s in repo.steps.STEPS if profile in s.profiles and (s.when is None or s.when(changed))]
     ids = [s.id for s in steps]

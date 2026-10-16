@@ -28,7 +28,7 @@ Differences from the hosted jobs:
   on its runner.
 - `CI` is not set: on this repository it only turns on locked restores, which every restore here requests explicitly,
   and deterministic source paths.
-- Not reproduced: CodeQL and dependency review (GitHub services; external PRs and the weekly schedule run them),
+- Not reproduced: CodeQL (external PRs and the weekly schedule) and dependency review (external PRs), GitHub services;
   win-arm64 and linux-arm64 (removed from the owner path by the user's instruction), the artifact uploads.
 Only Markdown outside the code, test, tool, script and workflow directories (and not THIRD_PARTY_NOTICES.md, which the
 desktop publish ships) selects the `docs` profile: the secret scan alone.
@@ -95,9 +95,9 @@ def linux_tests(*suites: str, native: bool = False) -> str:
 
 # Native AOT publish with zero warnings, in two concurrent groups that share no project (host and bench both build
 # ArcForges.Node.Store, so they stay in one group); measured on linux-x64 for a new commit: 85 s in sequence, 56 s in two
-# groups. On Windows each group is one eng/publish.ps1 run with its own log; the supervisor is copied beside the host
-# once both have ended, as eng/publish.ps1 does.
-PUBLISH_GROUPS_WIN = ("host,bench", "supervisor,desktop,testload")
+# groups. On Windows each group is one eng/publish.ps1 run with its own log; the supervisor is in the host's group, whose
+# run copies it beside the host (eng/publish.ps1 copies only in a run that published one of them).
+PUBLISH_GROUPS_WIN = ("host,supervisor,bench", "desktop,testload")
 PUBLISH_GROUPS_LINUX = ("host,bench", "desktop,testload")
 WIN_PUBLISH = (
     "$root = $PWD.Path; "
@@ -109,10 +109,7 @@ WIN_PUBLISH = (
     "[pscustomobject]@{ Group = $_; Exit = $LASTEXITCODE; Log = $log } }; "
     "foreach ($result in $results) { Get-Content -LiteralPath $result.Log | Write-Host; "
     "Write-Host \"==> group $($result.Group): exit $($result.Exit)\" }; "
-    "if (@($results | Where-Object Exit -ne 0).Count -gt 0) { throw 'Native AOT publish failed.' }; "
-    f"$publish = Join-Path $root 'artifacts/publish/{RID_WIN}'; "
-    "Copy-Item -LiteralPath (Join-Path $publish 'supervisor/arcforges-supervisor.exe') -Destination (Join-Path $publish 'host') -Force; "
-    "Write-Host '==> copied arcforges-supervisor.exe beside arcforges.exe'; $global:LASTEXITCODE = 0"
+    "if (@($results | Where-Object Exit -ne 0).Count -gt 0) { throw 'Native AOT publish failed.' }; $global:LASTEXITCODE = 0"
 )
 
 # The merge base's host, Native AOT, built in its own persistent checkout with the base's own SDK (global.json) and
@@ -190,7 +187,7 @@ def wsl(step_id: str, cmd: str, timeout: int, **options) -> Step:
     return Step(step_id, "wsl", cmd, timeout=timeout, env=ENV, **options)
 
 
-LINUX_HOST = f"{WSL_BASE}/artifacts/publish/{RID_LINUX}/host/arcforges"
+LINUX_BASE_HOST = f"{WSL_BASE}/artifacts/publish/{RID_LINUX}/host/arcforges"
 
 STEPS = [
     # ci.yml, Native (win-x64)
@@ -235,6 +232,6 @@ STEPS = [
         f"./eng/compare-startup.ps1 -RuntimeIdentifier {RID_WIN} "
         f"-BaselineExecutable (Join-Path {WIN_BASE} 'artifacts/publish/{RID_WIN}/host/arcforges.exe') "
         f"-BaselineSource '{BASE_SOURCE}'"), 300, exclusive=True),
-    wsl("wsl-startup-gate", f"python eng/verify_linux.py compare-startup \"{LINUX_HOST}\" --baseline-source '{BASE_SOURCE}'",
+    wsl("wsl-startup-gate", f"python eng/verify_linux.py compare-startup \"{LINUX_BASE_HOST}\" --baseline-source '{BASE_SOURCE}'",
         300, exclusive=True),
 ]
