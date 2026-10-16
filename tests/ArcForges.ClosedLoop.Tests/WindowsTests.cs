@@ -70,7 +70,8 @@ public sealed partial class WindowsTests
         using (ready)
         {
             Assert.True(ready!.WaitOne(0));
-            Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+            var stopped = await node.CliAsync("node", "stop");
+            Assert.True(stopped.ExitCode == 0, stopped.ToString());
             Assert.True(process.WaitForExit(TimeSpan.FromSeconds(15)));
             Assert.False(ready.WaitOne(0));
         }
@@ -119,7 +120,8 @@ public sealed partial class WindowsTests
                 Assert.Equal(IntPtr.Zero, nodeProcess.MainWindowHandle);
             }
 
-            Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+            var stopped = await node.CliAsync("node", "stop");
+            Assert.True(stopped.ExitCode == 0, stopped.ToString());
             Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
             Assert.Equal(0, supervisor.ExitCode);
             Assert.True(AutostartRegistration.Unregister(testKey));
@@ -163,7 +165,8 @@ public sealed partial class WindowsTests
         var log = File.ReadAllText(node.SupervisorLog);
         Assert.Contains("node.crashed exitCode=", log, StringComparison.Ordinal);
         Assert.Contains("restartInMs=2000", log, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+        var stopped = await node.CliAsync("node", "stop");
+        Assert.True(stopped.ExitCode == 0, stopped.ToString());
         Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
         Assert.Equal(0, supervisor.ExitCode);
     }

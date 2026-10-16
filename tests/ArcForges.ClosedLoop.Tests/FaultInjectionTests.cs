@@ -139,7 +139,7 @@ public sealed class FaultInjectionTests
         var nodePid = node.NodePid();
         var marker = Path.Combine(node.Root, "m.txt");
         var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker)).Stdout).Trim();
-        await TestNode.WaitAsync(() => File.Exists(marker) && File.ReadAllText(marker).Length > 0, Bound, "the attempt to run");
+        await TestNode.WaitAsync(() => TestNode.ReadShared(marker).Length > 0, Bound, "the attempt to run");
 
         supervisor.Kill();
         await supervisor.WaitForExitAsync(Ct);

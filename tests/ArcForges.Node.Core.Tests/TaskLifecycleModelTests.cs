@@ -98,6 +98,19 @@ public sealed class TaskLifecycleModelTests
     private static async Task RunAsync(Operation[] operations)
     {
         await using var node = await InProcessNode.Create().StartAsync();
+        try
+        {
+            await RunAsync(node, operations);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // What the node recorded about its attempts, for a failure that only load reproduces.
+            throw new InvalidOperationException(exception.Message + Environment.NewLine + Diagnose(node), exception);
+        }
+    }
+
+    private static async Task RunAsync(InProcessNode node, Operation[] operations)
+    {
         await using var channel = await node.ChannelAsync();
         var cursor = await StartCursorAsync(channel);
         var model = new List<Modelled>();
@@ -169,6 +182,29 @@ public sealed class TaskLifecycleModelTests
         }
 
         AssertStateMachines(await EventsSinceAsync(channel, cursor));
+    }
+
+    /// <summary>The node's execution log and each attempt's files (exit record, launch record), for a failure message.</summary>
+    private static string Diagnose(InProcessNode node)
+    {
+        var text = new System.Text.StringBuilder();
+        var log = Path.Combine(node.DataRoot, "logs", "node", "node.log");
+        if (File.Exists(log))
+        {
+            text.AppendLine("node log (execution):");
+            foreach (var line in Tasks.ReadShared(log).Split('\n').Where(line => line.Contains("\"execution.", StringComparison.Ordinal)).TakeLast(40))
+            {
+                text.AppendLine("  " + line.TrimEnd());
+            }
+        }
+
+        foreach (var attempt in InProcessNode.AttemptNames(node.Runtime.Store))
+        {
+            var files = new ArcForges.Node.Platform.AttemptFiles(node.DataRoot, attempt);
+            text.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"attempt {attempt}: exit {Tasks.ReadShared(files.ExitPath).Trim()}; launch {Tasks.ReadShared(files.LaunchPath).Trim()}");
+        }
+
+        return text.ToString();
     }
 
     /// <summary>What the model knows of a task: its workload (an exit code, or null for one that runs until cancelled), state and attempts.</summary>
