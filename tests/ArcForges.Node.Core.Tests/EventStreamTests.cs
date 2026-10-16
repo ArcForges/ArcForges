@@ -401,7 +401,9 @@ public sealed class EventStreamTests
     /// sees a disconnect, resumes from its cursor and catches up from the journal. The node still overflowed exactly once and never held
     /// more than the buffer.
     /// </summary>
-    [Fact(Timeout = 240_000)]
+    // isolation=exclusive: which branch the transport takes depends on the 15 s settle window's timing (held 3 s beyond it).
+    [Fact(Timeout = 240_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AReaderStalledBeyondTheSettleWindowResumesFromItsCursorAndConverges()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
