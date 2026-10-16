@@ -33,7 +33,10 @@ public sealed class LinuxTests
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Path.Combine(node.DataRoot, "node.lock")));
     }
 
-    [Fact(Timeout = 180_000)]
+    // isolation=exclusive: the CLI waits at most 5 s for an auto-started node to become ready (a JIT node under parallel load can take longer:
+    // measured, `status` exit 75 "the node did not become ready within 5 s" beside a Windows stress run).
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheUserUnitAutoStartsTheNodeAndRestartsItAfterACrash()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
