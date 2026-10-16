@@ -13,7 +13,9 @@ namespace ArcForges.ClosedLoop.Tests;
 [Trait("loop", "local")]
 public sealed class NodeLifecycleTests
 {
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the CLI waits at most 5 s for an auto-started node to become ready (a JIT node under parallel load can take longer).
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task StatusAutoStartsTheNodeAndReportsIt()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

@@ -313,25 +313,27 @@ public sealed class TaskControlTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await using var node = await InProcessNode.Create().StartAsync();
         var longMarker = Path.Combine(node.Root, "long.txt");
-        var shortMarker = Path.Combine(node.Root, "short.txt");
+
+        // The short attempt runs until the test writes the go file once the node stopped, so it cannot finish before the stop however
+        // slowly the test runs (a fixed 2 s hold raced with it under load).
+        var go = Path.Combine(node.Root, "go");
         Id longId, shortId, shortAttempt;
         await using (var channel = await node.ChannelAsync())
         {
             longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", longMarker));
-            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "2000", "--marker", shortMarker));
+            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.WaitForFile(go)));
             await Tasks.RunningAsync(channel, longId);
             shortAttempt = (await Tasks.RunningAsync(channel, shortId)).AttemptId;
 
             // RUNNING records the root process; its marker follows once the workload started.
-            await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0 && Tasks.Marker(shortMarker).Count > 0, Tasks.Bound, "the workloads to start");
+            await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0, Tasks.Bound, "the workload to start");
         }
 
         await node.StopAsync();
+        File.WriteAllText(go, "go");
         var longProcess = Tasks.Processes(longMarker).Single();
         Assert.True(longProcess.IsRunning(), "The attempt keeps running while the node is stopped.");
-        var shortProcess = Tasks.Processes(shortMarker).Single();
-        await Tasks.WaitForAsync(() => !shortProcess.IsRunning(), TimeSpan.FromSeconds(10), "the short task to finish while the node is down");
-        await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath), TimeSpan.FromSeconds(10), "its holder to record the exit");
+        await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath), Tasks.Bound, "the short attempt to finish while the node is down, recorded by its holder");
 
         await node.StartAsync();
         await using var after = await node.ChannelAsync();

@@ -324,16 +324,21 @@ public sealed class LinuxTaskTests
         await using var node = await InProcessNode.Create().StartAsync();
         Id longId, shortId, longAttempt, shortAttempt;
         var longPid = Path.Combine(node.Root, "long.txt");
+
+        // Both attempts wait for the go file the test writes once the node stopped, so neither can finish before the stop.
+        var go = Path.Combine(node.Root, "go");
         await using (var channel = await node.ChannelAsync())
         {
-            longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "echo $$ > \"$1\"; echo before; sleep 2; echo while-down; exec sleep 60", "sh", longPid));
-            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "sleep 2; echo done; exit 5"));
+            longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c",
+                "echo $$ > \"$1\"; echo before; while [ ! -e \"$2\" ]; do sleep 0.05; done; echo while-down; exec sleep 60", "sh", longPid, go));
+            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "while [ ! -e \"$1\" ]; do sleep 0.05; done; echo done; exit 5", "sh", go));
             longAttempt = (await Tasks.RunningAsync(channel, longId)).AttemptId;
             shortAttempt = (await Tasks.RunningAsync(channel, shortId)).AttemptId;
         }
 
         // While the node is down the short attempt ends with a durable exit record, and the long one keeps running (its next line).
         await node.StopAsync();
+        File.WriteAllText(go, "go");
         await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath)
             && Tasks.ReadShared(Tasks.Files(node, longAttempt).StdoutPath).Contains("while-down", StringComparison.Ordinal), Tasks.Bound, "the attempts to progress while the node is down");
         var pid = File.ReadAllText(longPid).Trim();

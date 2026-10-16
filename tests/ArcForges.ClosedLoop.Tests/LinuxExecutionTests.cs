@@ -124,21 +124,28 @@ public sealed class LinuxExecutionTests
         await using var node = TestNode.Create();
         var first = await node.StartNodeAsync();
         var pidFile = Path.Combine(node.Root, "long.pid");
-        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "echo $$ > \"$1\"; echo before; sleep 3; echo while-down; exec sleep 120", "sh", pidFile)).Stdout).Trim();
-        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "sleep 2; echo done; exit 5")).Stdout).Trim();
+
+        // Both attempts wait for the go file the test writes once the node is dead, so neither can finish before the kill however slowly
+        // the test runs (fixed sleeps raced with it under load).
+        var go = Path.Combine(node.Root, "go");
+        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c",
+            "echo $$ > \"$1\"; echo before; while [ ! -e \"$2\" ]; do sleep 0.05; done; echo while-down; exec sleep 120", "sh", pidFile, go)).Stdout).Trim();
+        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c",
+            "while [ ! -e \"$1\" ]; do sleep 0.05; done; echo done; exit 5", "sh", go)).Stdout).Trim();
         var longAttempt = await RunningAttemptAsync(node, id);
         var shortAttempt = await RunningAttemptAsync(node, shortId);
         await TestNode.WaitAsync(() => File.Exists(pidFile), Bound, "the long attempt");
 
         first.Kill();
         await first.WaitForExitAsync(Ct);
+        File.WriteAllText(go, "go");
         var pid = int.Parse(File.ReadAllText(pidFile).Trim(), CultureInfo.InvariantCulture);
         var root = ProcessIdentity.Capture(pid)!.Value;
         await TestNode.WaitAsync(() => File.Exists(Path.Combine(node.DataRoot, "logs", shortAttempt, AttemptFiles.Exit)), Bound, "the short attempt's exit record");
         var record = ExitRecord.TryRead(Path.Combine(node.DataRoot, "logs", shortAttempt, AttemptFiles.Exit))!;
         Assert.Equal(("exited", 5, "exit-record"), (record.ExitCodeKind, record.ExitStatus, record.RecordedBy));
 
-        // The long attempt keeps running while the node is down: it writes its next line (3 s after its start) into the captured output.
+        // The long attempt keeps running while the node is down: it writes its next line into the captured output.
         await TestNode.WaitAsync(() => TestNode.ReadShared(Path.Combine(node.DataRoot, "logs", longAttempt, AttemptFiles.Stdout)).Contains("while-down", StringComparison.Ordinal),
             Bound, "the long attempt's output while the node is down");
         Assert.True(root.IsRunning(), "The attempt survived the node.");
@@ -171,7 +178,11 @@ public sealed class LinuxExecutionTests
         await node.WaitReadyAsync();
         var pidFile = Path.Combine(node.Root, "long.pid");
         var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "echo $$ > \"$1\"; exec sleep 120", "sh", pidFile)).Stdout).Trim();
-        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "sleep 1; exit 9")).Stdout).Trim();
+        // The short attempt runs until the test writes the go file just before the restart (a fixed sleep could end before the test saw
+        // it running).
+        var go = Path.Combine(node.Root, "go");
+        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c",
+            "while [ ! -e \"$1\" ]; do sleep 0.05; done; exit 9", "sh", go)).Stdout).Trim();
         var attempt = await RunningAttemptAsync(node, id);
         await RunningAttemptAsync(node, shortId);
         await TestNode.WaitAsync(() => File.Exists(pidFile), Bound, "the long attempt");
@@ -185,6 +196,7 @@ public sealed class LinuxExecutionTests
         Assert.EndsWith("/" + node.Slice + "/" + SystemdTestEnvironment.AttemptUnit(attempt), attemptCgroup, StringComparison.Ordinal);
 
         var before = SystemdTestEnvironment.Property(unit, "MainPID");
+        File.WriteAllText(go, "go");
         Assert.Equal(0, SystemdTestEnvironment.Systemctl("restart", unit).ExitCode);
         await node.WaitReadyAsync();
         Assert.NotEqual(before, SystemdTestEnvironment.Property(unit, "MainPID"));

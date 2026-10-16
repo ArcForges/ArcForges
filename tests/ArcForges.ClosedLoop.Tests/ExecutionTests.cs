@@ -145,21 +145,24 @@ public sealed class ExecutionTests
         await using var node = TestNode.Create();
         var first = await node.StartNodeAsync();
         var marker = Path.Combine(node.Root, "f.txt");
-        var shortMarker = Path.Combine(node.Root, "s.txt");
         var detached = await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker);
         var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
-        var shortRun = await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "signal", "--hold-ms", "3000", "--marker", shortMarker);
+
+        // The short attempt runs until the test writes the go file once the node is dead, so it cannot finish before the kill however
+        // slowly the test runs (a fixed 3 s hold raced with it under load).
+        var go = Path.Combine(node.Root, "go");
+        var shortRun = await node.CliBytesAsync(Bound, ["run", "--detach", "--", .. WaitForFile(go)]);
         var shortId = Encoding.UTF8.GetString(shortRun.Stdout).Trim();
-        await TestNode.WaitAsync(() => Marker(marker).Count > 0 && Marker(shortMarker).Count > 0, Bound, "the attempts to run");
+        await TestNode.WaitAsync(() => Marker(marker).Count > 0, Bound, "the attempts to run");
         var shortAttempt = await AttemptDirectoryAsync(node, shortId);
 
         // The node is killed (not stopped): the attempts continue under their holders, and the short one's holder records its exit alone.
         first.Kill();
         await first.WaitForExitAsync(Ct);
+        File.WriteAllText(go, "go");
         var attempt = MarkerProcess(marker);
         await TestNode.WaitAsync(() => File.Exists(Path.Combine(shortAttempt, "exit.json")), Bound, "the short attempt's exit record while the node is down");
         Assert.True(attempt.IsRunning(), "The attempt survived the node.");
-        Assert.False(MarkerProcess(shortMarker).IsRunning(), "The short attempt finished while the node was down.");
 
         await node.StartNodeAsync();
         var shortTask = JsonDocument.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output).RootElement;
@@ -480,6 +483,13 @@ public sealed class ExecutionTests
             await Task.Delay(100, Ct);
         }
     }
+
+    /// <summary>A command that exits 0 once <paramref name="file"/> exists (checked every 50 ms): an attempt that ends when the test says so.</summary>
+    internal static string[] WaitForFile(string file) =>
+    [
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+        "-NoProfile", "-NonInteractive", "-Command", $"while (-not (Test-Path -LiteralPath '{file}')) {{ Start-Sleep -Milliseconds 50 }}",
+    ];
 
     private static (int ExitCode, byte[] Stdout, byte[] Stderr) Direct(string[] argv)
     {
