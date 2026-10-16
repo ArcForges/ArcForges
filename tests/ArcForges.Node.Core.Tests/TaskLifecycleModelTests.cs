@@ -49,6 +49,10 @@ public sealed class TaskLifecycleModelTests
         ([AttemptState.Pausing], AttemptState.Paused),
         ([AttemptState.Paused], AttemptState.Running),
         ([AttemptState.Running, AttemptState.Pausing, AttemptState.Paused], AttemptState.Stopping),
+
+        // Not in machines.json (an open Design question): a cancel while the attempt is being launched moves it from STARTING to STOPPING,
+        // which persists the cancel across a node restart (the recovery continues a STOPPING attempt's stop).
+        ([AttemptState.Starting], AttemptState.Stopping),
         ([AttemptState.Running], AttemptState.Finalizing),
         ([AttemptState.Stopping], AttemptState.Finalizing),
         ([AttemptState.Created], AttemptState.Finalizing),
@@ -114,7 +118,7 @@ public sealed class TaskLifecycleModelTests
                     var cancelled = new Modelled(await Tasks.SubmitAsync(channel, Running(node, model.Count)), null);
                     Assert.Null((await CancelAsync(channel, cancelled.Id)).Error);
                     var ended = await Tasks.WaitAsync(channel, cancelled.Id);
-                    Assert.Equal(TaskState.Cancelled, ended.State);
+                    Assert.True(ended.State == TaskState.Cancelled, $"Cancelled at once, the task ended {ended.State}: {ended.CurrentAttempt?.Result}");
                     model.Add(cancelled with { State = TaskState.Cancelled, Attempts = (int)ended.AttemptCount });
                     break;
                 case Cancel cancel when model.Count > 0:

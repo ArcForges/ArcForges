@@ -524,11 +524,18 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
         if (row.CurrentAttemptId is { } attemptId)
         {
-            transaction.Execute(
+            // The event names the state the attempt left: STARTING when the cancel arrives while it is being launched, not always RUNNING.
+            var attemptState = (AttemptState)Convert.ToInt32(transaction.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)),
+                CultureInfo.InvariantCulture);
+            var stopping = transaction.Execute(
                 "UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
                 ("$id", attemptId));
             transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(reason)), ("$id", taskId.ToArray()));
-            EmitAttempt(context, attemptId, AttemptState.Running);
+            if (stopping == 1)
+            {
+                EmitAttempt(context, attemptId, attemptState);
+            }
+
             EmitTask(context, taskId, row.State);
             return (row.State, null, IdText.Format(attemptId));
         }
@@ -563,17 +570,24 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 attempt.StopReason = reason;
             }
 
-            if (!graceful || attempt.Handle is null || attempt.Handle.Root is null)
+            if (attempt.Handle is null)
+            {
+                // Still being launched: there is nothing to stop yet, and the launch applies the forced phase once the handle exists.
+                // Marking it forced here would skip that, and the command would run on past the stop (TERMINATION_INCOMPLETE).
+                return;
+            }
+
+            if (!graceful || attempt.Handle.Root is null)
             {
                 if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit)
                 {
-                    var how = attempt.Handle?.StopAtLimit() ?? "no container";
+                    var how = attempt.Handle.StopAtLimit();
                     _log.Info("execution.limit_stop", new LogField("attempt", attemptName), new LogField("reason", reason),
-                        new LogField("container", attempt.Handle?.ContainerName ?? "-"), new LogField("stop", how));
+                        new LogField("container", attempt.Handle.ContainerName), new LogField("stop", how));
                 }
                 else
                 {
-                    attempt.Handle?.Terminate();
+                    attempt.Handle.Terminate();
                 }
 
                 TerminateEscaped(attempt, reason);

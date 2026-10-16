@@ -48,6 +48,9 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     private static readonly TimeSpan StatePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan VanishedGrace = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan FailedResetBound = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long a stop waits for a pending start job before it kills what the unit holds.</summary>
+    private static readonly TimeSpan StartWaitBound = TimeSpan.FromSeconds(10);
     private readonly LinuxExecutionPlatform _platform;
     private readonly TaskCompletionSource<RootProcess?> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Dictionary<int, long> _members = [];
@@ -247,7 +250,20 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
-    public void Terminate() => FreezeAndKill();
+    /// <remarks>
+    /// A stop that arrives while the unit's start job still runs (a cancel right after the submission) first waits for the start to finish,
+    /// bounded by <see cref="StartWaitBound"/>: before it, the unit's cgroup is empty or unknown, so the kill would find nothing and the
+    /// command would start afterwards and outlive the stop (TERMINATION_INCOMPLETE with the workload still running).
+    /// </remarks>
+    public void Terminate()
+    {
+        if (!_launchFinished)
+        {
+            _started.Task.Wait(StartWaitBound);
+        }
+
+        FreezeAndKill();
+    }
 
     /// <inheritdoc />
     public string StopAtLimit()
