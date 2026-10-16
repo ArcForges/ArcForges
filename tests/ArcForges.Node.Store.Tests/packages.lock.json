@@ -8,6 +8,12 @@
         "resolved": "1.0.0-ci.138.1",
         "contentHash": "YxuYMCF+rfM44q2y18daDpkdg/XRakb6NHMFoFZgcVMaUTIWAraqzTpx9PyHe/fuEwabeOnznYa9N4fyL4IDyA=="
       },
+      "CsCheck": {
+        "type": "Direct",
+        "requested": "[4.9.1, )",
+        "resolved": "4.9.1",
+        "contentHash": "rEmuFiG19sF8U4Ef/S79cu9HW4pUGraoCTkmYs0z7SvsGqGAVO3wCjxQPS0KQvPa1g2/w1wBbnAP6cDZKBFEcA=="
+      },
       "xunit.v3.mtp-v2": {
         "type": "Direct",
         "requested": "[4.0.1, )",

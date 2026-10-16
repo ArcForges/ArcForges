@@ -18,5 +18,8 @@
     <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
     <!-- The host's graph carries the DesktopPlatform 1.0.0-ci.138.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+    <!-- Property-based and model-based tests (16-testing-strategy; AD-0016). -->
+    <PackageReference Include="CsCheck" />
+    <Compile Include="../Shared/PropertyRuns.cs" Link="Shared/PropertyRuns.cs" />
   </ItemGroup>
 </Project>
