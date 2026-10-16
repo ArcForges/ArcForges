@@ -44,6 +44,24 @@ public sealed class UnitTests
         }
     }
 
+    [Theory]
+    [InlineData(1334, 1334, "9", "/usr/lib/systemd/systemd-executor", true)] // systemd 255.4: the executor, named "9", exe readable
+    [InlineData(1334, 1334, "systemd-executo", "/usr/lib/systemd/systemd-executor (deleted)", true)]
+    [InlineData(232, 232, "systemd", null, true)] // systemd 257: a fork of the manager, exe unreadable
+    [InlineData(232, 232, "(arcforges)", null, true)] // a fork renamed before its execve
+    [InlineData(232, 232, "sleep", "/usr/bin/sleep", false)] // a paused attempt's own main process
+    [InlineData(232, 232, "systemd", "/usr/local/bin/systemd", false)] // an attempt command merely named systemd
+    [InlineData(232, 232, "(x)", "/usr/bin/x", false)]
+    [InlineData(232, 232, "9", null, false)] // an unreadable process with another name
+    [InlineData(500, 232, "9", "/usr/lib/systemd/systemd-executor", false)] // not the manager's child
+    [InlineData(232, 0, "systemd", null, false)] // the manager is unknown
+    [SupportedOSPlatform("linux")]
+    public void TheManagersSpawnIsRecognizedStructurally(int parent, int manager, string name, string? executable, bool spawn)
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "The Linux platform.");
+        Assert.Equal(spawn, UnitControl.IsManagerSpawn(parent, manager, name, executable));
+    }
+
     [Fact]
     public void AKilledResultWithAnUnknownSignalIsNeverASuccess()
     {

@@ -196,8 +196,10 @@ public sealed class UnitPlatformTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         // A node or guard that died between killing a frozen unit's processes and thawing it leaves the cgroup frozen while the manager
-        // spawns ExecStop into it (systemd 257: the manager blocks until the cgroup is thawed). Neither the platform's start nor the guard
-        // needs the manager to release it. What the running systemd does is printed (L-24) and asserted as observed.
+        // spawns ExecStop into it. Observed (L-24): systemd 257 forks a child named "systemd" (exe unreadable) into the cgroup and the
+        // whole manager blocks until it is thawed; systemd 255.4 puts systemd-executor (named "9") there, keeps answering, and the unit
+        // stays deactivating until the cgroup is thawed. Neither the platform's start nor the guard needs the manager to release it.
+        // What the running systemd does is printed and asserted as observed.
         RequireUnits();
         using var harness = LinuxHarness.Start();
 
@@ -290,17 +292,7 @@ public sealed class UnitPlatformTests
         text.Append(File.ReadAllText(Path.Combine(directory, "cgroup.events")).ReplaceLineEndings(" ").Trim()).Append("; processes:");
         foreach (var pid in ProcFs.Procs(directory))
         {
-            var exe = new FileInfo($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/exe");
-            string target;
-            try
-            {
-                target = exe.LinkTarget ?? "-";
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                target = "(unreadable)";
-            }
-
+            var target = UnitControl.Executable(pid) ?? "(unreadable)";
             var stat = ProcFs.Stat(pid);
             text.Append(CultureInfo.InvariantCulture, $" [{pid} comm={ProcFs.Image(pid)} exe={target} ppid={stat?.ParentPid} state={stat?.State} spawn={UnitControl.IsManagerSpawn(pid, manager)}]");
         }

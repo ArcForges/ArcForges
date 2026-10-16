@@ -124,22 +124,46 @@ public static class UnitControl
     /// <summary>True when every process of <paramref name="directory"/> is the manager's spawn (or there is none).</summary>
     internal static bool OnlyManagerSpawns(string directory, int manager) => ProcFs.Procs(directory).All(pid => IsManagerSpawn(pid, manager));
 
+    /// <summary>Whether <paramref name="pid"/> is the user manager's spawn (<see cref="IsManagerSpawn(int, int, string, string?)"/>).</summary>
+    internal static bool IsManagerSpawn(int pid, int manager) =>
+        ProcFs.Stat(pid) is { } stat && IsManagerSpawn(stat.ParentPid, manager, ProcFs.Image(pid), Executable(pid));
+
     /// <summary>
-    /// Whether <paramref name="pid"/> is a process the user manager forked to run a unit's command that has not become that command:
-    /// its parent is the manager, and its name is the manager's own (<c>systemd</c>: frozen right after the fork, systemd 257), the
-    /// executor's (<c>systemd-executo</c>[r], systemd 255 and later) or systemd's name for a child before its <c>execve</c>, the command's
-    /// name in parentheses (<c>(arcforges)</c>, <c>(env)</c>, <c>(sd-...)</c>). An attempt's own main process is a child of the manager
-    /// too, but it carries its command's name (or <c>arcforges</c> while <c>exec-launch</c> runs), never one of these.
+    /// Whether a process is one the user manager started for a unit's command that has not become that command, from its parent,
+    /// name and executable (null when <c>/proc/&lt;pid&gt;/exe</c> cannot be read). Its parent must be the user manager (known), and
+    /// either its executable is <c>systemd-executor</c> (systemd 255 and later: the executor, whatever name it gives itself; observed
+    /// on 255.4 with the name <c>9</c>), or it is still a fork of the manager, whose executable cannot be read (the manager is not
+    /// dumpable), named <c>systemd</c> (257, frozen right after the fork) or with systemd's parenthesized pre-exec name
+    /// (<c>(arcforges)</c>, <c>(sd-...)</c>). An attempt's own processes, its main process included (also a child of the manager), have
+    /// their command's readable executable and are never matched.
     /// </summary>
-    internal static bool IsManagerSpawn(int pid, int manager)
+    internal static bool IsManagerSpawn(int parentPid, int manager, string name, string? executable)
     {
-        if (ProcFs.Stat(pid) is not { } stat || (manager != 0 && stat.ParentPid != manager))
+        if (manager == 0 || parentPid != manager)
         {
             return false;
         }
 
-        var name = ProcFs.Image(pid);
-        return name is "systemd" or "systemd-executo" or "systemd-executor"
-            || (name.Length > 2 && name[0] == '(' && name[^1] == ')');
+        if (executable is not null)
+        {
+            const string Deleted = " (deleted)";
+            var path = executable.EndsWith(Deleted, StringComparison.Ordinal) ? executable[..^Deleted.Length] : executable;
+            return Path.GetFileName(path) == "systemd-executor";
+        }
+
+        return name == "systemd" || (name.Length > 2 && name[0] == '(' && name[^1] == ')');
+    }
+
+    /// <summary>The target of <c>/proc/&lt;pid&gt;/exe</c>, or null when it cannot be read.</summary>
+    internal static string? Executable(int pid)
+    {
+        try
+        {
+            return new FileInfo("/proc/" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/exe").LinkTarget;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 }
