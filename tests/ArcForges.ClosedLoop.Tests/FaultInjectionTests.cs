@@ -167,6 +167,7 @@ public sealed class FaultInjectionTests
     /// <summary>Runs <paramref name="action"/> while this user may read but not create or write anything in <paramref name="directory"/>.</summary>
     private static async Task<T> WithoutWriteAccessAsync<T>(string directory, Func<Task<T>> action)
     {
+        Assert.SkipWhen(!OperatingSystem.IsWindows() && Environment.UserName == "root", "root is not bound by file modes, so a permission failure cannot be injected.");
         if (OperatingSystem.IsWindows())
         {
             var info = new DirectoryInfo(directory);
