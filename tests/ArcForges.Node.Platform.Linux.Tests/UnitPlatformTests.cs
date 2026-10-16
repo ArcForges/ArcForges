@@ -346,7 +346,9 @@ public sealed class UnitPlatformTests
         var child = Path.Combine(harness.Root, "child.txt");
         var handle = (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c",
             "(while :; do echo x >> \"$2\"; sleep 0.02; done) & while :; do echo y >> \"$1\"; sleep 0.02; done", "sh", counter, child]);
-        LinuxHarness.WaitFor(() => File.Exists(counter) && File.Exists(child) && new FileInfo(child).Length > 20, Bound, "the tree to write");
+        // The handle learns its cgroup from the manager (Processes() asks for it); under load that answer can come after the first writes.
+        LinuxHarness.WaitFor(() => File.Exists(counter) && File.Exists(child) && new FileInfo(child).Length > 20 && handle.Processes().Count >= 2
+            && handle.CgroupDirectory is not null, Bound, "the tree to write");
         handle.Freeze();
         var events = Path.Combine(handle.CgroupDirectory!, "cgroup.events");
         Assert.Contains("frozen 1", File.ReadAllText(events), StringComparison.Ordinal);
