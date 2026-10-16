@@ -89,7 +89,7 @@ internal sealed class StartupResult
     public required BenchEnvironment Environment { get; init; }
 }
 
-internal sealed class StartupComparisonResult
+internal sealed record StartupComparisonResult
 {
     public string Tool { get; init; } = "arcforges-bench";
 
@@ -102,6 +102,12 @@ internal sealed class StartupComparisonResult
     /// <summary><c>pass</c>, <c>regression</c> or <c>no-baseline</c>.</summary>
     public required string Status { get; init; }
 
+    /// <summary>
+    /// <c>interleaved-same-runner</c>: both executables measured here, alternating; <c>recorded-results</c>: two saved startup results
+    /// compared (only meaningful when both were measured on the same machine).
+    /// </summary>
+    public string Method { get; init; } = "recorded-results";
+
     public required string Reason { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -111,6 +117,12 @@ internal sealed class StartupComparisonResult
     public double? BaselineP50Ms { get; init; }
 
     public required double CurrentP50Ms { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? BaselineP95Ms { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? CurrentP95Ms { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? DeltaMs { get; init; }
@@ -123,6 +135,14 @@ internal sealed class StartupComparisonResult
     public required double NoiseFloorMs { get; init; }
 
     public required bool Pass { get; init; }
+
+    /// <summary>The baseline's startup result (samples, percentiles, environment).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public StartupResult? Baseline { get; init; }
+
+    /// <summary>The current startup result.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public StartupResult? Current { get; init; }
 }
 
 internal sealed class TableSize

@@ -10,13 +10,66 @@ namespace ArcForges.Bench;
 /// current startup is a few milliseconds, so the rule uses the median (p50 of the runs) and a
 /// regression must exceed both the relative limit (default 25%) and an absolute noise floor
 /// (default 5 ms). Without a baseline the result is recorded as passing with the stated reason.
+/// <list type="bullet">
+/// <item>Same-runner mode (<c>--baseline-exe</c>, <c>--current-exe</c>; the CI gate): both executables are measured here, interleaved,
+/// with the same arguments, warm-up and run count, so the comparison is free of the machine-to-machine variance of hosted runners.</item>
+/// <item>Recorded mode (<c>--current</c>, <c>--baseline</c>): two saved startup results, meaningful only when both were measured on the
+/// same machine; <c>--current</c> with <c>--reason</c> records a result without a baseline.</item>
+/// </list>
 /// </summary>
 internal static class StartupComparison
 {
     public const double DefaultMaxRegressionPercent = 25;
     public const double DefaultNoiseFloorMs = 5;
 
-    public static StartupComparisonResult Run(BenchOptions options)
+    public static async Task<StartupComparisonResult> RunAsync(BenchOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.GetString("current-exe") is { } currentExe)
+        {
+            return await RunPairAsync(options, currentExe).ConfigureAwait(false);
+        }
+
+        return Run(options);
+    }
+
+    /// <summary>Same-runner mode: measures both executables interleaved and compares their medians.</summary>
+    private static async Task<StartupComparisonResult> RunPairAsync(BenchOptions options, string currentExe)
+    {
+        var baselineExe = options.GetString("baseline-exe") ?? throw new UsageException("--current-exe needs --baseline-exe (or --reason with --current for no baseline).");
+        var arguments = options.GetAll("arg");
+        var runs = (int)(options.GetInt64("runs", 1, StartupBenchmark.MaxRuns) ?? 50);
+        var warmup = (int)(options.GetInt64("warmup", 0, StartupBenchmark.MaxRuns) ?? 1);
+        var expectExit = (int)(options.GetInt64("expect-exit", 0, 255) ?? 0);
+        var timeout = TimeSpan.FromMilliseconds(options.GetInt64("timeout-ms", 1, 3_600_000) ?? StartupBenchmark.DefaultTimeoutMs);
+        var name = options.GetString("name") ?? Path.GetFileNameWithoutExtension(currentExe);
+        var source = options.GetString("baseline-source");
+        var maxPercent = options.GetDouble("max-regression-percent", 0, 1000) ?? DefaultMaxRegressionPercent;
+        var floorMs = options.GetDouble("noise-floor-ms", 0, 60_000) ?? DefaultNoiseFloorMs;
+        options.GetString("output");
+        foreach (var recorded in (string[])["current", "baseline", "reason"])
+        {
+            if (options.GetString(recorded) is not null)
+            {
+                throw new UsageException($"--{recorded} belongs to the recorded mode; the same-runner mode measures --baseline-exe and --current-exe.");
+            }
+        }
+
+        options.EnsureAllUsed();
+        var (baseline, current) = await StartupBenchmark.RunPairAsync(name, Path.GetFullPath(baselineExe), Path.GetFullPath(currentExe), arguments, runs, warmup,
+            expectExit, timeout).ConfigureAwait(false);
+        return Compare(name, baseline.P50Ms, current.P50Ms, maxPercent, floorMs, source, null) with
+        {
+            Method = "interleaved-same-runner",
+            BaselineP95Ms = baseline.P95Ms,
+            CurrentP95Ms = current.P95Ms,
+            Baseline = baseline,
+            Current = current,
+        };
+    }
+
+    /// <summary>Recorded mode: two saved startup results, or one with the reason there is no baseline.</summary>
+    private static StartupComparisonResult Run(BenchOptions options)
     {
         var currentPath = options.GetRequired("current");
         var baselinePath = options.GetString("baseline");
@@ -44,7 +97,13 @@ internal static class StartupComparison
             }
         }
 
-        return Compare(current.Name, baseline?.P50Ms, current.P50Ms, maxPercent, floorMs, source, reason);
+        return Compare(current.Name, baseline?.P50Ms, current.P50Ms, maxPercent, floorMs, source, reason) with
+        {
+            BaselineP95Ms = baseline?.P95Ms,
+            CurrentP95Ms = current.P95Ms,
+            Baseline = baseline,
+            Current = current,
+        };
     }
 
     /// <summary>The comparison rule: a regression exceeds both the relative limit and the noise floor.</summary>

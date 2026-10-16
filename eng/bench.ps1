@@ -10,7 +10,8 @@
   10,000 attempts (-StoreAttempts, default 10000) submitted from the captured environments in
   tests/ArcForges.Node.Store.Tests/Fixtures/environments (node-store.md section 4). Startup has no absolute limit
   on hosted runners; CI gates it with eng/compare-startup.ps1 against the previous successful
-  main run (a regression is a p50 increase above both 25% and 5 ms). Pass
+  main run's CLI measured on the same runner, interleaved (a regression is a p50 increase above both 25% and
+  5 ms); this result is what a run without such a baseline records. Pass
   -StartupP50Ms 40 -StartupP95Ms 80 to check the absolute CLI cold-start targets on the workstation.
   The status round trip (`arcforges status --json` with a running node, p50 at most 60 ms) is a workstation
   benchmark: tests/ArcForges.ClosedLoop.Tests, category=perf (StatusRoundTrip).

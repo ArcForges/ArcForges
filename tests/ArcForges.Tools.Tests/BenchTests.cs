@@ -208,8 +208,73 @@ public sealed class BenchTests
         Assert.Contains("does not measure the same benchmark", run.StandardError, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ThePairedRunsAlternateWhichExecutableGoesFirst()
+    {
+        // Round 0 baseline first, round 1 current first, and so on: neither executable always runs first.
+        Assert.Equal([true, false, true, false, true, false], Enumerable.Range(0, 6).Select(StartupBenchmark.BaselineFirst));
+    }
+
+    [Fact]
+    public async Task TheSameRunnerModeMeasuresBothExecutablesInterleavedAndRecordsBoth()
+    {
+        using var directory = new TemporaryDirectory();
+        var output = Path.Combine(directory.Path, "comparison.json");
+
+        // The same executable as baseline and current: the rule must see two measured results of the same command on this machine.
+        var run = await ToolProcess.RunAsync(
+            ToolProcess.Bench,
+            ["compare-startup", "--baseline-exe", ToolProcess.TestLoad, "--current-exe", ToolProcess.TestLoad, "--arg", "cpu", "--arg", "--iterations",
+             "--arg", "1", "--runs", "6", "--warmup", "1", "--name", "testload cpu", "--baseline-source", "fixture", "--noise-floor-ms", "60000",
+             "--output", output],
+            TestContext.Current.CancellationToken);
+
+        Assert.True(run.ExitCode == 0, run.StandardError);
+        using var written = JsonDocument.Parse(await File.ReadAllBytesAsync(output, TestContext.Current.CancellationToken));
+        var root = written.RootElement;
+        Assert.Equal("interleaved-same-runner", root.GetProperty("method").GetString());
+        Assert.Equal("pass", root.GetProperty("status").GetString());
+        Assert.Equal("fixture", root.GetProperty("baselineSource").GetString());
+        Assert.Equal(25, root.GetProperty("maxRegressionPercent").GetDouble());
+        foreach (var side in (string[])["baseline", "current"])
+        {
+            var result = root.GetProperty(side);
+            Assert.Equal(6, result.GetProperty("samplesMs").GetArrayLength());
+            Assert.Equal(1, result.GetProperty("warmup").GetInt32());
+            Assert.Equal(["cpu", "--iterations", "1"], result.GetProperty("command").EnumerateArray().Skip(1).Select(item => item.GetString()));
+            Assert.Equal(root.GetProperty(side + "P50Ms").GetDouble(), result.GetProperty("p50Ms").GetDouble());
+            Assert.Equal(root.GetProperty(side + "P95Ms").GetDouble(), result.GetProperty("p95Ms").GetDouble());
+        }
+
+        Assert.Equal(Math.Round(root.GetProperty("currentP50Ms").GetDouble() - root.GetProperty("baselineP50Ms").GetDouble(), 3),
+            root.GetProperty("deltaMs").GetDouble());
+    }
+
+    [Fact]
+    public async Task TheRecordedModeKeepsBothPercentilesAndANoBaselineResultKeepsTheCurrentOnes()
+    {
+        using var directory = new TemporaryDirectory();
+        var current = Path.Combine(directory.Path, "current.json");
+        var output = Path.Combine(directory.Path, "comparison.json");
+        await File.WriteAllTextAsync(current, StartupJson("12"), TestContext.Current.CancellationToken);
+
+        var run = await ToolProcess.RunAsync(
+            ToolProcess.Bench, ["compare-startup", "--current", current, "--reason", "No successful main run yet.", "--output", output],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, run.ExitCode);
+        using var written = JsonDocument.Parse(await File.ReadAllBytesAsync(output, TestContext.Current.CancellationToken));
+        Assert.Equal("no-baseline", written.RootElement.GetProperty("status").GetString());
+        Assert.Equal("recorded-results", written.RootElement.GetProperty("method").GetString());
+        Assert.Equal(12, written.RootElement.GetProperty("currentP95Ms").GetDouble());
+        Assert.False(written.RootElement.TryGetProperty("baselineP50Ms", out _));
+    }
+
     [Theory]
     [InlineData("size", "--path", ".", "--target", "no-such-target")]
+    [InlineData("compare-startup", "--current-exe", "x.exe")]
+    [InlineData("compare-startup", "--current-exe", "x.exe", "--baseline-exe", "y.exe", "--current", "x.json")]
+    [InlineData("compare-startup", "--baseline-exe", "y.exe", "--current", "x.json", "--reason", "none")]
     [InlineData("compare-startup", "--current", "x.json")]
     [InlineData("startup", "--exe", "x", "--timeout-ms", "0")]
     [InlineData("size", "--path", ".")]

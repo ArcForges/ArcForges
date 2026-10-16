@@ -213,15 +213,22 @@ public sealed class EventStreamTests
         }
     }
 
-    [Fact(Timeout = 120_000)]
+    /// <summary>
+    /// A stalled cache with a small buffer overflows its stream once and converges again. Events are published until the node reports the
+    /// overflow (never a fixed count: how many it takes depends on the HTTP/2 window the client has grown), and the cache is released at
+    /// once. LocalRpc passes the typed overflow only to a reader that takes the message on its way within the settle window (15 s), so the
+    /// branch asserted follows the measured stall after the overflow: under 13 s a reset with a snapshot; over 17 s a transport reset and
+    /// a resume from the cursor. Convergence is always asserted.
+    /// </summary>
+    [Fact(Timeout = 240_000)]
     public async Task AnOverflowingSubscriberIsEndedAndTheCacheResubscribesForASnapshot()
     {
-        var ct = TestContext.Current.CancellationToken;
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         // The per-subscriber buffer is 2,048 events (02 section 1); a small buffer reaches overflow with few events.
         await using var node = await InProcessNode.Create(streamBuffer: 8).StartAsync();
-        var stall = new ManualResetEventSlim(true);
+        using var stall = new ManualResetEventSlim(true);
         await using var cache = new NodeStreamCache(_ => node.ChannelAsync(), [EventTopic.Node], new ReconnectBackoff(() => 0));
-        cache.Applied += (_, _) => stall.Wait(TimeSpan.FromSeconds(10));
+        cache.Applied += (_, _) => stall.Wait(TimeSpan.FromSeconds(60));
         cache.Start();
         await WaitAsync(() => cache.SnapshotsApplied == 1);
 
@@ -229,19 +236,27 @@ public sealed class EventStreamTests
         await using (var writer = await node.ChannelAsync())
         {
             await Rename(writer, "start");
-            // Stalled reader: the HTTP/2 window and then the stream's buffer fill up.
-            for (var i = 0; i < 600 && node.Runtime.ServerMetrics!().All(metric => metric.Name != "rpc.streams_ended" || metric.Labels["reason"] != "Overflow" || metric.Value == 0); i++)
-            {
-                await Rename(writer, "filler " + i);
-            }
         }
 
+        // Stalled reader: the HTTP/2 window and then the stream's buffer fill up.
+        var (latest, held) = await EmitUntilOverflowAsync(node, batch: 200);
         stall.Set();
-        await WaitAsync(() => cache.Resets >= 1 && cache.SnapshotsApplied >= 2, TimeSpan.FromSeconds(60));
-        Assert.Contains(node.Runtime.ServerMetrics!(), metric => metric.Name == "rpc.streams_ended" && metric.Labels["reason"] == "Overflow" && metric.Value >= 1);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        string Describe() => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"held {held.TotalMilliseconds:0} ms after the overflow; resets {cache.Resets}, snapshots {cache.SnapshotsApplied}, resumes {cache.Resumes}, last {cache.LastSequence}/{latest} after {clock.ElapsedMilliseconds} ms");
+        await WaitForProgressAsync(() => cache.LastSequence >= latest && (cache.Resets >= 1 || cache.Resumes >= 1),
+            () => (cache.LastSequence, cache.Subscriptions, cache.SnapshotsApplied), Describe);
+        TestContext.Current.TestOutputHelper?.WriteLine(Describe());
+        AssertSettleBranch(held, () => cache.Resets >= 1 && cache.SnapshotsApplied >= 2, () => cache.Resumes >= 1 && cache.SnapshotsApplied == 1, Describe());
+        Assert.Equal(1, node.Runtime.Hub.Overflows);
+        await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
     }
 
-    [Fact(Timeout = 60_000)]
+    /// <summary>
+    /// A raw subscriber that stops reading is ended with RESOURCE_EXHAUSTED and the overflow trailer once it reads again, when it does so
+    /// within the settle window (it starts reading as soon as the node reports the overflow); events are published until then.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
     public async Task OverflowIsReportedToARawSubscriberAsTheTypedStreamEnd()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -249,17 +264,7 @@ public sealed class EventStreamTests
         await using var channel = await node.ChannelAsync();
         using var call = channel.Events.Subscribe(new NodeEventServiceSubscribeRequest { Topics = { EventTopic.Node } }, cancellationToken: ct);
         await ReadUntilAsync(call.ResponseStream, frame => frame.FrameCase == NodeEventServiceSubscribeFrame.FrameOneofCase.SnapshotComplete);
-        await using (var writer = await node.ChannelAsync())
-        {
-            for (var i = 0; i < 600; i++)
-            {
-                await Rename(writer, "filler " + i);
-                if (node.Runtime.ServerMetrics!().Any(metric => metric.Name == "rpc.streams_ended" && metric.Labels["reason"] == "Overflow" && metric.Value > 0))
-                {
-                    break;
-                }
-            }
-        }
+        var (_, held) = await EmitUntilOverflowAsync(node, batch: 200);
 
         var exception = await Assert.ThrowsAsync<RpcException>(async () =>
         {
@@ -267,9 +272,8 @@ public sealed class EventStreamTests
             {
             }
         });
-        Assert.Equal(StatusCode.ResourceExhausted, exception.StatusCode);
-        Assert.True(LocalRpcStreamEnd.TryRead(exception, out var end));
-        Assert.Equal(LocalRpcStreamEndReason.Overflow, end);
+        AssertSettleBranch(held, () => IsTypedOverflow(exception), () => !IsTypedOverflow(exception), $"held {held.TotalMilliseconds:0} ms; {exception.Status}");
+        Assert.Equal(1, node.Runtime.Hub.Overflows);
     }
 
     [Theory(Timeout = 240_000)]
@@ -285,14 +289,15 @@ public sealed class EventStreamTests
         using var call = channel.Events.Subscribe(new NodeEventServiceSubscribeRequest { Topics = { EventTopic.Node } }, cancellationToken: ct);
         await ReadUntilAsync(call.ResponseStream, frame => frame.FrameCase == NodeEventServiceSubscribeFrame.FrameOneofCase.SnapshotComplete);
 
-        // The subscriber stops reading; the node keeps committing events.
-        await EmitAsync(node, events);
-        // The overflow is signalled when it happens; the typed status follows once the client takes the frame already on its way.
+        // The subscriber stops reading; the node keeps committing events. It reads again as soon as the overflow is signalled (within
+        // the settle window, so the typed status can pass), while the rest of the events are still being committed.
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var emitting = EmitAsync(node, events);
         await WaitAsync(() => node.Runtime.Hub.Overflows >= 1, TimeSpan.FromSeconds(60));
-        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
-
-        // Reading again: what the transport already carried, then RESOURCE_EXHAUSTED with the x-af-stream-end trailer, far before the end.
+        var overflowAt = clock.Elapsed;
         var received = 0;
+        // The reader starts reading again at once, well inside the settle window, so only the typed overflow is acceptable here.
+        var held = clock.Elapsed - overflowAt;
         var exception = await Assert.ThrowsAsync<RpcException>(async () =>
         {
             while (await call.ResponseStream.MoveNext(ct))
@@ -300,12 +305,56 @@ public sealed class EventStreamTests
                 received++;
             }
         });
-        Assert.Equal(StatusCode.ResourceExhausted, exception.StatusCode);
-        Assert.True(LocalRpcStreamEnd.TryRead(exception, out var end));
-        Assert.Equal(LocalRpcStreamEndReason.Overflow, end);
+        await emitting;
+        Assert.InRange(node.Runtime.Hub.PeakPending, 0, node.StreamBuffer);
+
+        // What the transport already carried, then RESOURCE_EXHAUSTED with the x-af-stream-end trailer, far before the end.
+        Assert.True(IsTypedOverflow(exception), $"A reader that reads again {held.TotalMilliseconds:0} ms after the overflow must get the typed overflow; got {exception.Status}");
         Assert.True(received < events, $"{received} of {events} frames arrived before the overflow");
+        Assert.Equal(1, node.Runtime.Hub.Overflows);
         await WaitAsync(() => OverflowCount(node) == 1, TimeSpan.FromSeconds(30));
-        TestContext.Current.TestOutputHelper?.WriteLine($"{events} events: {received} frames reached the stalled subscriber before the typed overflow.");
+        TestContext.Current.TestOutputHelper?.WriteLine($"{events} events: {received} frames reached the stalled subscriber before the typed overflow (it read again {held.TotalMilliseconds:0} ms after the overflow).");
+    }
+
+    /// <summary>RESOURCE_EXHAUSTED with the <c>x-af-stream-end: overflow</c> trailer.</summary>
+    private static bool IsTypedOverflow(RpcException exception) =>
+        exception.StatusCode == StatusCode.ResourceExhausted && LocalRpcStreamEnd.TryRead(exception, out var end) && end == LocalRpcStreamEndReason.Overflow;
+
+    /// <summary>
+    /// LocalRpc's settle window after an overflow (the stream's heartbeat interval): a reader that reads again within it gets the typed
+    /// overflow, one stalled longer a transport reset. Within 2 s of the window either is allowed.
+    /// </summary>
+    private static void AssertSettleBranch(TimeSpan held, Func<bool> withinWindow, Func<bool> beyondWindow, string describe)
+    {
+        var settle = NodeEventServiceHandler.HeartbeatInterval;
+        if (held < settle - TimeSpan.FromSeconds(2))
+        {
+            Assert.True(withinWindow(), "Read again within the settle window, so the typed overflow is expected: " + describe);
+        }
+        else if (held > settle + TimeSpan.FromSeconds(2))
+        {
+            Assert.True(beyondWindow(), "Stalled beyond the settle window, so a transport reset is expected: " + describe);
+        }
+    }
+
+    /// <summary>
+    /// Publishes NODE events in batches until the node reports an overflow (at most 60 s); returns the last sequence published and how
+    /// long ago the overflow was first seen (the stall after it, up to the caller's next action).
+    /// </summary>
+    private static async Task<(ulong Latest, TimeSpan HeldSoFar)> EmitUntilOverflowAsync(InProcessNode node, int batch)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        ulong latest = 0;
+        var lastBatch = TimeSpan.Zero;
+        while (node.Runtime.Hub.Overflows < 1)
+        {
+            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(60), "The stalled subscriber did not overflow within 60 s of publishing.");
+            lastBatch = clock.Elapsed;
+            latest = await EmitAsync(node, batch);
+        }
+
+        // The overflow happened during the last batch: the time since that batch started bounds the stall after it so far.
+        return (latest, clock.Elapsed - lastBatch);
     }
 
     /// <summary>

@@ -46,13 +46,64 @@ internal static class StartupBenchmark
             samples[i] = await MeasureOnceAsync(executable, arguments, expectExit, timeout).ConfigureAwait(false);
         }
 
+        return Result(name, executable, arguments, warmup, samples, limitP50, limitP95);
+    }
+
+    /// <summary>
+    /// Measures two executables with the same arguments on this machine, interleaved: the warm-up runs alternate, and each measured
+    /// round runs both, the baseline first in even rounds and second in odd ones (<see cref="BaselineFirst"/>), so drift of the
+    /// machine (cache, frequency, other load) during the measurement falls on both alike and neither always runs first.
+    /// </summary>
+    public static async Task<(StartupResult Baseline, StartupResult Current)> RunPairAsync(string name, string baselineExecutable, string currentExecutable,
+        IReadOnlyList<string> arguments, int runs, int warmup, int expectExit, TimeSpan timeout)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        foreach (var executable in (string[])[baselineExecutable, currentExecutable])
+        {
+            if (!File.Exists(executable))
+            {
+                throw new FileNotFoundException($"'{executable}' is not a file.", executable);
+            }
+        }
+
+        for (var i = 0; i < warmup; i++)
+        {
+            await MeasureOnceAsync(baselineExecutable, arguments, expectExit, timeout).ConfigureAwait(false);
+            await MeasureOnceAsync(currentExecutable, arguments, expectExit, timeout).ConfigureAwait(false);
+        }
+
+        var baseline = new double[runs];
+        var current = new double[runs];
+        for (var i = 0; i < runs; i++)
+        {
+            if (BaselineFirst(i))
+            {
+                baseline[i] = await MeasureOnceAsync(baselineExecutable, arguments, expectExit, timeout).ConfigureAwait(false);
+                current[i] = await MeasureOnceAsync(currentExecutable, arguments, expectExit, timeout).ConfigureAwait(false);
+            }
+            else
+            {
+                current[i] = await MeasureOnceAsync(currentExecutable, arguments, expectExit, timeout).ConfigureAwait(false);
+                baseline[i] = await MeasureOnceAsync(baselineExecutable, arguments, expectExit, timeout).ConfigureAwait(false);
+            }
+        }
+
+        return (Result(name, baselineExecutable, arguments, warmup, baseline, null, null), Result(name, currentExecutable, arguments, warmup, current, null, null));
+    }
+
+    /// <summary>Whether the baseline runs first in measured round <paramref name="round"/> (alternating, starting with the baseline).</summary>
+    public static bool BaselineFirst(int round) => round % 2 == 0;
+
+    private static StartupResult Result(string name, string executable, IReadOnlyList<string> arguments, int warmup, double[] samples, double? limitP50,
+        double? limitP95)
+    {
         var p50 = Percentile(samples, 50);
         var p95 = Percentile(samples, 95);
         return new StartupResult
         {
             Name = name,
             Command = [executable, .. arguments],
-            Runs = runs,
+            Runs = samples.Length,
             Warmup = warmup,
             SamplesMs = samples.Select(Round).ToList(),
             P50Ms = Round(p50),

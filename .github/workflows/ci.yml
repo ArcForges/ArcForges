@@ -22,8 +22,9 @@ env:
 # Platform-independent merge gate (16-testing-strategy section 3): build, analyzers, format,
 # tests (with the closed-loop node and CLI tests on the JIT build and again on the Native AOT binaries),
 # the node store's expand-only schema check (13-distribution-updates section 9), Native AOT
-# publish with zero warnings, size gates, the startup regression gate and the store growth bound
-# (15-performance-targets) on win-x64, win-arm64, linux-x64 and linux-arm64.
+# publish with zero warnings, size gates, the startup regression gate (this run's CLI against the previous
+# main run's CLI, both measured on the same runner) and the store growth bound (15-performance-targets) on
+# win-x64, win-arm64, linux-x64 and linux-arm64.
 # No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
 jobs:
   native:
@@ -113,6 +114,7 @@ jobs:
           TARGET_RID: ${{ matrix.rid }}
         run: ./eng/bench.ps1 -RuntimeIdentifier $env:TARGET_RID
       - name: Gate startup against the previous main run
+        # Same runner: the previous main run's CLI (its startup-host artifact) and this run's CLI are measured here, interleaved.
         env:
           TARGET_RID: ${{ matrix.rid }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -134,6 +136,17 @@ jobs:
           name: bench-${{ matrix.rid }}-${{ github.sha }}
           path: artifacts/bench/${{ matrix.rid }}/*.json
           if-no-files-found: warn
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        # The CLI that later runs measure against on their own runner (eng/compare-startup.ps1); main pushes only.
+        if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        with:
+          name: startup-host-${{ matrix.rid }}-${{ github.sha }}
+          path: |
+            artifacts/publish/${{ matrix.rid }}/host/*
+            !artifacts/publish/${{ matrix.rid }}/host/*.pdb
+            !artifacts/publish/${{ matrix.rid }}/host/*.dbg
+          if-no-files-found: error
           retention-days: 90
 
   verify:
