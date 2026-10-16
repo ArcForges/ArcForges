@@ -38,7 +38,8 @@ public sealed class NodeLifecycleTests
         Assert.True(first.ExitCode == 0, first.ToString());
         var json = first.Json();
         Assert.True(json.GetProperty("autoStarted").GetBoolean());
-        Assert.Equal(OperatingSystem.IsWindows() ? "NODE_LIFECYCLE_STATE_READY" : "NODE_LIFECYCLE_STATE_DEGRADED", json.GetProperty("node").GetProperty("state").GetString());
+        Assert.Equal(OperatingSystem.IsWindows() || ArcForges.Tests.SystemdTestEnvironment.FullyEnforced ? "NODE_LIFECYCLE_STATE_READY" : "NODE_LIFECYCLE_STATE_DEGRADED",
+            json.GetProperty("node").GetProperty("state").GetString());
         Assert.Equal(node.Endpoint, json.GetProperty("node").GetProperty("endpoint").GetString());
         Assert.True(elapsed < TimeSpan.FromSeconds(15), $"status took {elapsed}");
 

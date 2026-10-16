@@ -699,6 +699,7 @@ internal static class TaskCommands
 
     private static string Exit(ManagedTask task) =>
         task.CurrentAttempt?.Result is { HasExitCode: true } result ? result.ExitCode.ToString(CultureInfo.InvariantCulture)
+        : task.CurrentAttempt?.Result is { HasSignal: true, Signal: > 0 } signalled ? "SIG" + signalled.Signal.ToString(CultureInfo.InvariantCulture)
         : task.CurrentAttempt?.Result is { } other ? TaskText.Word(other.TerminationReason)
         : "-";
 }

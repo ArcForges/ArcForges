@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# The disk guard of running executions while the node is down (ArcForges-Design 13 section 3.4; 06 section 5). It is independent of
+# arcforges-node.service, so it keeps guarding while the node is stopped, failed or restarting: once the node's heartbeat has not changed
+# for storage.guard_takeover_ms it enforces each attempt's output limit (freeze, then kill) and records its actions in the attempt's
+# guard-events.jsonl. It is idle while the heartbeat is fresh.
+[Unit]
+Description=ArcForges disk guard for running executions
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/arcforges/app/current/arcforges node guard
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

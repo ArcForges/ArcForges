@@ -155,6 +155,21 @@ public sealed class CommandLineTests
         Assert.Equal(exit, ExitCodes.For(new NodeUnavailableException(reason, "x", "y")));
 
     [Fact]
+    public void AKilledResultNeverExitsZero()
+    {
+        // cli.md section 3 / 04 section 5: a signal maps to 128 + n (a real-time one too); an unknown signal or a missing exit code is a failure.
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120);
+        Assert.Equal(162, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, Signal = 34 }, cli));
+        Assert.Equal(192, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, Signal = 64 }, cli));
+        Assert.Equal(ExitCodes.Failed, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, Signal = 0 }, cli));
+        Assert.Equal(ExitCodes.Failed, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited }, cli));
+        Assert.Equal(0, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, ExitCode = 0 }, cli));
+        Assert.Equal(3, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, ExitCode = 3 }, cli));
+    }
+
+    [Fact]
     public void TheRefusedAutoStartPrintsTheSpecifiedGuidance()
     {
         using var output = new StringWriter();

@@ -56,7 +56,45 @@ internal sealed class TestNode : IAsyncDisposable
         if (!OperatingSystem.IsWindows())
         {
             Environment["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + Path.Combine(root, "no-session-bus");
+
+            // 16 section 4: each test node gets its own slice.
+            Environment["ARCFORGES_SLICE"] = Slice;
+
+            // A JIT process the test kills would leave the runtime's diagnostic sockets in /tmp.
+            Environment["DOTNET_EnableDiagnostics"] = "0";
         }
+    }
+
+    /// <summary>The node's slice on Linux (<c>arcforges-test-&lt;id&gt;.slice</c>).</summary>
+    public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
+
+    /// <summary>Test units this environment installed in the runtime unit directory (stopped and removed at the end).</summary>
+    public List<string> Units { get; } = [];
+
+    /// <summary>
+    /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled), and
+    /// reloads the manager; the unit is stopped and removed when the environment is disposed.
+    /// </summary>
+    public string InstallUnit(string name, string content)
+    {
+        var directory = Path.Combine(System.Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR")!, "systemd", "user");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, name), content);
+        Units.Add(name);
+        Assert.Equal(0, ArcForges.Tests.SystemdTestEnvironment.Systemctl("daemon-reload").ExitCode);
+        return name;
+    }
+
+    /// <summary>The <c>Environment=</c> lines that give a unit this environment's variables (and the JIT build its runtime).</summary>
+    public string UnitEnvironment()
+    {
+        var variables = Environment.Where(pair => pair.Value is not null).Select(pair => (pair.Key, Value: pair.Value!)).ToList();
+        if (System.Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } dotnetRoot)
+        {
+            variables.Add(("DOTNET_ROOT", dotnetRoot));
+        }
+
+        return string.Join("\n", variables.Select(pair => $"Environment=\"{pair.Key}={pair.Value}\""));
     }
 
     /// <summary>The <c>arcforges</c> binary under test: <c>ARCFORGES_HOST_PATH</c> or the JIT build next to the tests.</summary>
@@ -80,9 +118,11 @@ internal sealed class TestNode : IAsyncDisposable
 
     public string SupervisorLog => Path.Combine(DataRoot, "logs", "supervisor", "supervisor.log");
 
-    public static TestNode Create()
+    public static TestNode Create(string? parent = null)
     {
-        var root = Directory.CreateTempSubdirectory("arcforges-closed-loop-").FullName;
+        var root = parent is null
+            ? Directory.CreateTempSubdirectory("arcforges-closed-loop-").FullName
+            : Directory.CreateDirectory(Path.Combine(parent, "arcforges-closed-loop-" + Guid.NewGuid().ToString("N")[..12])).FullName;
         var node = new TestNode(root);
         Directory.CreateDirectory(node.ConfigDirectory);
         File.WriteAllText(Path.Combine(node.ConfigDirectory, "node.json"), "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");
@@ -290,6 +330,30 @@ internal sealed class TestNode : IAsyncDisposable
             {
                 leftovers.AddRange(EndAttempts());
             }
+            else
+            {
+                // Attempts outlive a stopped node as transient units: stop this node's units, its slice and the test units, and count what was left.
+                foreach (var unit in Units)
+                {
+                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("stop", unit);
+                }
+
+                leftovers.AddRange(ArcForges.Tests.SystemdTestEnvironment.Cleanup(Slice, AttemptNames(), Units));
+                var unitDirectory = Path.Combine(System.Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? "/nonexistent", "systemd", "user");
+                foreach (var unit in Units)
+                {
+                    File.Delete(Path.Combine(unitDirectory, unit));
+                }
+
+                if (Units.Count > 0)
+                {
+                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("daemon-reload");
+                    foreach (var unit in Units)
+                    {
+                        ArcForges.Tests.SystemdTestEnvironment.Systemctl("reset-failed", unit);
+                    }
+                }
+            }
 
             // Supervisors exit once their node stopped; give them a moment.
             await WaitAsync(() => LiveProcesses().Count == 0, TimeSpan.FromSeconds(15), "the node and supervisor processes to exit").ContinueWith(_ => { }, TaskScheduler.Default);
@@ -331,6 +395,35 @@ internal sealed class TestNode : IAsyncDisposable
         }
 
         Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
+    }
+
+    /// <summary>The attempts of this node's store.</summary>
+    public List<string> AttemptNames()
+    {
+        if (!File.Exists(StorePaths.Database(DataRoot)))
+        {
+            return [];
+        }
+
+        List<string> names;
+        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" }))
+        {
+            names = store.Read(reader =>
+            {
+                var list = new List<string>();
+                using var command = reader.CreateCommand("SELECT attempt_id FROM attempt;");
+                using var rows = command.ExecuteReader();
+                while (rows.Read())
+                {
+                    list.Add(IdText.Format((byte[])rows.GetValue(0)));
+                }
+
+                return list;
+            });
+        }
+
+        SqliteConnection.ClearAllPools();
+        return names;
     }
 
     /// <summary>Terminates every attempt job of this node by name and sets its ack event; returns the attempts that still ran.</summary>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!--
+    Tests of src/ArcForges.Node.Platform.Linux (16-testing-strategy section 4): pure units (execvp resolution, the exit records from
+    systemd's variables and a failed unit, signal names, the unit object paths, the role arguments, the helper formats) on every OS, and
+    the Linux platform with the real systemd user manager (Trait env=linux-real): transient units with file descriptors passed over D-Bus,
+    the exact environment, their limits in the cgroup files (L-07, L-13), the slice's root limits, freeze and thaw, the cancellation
+    sequence, limit stops that freeze before they kill, launch steps inside the unit before the command, end steps as ExecStop, OOM kills
+    recorded from the failed unit, recovery by unit name, the observe-only mode without a user manager, and the guard. Each test gets its
+    own slice arcforges-test-<id>.slice; the fixture removes its units, slice and files and fails when anything was left running. The
+    helper roles run from the arcforges executable built next to the tests (or ARCFORGES_HOST_PATH).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/ArcForges.Node.Platform.Linux/ArcForges.Node.Platform.Linux.csproj" />
+    <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
+    <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
+    <!-- The host's graph carries the DesktopPlatform 1.0.0-ci.138.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
+    <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
+  </ItemGroup>
+</Project>

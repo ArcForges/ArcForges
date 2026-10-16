@@ -275,7 +275,8 @@ public sealed class NodeServiceTests
     [Fact(Timeout = 60_000)]
     public async Task HealthAndCapabilitiesReportTheBuildsEnforcement()
     {
-        // Windows enforces through job objects (AF-EXEC-01) and is READY; Linux execution arrives with AF-EXEC-02, so it is observe-only.
+        // Windows enforces through job objects (AF-EXEC-01) and is READY; Linux enforces through transient units of the user manager
+        // (AF-EXEC-02) and is READY when the manager delegates cpu, memory and pids, observe-only (DEGRADED) without a user manager.
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
@@ -283,7 +284,7 @@ public sealed class NodeServiceTests
         var health = await channel.Node.GetHealthAsync(new NodeServiceGetHealthRequest(), deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
         Assert.Equal(InProcessNode.ExpectedState, health.Value.State);
         Assert.Contains(health.Value.Checks, check => check.CheckId == "node.enforcement"
-            && check.Status == (OperatingSystem.IsWindows() ? CheckStatus.Pass : CheckStatus.Warn));
+            && check.Status == (InProcessNode.ExpectedState == NodeLifecycleState.Ready ? CheckStatus.Pass : CheckStatus.Warn));
         Assert.Contains(health.Value.Metrics, metric => metric.Name == "rpc.peers_admitted" && metric.Value >= 1);
         var capabilities = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Reevaluate = true }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
         var report = capabilities.Value.Capabilities;
@@ -299,9 +300,20 @@ public sealed class NodeServiceTests
             Assert.True(report.RestartSurvival);
             Assert.Contains(report.PlatformFacts, fact => fact.Name == "root_job");
         }
+        else if (ArcForges.Tests.SystemdTestEnvironment.FullyEnforced)
+        {
+            Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
+            Assert.Equal(MemoryControl.EnforcedSoftAndHard, report.Memory);
+            Assert.Equal(ProcessCountControl.Enforced, report.Pids);
+            Assert.Equal(PauseSupport.Supported, report.Pause);
+            Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
+            Assert.True(report.RestartSurvival);
+            Assert.Contains(report.PlatformFacts, fact => fact.Name == "slice" && fact.Value == node.Slice);
+        }
         else
         {
             Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
+            Assert.False(report.RestartSurvival);
         }
     }
 

@@ -7,6 +7,7 @@
     <Project Path="src/ArcForges.Node.Api/ArcForges.Node.Api.csproj" />
     <Project Path="src/ArcForges.Node.Core/ArcForges.Node.Core.csproj" />
     <Project Path="src/ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
+    <Project Path="src/ArcForges.Node.Platform.Linux/ArcForges.Node.Platform.Linux.csproj" />
     <Project Path="src/ArcForges.Node.Platform.Windows/ArcForges.Node.Platform.Windows.csproj" />
     <Project Path="src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
     <Project Path="src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
@@ -20,6 +21,7 @@
     <Project Path="tests/ArcForges.ClosedLoop.Tests/ArcForges.ClosedLoop.Tests.csproj" />
     <Project Path="tests/ArcForges.Desktop.Tests/ArcForges.Desktop.Tests.csproj" />
     <Project Path="tests/ArcForges.Node.Core.Tests/ArcForges.Node.Core.Tests.csproj" />
+    <Project Path="tests/ArcForges.Node.Platform.Linux.Tests/ArcForges.Node.Platform.Linux.Tests.csproj" />
     <Project Path="tests/ArcForges.Node.Platform.Windows.Tests/ArcForges.Node.Platform.Windows.Tests.csproj" />
     <Project Path="tests/ArcForges.Node.Store.Tests/ArcForges.Node.Store.Tests.csproj" />
     <Project Path="tests/ArcForges.Repository.Tests/ArcForges.Repository.Tests.csproj" />

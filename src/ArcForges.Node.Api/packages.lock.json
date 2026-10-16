@@ -141,11 +141,6 @@
           "SQLitePCLRaw.core": "2.1.12"
         }
       },
-      "Tmds.DBus.Protocol": {
-        "type": "Transitive",
-        "resolved": "0.94.1",
-        "contentHash": "11YMr7FnAbL83bQmVxlhbIKHvSLxjO81D12Ej0QMSGXMDTxNA9MTOa4MQxx43nv5el/efuPHwzyrj6a5ha2gug=="
-      },
       "arcforges.client": {
         "type": "Project",
         "dependencies": {
@@ -169,6 +164,14 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )"
+        }
+      },
+      "arcforges.node.platform.linux": {
+        "type": "Project",
+        "dependencies": {
+          "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
+          "ArcForges.Node.Platform": "[0.1.0-dev, )",
+          "Tmds.DBus.Protocol": "[0.94.1, )"
         }
       },
       "arcforges.node.platform.windows": {
@@ -239,6 +242,12 @@
           "SQLitePCLRaw.bundle_e_sqlite3": "2.1.12",
           "SQLitePCLRaw.core": "2.1.12"
         }
+      },
+      "Tmds.DBus.Protocol": {
+        "type": "CentralTransitive",
+        "requested": "[0.94.1, )",
+        "resolved": "0.94.1",
+        "contentHash": "11YMr7FnAbL83bQmVxlhbIKHvSLxjO81D12Ej0QMSGXMDTxNA9MTOa4MQxx43nv5el/efuPHwzyrj6a5ha2gug=="
       }
     },
     "net10.0/linux-arm64": {

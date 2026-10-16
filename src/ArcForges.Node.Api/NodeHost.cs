@@ -73,6 +73,15 @@ public sealed record NodeHostOptions
 
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
+
+    /// <summary>Linux: the root slice (component tests give each node its own; default <c>arcforges.slice</c>, or the test hook in test mode).</summary>
+    public string? LinuxSlice { get; init; }
+
+    /// <summary>Linux: the user manager's D-Bus address (component tests may name an absent one; default the user bus, else the manager's private socket).</summary>
+    public string? SystemdAddress { get; init; }
+
+    /// <summary>Linux: the controllers treated as delegated (component tests simulate a manager without a controller; default as read).</summary>
+    public IReadOnlyCollection<string>? LinuxControllers { get; init; }
 }
 
 /// <summary>
@@ -210,7 +219,23 @@ public static class NodeHost
         // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
         var platform = StartPlatform(options, store, log);
         var capabilities = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        if (OperatingSystem.IsLinux())
+        {
+            // An in-memory data root: captured output and temporary files count against the attempts' memory (no swap to reclaim into).
+            var inMemory = NodeCapabilities.AddDataRootFact(capabilities, dataRoot);
+            foreach (var (path, kind) in inMemory)
+            {
+                log.Warning("node.data_root_in_memory", new LogField("path", path), new LogField("filesystem", kind));
+            }
+        }
+
         using var heartbeat = new NodeHeartbeatWriter(dataRoot, log, clock);
+        if (notifier.WatchdogInterval is { } watchdogInterval)
+        {
+            // 13 section 3.4: WatchdogSec=30, pinged with each heartbeat renewal from the enforcement loop (06 section 5).
+            heartbeat.Renewed = () => notifier.Notify("WATCHDOG=1");
+            log.Info("node.watchdog", new LogField("intervalMs", (long)watchdogInterval.TotalMilliseconds));
+        }
         var execution = new ExecutionSupervisor(new ExecutionOptions
         {
             Store = store,
@@ -224,6 +249,7 @@ public static class NodeHost
             Steps = options.LaunchSteps,
             Faults = faults,
             Heartbeat = heartbeat,
+            Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
@@ -234,7 +260,6 @@ public static class NodeHost
         LocalRpcServer? server = null;
         using var housekeeping = new PeriodicTimer(HousekeepingInterval);
         Task housekeepingLoop = Task.CompletedTask;
-        Task watchdogLoop = Task.CompletedTask;
         using var loops = new CancellationTokenSource();
         try
         {
@@ -290,9 +315,11 @@ public static class NodeHost
             }.Write(NodeLocations.EndpointDescriptorFile(dataRoot));
 
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
-            if (notifier.WatchdogInterval is { } watchdog)
+            if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
             {
-                watchdogLoop = WatchdogAsync(notifier, watchdog, loops.Token);
+                // 06 section 5: arcforges-guard.service guards the attempt units while the node is down; started when installed.
+                var guardUnit = LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.GuardUnit) ?? LinuxTestHooks.DefaultGuardUnit;
+                log.Info("node.guard_unit", new LogField("unit", guardUnit), new LogField("state", linux.EnsureGuard(guardUnit)));
             }
 
             var enforced = NodeCapabilities.FullyEnforced(node.Capabilities);
@@ -314,7 +341,7 @@ public static class NodeHost
             {
             }
 
-            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, watchdogLoop, keyLoad]).ConfigureAwait(false);
+            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, keyLoad]).ConfigureAwait(false);
         }
         finally
         {
@@ -414,25 +441,13 @@ public static class NodeHost
         }
     }
 
-    private static async Task WatchdogAsync(SystemdNotifier notifier, TimeSpan interval, CancellationToken cancellationToken)
-    {
-        using var timer = new PeriodicTimer(interval / 3);
-        try
-        {
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
-            {
-                notifier.Notify("WATCHDOG=1");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance",
-        Justification = "The node drives the platform through its interface; Linux gets its own platform with AF-EXEC-02.")]
     private static IExecutionPlatform? StartPlatform(NodeHostOptions options, NodeStore store, NodeLog log)
     {
+        if (OperatingSystem.IsLinux())
+        {
+            return StartLinuxPlatform(options, store, log);
+        }
+
         if (!OperatingSystem.IsWindows())
         {
             return null;
@@ -455,6 +470,36 @@ public static class NodeHost
             platform.Dispose();
             return null;
         }
+    }
+
+    /// <summary>
+    /// The Linux platform (AD-0005 Linux): transient units of the user manager in the slice, or plain child processes without a user
+    /// manager (observe only). Test mode takes the slice, the manager's address and simulated delegation from <see cref="LinuxTestHooks"/>.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    private static ArcForges.Node.Platform.Linux.LinuxExecutionPlatform StartLinuxPlatform(NodeHostOptions options, NodeStore store, NodeLog log)
+    {
+        var helper = options.HelperExecutable ?? Path.Combine(AppContext.BaseDirectory, "arcforges");
+        var controllers = LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.Controllers);
+        var platform = new ArcForges.Node.Platform.Linux.LinuxExecutionPlatform(new ArcForges.Node.Platform.Linux.LinuxPlatformOptions
+        {
+            Slice = options.LinuxSlice ?? LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.Slice) ?? ArcForges.Node.Platform.Linux.LinuxExecutionPlatform.DefaultSlice,
+            ManagerAddress = options.SystemdAddress ?? LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.ManagerAddress),
+            DelegatedControllers = options.LinuxControllers ?? controllers?.Split(' ', StringSplitOptions.RemoveEmptyEntries),
+        });
+        var settings = new ExecutionSettings(store.Policies.Current().Document, platform.Capacity.LogicalProcessors, platform.Capacity.PhysicalMemoryBytes);
+        var limits = settings.RootLimits();
+        platform.Start(IdText.Format(store.Metadata.NodeId.Span), limits, helper);
+        log.Info("node.platform.started", new LogField("platform", platform.Name), new LogField("slice", platform.Slice),
+            new LogField("unitMode", platform.UnitMode), new LogField("managerUnavailable", platform.ManagerUnavailableReason ?? "-"),
+            new LogField("controllers", string.Join(' ', platform.Controllers.Order(StringComparer.Ordinal))), new LogField("rootCpuRate", limits.CpuRate),
+            new LogField("rootMemoryMax", limits.HardMemoryBytes), new LogField("rootSwapMax", limits.SwapAllowanceBytes), new LogField("helper", helper));
+        foreach (var cgroup in platform.ReleasedFreezes)
+        {
+            log.Warning("node.platform.freeze_released", new LogField("cgroup", cgroup));
+        }
+
+        return platform;
     }
 
     private static Registrations RegisterSignals(NodeRuntime node)

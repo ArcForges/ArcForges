@@ -31,6 +31,12 @@ public sealed class AttemptFiles
     /// <summary>The guard's actions, one JSON object per line.</summary>
     public const string GuardEvents = "guard-events.jsonl";
 
+    /// <summary>The launch and end steps of a Linux attempt.</summary>
+    public const string Steps = "steps.json";
+
+    /// <summary>What a Linux attempt's <c>exec-stop</c> did.</summary>
+    public const string Stop = "stop.json";
+
     /// <summary>Creates the layout of <paramref name="attemptName"/> under <paramref name="dataRoot"/>.</summary>
     public AttemptFiles(string dataRoot, string attemptName)
     {
@@ -79,6 +85,12 @@ public sealed class AttemptFiles
 
     /// <summary><c>guard-events.jsonl</c>.</summary>
     public string GuardEventsPath => Path.Combine(Directory, GuardEvents);
+
+    /// <summary><c>steps.json</c>.</summary>
+    public string StepsPath => Path.Combine(Directory, Steps);
+
+    /// <summary><c>stop.json</c>.</summary>
+    public string StopPath => Path.Combine(Directory, Stop);
 
     /// <summary><c>run/node-heartbeat</c> of a data root (06 section 5).</summary>
     public static string HeartbeatPath(string dataRoot) => Path.Combine(dataRoot, "run", "node-heartbeat");

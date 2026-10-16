@@ -111,6 +111,11 @@ public sealed class NodeRuntime : IDisposable
     public CapabilityReport Reevaluate()
     {
         var report = Execution?.Platform is { } platform ? NodeCapabilities.FromPlatform(platform, Clock) : NodeCapabilities.Evaluate(Clock);
+        if (OperatingSystem.IsLinux())
+        {
+            NodeCapabilities.AddDataRootFact(report, DataRoot);
+        }
+
         Volatile.Write(ref _capabilities, report);
         return report;
     }

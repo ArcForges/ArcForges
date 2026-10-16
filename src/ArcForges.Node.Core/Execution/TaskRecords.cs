@@ -109,7 +109,7 @@ public static class TaskRecords
         "attempt_id, task_id, number, kind, state, executor_node_id, container_name, root_pid, root_start, boot_identity, request_cpu_millicores, " +
         "request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, unenforced, node_gap, created_at, started_at, finished_at, exit_code, " +
         "signal, windows_status, termination_reason, effect, detail, leftover_count, leftover_images_json, cpu_time_ms, mem_peak_bytes, io_read_bytes, " +
-        "io_write_bytes, stdout_bytes, stderr_bytes, stdout_offset, stderr_offset, index_offset, limit_enforced_by, guard_lost, rev";
+        "io_write_bytes, stdout_bytes, stderr_bytes, stdout_offset, stderr_offset, index_offset, limit_enforced_by, guard_lost, rev, core_dumped";
 
     private const string TaskColumns =
         "task_id, state, state_reason, kind, title, command_summary, spec, env_digest, owner, owner_origin, owner_session_id, workspace_id, pool, " +
@@ -493,6 +493,11 @@ public static class TaskRecords
             if (!rows.IsDBNull(20))
             {
                 result.Signal = rows.GetInt32(20);
+            }
+
+            if (!rows.IsDBNull(39))
+            {
+                result.CoreDumped = rows.GetInt32(39) == 1;
             }
 
             if (!rows.IsDBNull(21))

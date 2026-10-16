@@ -74,7 +74,9 @@ any change. They are binding; this file summarizes them and adds the repository 
   carry `tool=...` and skip with a reason when the tool is missing. Closed-loop tests (`loop=local`)
   run real `arcforges` processes (JIT next to the tests, or `ARCFORGES_HOST_PATH`), each node isolated with
   `--test-mode` and the `ARCFORGES_ENDPOINT` / `ARCFORGES_CONFIG_DIR` hooks; their fixture fails a test that leaves a
-  node or supervisor running and deletes the node data key it created in the OS secret store. On Windows a
+  node or supervisor running and deletes the node data key it created in the OS secret store. On Linux each test node gets its
+  own slice `arcforges-test-<id>.slice` (`ARCFORGES_SLICE`) and the fixtures stop its units, slice and test units and fail on anything
+  left running; a test that freezes a unit must thaw it before it is killed (the user manager blocks spawning into a frozen cgroup). On Windows a
   shell inside a job without breakaway (an AI-client sandbox) refuses auto-start by design, so the auto-start
   test skips there with its reason.
 - **Workloads and benchmarks:** `arcforges-testload` (cpu, mem-ramp, output, fork) is a

@@ -22,5 +22,7 @@
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
     <None Include="Procedures/**" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../eng/systemd/arcforges-node.service" Link="Procedures/arcforges-node.service" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The shipped Linux unit files (13 section 3.4), installed per test with the binary under test. -->
+    <None Include="../../packaging/linux/*" LinkBase="Procedures/packaging" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

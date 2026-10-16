@@ -17,6 +17,8 @@ public sealed class RunningAttempt : IDisposable
     private SafeFileHandle? _stderr;
     private FileStream? _index;
     private readonly byte[] _record = new byte[OutputIndexRecord.Size];
+    private readonly long[] _dropFrom = new long[2];
+    private readonly long[] _lastDrop = new long[2];
 
     internal RunningAttempt(byte[] attemptId, byte[] taskId, string name, int number, AttemptFiles files)
     {
@@ -65,6 +67,9 @@ public sealed class RunningAttempt : IDisposable
 
     /// <summary><c>cancel_grace_ms</c>.</summary>
     public TimeSpan CancelGrace { get; internal set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary><c>resources.stop_signal</c> (Linux; default SIGTERM).</summary>
+    public string? StopSignal { get; internal set; }
 
     /// <summary>Recovered after a node restart.</summary>
     public bool NodeGap { get; internal set; }
@@ -210,6 +215,16 @@ public sealed class RunningAttempt : IDisposable
                 else
                 {
                     StderrIndexed = indexed;
+                }
+
+                // Linux: indexed output leaves the page cache (charged to the attempt); the previous range again, now written back.
+                var slot = stream == OutputStreamKind.Stdout ? 0 : 1;
+                var previous = _dropFrom[slot];
+                if (indexed > previous)
+                {
+                    Platform.PageCache.Drop(handle, _lastDrop[slot], indexed - _lastDrop[slot]);
+                    _lastDrop[slot] = previous;
+                    _dropFrom[slot] = indexed;
                 }
             }
 

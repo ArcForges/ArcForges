@@ -34,7 +34,7 @@ public sealed class ExecutionTests
     public async Task RunMirrorsTheStreamsByteExactlyAndExitsLikeTheDirectRun()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
         string[] workload = [TestNode.TestLoad, "output", "--bytes", "8388608", "--line-bytes", "77", "--stream", "both", "--seed", "11"];
@@ -71,7 +71,7 @@ public sealed class ExecutionTests
     public async Task TasksWaitPrintsTheOutputAndExitsWithTheTaskCodeOrNine()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
         var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
@@ -95,7 +95,7 @@ public sealed class ExecutionTests
     public async Task AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
 
@@ -140,7 +140,7 @@ public sealed class ExecutionTests
     public async Task TheNodeKilledMidRunRecoversTheAttemptThroughItsHolder()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         var first = await node.StartNodeAsync();
         var marker = Path.Combine(node.Root, "f.txt");
@@ -187,7 +187,7 @@ public sealed class ExecutionTests
     public async Task AttachingAfterARestartReplaysTheBacklogInBoundedNodeMemory()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         const long Bytes = 700L << 20;
         await using var node = TestNode.Create();
         var first = await node.StartNodeAsync();
@@ -252,7 +252,7 @@ public sealed class ExecutionTests
     public async Task AHolderLeftWaitingByACrashAfterTheRecordIsReleasedAtTheNextStart()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         node.Environment[ExecutionFaultVariable] = "kill-before-ack=0";
         var first = await node.StartNodeAsync();
@@ -279,7 +279,7 @@ public sealed class ExecutionTests
     public async Task AnUnexpectedFinalizationFailureIsLoggedAndRetried()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         node.Environment[ExecutionFaultVariable] = "finalize-throw=0";
         await node.StartNodeAsync();
@@ -297,7 +297,7 @@ public sealed class ExecutionTests
     public async Task TheHolderTakesOverTheOutputLimitWhileTheNodeIsDown()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         const long Limit = 8L << 20;
         const long Rate = 2L << 20;
         const int Takeover = 2_000;
@@ -338,7 +338,7 @@ public sealed class ExecutionTests
     public async Task TheHolderStopsTheFloodWhileTheNodeRestartsFasterThanTheTakeover()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         const long Limit = 4L << 20;
         const long Rate = 1L << 20;
         const int Takeover = 2_000;
@@ -406,7 +406,7 @@ public sealed class ExecutionTests
     public async Task TheSupervisorRestartsANodeWhoseHeartbeatStalls(string fault)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         node.Environment["ARCFORGES_TEST_FAULT"] = fault + "=3";
         using var supervisor = node.Start(Supervisor, [NodeLocations.TestModeOption]);
@@ -435,7 +435,7 @@ public sealed class ExecutionTests
     public async Task AStartupLongerThanTheStallIsNotMistakenForAHang()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (Linux execution is AF-EXEC-02; its node refuses submissions as enforcement_unavailable).");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows execution (the Linux equivalents are LinuxExecutionTests).");
         await using var node = TestNode.Create();
         node.Environment["ARCFORGES_TEST_FAULT"] = "slow-startup=35";
         using var supervisor = node.Start(Supervisor, [NodeLocations.TestModeOption]);

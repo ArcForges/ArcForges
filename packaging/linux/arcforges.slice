@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# The root container of ArcForges executions (ArcForges-Design 13 section 3.4; 03 section 5.1). Its limits (CPUQuota, MemoryHigh,
+# MemoryMax, MemorySwapMax, TasksMax) are runtime properties the node sets through the user manager (SetUnitProperties, runtime), so the
+# file carries none. Every execution is a transient unit arcforges-a-<attempt>.service in this slice.
+[Unit]
+Description=ArcForges managed executions
+
+[Slice]

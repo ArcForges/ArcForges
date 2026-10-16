@@ -71,6 +71,14 @@ internal static class TaskText
 
         switch (result.TerminationReason)
         {
+            case TerminationReason.Exited when result.HasSignal:
+                // Linux: the program ended on a signal of its own (not a stop by the node): 128 + n, as a shell reports it. A killed result
+                // is never a success, even when the signal is unknown.
+                output.Error.WriteLine($"arcforges: the task ended on signal {result.Signal}" + (result.CoreDumped ? " (core dumped)" : string.Empty));
+                return result.Signal > 0 ? 128 + result.Signal : ExitCodes.Failed;
+            case TerminationReason.Exited when !result.HasExitCode:
+                output.Error.WriteLine("arcforges: the task ended without an exit code");
+                return ExitCodes.Failed;
             case TerminationReason.Exited:
                 return result.ExitCode;
             case TerminationReason.SpawnFailed:

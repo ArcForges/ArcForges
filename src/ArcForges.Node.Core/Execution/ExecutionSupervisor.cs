@@ -32,8 +32,14 @@ public sealed class ExecutionOptions
     /// <summary>The data root.</summary>
     public required string DataRoot { get; init; }
 
-    /// <summary>The execution platform, or <see langword="null"/> where this build has none (Linux until AF-EXEC-02).</summary>
+    /// <summary>The execution platform, or <see langword="null"/> when none could be started.</summary>
     public IExecutionPlatform? Platform { get; init; }
+
+    /// <summary>
+    /// True when the platform does not enforce CPU and memory limits (an observe-only or partial node, 03 section 8): attempts are recorded
+    /// with <c>unenforced=true</c>.
+    /// </summary>
+    public bool Unenforced { get; init; }
 
     /// <summary>The sealed task secrets.</summary>
     public required TaskSecrets Secrets { get; init; }
@@ -165,6 +171,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         _keysReady = options.KeysReady;
         _steps = options.Steps;
         _faults = options.Faults;
+        Unenforced = options.Unenforced;
         Heartbeat = options.Heartbeat;
         NodeName = IdText.Format(_store.Metadata.NodeId.Span);
         var capacity = Platform?.Capacity ?? new MachineCapacity(Environment.ProcessorCount, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
@@ -183,6 +190,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
     /// <summary>The platform, or <see langword="null"/>.</summary>
     public IExecutionPlatform? Platform { get; }
+
+    /// <summary>Attempts run without enforced CPU and memory limits (recorded <c>unenforced</c>; 03 section 8).</summary>
+    public bool Unenforced { get; }
 
     /// <summary>The node ID's base32 text (container names).</summary>
     public string NodeName { get; }
@@ -257,6 +267,12 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             {
                 _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("error", exception.NativeErrorCode));
             }
+            catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
+            {
+                // Linux: the user manager did not answer; without a container the exit record (if any) still finalizes the attempt.
+                _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
+                    new LogField("error", NodeLog.OneLine(exception.Message)));
+            }
 
             var running = new RunningAttempt(row.AttemptId, row.TaskId, name, row.Number, files)
             {
@@ -268,6 +284,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 DiscardOutput = task?.Spec.Output?.Capture == OutputCapture.Discard,
                 TimeoutMs = task?.Spec.HasTimeoutMs == true ? task.Spec.TimeoutMs : null,
                 CpuLimitMs = task?.Spec.HasCpuTimeLimitMs == true ? task.Spec.CpuTimeLimitMs : null,
+                StopSignal = task?.Spec.Resources is { HasStopSignal: true } stopResources ? stopResources.StopSignal : null,
             };
             if (task?.Spec.Resources is { HasCancelGraceMs: true } resources)
             {
@@ -520,8 +537,10 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     }
 
     /// <summary>
-    /// Starts the stop sequence of a running attempt (04 section 6): the graceful phase (CTRL_BREAK through the helper and WM_CLOSE),
-    /// <paramref name="grace"/>, then the forced phase. Limit stops (<paramref name="graceful"/> false) terminate at once.
+    /// Starts the stop sequence of a running attempt (04 section 6): the graceful phase (Windows: CTRL_BREAK through the helper and
+    /// WM_CLOSE; Linux: <c>KillUnit("all", stop_signal)</c>), <paramref name="grace"/>, then the forced phase. Limit stops
+    /// (<paramref name="graceful"/> false with <c>OUTPUT_LIMIT</c> or <c>DISK_LIMIT</c>) stop at once without the graceful phase; on Linux
+    /// the unit is frozen before it is killed.
     /// </summary>
     public void Stop(string attemptName, TerminationReason reason, TimeSpan? grace, bool graceful = true)
     {
@@ -546,7 +565,17 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
             if (!graceful || attempt.Handle is null || attempt.Handle.Root is null)
             {
-                attempt.Handle?.Terminate();
+                if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit)
+                {
+                    var how = attempt.Handle?.StopAtLimit() ?? "no container";
+                    _log.Info("execution.limit_stop", new LogField("attempt", attemptName), new LogField("reason", reason),
+                        new LogField("container", attempt.Handle?.ContainerName ?? "-"), new LogField("stop", how));
+                }
+                else
+                {
+                    attempt.Handle?.Terminate();
+                }
+
                 TerminateEscaped(attempt, reason);
                 attempt.Forced = true;
                 attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
@@ -561,9 +590,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             GracefulOutcome? outcome = null;
             try
             {
-                outcome = attempt.Handle.RequestGracefulStop();
+                outcome = attempt.Handle.RequestGracefulStop(attempt.StopSignal);
             }
-            catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException)
+            catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or TimeoutException)
             {
                 _log.Warning("execution.stop.graceful_failed", new LogField("attempt", attemptName), new LogField("errorType", exception.GetType().Name));
             }
@@ -572,9 +601,13 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             {
                 attempt.StopDetail = outcome is null
                     ? "the graceful phase failed; the grace period applies"
-                    : outcome.ConsoleSignalled
-                        ? $"CTRL_BREAK_EVENT delivered; WM_CLOSE posted to {outcome.WindowsClosed} window(s)"
-                        : $"graceful signal not delivered ({outcome.Reason}); WM_CLOSE posted to {outcome.WindowsClosed} window(s)";
+                    : !OperatingSystem.IsWindows()
+                        ? outcome.ConsoleSignalled
+                            ? $"{attempt.StopSignal ?? "SIGTERM"} sent to every process of the attempt"
+                            : $"graceful signal not delivered ({outcome.Reason})"
+                        : outcome.ConsoleSignalled
+                            ? $"CTRL_BREAK_EVENT delivered; WM_CLOSE posted to {outcome.WindowsClosed} window(s)"
+                            : $"graceful signal not delivered ({outcome.Reason}); WM_CLOSE posted to {outcome.WindowsClosed} window(s)";
                 attempt.GraceDeadline = _clock.GetTimestamp() + (long)(period.TotalSeconds * TimeProvider.System.TimestampFrequency);
             }
 
@@ -986,6 +1019,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         }
 
         var handle = attempt.Handle;
+
+        // Linux observes its units here (a failed unit whose ExecStopPost systemd skipped is recorded from the unit's own properties).
+        handle?.Refresh();
         if (File.Exists(attempt.Files.ExitPath))
         {
             BeginFinalize(attempt, incomplete: false);
@@ -1190,18 +1226,20 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 transaction.Execute(
                     """
                     INSERT INTO attempt (attempt_id, task_id, number, kind, state, executor_node_id, container_name, boot_identity, request_cpu_millicores,
-                                         request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, accounted_mem_bytes, cpu_weight, created_at, rev)
-                    VALUES ($id, $task, $number, 1, 3, $node, $container, $boot, $cpu, $expected, $ceiling, $source, $expected, $weight, $now, 0);
+                                         request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, accounted_mem_bytes, cpu_weight, unenforced,
+                                         created_at, rev)
+                    VALUES ($id, $task, $number, 1, 3, $node, $container, $boot, $cpu, $expected, $ceiling, $source, $expected, $weight, $unenforced, $now, 0);
                     """,
                     ("$id", attemptId), ("$task", taskId), ("$number", number), ("$node", _store.Metadata.NodeId.ToArray()),
-                    ("$container", "Local\\ArcForges." + NodeName + "." + name), ("$boot", _store.Metadata.BootIdentity), ("$cpu", cpu),
-                    ("$expected", expected), ("$ceiling", ceiling), ("$source", (int)source), ("$weight", ExecutionSettings.Weight(row.Priority)), ("$now", now));
+                    ("$container", platform.ContainerName(NodeName, name)), ("$boot", _store.Metadata.BootIdentity), ("$cpu", cpu),
+                    ("$expected", expected), ("$ceiling", ceiling), ("$source", (int)source), ("$weight", ExecutionSettings.Weight(row.Priority)),
+                    ("$unenforced", Unenforced ? 1 : 0), ("$now", now));
                 transaction.Execute(
                     "UPDATE task SET state = 4, state_reason = NULL, current_attempt_id = $attempt, attempt_count = $number, started_at = coalesce(started_at, $now), rev = rev + 1 WHERE task_id = $id;",
                     ("$attempt", attemptId), ("$number", number), ("$now", now), ("$id", taskId));
                 EmitAttempt(context, attemptId, AttemptState.Created);
                 EmitTask(context, taskId, TaskState.Queued);
-                return new Admitted(row, number, ceiling);
+                return new Admitted(row, number, expected, ceiling);
             }).ConfigureAwait(false);
             if (admitted is null)
             {
@@ -1215,6 +1253,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 DiscardOutput = spec.Output?.Capture == OutputCapture.Discard,
                 TimeoutMs = spec.HasTimeoutMs ? spec.TimeoutMs : null,
                 CpuLimitMs = spec.HasCpuTimeLimitMs ? spec.CpuTimeLimitMs : null,
+                StopSignal = spec.Resources is { HasStopSignal: true } stopResources ? stopResources.StopSignal : null,
             };
             if (spec.Resources is { HasCancelGraceMs: true } resources)
             {
@@ -1315,6 +1354,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 CpuWeight = ExecutionSettings.Weight(row.Priority),
                 CommitLimitBytes = (long)(settings.CommitFactor * admitted.Ceiling),
                 CommitNotificationBytes = admitted.Ceiling,
+
+                // Linux (03 section 5.2): MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling, MemorySwapMax = swap_allowance.
+                MemoryHighBytes = Math.Min((long)(1.25 * admitted.Expected), admitted.Ceiling),
+                MemoryMaxBytes = admitted.Ceiling,
+                SwapMaxBytes = settings.SwapAllowance,
             },
             KillWithNode = attempt.KillWithNode,
             DiscardOutput = attempt.DiscardOutput,
@@ -1623,7 +1667,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     private static AttemptOutcome Outcome(RunningAttempt attempt, ExitRecord? exit, LaunchRecord? launch, List<GuardEvent> guard, bool incomplete,
         IReadOnlyList<ContainerProcess> remaining, bool memoryHit)
     {
-        var exitCode = exit?.ExitStatus;
+        // Linux records a signal as exit_code_kind killed or dumped with the signal number; Windows always records an exit code.
+        var signalled = exit?.ExitCodeKind is "killed" or "dumped";
+        var exitCode = exit is null || signalled ? (int?)null : exit.ExitStatus;
+        int? signal = signalled ? exit!.ExitStatus : null;
+        bool? coreDumped = signalled ? exit!.ExitCodeKind == "dumped" : null;
         if (launch is not null)
         {
             return new AttemptOutcome(TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, launch.ExitCode, $"launch step {launch.Step} failed: {launch.Error}", null);
@@ -1632,27 +1680,35 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         if (incomplete && attempt.StopReason != TerminationReason.NodeShutdown)
         {
             return new AttemptOutcome(TerminationReason.TerminationIncomplete, EffectCertainty.Happened, exitCode,
-                "processes remained after the forced phase: " + string.Join(", ", remaining.Select(process => $"{process.Image} ({process.Pid})")), null);
+                "processes remained after the forced phase: " + string.Join(", ", remaining.Select(process => $"{process.Image} ({process.Pid})")), null, signal, coreDumped);
         }
 
         if (attempt.StopReason is { } stop)
         {
             var limitBy = stop is TerminationReason.OutputLimit or TerminationReason.DiskLimit ? attempt.LimitEnforcedBy ?? "NODE" : null;
-            return new AttemptOutcome(stop, EffectCertainty.Happened, exitCode, attempt.StopDetail, limitBy);
+            return new AttemptOutcome(stop, EffectCertainty.Happened, exitCode, attempt.StopDetail, limitBy, signal, coreDumped);
         }
 
         if (guard.FirstOrDefault(item => item.Event == GuardEventKinds.Terminate) is { } guardStop)
         {
             return new AttemptOutcome(guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, EffectCertainty.Happened,
-                exitCode, $"stopped by the attempt's guard while the node was down ({guardStop.OutputBytes} bytes of output, limit {guardStop.LimitBytes})", "GUARD");
+                exitCode, $"stopped by the attempt's guard while the node was down ({guardStop.OutputBytes} bytes of output, limit {guardStop.LimitBytes})", "GUARD",
+                signal, coreDumped);
+        }
+
+        if (exit is not null && (exit.ServiceResult == "oom-kill" || exit.OomKills > 0))
+        {
+            // Linux (04 section 7): memory.events oom_kill increased, or SERVICE_RESULT=oom-kill (OOMPolicy=kill ended the unit).
+            return new AttemptOutcome(TerminationReason.OomKilled, EffectCertainty.Happened, exitCode,
+                $"the OOM killer ended the attempt at its memory limit (peak {exit.MemPeakBytes} bytes)", null, signal, coreDumped);
         }
 
         if (exit is not null && exit.ExitStatus != 0 && (memoryHit || exit.LimitViolations.Contains("job_memory")))
         {
-            return new AttemptOutcome(TerminationReason.MemoryLimit, EffectCertainty.Happened, exitCode, "the attempt reached its commit limit", null);
+            return new AttemptOutcome(TerminationReason.MemoryLimit, EffectCertainty.Happened, exitCode, "the attempt reached its commit limit", null, signal, coreDumped);
         }
 
-        return new AttemptOutcome(TerminationReason.Exited, EffectCertainty.Happened, exitCode, null, null);
+        return new AttemptOutcome(TerminationReason.Exited, EffectCertainty.Happened, exitCode, null, null, signal, coreDumped);
     }
 
     private int RecordFinished(CommandContext context, RunningAttempt attempt, ExitRecord? exit, ContainerAccounting? accounting, AttemptOutcome outcome,
@@ -1667,12 +1723,12 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             return 0;
         }
 
-        uint? windowsStatus = outcome.ExitCode is { } code && unchecked((uint)code) >= 0xC0000000 ? unchecked((uint)code) : null;
+        uint? windowsStatus = OperatingSystem.IsWindows() && outcome.ExitCode is { } code && unchecked((uint)code) >= 0xC0000000 ? unchecked((uint)code) : null;
         var leftovers = exit?.LeftoversTerminated ?? [];
         var cpu = exit is not null ? exit.CpuUserMs + exit.CpuKernelMs : (accounting?.CpuUserMs ?? 0) + (accounting?.CpuKernelMs ?? 0);
         transaction.Execute(
             """
-            UPDATE attempt SET state = 9, finished_at = $now, exit_code = $exit, windows_status = $status, termination_reason = $reason, effect = $effect,
+            UPDATE attempt SET state = 9, finished_at = $now, exit_code = $exit, signal = $signal, core_dumped = $core, windows_status = $status, termination_reason = $reason, effect = $effect,
                    detail = $detail, leftover_count = $leftovers, leftover_images_json = $images, cpu_time_ms = $cpu, mem_peak_bytes = $mem,
                    io_read_bytes = $read, io_write_bytes = $write, stdout_bytes = $stdout, stderr_bytes = $stderr, stdout_offset = $stdout,
                    stderr_offset = $stderr, index_offset = $index, limit_enforced_by = $limitBy,
@@ -1680,7 +1736,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                    rev = rev + 1
             WHERE attempt_id = $id;
             """,
-            ("$now", now), ("$exit", outcome.ExitCode), ("$status", windowsStatus is { } value ? (long)value : null), ("$reason", (int)outcome.Reason),
+            ("$now", now), ("$exit", outcome.ExitCode), ("$signal", outcome.Signal), ("$core", outcome.CoreDumped is { } dumped ? (dumped ? 1 : 0) : null),
+            ("$status", windowsStatus is { } value ? (long)value : null), ("$reason", (int)outcome.Reason),
             ("$effect", (int)outcome.Effect), ("$detail", outcome.Detail), ("$leftovers", leftovers.Count),
             ("$images", JsonSerializer.Serialize(leftovers.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), ExecutionJsonContext.Default.ListString)),
             ("$cpu", cpu), ("$mem", exit?.MemPeakBytes ?? accounting?.MemPeakBytes ?? 0), ("$read", exit?.IoReadBytes ?? accounting?.IoReadBytes ?? 0),
@@ -1951,7 +2008,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
     private static string Truncate(string text) => text.Length <= 500 ? text : text[..500];
 
-    private sealed record Admitted(TaskRow Row, int Number, long Ceiling);
+    private sealed record Admitted(TaskRow Row, int Number, long Expected, long Ceiling);
 
-    private sealed record AttemptOutcome(TerminationReason Reason, EffectCertainty Effect, int? ExitCode, string? Detail, string? LimitEnforcedBy);
+    private sealed record AttemptOutcome(TerminationReason Reason, EffectCertainty Effect, int? ExitCode, string? Detail, string? LimitEnforcedBy,
+        int? Signal = null, bool? CoreDumped = null);
 }

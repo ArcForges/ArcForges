@@ -14,5 +14,7 @@
     <Using Include="Xunit" />
     <!-- Recorded processes are identified by ID and creation, never by ID alone (IDs are reused). -->
     <Compile Include="$(MSBuildThisFileDirectory)Shared/ProcessIdentity.cs" Link="Shared/ProcessIdentity.cs" />
+    <!-- The systemd user manager of the Linux tests: availability, delegation, and the slice and unit cleanup of 16 section 4. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/SystemdTestEnvironment.cs" Link="Shared/SystemdTestEnvironment.cs" />
   </ItemGroup>
 </Project>
