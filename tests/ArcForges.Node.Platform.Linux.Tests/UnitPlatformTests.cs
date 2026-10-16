@@ -71,7 +71,7 @@ public sealed class UnitPlatformTests
 
         // The command is the unit's main process (exec-launch replaced itself with it after the start job), a child of the user manager
         // (not of this process), inside the unit's cgroup.
-        Assert.Equal(root!.Pid.ToString(CultureInfo.InvariantCulture), SystemdTestEnvironment.Property(handle.Unit, "MainPID"));
+        Assert.Equal(root!.Pid.ToString(CultureInfo.InvariantCulture), SystemdTestEnvironment.RequiredProperty(handle.Unit, "MainPID"));
         LinuxHarness.WaitFor(() => ProcFs.Image(root.Pid) == "sleep", Bound, "exec-launch to replace itself with the command");
         Assert.NotEqual(Environment.ProcessId, ProcFs.Stat(root.Pid)!.Value.ParentPid);
         Assert.Equal(unit, ProcFs.CgroupDirectory(ProcFs.CgroupOf(root.Pid)!));
@@ -187,6 +187,8 @@ public sealed class UnitPlatformTests
         var exit = LinuxHarness.WaitExit(handle, Bound);
         Assert.Equal(("exited", 0), (exit.ExitCodeKind, exit.ExitStatus));
         Assert.Equal(["sleep"], exit.LeftoversTerminated);
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): it only tells leftover_grace (1 s)
+        // from TimeoutStopSec (16 s).
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8), $"The attempt took {watch.Elapsed} (leftover_grace 1 s; TimeoutStopSec would be 16 s).");
     }
 
@@ -395,6 +397,8 @@ public sealed class UnitPlatformTests
         Assert.Equal(("killed", 9), (exit.ExitCodeKind, exit.ExitStatus));
         Assert.True(stubborn.LastLimitStop!.Frozen);
         Assert.Empty(exit.LeftoversTerminated);
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the freeze and kill takes milliseconds;
+        // the bound only tells it from a stop that waits for TimeoutStopSec (16 s).
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"The forced phase took {watch.Elapsed}.");
         LinuxHarness.WaitFor(() => SystemdTestEnvironment.Property(stubborn.Unit, "LoadState") is "not-found" or "", Bound, "the unit to be collected");
     }
@@ -581,7 +585,7 @@ public sealed class UnitPlatformTests
         var reexec = SystemdTestEnvironment.Systemctl("daemon-reexec");
         Assert.True(reexec.ExitCode == 0, reexec.Output);
         Assert.Equal("active", SystemdTestEnvironment.Property(unit, "ActiveState"));
-        Assert.Equal(root.Pid.ToString(CultureInfo.InvariantCulture), SystemdTestEnvironment.Property(unit, "MainPID"));
+        Assert.Equal(root.Pid.ToString(CultureInfo.InvariantCulture), SystemdTestEnvironment.RequiredProperty(unit, "MainPID"));
 
         running.Refresh();
         Assert.True(running.RootRunning);

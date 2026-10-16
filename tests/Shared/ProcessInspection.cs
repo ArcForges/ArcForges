@@ -11,18 +11,22 @@ namespace ArcForges.Tests;
 /// Reads another process's command line and environment, so a test can tell its own processes from those of a test running beside it
 /// (the processes of one test node all carry that node's unique <c>ARCFORGES_ENDPOINT</c>, and a holder names its attempt on its command
 /// line). Linux reads <c>/proc/&lt;pid&gt;/cmdline</c> and <c>/proc/&lt;pid&gt;/environ</c>; Windows reads the process parameters of
-/// the target's PEB (64-bit processes of the same user). Returns <see langword="null"/> when the process is gone or unreadable: a caller
-/// treats that process as not its own. Linked into the test projects that need it.
+/// the target's PEB (64-bit processes of the same user). Returns <see langword="null"/> (or false) when the process is gone or
+/// unreadable; a caller that filters processes by owner reports a running unreadable one rather than dropping it. Linked into the test projects that need it.
 /// </summary>
 internal static partial class ProcessInspection
 {
-    /// <summary>The value of the environment variable <paramref name="name"/> in process <paramref name="pid"/>, or null.</summary>
-    public static string? EnvironmentValue(int pid, string name)
+    /// <summary>
+    /// Reads variable <paramref name="name"/> of process <paramref name="pid"/>: false when its environment cannot be read (it exited, or
+    /// it is not inspectable), true with the value, or null when the variable is not set.
+    /// </summary>
+    public static bool TryEnvironmentValue(int pid, string name, out string? value)
     {
+        value = null;
         var block = OperatingSystem.IsWindows() ? WindowsParameters(pid, Parameter.Environment) : ProcText(pid, "environ");
         if (block is null)
         {
-            return null;
+            return false;
         }
 
         var prefix = name + "=";
@@ -30,11 +34,12 @@ internal static partial class ProcessInspection
         {
             if (entry.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             {
-                return entry[prefix.Length..];
+                value = entry[prefix.Length..];
+                return true;
             }
         }
 
-        return null;
+        return true;
     }
 
     /// <summary>The working directory of process <paramref name="pid"/>, or null.</summary>
@@ -59,6 +64,14 @@ internal static partial class ProcessInspection
     public static string? CommandLine(int pid) => OperatingSystem.IsWindows()
         ? WindowsParameters(pid, Parameter.CommandLine)
         : ProcText(pid, "cmdline")?.TrimEnd('\0').Replace('\0', ' ');
+
+    /// <summary>
+    /// Whether process <paramref name="pid"/> has exited but is not reaped yet (Linux state Z). Its environment cannot be read (EACCES),
+    /// and <see cref="System.Diagnostics.Process.HasExited"/> is false for a zombie that is not this process's child.
+    /// </summary>
+    public static bool IsZombie(int pid) =>
+        !OperatingSystem.IsWindows() && ProcText(pid, "stat") is { } stat && stat.LastIndexOf(')') is var end and >= 0
+        && stat.AsSpan(end + 1).TrimStart().StartsWith("Z", StringComparison.Ordinal);
 
     private static string? ProcText(int pid, string file)
     {

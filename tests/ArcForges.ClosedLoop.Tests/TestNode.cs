@@ -31,6 +31,7 @@ internal sealed class TestNode : IAsyncDisposable
 {
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(60);
     private readonly DateTime _created = DateTime.Now.AddSeconds(-1);
+    private readonly HashSet<string> _uninspectable = [];
     private readonly List<Process> _children = [];
 
     private TestNode(string root)
@@ -66,8 +67,10 @@ internal sealed class TestNode : IAsyncDisposable
     public List<string> Units { get; } = [];
 
     /// <summary>
-    /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled), and
-    /// reloads the manager; the unit is stopped and removed when the environment is disposed.
+    /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled); the unit is
+    /// stopped and removed when the environment is disposed. <paramref name="name"/> must be new: the manager loads a unit it has not
+    /// loaded yet from the unit directories on its first use, so no daemon-reload is needed (a reload stalls the manager for every test
+    /// running beside this one).
     /// </summary>
     public string InstallUnit(string name, string content)
     {
@@ -75,7 +78,6 @@ internal sealed class TestNode : IAsyncDisposable
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, name), content);
         Units.Add(name);
-        Assert.Equal(0, ArcForges.Tests.SystemdTestEnvironment.Systemctl("daemon-reload").ExitCode);
         return name;
     }
 
@@ -325,22 +327,39 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>
     /// Running processes of the binaries under test started since this environment was created that belong to it: they carry its
     /// endpoint in their environment (every node, supervisor, holder and helper it started inherits it), or on Linux run in its slice
-    /// (the helpers of its attempt units). Tests run in parallel, so the processes of another environment are never counted.
+    /// (the helpers of its attempt units). Tests run in parallel, so the processes of another environment are never counted. A running
+    /// process whose environment cannot be read is neither counted nor dropped: the last scan remembers it and the fixture reports it.
     /// </summary>
     public List<Process> LiveProcesses()
     {
         var binaries = new[] { Host, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
             .Select(path => Path.GetFullPath(path)).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var live = new List<Process>();
+        lock (_uninspectable)
+        {
+            // Only the last scan counts: a process may be briefly uninspectable while it starts or exits.
+            _uninspectable.Clear();
+        }
+
         foreach (var process in Process.GetProcessesByName("arcforges").Concat(Process.GetProcessesByName("arcforges-supervisor")))
         {
             try
             {
-                if (!process.HasExited && process.MainModule?.FileName is { } file && binaries.Contains(Path.GetFullPath(file)) && process.StartTime >= _created
-                    && Owns(process.Id))
+                if (!process.HasExited && process.MainModule?.FileName is { } file && binaries.Contains(Path.GetFullPath(file)) && process.StartTime >= _created)
                 {
-                    live.Add(process);
-                    continue;
+                    switch (Owns(process.Id))
+                    {
+                        case true:
+                            live.Add(process);
+                            continue;
+                        case null when !process.HasExited && !ArcForges.Tests.ProcessInspection.IsZombie(process.Id):
+                            lock (_uninspectable)
+                            {
+                                _uninspectable.Add($"{process.ProcessName} (pid {process.Id}, started {process.StartTime:O}): its environment cannot be read, so it may belong to this test");
+                            }
+
+                            break;
+                    }
                 }
             }
             catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -354,9 +373,16 @@ internal sealed class TestNode : IAsyncDisposable
         return live;
     }
 
-    private bool Owns(int pid) =>
-        ArcForges.Tests.ProcessInspection.EnvironmentValue(pid, NodeLocations.EndpointVariable) == Endpoint
-        || (!OperatingSystem.IsWindows() && ProcessCgroup(pid) is { } cgroup && cgroup.Contains("/" + Slice + "/", StringComparison.Ordinal));
+    /// <summary>True when the process belongs to this environment, false when it does not, null when that cannot be told.</summary>
+    private bool? Owns(int pid)
+    {
+        if (!OperatingSystem.IsWindows() && ProcessCgroup(pid) is { } cgroup && cgroup.Contains("/" + Slice + "/", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return ArcForges.Tests.ProcessInspection.TryEnvironmentValue(pid, NodeLocations.EndpointVariable, out var endpoint) ? endpoint == Endpoint : null;
+    }
 
     private static string? ProcessCgroup(int pid)
     {
@@ -400,13 +426,10 @@ internal sealed class TestNode : IAsyncDisposable
                     File.Delete(Path.Combine(unitDirectory, unit));
                 }
 
-                if (Units.Count > 0)
+                // No daemon-reload (see InstallUnit): a stopped unit whose file is gone is unloaded once it is not failed.
+                foreach (var unit in Units)
                 {
-                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("daemon-reload");
-                    foreach (var unit in Units)
-                    {
-                        ArcForges.Tests.SystemdTestEnvironment.Systemctl("reset-failed", unit);
-                    }
+                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("reset-failed", unit);
                 }
             }
 
@@ -418,6 +441,12 @@ internal sealed class TestNode : IAsyncDisposable
                 process.Kill(entireProcessTree: true);
                 process.WaitForExit(TimeSpan.FromSeconds(10));
                 process.Dispose();
+            }
+
+            lock (_uninspectable)
+            {
+                // Not killed: it may be another test's.
+                leftovers.AddRange(_uninspectable);
             }
         }
         finally

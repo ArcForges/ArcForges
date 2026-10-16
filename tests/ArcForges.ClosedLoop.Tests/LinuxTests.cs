@@ -59,8 +59,7 @@ public sealed class LinuxTests
         node.Environment[NodeLocations.NodeUnitVariable] = unit;
         try
         {
-            Assert.Equal(0, (await SystemctlAsync("daemon-reload")).ExitCode);
-
+            // No daemon-reload: the manager loads the new unit on its first use (a reload stalls the manager for the tests beside this one).
             var status = await node.CliAsync("status", "--json");
             Assert.True(status.ExitCode == 0, status.ToString());
             Assert.True(status.Json().GetProperty("autoStarted").GetBoolean());
@@ -91,7 +90,6 @@ public sealed class LinuxTests
         {
             await SystemctlAsync("stop", unit);
             File.Delete(unitFile);
-            await SystemctlAsync("daemon-reload");
             await SystemctlAsync("reset-failed", unit);
         }
     }

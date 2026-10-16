@@ -90,7 +90,9 @@ public sealed class ExecutionTests
         Assert.NotEqual(9, (await node.CliBytesAsync(Bound, "tasks", "wait", runningId, "--output", "none")).ExitCode);
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the caller-gone cancellation within 5 s (AD-0006 section 7) is a product timing contract.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

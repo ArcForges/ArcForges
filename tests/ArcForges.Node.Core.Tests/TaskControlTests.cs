@@ -37,6 +37,8 @@ public sealed class TaskControlTests
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(3, task.CurrentAttempt.Result.ExitCode);
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 2 s timeout and the stop take a
+        // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"The timeout took {watch.Elapsed}.");
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
 

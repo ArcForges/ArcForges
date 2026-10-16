@@ -88,6 +88,31 @@ internal static class SystemdTestEnvironment
     /// <summary>A unit property (<c>systemctl --user show -P</c>), or empty.</summary>
     public static string Property(string unit, string property) => Systemctl("show", "-P", property, unit).Output.Trim();
 
+    /// <summary>
+    /// A unit property that must be set: a failed <c>systemctl</c> or an empty value fails the test with the unit's state
+    /// (<see cref="Describe"/>) and <paramref name="context"/> (what the test knows, such as its task's result).
+    /// </summary>
+    public static string RequiredProperty(string unit, string property, string? context = null)
+    {
+        var (exitCode, output) = Systemctl("show", "-P", property, unit);
+        var value = output.Trim();
+        if (exitCode != 0 || value.Length == 0)
+        {
+            Xunit.Assert.Fail($"{property} of {unit} is empty (systemctl exit {exitCode.ToString(CultureInfo.InvariantCulture)}: '{value}'); {Describe(unit)}"
+                + (context is null ? string.Empty : "; " + context));
+        }
+
+        return value;
+    }
+
+    /// <summary>The state of a unit for a failure message: its load, active and sub states, result, cgroup and main process.</summary>
+    public static string Describe(string unit)
+    {
+        var (exitCode, output) = Systemctl("show", "-p", "LoadState", "-p", "ActiveState", "-p", "SubState", "-p", "Result", "-p", "ControlGroup", "-p", "MainPID",
+            "-p", "NeedDaemonReload", "-p", "InvocationID", unit);
+        return $"{unit} (systemctl exit {exitCode.ToString(CultureInfo.InvariantCulture)}): {string.Join("; ", output.Split('\n', StringSplitOptions.RemoveEmptyEntries))}";
+    }
+
     /// <summary>The cgroup directory of a loaded unit, or null.</summary>
     public static string? CgroupDirectory(string unit) =>
         Property(unit, "ControlGroup") is { Length: > 0 } cgroup ? "/sys/fs/cgroup" + cgroup : null;
@@ -164,22 +189,17 @@ internal static class SystemdTestEnvironment
         Systemctl("stop", slice);
         Systemctl("reset-failed", slice);
         var runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
-        var reload = false;
         if (!string.IsNullOrEmpty(runtime))
         {
+            // No daemon-reload: the stopped slice is unloaded once unreferenced and its name is never used again. A reload stalls the
+            // manager for every test running beside this one (a concurrent node connecting to it, or starting an attempt unit).
             foreach (var directory in DropInRoots.Select(kind => Path.Combine(runtime, "systemd", kind, slice + ".d")))
             {
                 if (Directory.Exists(directory))
                 {
                     Directory.Delete(directory, recursive: true);
-                    reload = true;
                 }
             }
-        }
-
-        if (reload)
-        {
-            Systemctl("daemon-reload");
         }
 
         return leftovers;

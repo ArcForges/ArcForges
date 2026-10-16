@@ -43,6 +43,8 @@ public sealed class LinuxTaskTests
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(15, task.CurrentAttempt.Result.Signal);
         Assert.False(task.CurrentAttempt.Result.HasExitCode);
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 2 s timeout and the stop take a
+        // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"The timeout took {watch.Elapsed}.");
         Assert.All(File.ReadAllLines(pids), pid => Assert.False(Directory.Exists("/proc/" + pid), $"Process {pid} survived."));
 
@@ -152,7 +154,7 @@ public sealed class LinuxTaskTests
             policy.Resources.ReserveMemFraction = 0;
         })).StartAsync();
         await using var channel = await node.ChannelAsync();
-        var slice = SystemdTestEnvironment.CgroupDirectory(node.Slice)!;
+        var slice = "/sys/fs/cgroup" + SystemdTestEnvironment.RequiredProperty(node.Slice, "ControlGroup");
         var sliceMax = long.Parse(File.ReadAllText(Path.Combine(slice, "memory.max")), CultureInfo.InvariantCulture);
         Assert.Equal(Managed - (Managed % Environment.SystemPageSize), sliceMax);
         Assert.Equal("0", File.ReadAllText(Path.Combine(slice, "memory.swap.max")).Trim());

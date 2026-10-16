@@ -86,7 +86,13 @@ public sealed class LinuxExecutionTests
         var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
         var attempt = await RunningAttemptAsync(node, id);
         var unit = SystemdTestEnvironment.AttemptUnit(attempt);
-        var directory = SystemdTestEnvironment.CgroupDirectory(unit)!;
+        var cgroup = SystemdTestEnvironment.Property(unit, "ControlGroup");
+        if (cgroup.Length == 0)
+        {
+            Assert.Fail($"ControlGroup of {unit} is empty: {SystemdTestEnvironment.Describe(unit)}; {await DiagnoseAsync(node, id)}");
+        }
+
+        var directory = "/sys/fs/cgroup" + cgroup;
         Assert.Contains("/" + node.Slice + "/", directory, StringComparison.Ordinal);
 
         // 03 section 5.2 from the node: CPUWeight by priority (HIGH 200), MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling,
@@ -190,12 +196,12 @@ public sealed class LinuxExecutionTests
         var root = ProcessIdentity.Capture(pid)!.Value;
 
         // The execution is not in the node unit's cgroup but in its own unit in the slice.
-        var nodeCgroup = SystemdTestEnvironment.Property(unit, "ControlGroup");
+        var nodeCgroup = SystemdTestEnvironment.RequiredProperty(unit, "ControlGroup");
         var attemptCgroup = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup").Trim();
         Assert.DoesNotContain(nodeCgroup, attemptCgroup, StringComparison.Ordinal);
         Assert.EndsWith("/" + node.Slice + "/" + SystemdTestEnvironment.AttemptUnit(attempt), attemptCgroup, StringComparison.Ordinal);
 
-        var before = SystemdTestEnvironment.Property(unit, "MainPID");
+        var before = SystemdTestEnvironment.RequiredProperty(unit, "MainPID");
         File.WriteAllText(go, "go");
         Assert.Equal(0, SystemdTestEnvironment.Systemctl("restart", unit).ExitCode);
         await node.WaitReadyAsync();
@@ -254,7 +260,9 @@ public sealed class LinuxExecutionTests
         Assert.True(task.GetProperty("currentAttempt").GetProperty("unenforced").GetBoolean());
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the caller-gone cancellation within 5 s (AD-0006 section 7) is a product timing contract.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -511,6 +519,14 @@ public sealed class LinuxExecutionTests
     private static JsonElement Capabilities(JsonElement json) => json.TryGetProperty("capabilities", out var report) ? report : json;
 
     private static string Read(string directory, string file) => File.ReadAllText(Path.Combine(directory, file)).TrimEnd('\n');
+
+    /// <summary>What the node says about a task and its enforcement, for a failure message.</summary>
+    private static async Task<string> DiagnoseAsync(TestNode node, string id)
+    {
+        var task = (await node.CliAsync("tasks", "show", id, "--json")).Output.ReplaceLineEndings(" ");
+        var capabilities = (await node.CliAsync("node", "capabilities", "--json")).Output.ReplaceLineEndings(" ");
+        return $"task: {task}; capabilities: {capabilities}";
+    }
 
     /// <summary>The attempt ID of a task's running attempt (waits until it runs).</summary>
     private static async Task<string> RunningAttemptAsync(TestNode node, string id)

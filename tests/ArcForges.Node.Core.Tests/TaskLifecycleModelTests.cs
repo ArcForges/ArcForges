@@ -290,7 +290,7 @@ public sealed class TaskLifecycleModelTests
             {
                 var key = IdText.Format(attempt.Attempt.AttemptId);
                 Check(attempts, key, attempt.HasPreviousState ? attempt.PreviousState : (AttemptState?)null, attempt.Attempt.State, attempt.Attempt.Revision.Value, AttemptTransitions,
-                    [AttemptState.Created, AttemptState.Starting], $"attempt {key} (seq {item.Seq})");
+                    [AttemptState.Created], $"attempt {key} (seq {item.Seq})");
             }
         }
     }
