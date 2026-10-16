@@ -54,105 +54,113 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$repository = Split-Path $PSScriptRoot -Parent
-$results = if ($ResultsDirectory) { $ResultsDirectory } else { Join-Path $repository "artifacts/bench/$RuntimeIdentifier" }
-$suffix = if ($RuntimeIdentifier.StartsWith('win-')) { '.exe' } else { '' }
-if (-not $Bench) { $Bench = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/bench/arcforges-bench$suffix" }
-if (-not $CurrentExecutable) { $CurrentExecutable = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/host/arcforges$suffix" }
-foreach ($required in @($Bench, $CurrentExecutable)) {
-  if (-not (Test-Path -LiteralPath $required)) { throw "Run eng/publish.ps1 first: $required is missing." }
-}
-$null = New-Item -ItemType Directory -Path $results -Force
-
-# The token is read once and removed from this process's environment, so neither arcforges-bench nor the measured CLIs inherit
-# it (nor any other credential the runner provides); it is sent only to the GitHub API.
-$token = $env:GITHUB_TOKEN
-foreach ($credential in @('GITHUB_TOKEN', 'GH_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL')) {
-  Remove-Item -LiteralPath "Env:$credential" -ErrorAction SilentlyContinue
-}
-
-function Get-MainBaseline {
-  $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
-  if (-not $token -or -not $env:GITHUB_REPOSITORY) {
-    throw 'GITHUB_TOKEN and GITHUB_REPOSITORY are required to find the previous main run (or pass -BaselineExecutable).'
-  }
-  $headers = @{
-    Authorization = "Bearer $token"
-    Accept = 'application/vnd.github+json'
-    'X-GitHub-Api-Version' = '2022-11-28'
-  }
-  $runs = Invoke-RestMethod -Headers $headers -Uri "$api/repos/$env:GITHUB_REPOSITORY/actions/workflows/$Workflow/runs?branch=main&event=push&status=success&per_page=$RunWindow"
-  $candidates = @($runs.workflow_runs | Where-Object { "$($_.id)" -ne "$env:GITHUB_RUN_ID" })
-  if ($candidates.Count -eq 0) { return @{ Reason = 'No successful main-push CI run exists yet; there is no main CLI to measure against.' } }
-
-  # The newest successful main-push run that has the CLI: one whose artifact expired or failed to upload is skipped, never the gate.
-  $checked = @()
-  foreach ($run in $candidates) {
-    $artifactName = "startup-host-$RuntimeIdentifier-$($run.head_sha)"
-    $artifacts = Invoke-RestMethod -Headers $headers -Uri "$api/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/artifacts?name=$artifactName"
-    $artifact = @($artifacts.artifacts | Where-Object { $_.name -eq $artifactName -and -not $_.expired }) | Select-Object -First 1
-    if ($artifact) {
-      $skipped = if ($checked.Count -gt 0) { "; newer runs without it: $($checked -join ', ')" } else { '' }
-      return @{ Run = $run; Artifact = $artifact; Name = $artifactName; Source = "CI run $($run.id) on main at $($run.head_sha) (its CLI, measured on this runner)$skipped" }
-    }
-    $checked += "$($run.id) ($($run.head_sha))"
-  }
-
-  return @{ Reason = "None of the last $($candidates.Count) successful main-push CI runs has an unexpired startup-host-$RuntimeIdentifier artifact (main runs upload it since the same-runner gate; the RID may be new). Checked: $($checked -join ', ')." }
-}
-
-function Get-BaselineCli([hashtable] $found, [string] $download) {
-  $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
-  $archive = Join-Path $download 'artifact.zip'
-  # PowerShell drops the Authorization header on the redirect to the storage host.
-  Invoke-WebRequest -Headers $headers -Uri $found.Artifact.archive_download_url -OutFile $archive
-
-  # The archive must be the one the API lists: its SHA-256 digest (upload-artifact v4 and later records it for every artifact).
-  $digest = if ($found.Artifact.PSObject.Properties['digest']) { "$($found.Artifact.digest)" } else { '' }
-  if ($digest -notmatch '^sha256:[0-9a-fA-F]{64}$') { throw "$($found.Name) of CI run $($found.Run.id) has no SHA-256 digest to verify the download against." }
-  $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
-  if ($actual -ne $digest.Substring(7).ToUpperInvariant()) {
-    throw "$($found.Name) of CI run $($found.Run.id): the download's SHA-256 $actual does not match the artifact digest $digest."
-  }
-
-  $directory = Join-Path $download 'host'
-  Expand-Archive -LiteralPath $archive -DestinationPath $directory
-  $executable = Join-Path $directory "arcforges$suffix"
-  if (-not (Test-Path -LiteralPath $executable)) { throw "$($found.Name) of CI run $($found.Run.id) has no arcforges$suffix." }
-  if (-not $IsWindows) { & chmod +x $executable; if ($LASTEXITCODE -ne 0) { throw "chmod +x $executable failed." } }
-  return $executable
-}
-
-$download = $null
+# Every failure ends the step with one plain line on stderr ("compare-startup: <reason>"): no error view, colour or console
+# width (pwsh's ConciseView on Linux puts the script position first and wraps at the console width) gets between the reason and
+# the log or a test reading it. The download is removed by the inner finally before this handler runs.
 try {
-  $baseline = if ($BaselineExecutable) {
-    if (-not (Test-Path -LiteralPath $BaselineExecutable)) { throw "-BaselineExecutable $BaselineExecutable is missing." }
-    @{ Path = (Resolve-Path -LiteralPath $BaselineExecutable).Path; Source = "$BaselineExecutable (measured on this machine)" }
-  } else {
-    $found = Get-MainBaseline
-    if ($found.Contains('Artifact')) {
-      $download = Join-Path ([IO.Path]::GetTempPath()) "arcforges-baseline-$([guid]::NewGuid().ToString('N'))"
-      $null = New-Item -ItemType Directory -Path $download
-      @{ Path = (Get-BaselineCli $found $download); Source = $found.Source }
-    } else {
-      $found
-    }
+  $repository = Split-Path $PSScriptRoot -Parent
+  $results = if ($ResultsDirectory) { $ResultsDirectory } else { Join-Path $repository "artifacts/bench/$RuntimeIdentifier" }
+  $suffix = if ($RuntimeIdentifier.StartsWith('win-')) { '.exe' } else { '' }
+  if (-not $Bench) { $Bench = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/bench/arcforges-bench$suffix" }
+  if (-not $CurrentExecutable) { $CurrentExecutable = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/host/arcforges$suffix" }
+  foreach ($required in @($Bench, $CurrentExecutable)) {
+    if (-not (Test-Path -LiteralPath $required)) { throw "Run eng/publish.ps1 first: $required is missing." }
+  }
+  $null = New-Item -ItemType Directory -Path $results -Force
+
+  # The token is read once and removed from this process's environment, so neither arcforges-bench nor the measured CLIs inherit
+  # it (nor any other credential the runner provides); it is sent only to the GitHub API.
+  $token = $env:GITHUB_TOKEN
+  foreach ($credential in @('GITHUB_TOKEN', 'GH_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL')) {
+    Remove-Item -LiteralPath "Env:$credential" -ErrorAction SilentlyContinue
   }
 
-  $output = Join-Path $results 'startup-comparison.json'
-  $rule = @('--max-regression-percent', "$MaxRegressionPercent", '--noise-floor-ms', "$NoiseFloorMs", '--output', $output)
-  if ($baseline.Contains('Path')) {
-    $benchArguments = @('compare-startup', '--baseline-exe', $baseline.Path, '--current-exe', $CurrentExecutable, '--runs', "$Runs", '--warmup', "$Warmup",
-      '--name', $Name, '--baseline-source', $baseline.Source)
-    foreach ($argument in $Arguments) { $benchArguments += @('--arg', $argument) }
-  } else {
-    $current = Join-Path $results $ResultFile
-    if (-not (Test-Path -LiteralPath $current)) { throw "Run eng/bench.ps1 first: $current is missing." }
-    $benchArguments = @('compare-startup', '--current', $current, '--reason', $baseline.Reason)
+  function Get-MainBaseline {
+    $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
+    if (-not $token -or -not $env:GITHUB_REPOSITORY) {
+      throw 'GITHUB_TOKEN and GITHUB_REPOSITORY are required to find the previous main run (or pass -BaselineExecutable).'
+    }
+    $headers = @{
+      Authorization = "Bearer $token"
+      Accept = 'application/vnd.github+json'
+      'X-GitHub-Api-Version' = '2022-11-28'
+    }
+    $runs = Invoke-RestMethod -Headers $headers -Uri "$api/repos/$env:GITHUB_REPOSITORY/actions/workflows/$Workflow/runs?branch=main&event=push&status=success&per_page=$RunWindow"
+    $candidates = @($runs.workflow_runs | Where-Object { "$($_.id)" -ne "$env:GITHUB_RUN_ID" })
+    if ($candidates.Count -eq 0) { return @{ Reason = 'No successful main-push CI run exists yet; there is no main CLI to measure against.' } }
+
+    # The newest successful main-push run that has the CLI: one whose artifact expired or failed to upload is skipped, never the gate.
+    $checked = @()
+    foreach ($run in $candidates) {
+      $artifactName = "startup-host-$RuntimeIdentifier-$($run.head_sha)"
+      $artifacts = Invoke-RestMethod -Headers $headers -Uri "$api/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/artifacts?name=$artifactName"
+      $artifact = @($artifacts.artifacts | Where-Object { $_.name -eq $artifactName -and -not $_.expired }) | Select-Object -First 1
+      if ($artifact) {
+        $skipped = if ($checked.Count -gt 0) { "; newer runs without it: $($checked -join ', ')" } else { '' }
+        return @{ Run = $run; Artifact = $artifact; Name = $artifactName; Source = "CI run $($run.id) on main at $($run.head_sha) (its CLI, measured on this runner)$skipped" }
+      }
+      $checked += "$($run.id) ($($run.head_sha))"
+    }
+
+    return @{ Reason = "None of the last $($candidates.Count) successful main-push CI runs has an unexpired startup-host-$RuntimeIdentifier artifact (main runs upload it since the same-runner gate; the RID may be new). Checked: $($checked -join ', ')." }
   }
-  & $Bench @($benchArguments + $rule)
-  if ($LASTEXITCODE -ne 0) { throw "The startup comparison failed (exit $LASTEXITCODE); see $output." }
-} finally {
-  # The downloaded CLI is removed whatever happened (the measurement has ended: arcforges-bench waits for every run).
-  if ($download -and (Test-Path -LiteralPath $download)) { Remove-Item -LiteralPath $download -Recurse -Force }
+
+  function Get-BaselineCli([hashtable] $found, [string] $download) {
+    $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+    $archive = Join-Path $download 'artifact.zip'
+    # PowerShell drops the Authorization header on the redirect to the storage host.
+    Invoke-WebRequest -Headers $headers -Uri $found.Artifact.archive_download_url -OutFile $archive
+
+    # The archive must be the one the API lists: its SHA-256 digest (upload-artifact v4 and later records it for every artifact).
+    $digest = if ($found.Artifact.PSObject.Properties['digest']) { "$($found.Artifact.digest)" } else { '' }
+    if ($digest -notmatch '^sha256:[0-9a-fA-F]{64}$') { throw "$($found.Name) of CI run $($found.Run.id) has no SHA-256 digest to verify the download against." }
+    $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+    if ($actual -ne $digest.Substring(7).ToUpperInvariant()) {
+      throw "$($found.Name) of CI run $($found.Run.id): the download's SHA-256 $actual does not match the artifact digest $digest."
+    }
+
+    $directory = Join-Path $download 'host'
+    Expand-Archive -LiteralPath $archive -DestinationPath $directory
+    $executable = Join-Path $directory "arcforges$suffix"
+    if (-not (Test-Path -LiteralPath $executable)) { throw "$($found.Name) of CI run $($found.Run.id) has no arcforges$suffix." }
+    if (-not $IsWindows) { & chmod +x $executable; if ($LASTEXITCODE -ne 0) { throw "chmod +x $executable failed." } }
+    return $executable
+  }
+
+  $download = $null
+  try {
+    $baseline = if ($BaselineExecutable) {
+      if (-not (Test-Path -LiteralPath $BaselineExecutable)) { throw "-BaselineExecutable $BaselineExecutable is missing." }
+      @{ Path = (Resolve-Path -LiteralPath $BaselineExecutable).Path; Source = "$BaselineExecutable (measured on this machine)" }
+    } else {
+      $found = Get-MainBaseline
+      if ($found.Contains('Artifact')) {
+        $download = Join-Path ([IO.Path]::GetTempPath()) "arcforges-baseline-$([guid]::NewGuid().ToString('N'))"
+        $null = New-Item -ItemType Directory -Path $download
+        @{ Path = (Get-BaselineCli $found $download); Source = $found.Source }
+      } else {
+        $found
+      }
+    }
+
+    $output = Join-Path $results 'startup-comparison.json'
+    $rule = @('--max-regression-percent', "$MaxRegressionPercent", '--noise-floor-ms', "$NoiseFloorMs", '--output', $output)
+    if ($baseline.Contains('Path')) {
+      $benchArguments = @('compare-startup', '--baseline-exe', $baseline.Path, '--current-exe', $CurrentExecutable, '--runs', "$Runs", '--warmup', "$Warmup",
+        '--name', $Name, '--baseline-source', $baseline.Source)
+      foreach ($argument in $Arguments) { $benchArguments += @('--arg', $argument) }
+    } else {
+      $current = Join-Path $results $ResultFile
+      if (-not (Test-Path -LiteralPath $current)) { throw "Run eng/bench.ps1 first: $current is missing." }
+      $benchArguments = @('compare-startup', '--current', $current, '--reason', $baseline.Reason)
+    }
+    & $Bench @($benchArguments + $rule)
+    if ($LASTEXITCODE -ne 0) { throw "The startup comparison failed (exit $LASTEXITCODE); see $output." }
+  } finally {
+    # The downloaded CLI is removed whatever happened (the measurement has ended: arcforges-bench waits for every run).
+    if ($download -and (Test-Path -LiteralPath $download)) { Remove-Item -LiteralPath $download -Recurse -Force }
+  }
+} catch {
+  [Console]::Error.WriteLine("compare-startup: $($_.Exception.Message)")
+  exit 1
 }

@@ -160,7 +160,7 @@ public sealed class CompareStartupScriptTests
         var run = await RunScriptAsync(pwsh, directory.Path, [], api.Environment);
 
         Assert.NotEqual(0, run.ExitCode);
-        Assert.Contains(message, run.Output, StringComparison.Ordinal);
+        AssertFailureReason(run.Output, message);
         Assert.False(File.Exists(Path.Combine(directory.Path, "startup-comparison.json")));
         AssertNothingLeftInTemp(directory.Path);
     }
@@ -208,7 +208,7 @@ public sealed class CompareStartupScriptTests
         var run = await RunScriptAsync(pwsh, directory.Path, [], new Dictionary<string, string?> { ["GITHUB_TOKEN"] = null, ["GITHUB_REPOSITORY"] = Repository });
 
         Assert.NotEqual(0, run.ExitCode);
-        Assert.Contains("GITHUB_TOKEN and GITHUB_REPOSITORY are required", run.Output, StringComparison.Ordinal);
+        AssertFailureReason(run.Output, "GITHUB_TOKEN and GITHUB_REPOSITORY are required");
     }
 
     /// <summary>A startup-host artifact: testload under the CLI's name, with its managed files when it is the JIT build (its apphost loads them).</summary>
@@ -224,6 +224,17 @@ public sealed class CompareStartupScriptTests
         }
 
         return archive;
+    }
+
+    /// <summary>
+    /// The step failed with <paramref name="reason"/> on one plain line of its own (<c>compare-startup: ...</c>), unaffected by the error
+    /// view, colour and console width; the reason must not be split or decorated.
+    /// </summary>
+    private static void AssertFailureReason(string output, string reason)
+    {
+        var lines = output.Split('\n').Select(line => line.TrimEnd('\r')).ToList();
+        Assert.True(lines.Any(line => line.StartsWith("compare-startup: ", StringComparison.Ordinal) && line.Contains(reason, StringComparison.Ordinal)),
+            $"No 'compare-startup:' line with \"{reason}\" in:\n{output}");
     }
 
     private static string Digest(string file) => "sha256:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
@@ -264,7 +275,8 @@ public sealed class CompareStartupScriptTests
         };
         // -Command, so -Arguments is a real array (the measured command: testload cpu --iterations 1).
         static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
-        var invocation = new StringBuilder("& ").Append(Quote(script));
+        // The Linux runner's view: ConciseView errors (script position first, wrapped at the console width) and a narrow console.
+        var invocation = new StringBuilder("$ErrorView = 'ConciseView'; & ").Append(Quote(script));
         foreach (var argument in (string[])["-RuntimeIdentifier", Rid, "-ResultsDirectory", results, "-Bench", ToolProcess.Bench,
             "-CurrentExecutable", current ?? ToolProcess.TestLoad, "-Runs", "4", "-NoiseFloorMs", "60000", "-Name", "testload cpu", .. extra])
         {
@@ -281,6 +293,8 @@ public sealed class CompareStartupScriptTests
         {
             start.Environment.Remove(name);
         }
+
+        start.Environment["COLUMNS"] = "60";
 
         // The script's temporary files go under the test's directory, so leftovers are found.
         var temp = Directory.CreateDirectory(Path.Combine(results, "temp")).FullName;
