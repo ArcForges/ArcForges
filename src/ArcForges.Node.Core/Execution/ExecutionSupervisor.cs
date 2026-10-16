@@ -1870,6 +1870,13 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         {
             RaiseOutputFinding(context, attempt, notify.OutputBytes ?? 0, notify.LimitBytes ?? 0, "GUARD");
         }
+        else if (settings.DiskLimitAction == "NOTIFY" && settings.MaxOutputBytes > 0 && attempt.OutputBytes > settings.MaxOutputBytes && !attempt.OutputNotified)
+        {
+            // The attempt ended before an enforcement pass saw its output cross the limit (it wrote faster than the tail interval): the final
+            // tail still finds it, and NOTIFY still owes its finding (06 section 5).
+            attempt.OutputNotified = true;
+            RaiseOutputFinding(context, attempt, attempt.OutputBytes, settings.MaxOutputBytes, "NODE");
+        }
 
         return 0;
     }

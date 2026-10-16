@@ -155,8 +155,14 @@ public sealed class TaskControlTests
         Assert.True(output - Limit <= Rate / 2, $"The overshoot {output - Limit} exceeds the rate over 500 ms ({Rate / 2}).");
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput()
+    /// <summary>
+    /// Under NOTIFY the attempt runs on and gets one finding, whether an enforcement pass sees the output cross the limit while it runs
+    /// (6 MiB/s: about half a second) or the attempt ends before any pass does (unthrottled: the final tail at finalization finds it).
+    /// </summary>
+    [Theory(Timeout = 120_000)]
+    [InlineData(6_291_456)]
+    [InlineData(0)]
+    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput(int rate)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
@@ -166,7 +172,7 @@ public sealed class TaskControlTests
             policy.Storage.DiskLimitAction = DiskLimitAction.Notify;
         })).StartAsync();
         await using var channel = await node.ChannelAsync();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", "6291456")));
+        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture))));
         Assert.Equal(TaskState.Succeeded, task.State);
         Assert.Equal(3_145_728, (await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout)).Length);
         var findings = node.Runtime.Store.Read(reader => Execution.ExecutionFindings.OpenFor(reader, "attempt", task.CurrentAttempt.AttemptId.Value.Span));
