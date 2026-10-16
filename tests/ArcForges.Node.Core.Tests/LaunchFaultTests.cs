@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
@@ -15,8 +16,17 @@ public sealed class LaunchFaultTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact(Timeout = 180_000)]
-    public async Task ACancelDuringTheLaunchStepsCancelsTheTaskAndTheCommandNeverRuns()
+    /// <summary>
+    /// The stop terminates the attempt at once, so a step shorter than any wait for the start (3 s) never finishes and lets the command
+    /// start after the cancel, and a long step (30 s) does not hold the cancel. The task ends CANCELLED well under the step's hold
+    /// (generous safety bound: the forced stop waits for nothing, so it holds in the parallel suites), no root was ever recorded (Windows:
+    /// the root is the command, started by the holder after the steps; on Linux the steps and the command share the unit's main process),
+    /// and the effect is HAPPENED (04 section 7: DID_NOT_HAPPEN only for SPAWN_FAILED and POLICY_DENIED).
+    /// </summary>
+    [Theory(Timeout = 180_000)]
+    [InlineData(3_000)]
+    [InlineData(30_000)]
+    public async Task ACancelDuringTheLaunchStepsCancelsTheTaskAndTheCommandNeverRuns(int stepHoldMs)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows())
@@ -25,7 +35,7 @@ public sealed class LaunchFaultTests
         }
 
         string? launchMarker = null;
-        var steps = new Tasks.FixedSteps(_ => [Step("slow-launch", launchMarker!)], _ => []);
+        var steps = new Tasks.FixedSteps(_ => [Step("slow-launch", launchMarker!, stepHoldMs)], _ => []);
         await using var node = await InProcessNode.Create(steps: steps).StartAsync();
         launchMarker = Path.Combine(node.Root, "launch.txt");
         await using var channel = await node.ChannelAsync();
@@ -36,13 +46,33 @@ public sealed class LaunchFaultTests
 
         // The launch step is running: the attempt is being launched, its command has not started.
         await Tasks.WaitForAsync(() => File.Exists(launchMarker), Tasks.Bound, "the launch step to run");
+        var cancelled = System.Diagnostics.Stopwatch.StartNew();
         var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
         Assert.Null(cancel.Error);
 
         var task = await Tasks.WaitAsync(channel, id);
-        TestContext.Current.TestOutputHelper?.WriteLine($"{task.State}: {task.CurrentAttempt.Result}");
+        var toFinal = cancelled.Elapsed;
+        TestContext.Current.TestOutputHelper?.WriteLine($"{task.State} after {toFinal.TotalMilliseconds:F0} ms: {task.CurrentAttempt.Result}");
         Assert.Equal(TaskState.Cancelled, task.State);
         Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
+        Assert.Equal(EffectCertainty.Happened, task.CurrentAttempt.Result.Effect);
+        Assert.True(toFinal < TimeSpan.FromSeconds(5), $"The cancel took {toFinal} to end the task (step hold {stepHoldMs} ms).");
+        if (OperatingSystem.IsWindows())
+        {
+            var rootPid = node.Runtime.Store.Read(reader =>
+            {
+                using var command = reader.CreateCommand("SELECT root_pid FROM attempt WHERE task_id = $id;");
+                command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
+                using var rows = command.ExecuteReader();
+                Assert.True(rows.Read());
+                return rows.IsDBNull(0) ? (long?)null : rows.GetInt64(0);
+            });
+            Assert.True(rootPid is null, $"The command started (root {rootPid}) although its task was cancelled during the launch.");
+        }
+
+        // Past the short step's hold, so a command started after the cancel would have written its marker (the long step was killed by
+        // the termination; the fixture fails the test on any leftover, so waiting out its hold proves nothing more).
+        await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, Math.Min(stepHoldMs + 1_000, 5_000) - cancelled.Elapsed.TotalMilliseconds)), Ct);
         Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
     }
 
@@ -74,12 +104,12 @@ public sealed class LaunchFaultTests
         Assert.All(tasks, task => Assert.True(task.State == TaskState.Cancelled, $"{task.State}: {task.CurrentAttempt?.Result}"));
     }
 
-    /// <summary>A launch step that marks it started and then holds for 30 s (the attempt is being launched meanwhile).</summary>
-    private static StepSpec Step(string name, string marker)
+    /// <summary>A launch step that marks it started and then holds (the attempt is being launched meanwhile).</summary>
+    private static StepSpec Step(string name, string marker, int holdMs)
     {
         string[] argv = OperatingSystem.IsWindows()
-            ? [Tasks.TestLoad, "signal", "--hold-ms", "30000", "--marker", marker]
-            : ["/bin/sh", "-c", "echo started > \"$1\"; exec sleep 30", "sh", marker];
+            ? [Tasks.TestLoad, "signal", "--hold-ms", holdMs.ToString(System.Globalization.CultureInfo.InvariantCulture), "--marker", marker]
+            : ["/bin/sh", "-c", "echo started > \"$1\"; exec sleep \"$2\"", "sh", marker, (holdMs / 1000.0).ToString(System.Globalization.CultureInfo.InvariantCulture)];
         return OperatingSystem.IsWindows()
             ? new StepSpec { Name = name, Application = argv[0], CommandLine = WindowsCommandLine.Build(argv), TimeoutMs = 60_000 }
             : new StepSpec { Name = name, Application = argv[0], Argv = [.. argv], TimeoutMs = 60_000 };
