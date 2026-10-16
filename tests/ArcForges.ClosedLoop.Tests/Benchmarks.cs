@@ -294,8 +294,9 @@ public sealed class Benchmarks
         var bench = Environment.GetEnvironmentVariable("ARCFORGES_BENCH_PATH") is { Length: > 0 } configured
             ? configured
             : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges-bench.exe" : "arcforges-bench");
-        var output = Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 } directory
-            ? Path.Combine(directory, name + "-" + (OperatingSystem.IsWindows() ? "windows" : "linux") + ".json")
+        var keep = Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 };
+        var output = keep
+            ? Path.Combine(Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT")!, name + "-" + (OperatingSystem.IsWindows() ? "windows" : "linux") + ".json")
             : Path.Combine(Path.GetTempPath(), "arcforges-" + name + "-" + Guid.NewGuid().ToString("N") + ".json");
         List<string> all = ["startup", "--exe", TestNode.Host, .. arguments, "--runs", "50", "--warmup", "1", "--name", name, "--output", output];
         var start = new ProcessStartInfo(bench) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -321,8 +322,19 @@ public sealed class Benchmarks
 
         using var process = Process.Start(start)!;
         var run = await TestNode.CompleteAsync(process, TimeSpan.FromMinutes(4));
-        Assert.True(run.ExitCode == 0, run.ToString());
-        return JsonDocument.Parse(File.ReadAllBytes(output)).RootElement.Clone();
+        try
+        {
+            Assert.True(run.ExitCode == 0, run.ToString());
+            return JsonDocument.Parse(File.ReadAllBytes(output)).RootElement.Clone();
+        }
+        finally
+        {
+            if (!keep)
+            {
+                // Without ARCFORGES_BENCH_OUTPUT the result file is the test's own temporary file.
+                File.Delete(output);
+            }
+        }
     }
 
     private static void RequireNativeHost() => Assert.SkipWhen(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH")),
