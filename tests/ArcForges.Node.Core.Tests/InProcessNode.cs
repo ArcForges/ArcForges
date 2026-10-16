@@ -171,7 +171,10 @@ internal sealed class InProcessNode : IAsyncDisposable
         return await _run.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
     }
 
-    /// <summary>A connected session (the real client: endpoint, hello and all).</summary>
+    /// <summary>
+    /// A connected session (the real client: endpoint, hello and all). A refused hello fails as the client library's connector fails it,
+    /// with <see cref="NodeUnavailableException"/> (a stopping node is not ready yet), so a reconnecting stream cache retries it.
+    /// </summary>
     public async Task<NodeChannel> ChannelAsync(bool helloAsHuman = false)
     {
         var channel = NodeChannel.Create(Endpoint);
@@ -182,7 +185,7 @@ internal sealed class InProcessNode : IAsyncDisposable
         if (response.Error is { } error)
         {
             await channel.DisposeAsync();
-            throw new InvalidOperationException($"Hello failed: {error.Category}/{error.Code}");
+            throw new NodeUnavailableException(NodeUnavailableReason.NotReady, $"Hello failed: {error.Category}/{error.Code}", "the test node refused the hello", error);
         }
 
         return channel;
@@ -235,6 +238,11 @@ internal sealed class InProcessNode : IAsyncDisposable
                     // Holders that just exited may still close their files.
                     await Task.Delay(100);
                 }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    leftovers.Add($"files under {Root} ({exception.Message} Processes working in it: {string.Join(", ", ProcessesWorkingIn(Root))})");
+                    break;
+                }
             }
 
             if (!OperatingSystem.IsWindows() && Directory.Exists(Path.GetDirectoryName(Endpoint.Address)))
@@ -245,6 +253,18 @@ internal sealed class InProcessNode : IAsyncDisposable
 
         ArcForges.Tests.Leftovers.Report(leftovers);
     }
+
+    /// <summary>The processes whose working directory is <paramref name="directory"/> or below it (they keep it from being deleted).</summary>
+    private static List<string> ProcessesWorkingIn(string directory) =>
+        [.. System.Diagnostics.Process.GetProcesses().Select(process =>
+        {
+            using (process)
+            {
+                return ArcForges.Tests.ProcessInspection.CurrentDirectory(process.Id) is { } cwd && cwd.StartsWith(directory, StringComparison.OrdinalIgnoreCase)
+                    ? $"{process.ProcessName} ({process.Id}, in {cwd})"
+                    : null;
+            }
+        }).OfType<string>()];
 
     /// <summary>The attempts of the store (their unit names on Linux).</summary>
     public static List<string> AttemptNames(NodeStore store) => store.Read(reader =>

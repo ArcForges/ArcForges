@@ -119,6 +119,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     /// <summary>The verification window after the forced phase (04 section 6 step 5).</summary>
     public static readonly TimeSpan VerifyWindow = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long the forced phase of a stop waits for a command that is still being started (its root process) before it terminates.</summary>
+    public static readonly TimeSpan StartWaitBound = TimeSpan.FromSeconds(10);
+
     /// <summary>The ancestry scan interval (04 section 3).</summary>
     public static readonly TimeSpan EscapeScanInterval = TimeSpan.FromSeconds(5);
 
@@ -544,6 +547,42 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     }
 
     /// <summary>
+    /// The forced phase of a stop (the caller holds the attempt's lock): the container is terminated at once, or, while the command is still
+    /// being started (no root yet), as soon as the start finished, bounded by <see cref="StartWaitBound"/>. Terminated earlier, the
+    /// container is still empty, and the command it starts afterwards outlives the stop (TERMINATION_INCOMPLETE with the command running).
+    /// </summary>
+    private void ForceWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        if (handle.Root is not null || handle.Started.IsCompleted)
+        {
+            Force(attempt, handle, reason);
+            return;
+        }
+
+        _ = handle.Started.WaitAsync(StartWaitBound).ContinueWith(_ =>
+        {
+            lock (attempt)
+            {
+                Force(attempt, handle, reason);
+            }
+        }, TaskScheduler.Default);
+    }
+
+    private void Force(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        if (attempt.Forced)
+        {
+            return;
+        }
+
+        handle.Terminate();
+        TerminateEscaped(attempt, reason);
+        attempt.Forced = true;
+        attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
+        _loopWake.Pulse();
+    }
+
+    /// <summary>
     /// Starts the stop sequence of a running attempt (04 section 6): the graceful phase (Windows: CTRL_BREAK through the helper and
     /// WM_CLOSE; Linux: <c>KillUnit("all", stop_signal)</c>), <paramref name="grace"/>, then the forced phase. Limit stops
     /// (<paramref name="graceful"/> false with <c>OUTPUT_LIMIT</c> or <c>DISK_LIMIT</c>) stop at once without the graceful phase; on Linux
@@ -587,7 +626,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 }
                 else
                 {
-                    attempt.Handle.Terminate();
+                    ForceWhenStarted(attempt, attempt.Handle, reason);
+                    return;
                 }
 
                 TerminateEscaped(attempt, reason);
@@ -1384,12 +1424,10 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         attempt.OpenTail();
         lock (attempt)
         {
-            if (attempt.StopReason is not null && !attempt.Forced)
+            if (attempt.StopReason is { } stop && !attempt.Forced)
             {
                 // Cancelled while it was being launched: there is no root to signal yet, so the forced phase applies.
-                handle.Terminate();
-                attempt.Forced = true;
-                attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
+                ForceWhenStarted(attempt, handle, stop);
             }
         }
 

@@ -403,6 +403,9 @@ public sealed class TaskControlTests
         {
             taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker));
             await Tasks.RunningAsync(channel, taskId);
+
+            // RUNNING records the root process; its marker (which names it) follows once the workload started: under load, later.
+            await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count > 0, Tasks.Bound, "the workload to start");
         }
 
         var holders = ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)).ToList();

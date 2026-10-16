@@ -19,7 +19,7 @@ internal static partial class ProcessInspection
     /// <summary>The value of the environment variable <paramref name="name"/> in process <paramref name="pid"/>, or null.</summary>
     public static string? EnvironmentValue(int pid, string name)
     {
-        var block = OperatingSystem.IsWindows() ? WindowsParameters(pid, environment: true) : ProcText(pid, "environ");
+        var block = OperatingSystem.IsWindows() ? WindowsParameters(pid, Parameter.Environment) : ProcText(pid, "environ");
         if (block is null)
         {
             return null;
@@ -37,9 +37,27 @@ internal static partial class ProcessInspection
         return null;
     }
 
+    /// <summary>The working directory of process <paramref name="pid"/>, or null.</summary>
+    public static string? CurrentDirectory(int pid)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            try
+            {
+                return new FileInfo($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cwd").LinkTarget;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        return WindowsParameters(pid, Parameter.CurrentDirectory);
+    }
+
     /// <summary>The command line of process <paramref name="pid"/> (Linux: the arguments joined by spaces), or null.</summary>
     public static string? CommandLine(int pid) => OperatingSystem.IsWindows()
-        ? WindowsParameters(pid, environment: false)
+        ? WindowsParameters(pid, Parameter.CommandLine)
         : ProcText(pid, "cmdline")?.TrimEnd('\0').Replace('\0', ' ');
 
     private static string? ProcText(int pid, string file)
@@ -54,11 +72,18 @@ internal static partial class ProcessInspection
         }
     }
 
+    private enum Parameter
+    {
+        CurrentDirectory,
+        CommandLine,
+        Environment,
+    }
+
     // x64 and arm64 layouts: PROCESS_BASIC_INFORMATION.PebBaseAddress at 8, PEB.ProcessParameters at 0x20, and in
-    // RTL_USER_PROCESS_PARAMETERS the CommandLine UNICODE_STRING at 0x70 (length) / 0x78 (buffer), Environment at 0x80 and
-    // EnvironmentSize at 0x3F0.
+    // RTL_USER_PROCESS_PARAMETERS the CurrentDirectory.DosPath UNICODE_STRING at 0x38 (length) / 0x40 (buffer), the CommandLine
+    // UNICODE_STRING at 0x70 / 0x78, Environment at 0x80 and EnvironmentSize at 0x3F0.
     [SupportedOSPlatform("windows")]
-    private static string? WindowsParameters(int pid, bool environment)
+    private static string? WindowsParameters(int pid, Parameter parameter)
     {
         if (!Environment.Is64BitProcess)
         {
@@ -84,9 +109,12 @@ internal static partial class ProcessInspection
             return null;
         }
 
-        var (address, length) = environment
-            ? (BitConverter.ToInt64(block, 0x80), Math.Min(BitConverter.ToInt64(block, 0x3F0), 1L << 20))
-            : (BitConverter.ToInt64(block, 0x78), BitConverter.ToUInt16(block, 0x70));
+        var (address, length) = parameter switch
+        {
+            Parameter.Environment => (BitConverter.ToInt64(block, 0x80), Math.Min(BitConverter.ToInt64(block, 0x3F0), 1L << 20)),
+            Parameter.CommandLine => (BitConverter.ToInt64(block, 0x78), BitConverter.ToUInt16(block, 0x70)),
+            _ => (BitConverter.ToInt64(block, 0x40), BitConverter.ToUInt16(block, 0x38)),
+        };
         return address != 0 && length > 0 && Read(process, address, (int)length) is { } text ? Encoding.Unicode.GetString(text) : null;
     }
 
