@@ -396,7 +396,7 @@ public sealed class HolderSpec
 /// <c>logs/&lt;attempt&gt;/steps.json</c>, schema 1 (Linux; 04 section 3): the attempt's launch and end steps, written by the node before
 /// it starts the unit. <c>arcforges node exec-launch</c> runs the launch steps inside the unit's cgroup before it replaces itself with the
 /// command; <c>arcforges node exec-stop</c> (the unit's <c>ExecStop</c>) runs the end steps. Steps carry no environment: they inherit the
-/// unit's exact environment. Additive changes only.
+/// unit's exact environment (<see cref="EnvironmentNames"/>). Additive changes only.
 /// </summary>
 public sealed class StepsFile
 {
@@ -417,6 +417,13 @@ public sealed class StepsFile
 
     /// <summary><c>leftover_grace</c> (04 section 3: default 5 s).</summary>
     public int LeftoverGraceMs { get; set; } = 5_000;
+
+    /// <summary>
+    /// The names (never the values) of the attempt's resolved environment: <c>exec-launch</c> passes exactly these to the command and the
+    /// steps and drops every other variable its process received (from the user manager or systemd itself), so the environment is exact
+    /// whatever the manager adds. Null in files written before it existed.
+    /// </summary>
+    public List<string>? EnvironmentNames { get; set; }
 
     /// <summary>Serializes the file.</summary>
     public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.StepsFile);

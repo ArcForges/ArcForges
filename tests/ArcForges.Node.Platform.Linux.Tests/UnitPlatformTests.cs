@@ -101,6 +101,7 @@ public sealed class UnitPlatformTests
         [
             "A=1", "PATH=/usr/bin:/bin", "EMPTY=", "QUOTE=a\"b'c", "DOLLAR=$HOME and ${PATH} and $$ and %h", "MULTI=line1\nline2\tx",
             "WITH SPACE=x y", "my-var=1", "BASH_FUNC_f%%=() {  echo hi\n}", "CONTROL=a\u0001b", "UNICODE=äöü 中文",
+            ExecLaunchRole.CarrierVariable + "=the caller's own value",
         ];
         var handle = harness.Launch(["/bin/sh", "-c", "printf out; printf err >&2; exit 3"], environment: environment);
         var exit = LinuxHarness.WaitExit(handle, Bound);
@@ -122,6 +123,121 @@ public sealed class UnitPlatformTests
         var envDirectory = Path.Combine(harness.DataRoot, "logs", ((LinuxAttemptHandle)printed).Files.AttemptName);
         var received = File.ReadAllText(Path.Combine(envDirectory, AttemptFiles.Stdout)).Split('\0', StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal(environment.Order(StringComparer.Ordinal), received.Order(StringComparer.Ordinal));
+    }
+
+    [Fact(Timeout = 120_000)]
+    public void AVariableTheManagerPassesOutsideTheResolvedEnvironmentNeverReachesTheCommand()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // Exactness does not depend on what the user manager adds (seen on a hosted runner: a variable of the image reached the service
+        // although UnsetEnvironment= listed the manager's environment): the unit itself carries variables outside the resolved
+        // environment here, as a manager would pass them, and exec-launch keeps only the resolved names of steps.json.
+        RequireUnits();
+        using var harness = LinuxHarness.Start(options: slice => new LinuxPlatformOptions
+        {
+            Slice = slice,
+            ExtraUnitEnvironment = ["ARCFORGES_TEST_MANAGER_EXTRA=leaked", "JAVA_HOME_8_X64=/usr/lib/jvm/x"],
+        });
+        Assert.True(harness.Platform.UnitMode, harness.Platform.ManagerUnavailableReason);
+        List<string> environment = ["A=1", "PATH=/usr/bin:/bin"];
+        var endEnvironment = Path.Combine(harness.Root, "end-env.txt");
+        var printed = harness.Launch(["/usr/bin/env", "-0"], environment: environment,
+            endSteps: [LinuxHarness.Step("env", 10_000, "/bin/sh", "-c", "env > \"$1\"", "sh", endEnvironment)]);
+        Assert.Equal(0, LinuxHarness.WaitExit(printed, Bound).ExitStatus);
+        var received = File.ReadAllText(Path.Combine(harness.DataRoot, "logs", ((LinuxAttemptHandle)printed).Files.AttemptName, AttemptFiles.Stdout))
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(environment.Order(StringComparer.Ordinal), received.Order(StringComparer.Ordinal));
+
+        // The end steps get the same exact environment (the shell adds only its own PWD, SHLVL and _).
+        var endNames = File.ReadAllLines(endEnvironment).Select(line => line.Split('=')[0]).ToHashSet(StringComparer.Ordinal);
+        Assert.DoesNotContain("ARCFORGES_TEST_MANAGER_EXTRA", endNames);
+        Assert.DoesNotContain("JAVA_HOME_8_X64", endNames);
+        Assert.DoesNotContain("INVOCATION_ID", endNames);
+        Assert.Contains("A", endNames);
+    }
+
+    [Theory(Timeout = 120_000)]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(-1)]
+    public void ACommandKilledByARealTimeSignalIsRecordedWithItAndItsEndStepsRun(int offset)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // RTMIN, RTMIN+3 and RTMAX (offset -1): systemd writes them as RTMIN+n in $EXIT_STATUS; they are success statuses of the unit
+        // too, so ExecStop runs.
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var signal = offset < 0 ? Libc.SigRtMax : Libc.SigRtMin + offset;
+        var ran = Path.Combine(harness.Root, "end-ran.txt");
+        var handle = harness.Launch(["/bin/sh", "-c", "kill -" + signal.ToString(CultureInfo.InvariantCulture) + " $$; sleep 5"],
+            endSteps: [LinuxHarness.Step("marker", 10_000, "/bin/sh", "-c", "echo ran > \"$1\"", "sh", ran)]);
+        var exit = LinuxHarness.WaitExit(handle, Bound);
+        Assert.Equal(("killed", signal), (exit.ExitCodeKind, exit.ExitStatus));
+        Assert.True(File.Exists(ran), "The end step did not run.");
+    }
+
+    [Fact(Timeout = 120_000)]
+    public void ALeftoverThatIgnoresSigtermIsKilledOnceLeftoverGraceEnds()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // 04 section 3: after leftover_grace the remaining processes are killed at once (the forced phase), not after TimeoutStopSec.
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var watch = Stopwatch.StartNew();
+        var handle = harness.Launch(["/bin/sh", "-c", "(trap '' TERM; exec sleep 60) & sleep 0.2; exit 0"], leftoverGraceMs: 1_000);
+        var exit = LinuxHarness.WaitExit(handle, Bound);
+        Assert.Equal(("exited", 0), (exit.ExitCodeKind, exit.ExitStatus));
+        Assert.Equal(["sleep"], exit.LeftoversTerminated);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8), $"The attempt took {watch.Elapsed} (leftover_grace 1 s; TimeoutStopSec would be 16 s).");
+    }
+
+    [Fact(Timeout = 180_000)]
+    public async Task AFrozenUnitBlockingTheManagerIsThawedByAStartingPlatformAndByTheGuard()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // A node or guard that died between killing a frozen unit's processes and thawing it leaves the user manager blocked: it spawns
+        // ExecStop into the frozen cgroup. Neither the platform's start nor the guard needs the (blocked) manager to release it.
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+
+        var first = (LinuxAttemptHandle)harness.Launch(["sleep", "60"]);
+        LeaveStuck(first);
+        var restarted = harness.NewPlatform();
+        Assert.Contains(first.CgroupDirectory!, restarted.ReleasedFreezes);
+        var firstExit = LinuxHarness.WaitExit(first, Bound);
+        Assert.Equal(("killed", 9), (firstExit.ExitCodeKind, firstExit.ExitStatus));
+
+        var second = (LinuxAttemptHandle)harness.Launch(["sleep", "60"]);
+        LeaveStuck(second);
+        using var stop = new CancellationTokenSource();
+        var guard = Task.Run(() => GuardRole.Run(new GuardOptions { DataRoot = harness.DataRoot, Stop = stop.Token }), Ct);
+        try
+        {
+            LinuxHarness.WaitFor(() => File.ReadAllText(Path.Combine(second.CgroupDirectory!, "cgroup.freeze")).Trim() == "0", Bound, "the guard to thaw the cgroup");
+            var secondExit = LinuxHarness.WaitExit(second, Bound);
+            Assert.Equal(("killed", 9), (secondExit.ExitCodeKind, secondExit.ExitStatus));
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            Assert.Equal(0, await guard.WaitAsync(Bound, Ct));
+        }
+
+        static void LeaveStuck(LinuxAttemptHandle handle)
+        {
+            LinuxHarness.WaitFor(() => handle.Root is not null && handle.CgroupDirectory is not null && handle.Processes().Count > 0, Bound, "the unit");
+            var directory = handle.CgroupDirectory!;
+            ProcFs.WriteControl(Path.Combine(directory, "cgroup.freeze"), "1");
+            LinuxHarness.WaitFor(() => File.ReadAllText(Path.Combine(directory, "cgroup.events")).Contains("frozen 1", StringComparison.Ordinal), Bound, "the freeze");
+            foreach (var pid in ProcFs.Procs(directory))
+            {
+                _ = Libc.Kill(pid, Libc.SigKill);
+            }
+
+            // The manager now spawns ExecStop into the frozen cgroup and blocks: only its own child is left there.
+            LinuxHarness.WaitFor(() => ProcFs.Procs(directory) is { Count: > 0 } pids
+                && pids.All(pid => ProcFs.Image(pid) is var image && (image == "systemd" || image.StartsWith("(sd-", StringComparison.Ordinal))), Bound, "the manager's spawn");
+        }
     }
 
     [Fact(Timeout = 120_000)]
@@ -447,6 +563,14 @@ public sealed class DirectPlatformTests
         var attempt = Directory.EnumerateDirectories(Path.Combine(harness.DataRoot, "logs")).Single();
         Assert.Equal("hi", File.ReadAllText(Path.Combine(attempt, AttemptFiles.Stdout)));
         Assert.Null(platform.Reopen(harness.NodeName, new AttemptFiles(harness.DataRoot, Path.GetFileName(attempt)), null));
+
+        // The exact environment here too, a caller's own variable named like the carrier included.
+        List<string> environment = ["A=1", "PATH=/usr/bin:/bin", "my-var=x", ExecLaunchRole.CarrierVariable + "=the caller's own value"];
+        var printed = harness.Launch(["/usr/bin/env", "-0"], environment: environment);
+        Assert.Equal(0, LinuxHarness.WaitExit(printed, TimeSpan.FromSeconds(60)).ExitStatus);
+        var printedDirectory = Directory.EnumerateDirectories(Path.Combine(harness.DataRoot, "logs")).Single(directory => directory != attempt);
+        var received = File.ReadAllText(Path.Combine(printedDirectory, AttemptFiles.Stdout)).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(environment.Order(StringComparer.Ordinal), received.Order(StringComparer.Ordinal));
 
         var tree = harness.Launch(["/bin/sh", "-c", "sleep 60 & sleep 60"]);
         LinuxHarness.WaitFor(() => tree.Processes().Count >= 2, TimeSpan.FromSeconds(30), "the tree");

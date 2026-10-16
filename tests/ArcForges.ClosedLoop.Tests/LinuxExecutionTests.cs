@@ -62,6 +62,14 @@ public sealed class LinuxExecutionTests
         // A signal maps to 128 + n (04 section 5): the program's own, and the node's stop of a timed-out task (SIGTERM).
         var signalled = await node.CliBytesAsync(Bound, "run", "--", "/bin/sh", "-c", "kill -TERM $$");
         Assert.Equal(143, signalled.ExitCode);
+
+        // Real-time signals too (RTMIN, RTMIN+3, RTMAX as the shell numbers them), exactly like the direct run.
+        foreach (var signal in (int[])[34, 37, 64])
+        {
+            string[] killer = ["/bin/sh", "-c", $"kill -{signal.ToString(CultureInfo.InvariantCulture)} $$"];
+            Assert.Equal(Direct(killer).ExitCode, (await node.CliBytesAsync(Bound, ["run", "--", .. killer])).ExitCode);
+            Assert.Equal(128 + signal, Direct(killer).ExitCode);
+        }
         var timedOut = await node.CliBytesAsync(Bound, "--timeout", "2s", "run", "--", "/bin/sleep", "60");
         Assert.Equal(143, timedOut.ExitCode);
         Assert.Contains("TIMED_OUT", Encoding.UTF8.GetString(timedOut.Stderr), StringComparison.Ordinal);

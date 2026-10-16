@@ -39,6 +39,31 @@ internal static unsafe partial class Libc
 
     public static int LastError => Marshal.GetLastPInvokeError();
 
+    /// <summary>The first real-time signal (glibc's <c>SIGRTMIN</c>, 34 on Linux: glibc keeps 32 and 33 for itself).</summary>
+    public static int SigRtMin { get; } = RealTimeBound(minimum: true);
+
+    /// <summary>The last real-time signal (<c>SIGRTMAX</c>, 64 on Linux).</summary>
+    public static int SigRtMax { get; } = RealTimeBound(minimum: false);
+
+    [LibraryImport(Library, EntryPoint = "__libc_current_sigrtmin")]
+    private static partial int CurrentSigRtMin();
+
+    [LibraryImport(Library, EntryPoint = "__libc_current_sigrtmax")]
+    private static partial int CurrentSigRtMax();
+
+    private static int RealTimeBound(bool minimum)
+    {
+        try
+        {
+            return minimum ? CurrentSigRtMin() : CurrentSigRtMax();
+        }
+        catch (Exception exception) when (exception is EntryPointNotFoundException or DllNotFoundException)
+        {
+            // Not glibc: the kernel's values less glibc's two reserved signals.
+            return minimum ? 34 : 64;
+        }
+    }
+
     [LibraryImport(Library, EntryPoint = "kill", SetLastError = true)]
     public static partial int Kill(int pid, int signal);
 
@@ -136,8 +161,9 @@ internal static unsafe partial class Libc
     {
         ArgumentNullException.ThrowIfNull(argv);
         ArgumentNullException.ThrowIfNull(environment);
-        for (var signal = 1; signal < 32; signal++)
+        for (var signal = 1; signal <= SigRtMax; signal++)
         {
+            // The real-time signals too (the runtime may handle some); glibc's internal 32 and 33 are refused and left alone.
             if (signal is not (SigKill or 19))
             {
                 _ = Signal(signal, 0);

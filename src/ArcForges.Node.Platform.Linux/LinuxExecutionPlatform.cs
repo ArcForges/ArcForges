@@ -28,6 +28,12 @@ public sealed class LinuxPlatformOptions
 
     /// <summary>The node's own unit, which <c>kill_with_node</c> attempts bind to; null detects it from the node's cgroup.</summary>
     public string? NodeUnit { get; init; }
+
+    /// <summary>
+    /// Tests only: entries added to every attempt unit's <c>Environment=</c> outside the resolved environment, standing in for a variable
+    /// the user manager passes to its services (the command must never see them).
+    /// </summary>
+    internal IReadOnlyList<string> ExtraUnitEnvironment { get; init; } = [];
 }
 
 /// <summary>
@@ -116,6 +122,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <summary>The unit name of an attempt.</summary>
     public static string UnitName(string attemptName) => UnitPrefix + attemptName + ".service";
 
+    /// <summary>The attempt cgroups found frozen and blocking the user manager at start, thawed directly (for the node log).</summary>
+    public IReadOnlyList<string> ReleasedFreezes { get; private set; } = [];
+
     /// <summary>The user manager connection (reconnected after the user manager restarted).</summary>
     internal SystemdManager Manager
     {
@@ -156,6 +165,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             _managerReason = "no systemd user manager runs for this user ($XDG_RUNTIME_DIR/systemd/private does not exist)";
             return;
         }
+
+        // Before any call to the manager, which a frozen attempt cgroup left by a dead node or guard would block.
+        ReleasedFreezes = UnitControl.ReleaseStuckFreezes();
 
         SystemdManager manager;
         try
@@ -321,6 +333,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             LaunchSteps = [.. launch.LaunchSteps],
             EndSteps = [.. launch.EndSteps],
             LeftoverGraceMs = launch.LeftoverGraceMs,
+            EnvironmentNames = [.. launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).Distinct(StringComparer.Ordinal)],
         }.ToJson());
         if (_manager is null)
         {
@@ -483,9 +496,10 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
                 helperDiagnosticsOff)]),
             // Every exit status and signal is a success of the unit, so ExecStop (the end steps) runs after any exit; the attempt's result
             // is taken from $EXIT_CODE and $EXIT_STATUS by exit-record (04 section 3).
-            new("SuccessExitStatus", new ExitStatusSet([.. Enumerable.Range(1, 255)], [.. Enumerable.Range(1, 31)])),
+            new("SuccessExitStatus", new ExitStatusSet([.. Enumerable.Range(1, 255)],
+                [.. Enumerable.Range(1, 31), .. Enumerable.Range(Libc.SigRtMin, Libc.SigRtMax - Libc.SigRtMin + 1)])),
             new("WorkingDirectory", "-" + launch.WorkingDirectory),
-            new("Environment", UnitEnvironment(launch.Environment)),
+            new("Environment", (string[])[.. UnitEnvironment(launch.Environment), .. _options.ExtraUnitEnvironment]),
             new("UnsetEnvironment", managerEnvironment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))])
                 .Where(name => name.Length > 0 && !resolved.Contains(name)).Distinct(StringComparer.Ordinal).ToArray()),
             new("StandardInputFileDescriptor", stdin),
@@ -575,7 +589,8 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// values without other control characters than tab and newline, so any other entry (for example a bash function
     /// <c>BASH_FUNC_x%%</c>, a name with a dash) travels in <see cref="ExecLaunchRole.CarrierVariable"/> (base64 of the NUL-separated
     /// entries), which <c>exec-launch</c> unpacks into the command's environment and removes, so the command still gets exactly the
-    /// resolved environment.
+    /// resolved environment. A caller's own variable of that name is carried the same way, and the carrier is always set (empty when
+    /// nothing is carried); <c>exec-launch</c> then keeps only the resolved names (<see cref="StepsFile.EnvironmentNames"/>).
     /// </summary>
     internal static string[] UnitEnvironment(IReadOnlyList<string> environment)
     {
@@ -586,11 +601,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             (SystemdAccepts(entry) ? accepted : carried).Add(entry);
         }
 
-        if (carried.Count > 0)
-        {
-            accepted.Add(ExecLaunchRole.CarrierVariable + "=" + Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', carried))));
-        }
-
+        // Always set, empty when nothing is carried: a carrier variable of the user manager's own never reaches exec-launch.
+        accepted.Add(ExecLaunchRole.CarrierVariable + "="
+            + (carried.Count == 0 ? string.Empty : Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', carried)))));
         return [.. accepted];
     }
 
@@ -598,6 +611,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     {
         var equals = entry.IndexOf('=', StringComparison.Ordinal);
         if (equals <= 0 || char.IsAsciiDigit(entry[0]))
+        {
+            return false;
+        }
+
+        // A caller's own variable with the carrier's name travels inside the carrier, like any entry systemd refuses.
+        if (entry.AsSpan(0, equals).SequenceEqual(ExecLaunchRole.CarrierVariable))
         {
             return false;
         }

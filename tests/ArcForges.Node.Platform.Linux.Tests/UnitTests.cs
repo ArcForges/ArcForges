@@ -20,6 +20,48 @@ public sealed class UnitTests
         Assert.Equal(0, LinuxRecords.SignalNumber(null));
         Assert.Equal("TERM", LinuxRecords.SignalName(15));
         Assert.Equal("99", LinuxRecords.SignalName(99));
+        Assert.Equal(0, LinuxRecords.SignalNumber("65"));
+    }
+
+    [Theory]
+    [InlineData("RTMIN", 34)]
+    [InlineData("SIGRTMIN", 34)]
+    [InlineData("RTMIN+3", 37)]
+    [InlineData("SIGRTMIN+3", 37)]
+    [InlineData("RTMAX", 64)]
+    [InlineData("RTMAX-2", 62)]
+    [InlineData("40", 40)]
+    [InlineData("RTMIN+31", 0)]
+    [InlineData("RTMIN-1", 0)]
+    [InlineData("RTMINX", 0)]
+    public void RealTimeSignalsMapToTheGlibcNumbers(string name, int number)
+    {
+        // systemd writes real-time signals in $EXIT_STATUS as RTMIN+n; a stop_signal may use either end. glibc's SIGRTMIN is 34, SIGRTMAX 64.
+        Assert.Equal(number, LinuxRecords.SignalNumber(name));
+        if (number > 0)
+        {
+            Assert.Equal(number, LinuxRecords.SignalNumber(LinuxRecords.SignalName(number)));
+        }
+    }
+
+    [Fact]
+    public void AKilledResultWithAnUnknownSignalIsNeverASuccess()
+    {
+        var record = LinuxRecords.FromServiceEnvironment("a1", "killed", "RTMIN", "success", null, null, DateTimeOffset.UnixEpoch);
+        Assert.Equal(("killed", 34), (record.ExitCodeKind, record.ExitStatus));
+    }
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void TheUnitEnvironmentAlwaysSetsTheCarrierAndCarriesACallersOwnCarrierVariable()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "The Linux platform.");
+        Assert.Equal(["A=1", ExecLaunchRole.CarrierVariable + "="], LinuxExecutionPlatform.UnitEnvironment(["A=1"]));
+        var unit = LinuxExecutionPlatform.UnitEnvironment(["A=1", ExecLaunchRole.CarrierVariable + "=caller's own"]);
+        Assert.Equal(2, unit.Length);
+        Assert.Equal("A=1", unit[0]);
+        var carried = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(unit[1][(ExecLaunchRole.CarrierVariable.Length + 1)..]));
+        Assert.Equal(ExecLaunchRole.CarrierVariable + "=caller's own", carried);
     }
 
     [Theory]
@@ -110,8 +152,11 @@ public sealed class UnitTests
             LaunchSteps = [new StepSpec { Name = "s", Application = "/bin/true", Argv = ["true", "x"], TimeoutMs = 5 }],
             EndSteps = [new StepSpec { Name = "e", Application = "/bin/false" }],
             LeftoverGraceMs = 1_000,
+            EnvironmentNames = ["PATH", "WITH SPACE"],
         };
         var parsed = StepsFile.Parse(steps.ToJson());
+        Assert.Equal(["PATH", "WITH SPACE"], parsed.EnvironmentNames);
+        Assert.Null(StepsFile.Parse("""{"schema":1,"attempt_id":"A"}""").EnvironmentNames);
         Assert.Equal(["true", "x"], parsed.LaunchSteps[0].Argv);
         Assert.Equal(1_000, parsed.LeftoverGraceMs);
         Assert.Equal(10_000, parsed.EndStepBudgetMs);

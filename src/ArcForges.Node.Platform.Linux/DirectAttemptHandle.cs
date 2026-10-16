@@ -75,7 +75,7 @@ public sealed class DirectAttemptHandle : IAttemptHandle
                 platform.Helper, "node", "exec-launch", "--attempt", files.AttemptName, "--dir", files.Directory, "--cwd", launch.WorkingDirectory,
                 "--program", launch.Command.Application, "--nofile", LinuxExecutionPlatform.DefaultNoFileSoft.ToString(CultureInfo.InvariantCulture),
             ];
-            List<string> environment = [.. launch.Environment];
+            List<string> environment = [.. LinuxExecutionPlatform.UnitEnvironment(launch.Environment)];
             if (platform.HelperRuntime is { } runtime && !environment.Any(entry => entry.StartsWith("DOTNET_ROOT=", StringComparison.Ordinal)))
             {
                 // A framework-dependent helper (the JIT build of the tests) gets DOTNET_ROOT for itself only.
@@ -155,11 +155,19 @@ public sealed class DirectAttemptHandle : IAttemptHandle
         _started.TrySetResult(Root);
     }
 
-    private bool Signal(int signal) => _root is { } root && Libc.Kill(-root.Pid, signal) == 0;
+    private bool Signal(int signal) => _root is { } root && GroupIsOurs() && Group().Count > 0 && Libc.Kill(-root.Pid, signal) == 0;
+
+    /// <summary>
+    /// Whether the process group numbered after the root is still the attempt's. The kernel never hands out a number a live group still
+    /// uses, so the number is reused only after the group emptied; a live process with the root's PID but another start time is then
+    /// a stranger's group leader, and the group is not signalled (PGID reuse).
+    /// </summary>
+    private bool GroupIsOurs() => _root is { } root
+        && (ProcFs.StartOf(root.Pid) is not { } start || Math.Abs((start.Start - root.StartTime).TotalMilliseconds) < 1_000);
 
     private List<int> Group()
     {
-        if (_root is not { } root)
+        if (_root is not { } root || !GroupIsOurs())
         {
             return [];
         }

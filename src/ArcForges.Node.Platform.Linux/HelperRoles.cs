@@ -57,7 +57,7 @@ internal sealed class RoleArguments
 /// launch steps of <c>steps.json</c> in order (each with <c>/dev/null</c> as its streams, bounded by its timeout), then replaces itself
 /// with the command (<c>execve</c>), so the command is the unit's main process with the PID systemd started. Before the <c>execve</c> it
 /// restores what the .NET runtime changed in this process (the soft open-file limit it raised, <c>SIGPIPE</c> it ignores, the signal mask)
-/// and removes the variables systemd adds to every service (<c>--unset</c>: those the resolved environment does not hold). A failing step,
+/// and keeps only the resolved variable names of <c>steps.json</c>, dropping whatever the user manager or systemd added. A failing step,
 /// a working directory it cannot enter, or a command it cannot start is written to <c>launch.json</c> and the role exits (126, or 127 when
 /// the program does not exist); <c>exit-record</c> then records the attempt and the node records it as <c>SPAWN_FAILED</c>.
 /// </summary>
@@ -97,10 +97,9 @@ public static class ExecLaunchRole
             return Fail(launchPath, attempt, "command", $"the working directory {workingDirectory} cannot be entered: {Marshal.GetPInvokeErrorMessage(error)}", null, error, LaunchFailed);
         }
 
-        var unset = parsed.All("--unset").ToHashSet(StringComparer.Ordinal);
-        var environment = CurrentEnvironment().Where(entry => !unset.Contains(entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))])).ToList();
-
-        if (StepsFile.TryRead(Path.Combine(directory, AttemptFiles.Steps)) is { } steps)
+        var steps = StepsFile.TryRead(Path.Combine(directory, AttemptFiles.Steps));
+        var environment = ExactEnvironment(steps, parsed.All("--unset"));
+        if (steps is not null)
         {
             foreach (var step in steps.LaunchSteps)
             {
@@ -123,6 +122,26 @@ public static class ExecLaunchRole
         return Fail(launchPath, attempt, "command", $"the command could not be started: {Marshal.GetPInvokeErrorMessage(failure)}", null, failure,
             failure == 2 ? NotFound : LaunchFailed);
     }
+
+    /// <summary>
+    /// The attempt's exact environment: this process's environment with the carried entries unpacked, restricted to the resolved names
+    /// of <c>steps.json</c> (<see cref="StepsFile.EnvironmentNames"/>), so nothing the user manager or systemd added reaches the command or
+    /// the steps whatever <c>UnsetEnvironment=</c> removed; without names (an older file), the <paramref name="unset"/> names are removed.
+    /// </summary>
+    internal static List<string> ExactEnvironment(StepsFile? steps, IEnumerable<string> unset)
+    {
+        var current = CurrentEnvironment();
+        if (steps?.EnvironmentNames is { } names)
+        {
+            var keep = names.ToHashSet(StringComparer.Ordinal);
+            return [.. current.Where(entry => keep.Contains(Name(entry)))];
+        }
+
+        var drop = unset.ToHashSet(StringComparer.Ordinal);
+        return [.. current.Where(entry => !drop.Contains(Name(entry)))];
+    }
+
+    private static string Name(string entry) => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))];
 
     /// <summary>This process's environment with the carried entries unpacked (and the carrier removed).</summary>
     internal static List<string> CurrentEnvironment()
@@ -186,8 +205,8 @@ public static class ExecLaunchRole
 /// section 3). systemd runs it once the main process exited (every exit status and signal is a success status of the unit, so it always
 /// runs), before it stops the remaining processes. It runs the end steps of <c>steps.json</c> within the end-step budget (10 s; a
 /// failing or slow step is recorded and never changes the attempt's result), waits up to <c>leftover_grace</c> for the unit's other
-/// processes to exit on their own, and writes what is still running to <c>stop.json</c>; systemd then stops those processes
-/// (<c>KillMode=control-group</c>) and <c>exit-record</c> lists them as terminated leftovers. It always exits 0.
+/// processes to exit on their own, kills what is still running (SIGKILL, the forced phase) and writes it to <c>stop.json</c>;
+/// <c>exit-record</c> lists those processes as terminated leftovers. It always exits 0.
 /// </summary>
 [SupportedOSPlatform("linux")]
 public static class ExecStopRole
@@ -202,7 +221,7 @@ public static class ExecStopRole
         }
 
         var steps = StepsFile.TryRead(Path.Combine(directory, AttemptFiles.Steps)) ?? new StepsFile { AttemptId = attempt };
-        var environment = ExecLaunchRole.CurrentEnvironment();
+        var environment = ExecLaunchRole.ExactEnvironment(steps, ExecLaunchRole.ManagerAddedVariables);
         var record = new StopRecord { AttemptId = attempt };
         var budget = Stopwatch.StartNew();
         var total = TimeSpan.FromMilliseconds(steps.EndStepBudgetMs);
@@ -234,7 +253,24 @@ public static class ExecStopRole
             others = [.. ProcFs.Procs(cgroup!).Where(pid => pid != self)];
         }
 
+        // The forced phase (04 section 3): what is still running after leftover_grace is killed now, not after TimeoutStopSec, so a
+        // leftover that ignores SIGTERM does not hold the unit; the record lists it as a terminated leftover.
         record.Leftovers = [.. others.Select(ProcFs.Image)];
+        if (cgroup is not null && others.Count > 0)
+        {
+            var forced = Stopwatch.StartNew();
+            while (others.Count > 0 && forced.ElapsedMilliseconds < 2_000)
+            {
+                foreach (var pid in others)
+                {
+                    _ = Libc.Kill(pid, Libc.SigKill);
+                }
+
+                Thread.Sleep(20);
+                others = [.. ProcFs.Procs(cgroup).Where(pid => pid != self && ProcFs.Stat(pid) is { State: not ('Z' or 'X') })];
+            }
+        }
+
         Write(directory, record);
         return 0;
     }

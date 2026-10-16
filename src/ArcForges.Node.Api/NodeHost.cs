@@ -484,8 +484,14 @@ public static class NodeHost
             new LogField("unitMode", platform.UnitMode), new LogField("managerUnavailable", platform.ManagerUnavailableReason ?? "-"),
             new LogField("controllers", string.Join(' ', platform.Controllers.Order(StringComparer.Ordinal))), new LogField("rootCpuRate", limits.CpuRate),
             new LogField("rootMemoryMax", limits.HardMemoryBytes), new LogField("rootSwapMax", limits.SwapAllowanceBytes), new LogField("helper", helper));
+        foreach (var cgroup in platform.ReleasedFreezes)
+        {
+            log.Warning("node.platform.freeze_released", new LogField("cgroup", cgroup));
+        }
+
         return platform;
     }
+
     private static Registrations RegisterSignals(NodeRuntime node)
     {
         var registrations = new List<PosixSignalRegistration>();

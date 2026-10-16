@@ -74,4 +74,50 @@ public static class UnitControl
 
         return new LimitStop(frozenAt is not null, killed, frozenAt, killedAt) { DirectThaw = thawed, ThawedAt = DateTimeOffset.UtcNow };
     }
+    /// <summary>
+    /// Thaws attempt cgroups left frozen with nothing but the user manager's own spawn in them, without the user manager (it is blocked in
+    /// that state): a node or guard that died between killing the processes of a frozen unit and thawing it leaves the manager spawning
+    /// <c>ExecStop</c> into the frozen cgroup, which blocks the whole manager until the cgroup is thawed. A frozen cgroup whose processes
+    /// are the attempt's own (a paused attempt) is left alone. Every <c>arcforges-a-*.service</c> cgroup under the user's manager is
+    /// checked (<paramref name="managerCgroup"/>: <c>user@&lt;uid&gt;.service</c>); returns the directories thawed.
+    /// </summary>
+    public static List<string> ReleaseStuckFreezes(string? managerCgroup = null)
+    {
+        var released = new List<string>();
+        var root = managerCgroup ?? Path.Combine("/sys/fs/cgroup/user.slice", $"user-{ProcFs.UserId}.slice", $"user@{ProcFs.UserId}.service");
+        if (!Directory.Exists(root))
+        {
+            return released;
+        }
+
+        var manager = ProcFs.Procs(Path.Combine(root, "init.scope")).FirstOrDefault();
+        IEnumerable<string> units;
+        try
+        {
+            units = [.. Directory.EnumerateDirectories(root, LinuxExecutionPlatform.UnitPrefix + "*.service", SearchOption.AllDirectories)];
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return released;
+        }
+
+        foreach (var directory in units)
+        {
+            var freeze = Path.Combine(directory, "cgroup.freeze");
+            if (ProcFs.Text(freeze) != "1")
+            {
+                continue;
+            }
+
+            // The manager's spawn is its child still named after it ("systemd", or "(sd-...)" before it renames itself).
+            var stuck = ProcFs.Procs(directory).All(pid => ProcFs.Stat(pid) is { } stat && (manager == 0 || stat.ParentPid == manager)
+                && ProcFs.Image(pid) is var image && (image == "systemd" || image.StartsWith("(sd-", StringComparison.Ordinal)));
+            if (stuck && ProcFs.WriteControl(freeze, "0"))
+            {
+                released.Add(directory);
+            }
+        }
+
+        return released;
+    }
 }

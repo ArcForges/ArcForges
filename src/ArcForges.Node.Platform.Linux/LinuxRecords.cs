@@ -15,7 +15,11 @@ public static class LinuxRecords
         "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS",
     ];
 
-    /// <summary>The number of a signal name as systemd writes it in <c>$EXIT_STATUS</c> (<c>KILL</c>, <c>SIGKILL</c> or a number); 0 when unknown.</summary>
+    /// <summary>
+    /// The number of a signal name as systemd writes it in <c>$EXIT_STATUS</c> (<c>KILL</c>), as a task's <c>stop_signal</c> gives it
+    /// (<c>SIGKILL</c>), a real-time signal (<c>RTMIN</c>, <c>RTMIN+3</c>, <c>RTMAX</c>, <c>RTMAX-2</c>, with or without <c>SIG</c>, from the
+    /// platform's <c>SIGRTMIN</c>/<c>SIGRTMAX</c>) or a number; 0 when unknown or out of range.
+    /// </summary>
     public static int SignalNumber(string? name)
     {
         if (string.IsNullOrEmpty(name))
@@ -25,16 +29,61 @@ public static class LinuxRecords
 
         if (int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
         {
-            return number;
+            return number is > 0 and <= 64 ? number : 0;
         }
 
         var bare = name.StartsWith("SIG", StringComparison.Ordinal) ? name[3..] : name;
+        if (RealTime(bare, "RTMIN", RtMin) is { } fromMinimum)
+        {
+            return fromMinimum;
+        }
+
+        if (RealTime(bare, "RTMAX", RtMax) is { } fromMaximum)
+        {
+            return fromMaximum;
+        }
+
         var index = Array.IndexOf(SignalNames, bare);
         return index > 0 ? index : 0;
     }
 
-    /// <summary>The name of a signal number (<c>TERM</c>), or the number as text.</summary>
-    public static string SignalName(int number) => number > 0 && number < SignalNames.Length ? SignalNames[number] : number.ToString(CultureInfo.InvariantCulture);
+    /// <summary>The name of a signal number (<c>TERM</c>, <c>RTMIN+3</c>), or the number as text.</summary>
+    public static string SignalName(int number) => number > 0 && number < SignalNames.Length
+        ? SignalNames[number]
+        : number >= RtMin && number <= RtMax
+            ? number == RtMin ? "RTMIN" : "RTMIN+" + (number - RtMin).ToString(CultureInfo.InvariantCulture)
+            : number.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>The platform's <c>SIGRTMIN</c> (34 with glibc; the same value elsewhere, where only tests parse Linux records).</summary>
+    private static int RtMin => OperatingSystem.IsLinux() ? Libc.SigRtMin : 34;
+
+    /// <summary>The platform's <c>SIGRTMAX</c>.</summary>
+    private static int RtMax => OperatingSystem.IsLinux() ? Libc.SigRtMax : 64;
+
+    private static int? RealTime(string bare, string prefix, int origin)
+    {
+        if (!bare.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var rest = bare[prefix.Length..];
+        int value;
+        if (rest.Length == 0)
+        {
+            value = origin;
+        }
+        else if (rest[0] is '+' or '-' && int.TryParse(rest[1..], NumberStyles.None, CultureInfo.InvariantCulture, out var offset))
+        {
+            value = rest[0] == '+' ? origin + offset : origin - offset;
+        }
+        else
+        {
+            return 0;
+        }
+
+        return value >= RtMin && value <= RtMax ? value : 0;
+    }
 
     /// <summary>
     /// The record <c>arcforges node exit-record</c> writes from systemd's <c>$EXIT_CODE</c>, <c>$EXIT_STATUS</c> and <c>$SERVICE_RESULT</c>

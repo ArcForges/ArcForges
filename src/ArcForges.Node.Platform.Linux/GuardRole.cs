@@ -30,7 +30,8 @@ public sealed class GuardOptions
 /// output every 100 ms against <c>max_attempt_output_bytes</c>: <c>TERMINATE</c> freezes the unit and kills it (<see cref="UnitControl"/>),
 /// <c>NOTIFY</c> records the crossing. Every action, takeover and stand-down is appended to the attempt's <c>guard-events.jsonl</c>; the
 /// guard never writes the node store. A node that restarts faster than the takeover time never renews the heartbeat, so the guard stays
-/// in charge. The temporary-directory and low-space limits join with AF-STOR-01.
+/// in charge. At its start, and every 10 s while the node is down, it thaws attempt cgroups left frozen with the user manager blocked
+/// in them (<see cref="UnitControl.ReleaseStuckFreezes"/>). The temporary-directory and low-space limits join with AF-STOR-01.
 /// </summary>
 [SupportedOSPlatform("linux")]
 public static partial class GuardRole
@@ -43,6 +44,9 @@ public static partial class GuardRole
 
     /// <summary>How often the attempt directories are scanned while in charge.</summary>
     public static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>How often frozen attempt cgroups that block the user manager are looked for while the node is down.</summary>
+    public static readonly TimeSpan ReleaseInterval = TimeSpan.FromSeconds(10);
 
     /// <summary>Runs the guard until <see cref="GuardOptions.Stop"/>; returns its exit code.</summary>
     public static int Run(GuardOptions options)
@@ -58,6 +62,8 @@ public static partial class GuardRole
         }
 
         Console.Error.WriteLine($"arcforges guard: guarding {options.DataRoot}");
+        ReleaseStuckFreezes();
+        var lastRelease = clock.GetTimestamp();
         var watch = new HeartbeatWatch(Path.Combine(run, "node-heartbeat"), TimeSpan.FromMilliseconds(2_000), clock);
         var attempts = new Dictionary<string, Guarded>(StringComparer.Ordinal);
         SystemdManager? manager = null;
@@ -80,6 +86,12 @@ public static partial class GuardRole
                     continue;
                 }
 
+                if (clock.GetElapsedTime(lastRelease) >= ReleaseInterval)
+                {
+                    ReleaseStuckFreezes();
+                    lastRelease = clock.GetTimestamp();
+                }
+
                 if (lastScan == long.MinValue || clock.GetElapsedTime(lastScan) >= ScanInterval)
                 {
                     Scan(options.DataRoot, attempts);
@@ -98,6 +110,15 @@ public static partial class GuardRole
         }
 
         return 0;
+    }
+
+    private static void ReleaseStuckFreezes()
+    {
+        // Without the user manager (blocked in that state): see UnitControl.ReleaseStuckFreezes.
+        foreach (var cgroup in UnitControl.ReleaseStuckFreezes())
+        {
+            Console.Error.WriteLine($"arcforges guard: thawed {cgroup}, left frozen with the user manager's spawn blocked in it");
+        }
     }
 
     private static bool AnyInCharge(Dictionary<string, Guarded> attempts)
