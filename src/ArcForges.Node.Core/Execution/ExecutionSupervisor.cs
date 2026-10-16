@@ -570,7 +570,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
     private void Force(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
-        if (attempt.Forced)
+        // Once (a stop and the launch can both get here), and never for an attempt that is already being recorded (its launch failed).
+        if (attempt.Forced || attempt.Finalizing)
         {
             return;
         }
