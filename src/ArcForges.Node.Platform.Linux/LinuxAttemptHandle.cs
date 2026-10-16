@@ -47,6 +47,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
 {
     private static readonly TimeSpan StatePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan VanishedGrace = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan FailedResetBound = TimeSpan.FromSeconds(30);
     private readonly LinuxExecutionPlatform _platform;
     private readonly TaskCompletionSource<RootProcess?> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Dictionary<int, long> _members = [];
@@ -358,7 +359,38 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     /// <inheritdoc />
     public void Acknowledge()
     {
-        // The exit record is durable in the attempt's directory and the unit is collected by the user manager; nothing waits.
+        // The exit record is durable in the attempt's directory and nothing waits. A unit that ended failed (an OOM kill, a stop timeout)
+        // stays loaded (CollectMode=inactive) until the node recorded it: once it is failed, it is reset and unloaded. exit-record runs
+        // before the unit turns failed, so this waits for that state off the enforcement loop (bounded; units that succeeded are collected).
+        if (TryReadExit() is not { RecordedBy: "exit-record" } exit || exit.ServiceResult == "success")
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            while (watch.Elapsed < FailedResetBound)
+            {
+                try
+                {
+                    switch (_platform.Manager.State(Unit)?.ActiveState)
+                    {
+                        case "failed":
+                            _platform.Manager.ResetFailedUnit(Unit);
+                            return;
+                        case null or "inactive" or "active" or "activating":
+                            return;
+                    }
+                }
+                catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or ObjectDisposedException)
+                {
+                    return;
+                }
+
+                Thread.Sleep(100);
+            }
+        });
     }
 
     /// <inheritdoc />

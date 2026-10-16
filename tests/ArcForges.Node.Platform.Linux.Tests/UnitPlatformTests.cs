@@ -300,17 +300,22 @@ public sealed class UnitPlatformTests
     public void AnOomKillIsRecordedFromTheFailedUnit()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        // systemd skips ExecStopPost when OOMPolicy=kill ends a unit; the failed unit is kept and the node records it from its properties.
+        // When OOMPolicy=kill ends a unit, systemd may skip ExecStopPost (seen when the kill races the unit's stop) or run it: either the
+        // failed unit, kept by CollectMode=inactive, is recorded from its properties, or exit-record records it; the result is the same.
         RequireUnits();
         using var harness = LinuxHarness.Start();
         var handle = (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c", "head -c 400M /dev/zero | tail > /dev/null"],
             new ContainerLimits { MemoryMaxBytes = 64L << 20, SwapMaxBytes = 0 });
         var exit = LinuxHarness.WaitExit(handle, Bound);
+        TestContext.Current.TestOutputHelper?.WriteLine($"recorded by {exit.RecordedBy}");
         Assert.Equal("oom-kill", exit.ServiceResult);
-        Assert.Equal("unit", exit.RecordedBy);
-        Assert.Equal(1, exit.OomKills);
+        Assert.Contains(exit.RecordedBy, (string[])["unit", "exit-record"]);
+        Assert.True(exit.OomKills >= 1, $"{exit.OomKills} OOM kills recorded.");
         Assert.InRange(exit.MemPeakBytes, 1, 64L << 20);
         Assert.Equal(0, exit.SwapPeakBytes);
+
+        // Once the node recorded it, the failed unit is unloaded.
+        handle.Acknowledge();
         LinuxHarness.WaitFor(() => SystemdTestEnvironment.Property(handle.Unit, "LoadState") is "not-found" or "", Bound, "the failed unit to be reset");
     }
 

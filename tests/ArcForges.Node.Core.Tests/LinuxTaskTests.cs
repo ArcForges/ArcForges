@@ -197,6 +197,13 @@ public sealed class LinuxTaskTests
         Assert.All(results, task => Assert.True((long)task.CurrentAttempt.Usage.MemPeakBytes <= 512L << 20, $"An attempt peaked at {task.CurrentAttempt.Usage.MemPeakBytes}."));
         Assert.Contains(results, task => task.CurrentAttempt.Result.TerminationReason == TerminationReason.OomKilled);
         Assert.False(node.Exit.IsCompleted, "The node (unmanaged) was not affected.");
+
+        // The node unloads the failed (OOM-killed) units once it recorded them; none stays loaded as failed.
+        foreach (var task in results)
+        {
+            var unit = SystemdTestEnvironment.AttemptUnit(Tasks.Files(node, task.CurrentAttempt.AttemptId).AttemptName);
+            await Tasks.WaitForAsync(() => SystemdTestEnvironment.Property(unit, "ActiveState") != "failed", Tasks.Bound, $"{unit} to be unloaded");
+        }
     }
 
     [Fact(Timeout = 180_000)]

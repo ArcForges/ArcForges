@@ -359,6 +359,32 @@ public sealed class SystemdManager : IDisposable
     /// <summary><c>ResetFailedUnit(name)</c>: a failed unit is unloaded.</summary>
     public void ResetFailedUnit(string name) => Call(Message("ResetFailedUnit", "s", name));
 
+    /// <summary><c>ListUnitsByPatterns(["failed"], [pattern])</c>: the names of the failed units matching <paramref name="pattern"/>.</summary>
+    public HashSet<string> FailedUnits(string pattern) => Run(() => _connection.CallMethodAsync(Message("ListUnitsByPatterns", "asas", (string[])["failed"], (string[])[pattern]),
+        static (Message reply, object? _) =>
+        {
+            // a(ssssssouso): name, description, load, active, sub, following, unit path, job id, job type, job path.
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var reader = reply.GetBodyReader();
+            var end = reader.ReadArrayStart(DBusType.Struct);
+            while (reader.HasNext(end))
+            {
+                reader.AlignStruct();
+                names.Add(reader.ReadString());
+                for (var field = 0; field < 5; field++)
+                {
+                    _ = reader.ReadString();
+                }
+
+                _ = reader.ReadObjectPathAsString();
+                _ = reader.ReadUInt32();
+                _ = reader.ReadString();
+                _ = reader.ReadObjectPathAsString();
+            }
+
+            return names;
+        }));
+
     /// <summary><c>StartUnit(name, "replace")</c>; returns the job.</summary>
     public string StartUnit(string name) =>
         Run(() => _connection.CallMethodAsync(Message("StartUnit", "ss", name, "replace"), static (Message reply, object? _) => reply.GetBodyReader().ReadObjectPathAsString()));
@@ -518,6 +544,15 @@ public sealed class SystemdManager : IDisposable
                         break;
                     case bool flag:
                         writer.WriteBool(flag);
+                        break;
+                    case string[] texts:
+                        var array = writer.WriteArrayStart(DBusType.String);
+                        foreach (var text in texts)
+                        {
+                            writer.WriteString(text);
+                        }
+
+                        writer.WriteArrayEnd(array);
                         break;
                     default:
                         throw new ArgumentException("Unsupported argument type.", nameof(arguments));

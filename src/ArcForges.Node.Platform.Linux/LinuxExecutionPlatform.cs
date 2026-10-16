@@ -68,6 +68,8 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     private readonly LinuxPlatformOptions _options;
     private readonly Lock _gate = new();
     private SystemdManager? _manager;
+    private HashSet<string>? _failedUnits;
+    private long _failedUnitsAt;
     private string? _managerReason;
     private HashSet<string> _controllers = new(StringComparer.Ordinal);
     private string? _selfTest;
@@ -354,8 +356,37 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    /// <inheritdoc />
-    public bool AcknowledgeRecorded(string nodeName, string attemptName) => false;
+    /// <summary>
+    /// No holder ever waits on Linux, so this returns false; it unloads the attempt's unit when it was left failed (CollectMode=inactive
+    /// keeps it until the node recorded it, and the node stopped first). The failed attempt units are listed once per sweep.
+    /// </summary>
+    public bool AcknowledgeRecorded(string nodeName, string attemptName)
+    {
+        if (_manager is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var now = Environment.TickCount64;
+            if (_failedUnits is null || now - _failedUnitsAt > 10_000)
+            {
+                _failedUnits = Manager.FailedUnits(UnitPrefix + "*");
+                _failedUnitsAt = now;
+            }
+
+            if (_failedUnits.Remove(UnitName(attemptName)))
+            {
+                Manager.ResetFailedUnit(UnitName(attemptName));
+            }
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
+        {
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Starts the guard unit (13 section 3.4: <c>arcforges-guard.service</c>) when it is installed and not running; returns its state for
