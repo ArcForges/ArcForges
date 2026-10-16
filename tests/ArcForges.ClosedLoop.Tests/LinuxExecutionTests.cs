@@ -23,7 +23,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// </summary>
 [Trait("loop", "local")]
 [Trait("env", "linux-real")]
-[Collection(SerialProcessTests.Name)]
 [SupportedOSPlatform("linux")]
 public sealed class LinuxExecutionTests
 {
@@ -87,7 +86,13 @@ public sealed class LinuxExecutionTests
         var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
         var attempt = await RunningAttemptAsync(node, id);
         var unit = SystemdTestEnvironment.AttemptUnit(attempt);
-        var directory = SystemdTestEnvironment.CgroupDirectory(unit)!;
+        var cgroup = SystemdTestEnvironment.Property(unit, "ControlGroup");
+        if (cgroup.Length == 0)
+        {
+            Assert.Fail($"ControlGroup of {unit} is empty: {SystemdTestEnvironment.Describe(unit)}; {await DiagnoseAsync(node, id)}");
+        }
+
+        var directory = "/sys/fs/cgroup" + cgroup;
         Assert.Contains("/" + node.Slice + "/", directory, StringComparison.Ordinal);
 
         // 03 section 5.2 from the node: CPUWeight by priority (HIGH 200), MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling,
@@ -125,20 +130,30 @@ public sealed class LinuxExecutionTests
         await using var node = TestNode.Create();
         var first = await node.StartNodeAsync();
         var pidFile = Path.Combine(node.Root, "long.pid");
-        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "echo $$ > \"$1\"; echo before; sleep 3; echo while-down; exec sleep 120", "sh", pidFile)).Stdout).Trim();
-        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "sleep 2; echo done; exit 5")).Stdout).Trim();
-        await RunningAttemptAsync(node, id);
+
+        // Both attempts wait for the go file the test writes once the node is dead, so neither can finish before the kill however slowly
+        // the test runs (fixed sleeps raced with it under load).
+        var go = Path.Combine(node.Root, "go");
+        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c",
+            "echo $$ > \"$1\"; echo before; while [ ! -e \"$2\" ]; do sleep 0.05; done; echo while-down; exec sleep 120", "sh", pidFile, go)).Stdout).Trim();
+        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c",
+            "while [ ! -e \"$1\" ]; do sleep 0.05; done; echo done; exit 5", "sh", go)).Stdout).Trim();
+        var longAttempt = await RunningAttemptAsync(node, id);
         var shortAttempt = await RunningAttemptAsync(node, shortId);
         await TestNode.WaitAsync(() => File.Exists(pidFile), Bound, "the long attempt");
 
         first.Kill();
         await first.WaitForExitAsync(Ct);
+        File.WriteAllText(go, "go");
         var pid = int.Parse(File.ReadAllText(pidFile).Trim(), CultureInfo.InvariantCulture);
         var root = ProcessIdentity.Capture(pid)!.Value;
         await TestNode.WaitAsync(() => File.Exists(Path.Combine(node.DataRoot, "logs", shortAttempt, AttemptFiles.Exit)), Bound, "the short attempt's exit record");
         var record = ExitRecord.TryRead(Path.Combine(node.DataRoot, "logs", shortAttempt, AttemptFiles.Exit))!;
         Assert.Equal(("exited", 5, "exit-record"), (record.ExitCodeKind, record.ExitStatus, record.RecordedBy));
-        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+
+        // The long attempt keeps running while the node is down: it writes its next line into the captured output.
+        await TestNode.WaitAsync(() => TestNode.ReadShared(Path.Combine(node.DataRoot, "logs", longAttempt, AttemptFiles.Stdout)).Contains("while-down", StringComparison.Ordinal),
+            Bound, "the long attempt's output while the node is down");
         Assert.True(root.IsRunning(), "The attempt survived the node.");
 
         await node.StartNodeAsync();
@@ -169,7 +184,11 @@ public sealed class LinuxExecutionTests
         await node.WaitReadyAsync();
         var pidFile = Path.Combine(node.Root, "long.pid");
         var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "echo $$ > \"$1\"; exec sleep 120", "sh", pidFile)).Stdout).Trim();
-        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "sleep 1; exit 9")).Stdout).Trim();
+        // The short attempt runs until the test writes the go file just before the restart (a fixed sleep could end before the test saw
+        // it running).
+        var go = Path.Combine(node.Root, "go");
+        var shortId = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c",
+            "while [ ! -e \"$1\" ]; do sleep 0.05; done; exit 9", "sh", go)).Stdout).Trim();
         var attempt = await RunningAttemptAsync(node, id);
         await RunningAttemptAsync(node, shortId);
         await TestNode.WaitAsync(() => File.Exists(pidFile), Bound, "the long attempt");
@@ -177,12 +196,13 @@ public sealed class LinuxExecutionTests
         var root = ProcessIdentity.Capture(pid)!.Value;
 
         // The execution is not in the node unit's cgroup but in its own unit in the slice.
-        var nodeCgroup = SystemdTestEnvironment.Property(unit, "ControlGroup");
+        var nodeCgroup = SystemdTestEnvironment.RequiredProperty(unit, "ControlGroup");
         var attemptCgroup = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup").Trim();
         Assert.DoesNotContain(nodeCgroup, attemptCgroup, StringComparison.Ordinal);
         Assert.EndsWith("/" + node.Slice + "/" + SystemdTestEnvironment.AttemptUnit(attempt), attemptCgroup, StringComparison.Ordinal);
 
-        var before = SystemdTestEnvironment.Property(unit, "MainPID");
+        var before = SystemdTestEnvironment.RequiredProperty(unit, "MainPID");
+        File.WriteAllText(go, "go");
         Assert.Equal(0, SystemdTestEnvironment.Systemctl("restart", unit).ExitCode);
         await node.WaitReadyAsync();
         Assert.NotEqual(before, SystemdTestEnvironment.Property(unit, "MainPID"));
@@ -240,7 +260,9 @@ public sealed class LinuxExecutionTests
         Assert.True(task.GetProperty("currentAttempt").GetProperty("unenforced").GetBoolean());
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the caller-gone cancellation within 5 s (AD-0006 section 7) is a product timing contract.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -253,6 +275,8 @@ public sealed class LinuxExecutionTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"The hand-off took {watch.Elapsed}.");
         var message = Encoding.UTF8.GetString(handoff.Stderr);
         var handedOff = message.Split("arcforges tasks wait ")[1].Split('\n')[0].Trim();
+
+        // A deliberate hold longer than the 5 s caller-gone window (AD-0006 section 7): the handed-off task is not cancelled.
         await Task.Delay(TimeSpan.FromSeconds(7), Ct);
         Assert.Contains("TASK_STATE_RUNNING", (await node.CliAsync("tasks", "show", handedOff, "--json")).Output, StringComparison.Ordinal);
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", handedOff)).ExitCode);
@@ -270,7 +294,9 @@ public sealed class LinuxExecutionTests
         await TestNode.WaitAsync(() => !root.IsRunning(), TimeSpan.FromSeconds(20), "the interrupted run's task to stop");
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the takeover delay (takeover + 1 s) and the overshoot (rate over 500 ms) are timing bounds.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheGuardUnitStopsAFloodWhileTheNodeIsKilled()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -305,7 +331,9 @@ public sealed class LinuxExecutionTests
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the overshoot (rate over 500 ms) is a timing bound.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheGuardUnitStopsAFloodWithTheNodeUnitFailedAfterRepeatedCrashes()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -351,7 +379,9 @@ public sealed class LinuxExecutionTests
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
-    [Theory(Timeout = 300_000)]
+    // isolation=exclusive: the overshoot bound depends on short node lifetimes and the guard's timing.
+    [Theory(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [InlineData(300)]
     [InlineData(40)]
     public async Task TheGuardUnitStopsTheFloodWhileTheNodeRestartsFasterThanTheTakeover(int lifetimeMs)
@@ -422,6 +452,7 @@ public sealed class LinuxExecutionTests
         var watch = Stopwatch.StartNew();
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "NRestarts") is var restarts && restarts.Length > 0 && restarts != "0", TimeSpan.FromSeconds(120),
             "systemd to restart the hung node");
+        var restarted = Stopwatch.StartNew();
         TestContext.Current.TestOutputHelper?.WriteLine($"restarted after {watch.Elapsed.TotalSeconds:0.0} s");
         // The fault (3 s), for the probe up to three missed probes (5 s timeout each, one a second), WatchdogSec (30 s),
         // TimeoutAbortSec (5 s), RestartSec (2 s) and a few seconds of slack for the restart.
@@ -431,8 +462,10 @@ public sealed class LinuxExecutionTests
         var journal = Journal(unit);
         Assert.Contains("Watchdog timeout (limit 30s)", journal, StringComparison.Ordinal);
         Assert.Contains("Failed with result 'watchdog'", journal, StringComparison.Ordinal);
+
+        // The fault fires once per data root: the restarted node's heartbeat still changes after the moment the fault would have stopped it.
         await node.WaitReadyAsync();
-        await Task.Delay(TimeSpan.FromSeconds(3), Ct);
+        await node.WaitHeartbeatChangeAsync(restarted, TestNode.FaultHorizon(fault, 3));
         Assert.Equal("1", SystemdTestEnvironment.Property(unit, "NRestarts"));
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "ActiveState") is "inactive" or "failed", Bound, "the node unit to stop");
@@ -486,6 +519,14 @@ public sealed class LinuxExecutionTests
     private static JsonElement Capabilities(JsonElement json) => json.TryGetProperty("capabilities", out var report) ? report : json;
 
     private static string Read(string directory, string file) => File.ReadAllText(Path.Combine(directory, file)).TrimEnd('\n');
+
+    /// <summary>What the node says about a task and its enforcement, for a failure message.</summary>
+    private static async Task<string> DiagnoseAsync(TestNode node, string id)
+    {
+        var task = (await node.CliAsync("tasks", "show", id, "--json")).Output.ReplaceLineEndings(" ");
+        var capabilities = (await node.CliAsync("node", "capabilities", "--json")).Output.ReplaceLineEndings(" ");
+        return $"task: {task}; capabilities: {capabilities}";
+    }
 
     /// <summary>The attempt ID of a task's running attempt (waits until it runs).</summary>
     private static async Task<string> RunningAttemptAsync(TestNode node, string id)

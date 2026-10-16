@@ -11,10 +11,34 @@ namespace ArcForges.ClosedLoop.Tests;
 /// crash recovery, stream resume and reset through <c>arcforges events</c>, a busy endpoint, and the CLI's output and exit codes.
 /// </summary>
 [Trait("loop", "local")]
-[Collection(SerialProcessTests.Name)]
 public sealed class NodeLifecycleTests
 {
+    /// <summary>
+    /// <c>node wait-ready</c> reports a node once it is READY or DEGRADED (02 section 2 step 9), not as soon as it listens (step 7): a node
+    /// that answers hellos in RECOVERING for 3 s (<c>slow-ready</c> fault) is not ready yet, and a <c>node stop</c> sent then failed with
+    /// INTERNAL (SM-NODE has no RECOVERING -> STOPPING). After wait-ready the node has logged <c>node.ready</c>, and the stop succeeds.
+    /// </summary>
     [Fact(Timeout = 120_000)]
+    public async Task WaitReadyReturnsOnlyOnceTheNodeIsReady()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = TestNode.Create();
+        node.Environment["ARCFORGES_TEST_FAULT"] = "slow-ready=3";
+        using var process = node.Start(TestNode.Host, ["node", "run", NodeLocations.TestModeOption]);
+        var ready = await node.CliAsync("node", "wait-ready", "--timeout", "60s", "--json");
+        Assert.True(ready.ExitCode == 0, ready + node.Diagnostics());
+        Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "node.fault.slow_ready"));
+        // The state wait-ready reports is the readiness contract; the node writes its node.ready log line after the transition,
+        // so the log is not read here (it may trail the state by a moment).
+        Assert.Contains(ready.Json().GetProperty("state").GetString(), (string[])["READY", "DEGRADED"]);
+        Assert.True(node.Descriptor() is { } descriptor && descriptor.ProcessIsAlive(), "No endpoint descriptor after wait-ready.");
+        await node.StopNodeAsync();
+        Assert.True(process.WaitForExit(TimeSpan.FromSeconds(15)));
+    }
+
+    // isolation=exclusive: the CLI waits at most 5 s for an auto-started node to become ready (a JIT node under parallel load can take longer).
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task StatusAutoStartsTheNodeAndReportsIt()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

@@ -17,7 +17,6 @@ namespace ArcForges.Node.Core.Tests;
 /// <c>ReleaseCallerBinding</c> (R-AI-010).
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialNodeTests.Name)]
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class TaskControlTests
 {
@@ -38,6 +37,8 @@ public sealed class TaskControlTests
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(3, task.CurrentAttempt.Result.ExitCode);
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 2 s timeout and the stop take a
+        // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"The timeout took {watch.Elapsed}.");
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
 
@@ -129,7 +130,9 @@ public sealed class TaskControlTests
         Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(channel, running)).State);
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the overshoot (rate over 500 ms) is a timing bound of the enforcement loop.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task OutputBeyondTheLimitStopsTheAttemptAtOnceWithinTheStatedBound()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -152,8 +155,14 @@ public sealed class TaskControlTests
         Assert.True(output - Limit <= Rate / 2, $"The overshoot {output - Limit} exceeds the rate over 500 ms ({Rate / 2}).");
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput()
+    /// <summary>
+    /// Under NOTIFY the attempt runs on and gets one finding, whether an enforcement pass sees the output cross the limit while it runs
+    /// (6 MiB/s: about half a second) or the attempt ends before any pass does (unthrottled: the final tail at finalization finds it).
+    /// </summary>
+    [Theory(Timeout = 120_000)]
+    [InlineData(6_291_456)]
+    [InlineData(0)]
+    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput(int rate)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
@@ -163,7 +172,7 @@ public sealed class TaskControlTests
             policy.Storage.DiskLimitAction = DiskLimitAction.Notify;
         })).StartAsync();
         await using var channel = await node.ChannelAsync();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", "6291456")));
+        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture))));
         Assert.Equal(TaskState.Succeeded, task.State);
         Assert.Equal(3_145_728, (await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout)).Length);
         var findings = node.Runtime.Store.Read(reader => Execution.ExecutionFindings.OpenFor(reader, "attempt", task.CurrentAttempt.AttemptId.Value.Span));
@@ -190,8 +199,11 @@ public sealed class TaskControlTests
         using var root = JobObject.Open(WindowsExecutionPlatform.JobName(nodeName, "root"))!;
         Assert.Equal(Managed * 3 / 2, root.Limits().JobMemoryLimit);
 
-        // One attempt with a 128 MiB ceiling: its commit limit is 192 MiB, its notification limit 128 MiB.
+        // One attempt with a 128 MiB ceiling: its commit limit is 192 MiB, its notification limit 128 MiB. The workload's heap limit is
+        // lifted (hex without 0x, read by the JIT runtime and Native AOT): inside a job the .NET GC would otherwise refuse at 75% of the
+        // commit limit (144 MiB) itself, and the job's limit would never be exercised.
         var single = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "512", "--step-mb", "16");
+        single.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
         single.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 64L << 20, MemCeilingBytes = 128L << 20 } };
         var singleId = await Tasks.SubmitAsync(channel, single);
         var attempt = await Tasks.RunningAsync(channel, singleId);
@@ -200,6 +212,9 @@ public sealed class TaskControlTests
         var finished = await Tasks.WaitAsync(channel, singleId);
         Assert.Equal(TerminationReason.MemoryLimit, finished.CurrentAttempt.Result.TerminationReason);
         Assert.True(attemptMax.Max <= 192L << 20, $"The attempt committed {attemptMax.Max}.");
+
+        // The job refused: its peak (which counts the refused request) reached the commit limit, within one 16 MiB step.
+        Assert.InRange((long)finished.CurrentAttempt.Usage.MemPeakBytes, (192L - 16) << 20, (192L + 16) << 20);
         attemptMax.Stop();
 
         // Two attempts whose ceilings together exceed the root: the root's commit limit holds for both.
@@ -208,6 +223,7 @@ public sealed class TaskControlTests
         for (var index = 0; index < 2; index++)
         {
             var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "380", "--step-mb", "20", "--step-ms", "30", "--hold-ms", "3000");
+            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
             spec.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 64L << 20, MemCeilingBytes = 300L << 20 } };
             ids.Add(await Tasks.SubmitAsync(channel, spec));
         }
@@ -221,6 +237,7 @@ public sealed class TaskControlTests
         rootMax.Stop();
         TestContext.Current.TestOutputHelper?.WriteLine($"root committed at most {rootMax.Max} of {Managed * 3 / 2}; attempt at most {attemptMax.Max} of {192L << 20}");
         Assert.True(rootMax.Max <= Managed * 3 / 2, $"The root committed {rootMax.Max}.");
+        Assert.True(root.Accounting().PeakJobMemory >= (Managed * 3 / 2) - (20L << 20), $"The root's peak {root.Accounting().PeakJobMemory} never reached its limit: the root did not refuse.");
         Assert.Contains(results, task => task.State == TaskState.Failed);
     }
 
@@ -285,7 +302,7 @@ public sealed class TaskControlTests
                 Assert.True(rows.Read());
                 return ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(rows.GetInt32(0), ArcForges.Node.Store.StoreTime.FromMicroseconds(rows.GetInt64(1)));
             });
-            Assert.Empty(ExecutionCleanup.Children());
+            Assert.Empty(ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)));
         }
 
         await node.StopAsync();
@@ -304,25 +321,27 @@ public sealed class TaskControlTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await using var node = await InProcessNode.Create().StartAsync();
         var longMarker = Path.Combine(node.Root, "long.txt");
-        var shortMarker = Path.Combine(node.Root, "short.txt");
-        Id longId, shortId;
+
+        // The short attempt runs until the test writes the go file once the node stopped, so it cannot finish before the stop however
+        // slowly the test runs (a fixed 2 s hold raced with it under load).
+        var go = Path.Combine(node.Root, "go");
+        Id longId, shortId, shortAttempt;
         await using (var channel = await node.ChannelAsync())
         {
             longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", longMarker));
-            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "2000", "--marker", shortMarker));
+            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.WaitForFile(go)));
             await Tasks.RunningAsync(channel, longId);
-            await Tasks.RunningAsync(channel, shortId);
+            shortAttempt = (await Tasks.RunningAsync(channel, shortId)).AttemptId;
 
             // RUNNING records the root process; its marker follows once the workload started.
-            await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0 && Tasks.Marker(shortMarker).Count > 0, Tasks.Bound, "the workloads to start");
+            await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0, Tasks.Bound, "the workload to start");
         }
 
         await node.StopAsync();
+        File.WriteAllText(go, "go");
         var longProcess = Tasks.Processes(longMarker).Single();
         Assert.True(longProcess.IsRunning(), "The attempt keeps running while the node is stopped.");
-        var shortProcess = Tasks.Processes(shortMarker).Single();
-        await Tasks.WaitForAsync(() => !shortProcess.IsRunning(), TimeSpan.FromSeconds(10), "the short task to finish while the node is down");
-        await Task.Delay(500, Ct);
+        await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath), Tasks.Bound, "the short attempt to finish while the node is down, recorded by its holder");
 
         await node.StartAsync();
         await using var after = await node.ChannelAsync();
@@ -387,15 +406,17 @@ public sealed class TaskControlTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await using var node = await InProcessNode.Create().StartAsync();
         var marker = Path.Combine(node.Root, "m.txt");
-        var holdersBefore = ExecutionCleanup.Children();
         Id taskId;
         await using (var channel = await node.ChannelAsync())
         {
             taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker));
             await Tasks.RunningAsync(channel, taskId);
+
+            // RUNNING records the root process; its marker (which names it) follows once the workload started: under load, later.
+            await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count > 0, Tasks.Bound, "the workload to start");
         }
 
-        var holders = ExecutionCleanup.Children().Except(holdersBefore).ToList();
+        var holders = ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)).ToList();
         Assert.Single(holders);
         await node.StopAsync();
 
@@ -450,6 +471,8 @@ public sealed class TaskControlTests
         // (a client reconnecting after a lost connection), so nothing is cancelled. A caller whose process ends is cancelled within 5 s:
         // ExecutionTests.AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels kills a real CLI process.
         TaskState State(Id id) => (TaskState)node.Runtime.Store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM task WHERE task_id = $id;", ("$id", id.Value.ToByteArray())), CultureInfo.InvariantCulture));
+
+        // A deliberate hold longer than the 5 s caller-gone window: the absence of a cancellation cannot be awaited.
         await Task.Delay(TimeSpan.FromSeconds(6), Ct);
         Assert.Equal(TaskState.Running, State(bound));
         Assert.Equal(TaskState.Running, State(released));

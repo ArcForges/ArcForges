@@ -226,8 +226,10 @@ public static class NodeClient
     }
 
     /// <summary>
-    /// Waits until a node answers its hello, without starting one (<c>arcforges node wait-ready</c>, and after <c>node run
-    /// --background</c>): every failure except a refusal is retried until <see cref="NodeConnectOptions.ReadinessTimeout"/>.
+    /// Waits until a node is ready, without starting one (<c>arcforges node wait-ready</c>, and after <c>node run --background</c>):
+    /// it answers its hello in READY or DEGRADED. The node listens from startup step 7 and reports readiness at step 9 (02 section 2),
+    /// so a hello answered in STARTING or RECOVERING is retried, as is every failure except a refusal, until
+    /// <see cref="NodeConnectOptions.ReadinessTimeout"/>.
     /// </summary>
     public static async Task<NodeSession> WaitForReadyAsync(NodeConnectOptions options, CancellationToken cancellationToken)
     {
@@ -244,6 +246,12 @@ public static class NodeClient
                 var remaining = options.ReadinessTimeout - TimeProvider.System.GetElapsedTime(started);
                 var slice = options with { ReadinessTimeout = remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1) };
                 var ready = await ConnectWithRetriesAsync(channel, hello, slice, TimeProvider.System.GetTimestamp(), cancellationToken).ConfigureAwait(false);
+                if (ready.Value!.Node.State is NodeLifecycleState.Starting or NodeLifecycleState.Recovering)
+                {
+                    throw new NodeUnavailableException(NodeUnavailableReason.NotReady, $"the node is {ready.Value.Node.State.ToString().ToLowerInvariant()}",
+                        "check 'arcforges node health' or the node log in <data root>/logs/node");
+                }
+
                 return new NodeSession(channel, endpoint, ready.Value!, null);
             }
             catch (NodeUnavailableException exception) when (exception.Reason == NodeUnavailableReason.NotReady)
@@ -254,6 +262,9 @@ public static class NodeClient
                     throw new NodeUnavailableException(NodeUnavailableReason.NotReady,
                         $"no node became ready within {options.ReadinessTimeout.TotalSeconds:0} s", exception.Guidance, exception.Error, exception);
                 }
+
+                // A node that answered while starting or recovering is asked again shortly, not at once.
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
             }
             catch
             {

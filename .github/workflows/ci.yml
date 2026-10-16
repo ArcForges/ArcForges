@@ -83,6 +83,9 @@ jobs:
       - name: Run the ci test suite
         if: matrix.full
         run: ./eng/test.ps1 -Suite ci -NoBuild
+      - name: Run the exclusive tests alone after the parallel ones
+        if: matrix.full
+        run: ./eng/test.ps1 -Suite exclusive -NoBuild
       - name: Check the node store schema is expand-only
         if: matrix.rid == 'linux-x64'
         run: ./eng/test.ps1 -Suite store-schema -NoBuild
@@ -108,7 +111,7 @@ jobs:
         run: |
           $suffix = if ($IsWindows) { '.exe' } else { '' }
           $env:ARCFORGES_HOST_PATH = Join-Path $env:GITHUB_WORKSPACE "artifacts/publish/$env:TARGET_RID/host/arcforges$suffix"
-          ./eng/test.ps1 -Suite closed-loop -NoBuild
+          ./eng/test.ps1 -Suite closed-loop,exclusive -NoBuild
       - name: Gate sizes and store growth, and record the startup benchmark
         env:
           TARGET_RID: ${{ matrix.rid }}

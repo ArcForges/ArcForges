@@ -524,16 +524,84 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
         if (row.CurrentAttemptId is { } attemptId)
         {
-            transaction.Execute(
+            // The event names the state the attempt left: STARTING when the cancel arrives while it is being launched, not always RUNNING.
+            var attemptState = (AttemptState)Convert.ToInt32(transaction.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)),
+                CultureInfo.InvariantCulture);
+            var stopping = transaction.Execute(
                 "UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
                 ("$id", attemptId));
             transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(reason)), ("$id", taskId.ToArray()));
-            EmitAttempt(context, attemptId, AttemptState.Running);
+            if (stopping == 1)
+            {
+                EmitAttempt(context, attemptId, attemptState);
+            }
+
             EmitTask(context, taskId, row.State);
             return (row.State, null, IdText.Format(attemptId));
         }
 
         return (row.State, null, null);
+    }
+
+    /// <summary>
+    /// The forced phase of a stop (the caller holds the attempt's lock): the container is terminated at once, which also ends a launch step
+    /// that runs in it. While the command is still being started (no root yet) the container may still be empty, and the holder or the unit
+    /// may start the command afterwards; so when the start completes with a root, the container is terminated again, and the verification
+    /// window counts from that last termination. Nothing is terminated after the node began to stop (it released the handles).
+    /// </summary>
+    private void ForceWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        if (!Force(attempt, handle, reason) || handle.Root is not null || handle.Started.IsCompleted)
+        {
+            return;
+        }
+
+        _ = handle.Started.ContinueWith(started =>
+        {
+            if (!started.IsCompletedSuccessfully || started.Result is null)
+            {
+                // No command started: the launch failure (or the stopped launch step) finalizes the attempt.
+                return;
+            }
+
+            lock (attempt)
+            {
+                if (!attempt.Finalizing && !_stop.IsCancellationRequested && _running.TryGetValue(attempt.Name, out var current) && current == attempt)
+                {
+                    TerminateNow(attempt, handle, reason);
+                }
+            }
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>Terminates the attempt once (a stop and the launch can both get here); never one that is already being recorded.</summary>
+    private bool Force(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        if (attempt.Forced || attempt.Finalizing)
+        {
+            return false;
+        }
+
+        attempt.Forced = true;
+        TerminateNow(attempt, handle, reason);
+        return true;
+    }
+
+    private void TerminateNow(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        try
+        {
+            handle.Terminate();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The node is stopping and released the handle: the holder or the unit keeps the attempt for the next start.
+            return;
+        }
+
+        TerminateEscaped(attempt, reason);
+        attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
+        _loopWake.Pulse();
     }
 
     /// <summary>
@@ -563,17 +631,25 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 attempt.StopReason = reason;
             }
 
-            if (!graceful || attempt.Handle is null || attempt.Handle.Root is null)
+            if (attempt.Handle is null)
+            {
+                // Still being launched: there is nothing to stop yet, and the launch applies the forced phase once the handle exists.
+                // Marking it forced here would skip that, and the command would run on past the stop (TERMINATION_INCOMPLETE).
+                return;
+            }
+
+            if (!graceful || attempt.Handle.Root is null)
             {
                 if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit)
                 {
-                    var how = attempt.Handle?.StopAtLimit() ?? "no container";
+                    var how = attempt.Handle.StopAtLimit();
                     _log.Info("execution.limit_stop", new LogField("attempt", attemptName), new LogField("reason", reason),
-                        new LogField("container", attempt.Handle?.ContainerName ?? "-"), new LogField("stop", how));
+                        new LogField("container", attempt.Handle.ContainerName), new LogField("stop", how));
                 }
                 else
                 {
-                    attempt.Handle?.Terminate();
+                    ForceWhenStarted(attempt, attempt.Handle, reason);
+                    return;
                 }
 
                 TerminateEscaped(attempt, reason);
@@ -1261,6 +1337,18 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             }
 
             _running[name] = attempt;
+
+            // A cancel committed between the admission and this registration found no running attempt to stop and only marked the attempt
+            // STOPPING: it is taken over here, and the launch applies the forced phase once the handle exists (the stop is never lost).
+            if (_store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)), CultureInfo.InvariantCulture))
+                == (int)AttemptState.Stopping)
+            {
+                lock (attempt)
+                {
+                    attempt.StopReason ??= TerminationReason.Cancelled;
+                }
+            }
+
             Launch(attempt, admitted, platform, settings);
         }
         catch (CommandRefusedException exception)
@@ -1370,12 +1458,10 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         attempt.OpenTail();
         lock (attempt)
         {
-            if (attempt.StopReason is not null && !attempt.Forced)
+            if (attempt.StopReason is { } stop && !attempt.Forced)
             {
                 // Cancelled while it was being launched: there is no root to signal yet, so the forced phase applies.
-                handle.Terminate();
-                attempt.Forced = true;
-                attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
+                ForceWhenStarted(attempt, handle, stop);
             }
         }
 
@@ -1674,7 +1760,12 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         bool? coreDumped = signalled ? exit!.ExitCodeKind == "dumped" : null;
         if (launch is not null)
         {
-            return new AttemptOutcome(TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, launch.ExitCode, $"launch step {launch.Step} failed: {launch.Error}", null);
+            // A stop (a cancel, a timeout) during the launch steps ends them, and they fail as stopped: the attempt ends for the stop's reason
+            // (SM-TASK RUNNING -> CANCELLED for a cancel), not as SPAWN_FAILED. 04 section 7 keeps DID_NOT_HAPPEN for SPAWN_FAILED and
+            // POLICY_DENIED only, so the effect is HAPPENED, as on Linux, where the steps and the command share one process.
+            return attempt.StopReason is { } stopped
+                ? new AttemptOutcome(stopped, EffectCertainty.Happened, null, $"stopped during launch step {launch.Step}; the command did not start", null)
+                : new AttemptOutcome(TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, launch.ExitCode, $"launch step {launch.Step} failed: {launch.Error}", null);
         }
 
         if (incomplete && attempt.StopReason != TerminationReason.NodeShutdown)
@@ -1778,6 +1869,13 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         if (guard.FirstOrDefault(item => item.Event == GuardEventKinds.Notify) is { } notify && !attempt.OutputNotified)
         {
             RaiseOutputFinding(context, attempt, notify.OutputBytes ?? 0, notify.LimitBytes ?? 0, "GUARD");
+        }
+        else if (settings.DiskLimitAction == "NOTIFY" && settings.MaxOutputBytes > 0 && attempt.OutputBytes > settings.MaxOutputBytes && !attempt.OutputNotified)
+        {
+            // The attempt ended before an enforcement pass saw its output cross the limit (it wrote faster than the tail interval): the final
+            // tail still finds it, and NOTIFY still owes its finding (06 section 5).
+            attempt.OutputNotified = true;
+            RaiseOutputFinding(context, attempt, attempt.OutputBytes, settings.MaxOutputBytes, "NODE");
         }
 
         return 0;

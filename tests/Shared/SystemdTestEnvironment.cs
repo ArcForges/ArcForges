@@ -88,10 +88,30 @@ internal static class SystemdTestEnvironment
     /// <summary>A unit property (<c>systemctl --user show -P</c>), or empty.</summary>
     public static string Property(string unit, string property) => Systemctl("show", "-P", property, unit).Output.Trim();
 
-    /// <summary>The loaded units matching <paramref name="pattern"/>.</summary>
-    public static List<string> Units(string pattern) =>
-        [.. Systemctl("list-units", "--all", "--plain", "--no-legend", pattern).Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(line => line.Split(' ', 2)[0]).Where(name => name.Length > 0)];
+    /// <summary>
+    /// A unit property that must be set: a failed <c>systemctl</c> or an empty value fails the test with the unit's state
+    /// (<see cref="Describe"/>) and <paramref name="context"/> (what the test knows, such as its task's result).
+    /// </summary>
+    public static string RequiredProperty(string unit, string property, string? context = null)
+    {
+        var (exitCode, output) = Systemctl("show", "-P", property, unit);
+        var value = output.Trim();
+        if (exitCode != 0 || value.Length == 0)
+        {
+            Xunit.Assert.Fail($"{property} of {unit} is empty (systemctl exit {exitCode.ToString(CultureInfo.InvariantCulture)}: '{value}'); {Describe(unit)}"
+                + (context is null ? string.Empty : "; " + context));
+        }
+
+        return value;
+    }
+
+    /// <summary>The state of a unit for a failure message: its load, active and sub states, result, cgroup and main process.</summary>
+    public static string Describe(string unit)
+    {
+        var (exitCode, output) = Systemctl("show", "-p", "LoadState", "-p", "ActiveState", "-p", "SubState", "-p", "Result", "-p", "ControlGroup", "-p", "MainPID",
+            "-p", "NeedDaemonReload", "-p", "InvocationID", unit);
+        return $"{unit} (systemctl exit {exitCode.ToString(CultureInfo.InvariantCulture)}): {string.Join("; ", output.Split('\n', StringSplitOptions.RemoveEmptyEntries))}";
+    }
 
     /// <summary>The cgroup directory of a loaded unit, or null.</summary>
     public static string? CgroupDirectory(string unit) =>
@@ -99,8 +119,9 @@ internal static class SystemdTestEnvironment
 
     /// <summary>
     /// Removes what a test's node created in the user manager: every attempt unit of <paramref name="attempts"/> (reported when still
-    /// active: an attempt the test left running), stopped and reset; the slice (stopped; its runtime drop-ins removed); the parent test slice
-    /// when no other test slice remains; and the extra units the test installed. Returns the leftovers found.
+    /// active: an attempt the test left running), stopped and reset; the slice (stopped; its runtime drop-ins removed); and the extra units
+    /// the test installed. Returns the leftovers found. The shared parents (<c>arcforges-test.slice</c>, <c>arcforges.slice</c>) stay: tests
+    /// run in parallel, and stopping a parent would stop the slice of a test that starts at that moment (an empty slice runs nothing).
     /// </summary>
     public static List<string> Cleanup(string slice, IEnumerable<string> attempts, IEnumerable<string>? extraUnits = null)
     {
@@ -168,32 +189,16 @@ internal static class SystemdTestEnvironment
         Systemctl("stop", slice);
         Systemctl("reset-failed", slice);
         var runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
-        var reload = false;
         if (!string.IsNullOrEmpty(runtime))
         {
+            // No daemon-reload: the stopped slice is unloaded once unreferenced and its name is never used again. A reload stalls the
+            // manager for every test running beside this one (a concurrent node connecting to it, or starting an attempt unit).
             foreach (var directory in DropInRoots.Select(kind => Path.Combine(runtime, "systemd", kind, slice + ".d")))
             {
                 if (Directory.Exists(directory))
                 {
                     Directory.Delete(directory, recursive: true);
-                    reload = true;
                 }
-            }
-        }
-
-        if (reload)
-        {
-            Systemctl("daemon-reload");
-        }
-
-        if (!Units("arcforges-test-*.slice").Any(unit => unit != TestParentSlice && unit != slice))
-        {
-            Systemctl("stop", TestParentSlice);
-
-            // arcforges.slice exists only as the test slices' parent unless an installed node uses it (a unit file); left empty, it is ours.
-            if (Units("arcforges*").All(unit => unit is "arcforges.slice" or TestParentSlice) && Property("arcforges.slice", "FragmentPath").Length == 0)
-            {
-                Systemctl("stop", "arcforges.slice");
             }
         }
 

@@ -10,7 +10,6 @@ namespace ArcForges.Node.Core.Tests;
 /// missing endpoint is "not running" (auto-start may follow), a full Linux accept backlog (<c>EAGAIN</c>) is "busy" (retried with
 /// bounded backoff, never auto-started).
 /// </summary>
-[Collection(SerialNodeTests.Name)]
 public sealed class EndpointTests
 {
     [Fact(Timeout = 60_000)]

@@ -169,6 +169,22 @@
       "reviewedOn": "2026-10-14"
     },
     {
+      "id": "CsCheck",
+      "version": "4.9.1",
+      "contentHash": "rEmuFiG19sF8U4Ef/S79cu9HW4pUGraoCTkmYs0z7SvsGqGAVO3wCjxQPS0KQvPa1g2/w1wBbnAP6cDZKBFEcA==",
+      "nuspecSha256": "7ea259d185195e38ac33b8cabb3b3cfbfc8b07ae8005350f64f9d721accf5ba0",
+      "licence": "Apache-2.0",
+      "class": "test",
+      "usedBy": "tests/ArcForges.Client.Tests, tests/ArcForges.Node.Core.Tests, tests/ArcForges.Node.Platform.Windows.Tests and tests/ArcForges.Node.Store.Tests (property-based and model-based tests).",
+      "source": "https://github.com/AnthonyLloyd/CsCheck",
+      "sourceCommit": "50503557f23266f140021f65632612ceb4ac248f",
+      "provenance": "nuget.org, latest stable on 2026-10-16 (4.9.1; 5.0.0-rc1 and -rc2 are prereleases); the nuspec names repository commit 5050355 on refs/heads/master, license expression Apache-2.0 and no dependencies (net8.0 group empty). One assembly, lib/net8.0/CsCheck.dll.",
+      "aot": "Test-only (JIT); never shipped.",
+      "reason": "Property-based, model-based and linearizability testing for important invariants, boundaries, parsers and state transitions (AD-0016 testing techniques; 16-testing-strategy): plain [Fact] tests with Gen.Sample, shrinking and printed seeds, so it adds no coupling to the xunit.v3.mtp-v2 runner. Iterations are fixed per test; CsCheck_Iter / CsCheck_Time / CsCheck_Seed set the deep tier and reproduction.",
+      "admittedBy": "chore/deterministic-parallel-tests (local-first testing, AD-0016)",
+      "reviewedOn": "2026-10-16"
+    },
+    {
       "id": "Grpc.Tools",
       "version": "2.84.0",
       "contentHash": "SarjdfpQYU/mmdu/fWgSW8kEHQ54jiyG2+I4THu9eubtAud+QJf+1iJdGtoKTJ/ZRaI0qAG+7ttsK2WUTao2OQ==",

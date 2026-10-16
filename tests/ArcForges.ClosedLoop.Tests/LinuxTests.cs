@@ -13,7 +13,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// </summary>
 [Trait("env", "linux-real")]
 [UnsupportedOSPlatform("windows")]
-[Collection(SerialProcessTests.Name)]
 public sealed class LinuxTests
 {
     private const UnixFileMode GroupOrOther = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
@@ -34,7 +33,10 @@ public sealed class LinuxTests
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Path.Combine(node.DataRoot, "node.lock")));
     }
 
-    [Fact(Timeout = 180_000)]
+    // isolation=exclusive: the CLI waits at most 5 s for an auto-started node to become ready (a JIT node under parallel load can take longer:
+    // measured, `status` exit 75 "the node did not become ready within 5 s" beside a Windows stress run).
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheUserUnitAutoStartsTheNodeAndRestartsItAfterACrash()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -60,8 +62,7 @@ public sealed class LinuxTests
         node.Environment[NodeLocations.NodeUnitVariable] = unit;
         try
         {
-            Assert.Equal(0, (await SystemctlAsync("daemon-reload")).ExitCode);
-
+            // No daemon-reload: the manager loads the new unit on its first use (a reload stalls the manager for the tests beside this one).
             var status = await node.CliAsync("status", "--json");
             Assert.True(status.ExitCode == 0, status.ToString());
             Assert.True(status.Json().GetProperty("autoStarted").GetBoolean());
@@ -84,6 +85,7 @@ public sealed class LinuxTests
             Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
             await TestNode.WaitAsync(async () => (await SystemctlAsync("is-active", unit)).Output.Trim() is "inactive", TimeSpan.FromSeconds(30),
                 "the unit to become inactive");
+            // A deliberate hold longer than RestartSec (2 s): the absence of a restart cannot be awaited.
             await Task.Delay(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
             Assert.Equal("inactive", (await SystemctlAsync("is-active", unit)).Output.Trim());
         }
@@ -91,7 +93,6 @@ public sealed class LinuxTests
         {
             await SystemctlAsync("stop", unit);
             File.Delete(unitFile);
-            await SystemctlAsync("daemon-reload");
             await SystemctlAsync("reset-failed", unit);
         }
     }

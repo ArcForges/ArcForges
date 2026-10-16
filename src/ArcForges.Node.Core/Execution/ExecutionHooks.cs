@@ -21,6 +21,8 @@ public interface ILaunchStepProvider
 /// <c>run/</c> records it), so a node restarted by its supervisor runs normally:
 /// <list type="bullet">
 /// <item><c>slow-startup=N</c>: startup waits N seconds before opening the store (a long store migration).</item>
+/// <item><c>slow-ready=N</c>: startup waits N seconds after the API listener started, before the node is READY (a slow recovery tail:
+/// the node answers hellos in RECOVERING meanwhile).</item>
 /// <item><c>hang-tailer-after=N</c>: the enforcement loop hangs N seconds after it started (a hung monitor).</item>
 /// <item><c>hang-probe-after=N</c>: a heartbeat probe stops answering N seconds after it started (a hung cache store).</item>
 /// <item><c>kill-before-ack=N</c>: the node kills itself N seconds after it recorded a finished attempt, before it acknowledges the exit

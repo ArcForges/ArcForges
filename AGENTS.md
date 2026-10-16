@@ -69,14 +69,20 @@ any change. They are binding; this file summarizes them and adds the repository 
   developer environment (`Launch-VsDevShell.ps1`); Linux targets are published in WSL Debian
   (clang and zlib). linux-arm64 links only on an arm64 host or with an arm64 sysroot (hosted CI).
 - **Tests:** select suites by trait with `eng/test.ps1` or `eng/test.sh` (`-List` / `--list`
-  shows suites and task kinds; definitions in `eng/test-suites.conf`). Real-OS tests carry
+  shows suites and task kinds; definitions in `eng/test-suites.conf`). The scripts run up to `-Parallel` / `--parallel` test
+  projects at once (default 2, measured: the longest project bounds the run; each project's log in `artifacts/test-logs/`); `-Repeat` /
+  `--repeat N` reruns the selected suites until the first failing iteration. Tests run in parallel inside their projects too, each
+  with its own node, platform, data root, endpoint and slice; never add a serial collection. A timing-, CPU-share- or memory-sensitive
+  test, or one that changes machine-wide state, carries `isolation=exclusive` and `DisableParallelization = true`; the parallel suites
+  leave it out and the `exclusive` suite runs it alone afterwards (`-Suite ci,exclusive`). Real-OS tests carry
   `env=windows-real|linux-real|wsl-bridge` and skip with a reason elsewhere; tool-dependent tests
   carry `tool=...` and skip with a reason when the tool is missing. Closed-loop tests (`loop=local`)
   run real `arcforges` processes (JIT next to the tests, or `ARCFORGES_HOST_PATH`), each node isolated with
   `--test-mode` and the `ARCFORGES_ENDPOINT` / `ARCFORGES_CONFIG_DIR` hooks; their fixture fails a test that leaves a
-  node or supervisor running and deletes the node data key it created in the OS secret store. On Linux each test node gets its
+  node or supervisor of its own environment (its endpoint, or on Linux its slice) running and deletes the node data key it created in
+  the OS secret store. On Linux each test node gets its
   own slice `arcforges-test-<id>.slice` (`ARCFORGES_SLICE`) and the fixtures stop its units, slice and test units and fail on anything
-  left running; a test that freezes a unit must thaw it before it is killed (the user manager blocks spawning into a frozen cgroup). On Windows a
+  left running (the shared parent slices stay); a test that freezes a unit must thaw it before it is killed (the user manager blocks spawning into a frozen cgroup). On Windows a
   shell inside a job without breakaway (an AI-client sandbox) refuses auto-start by design, so the auto-start
   test skips there with its reason.
 - **Workloads and benchmarks:** `arcforges-testload` (cpu, mem-ramp, output, fork) is a

@@ -13,7 +13,6 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// steps follow in AF-TOOL-02.
 /// </summary>
 [Trait("env", "windows-real")]
-[Collection(SerialPlatformTests.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class HolderTests
 {

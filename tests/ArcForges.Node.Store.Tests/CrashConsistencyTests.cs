@@ -72,7 +72,11 @@ public sealed class CrashConsistencyTests
             });
             Assert.NotEmpty(sealedTasks);
             var sealer = new TaskSecrets(store, keys);
-            Assert.All(sealedTasks, taskId => Assert.Equal(UnsealStatus.Available, sealer.Unseal(taskId).Status));
+            Assert.All(sealedTasks, taskId =>
+            {
+                var unsealed = sealer.Unseal(taskId);
+                Assert.True(unsealed.Status == UnsealStatus.Available, $"{unsealed.Status}: {unsealed.UnavailableReason}");
+            });
 
             // The store accepts writes again.
             store.Write(transaction => Rows.InsertTask(transaction));

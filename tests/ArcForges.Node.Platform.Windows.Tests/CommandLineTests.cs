@@ -7,7 +7,7 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// <summary>
 /// Windows command lines (architecture 04 section 2), pure logic on every OS: the quoting inverse to <c>CommandLineToArgvW</c>, the
 /// command-line limit, and the batch-file refusal corpus of threat T-03 (11 section 4; CVE-2024-24576 class). The real-OS round trips
-/// through <c>CommandLineToArgvW</c> and real batch files are in <see cref="WindowsCommandLineRealTests"/>.
+/// through <c>CommandLineToArgvW</c> and real batch files, over generated arguments, are in <see cref="CommandLineProperties"/>.
 /// </summary>
 public sealed class CommandLineTests
 {

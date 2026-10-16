@@ -11,6 +11,8 @@
     helper roles run from the arcforges executable built next to the tests (or ARCFORGES_HOST_PATH).
   -->
   <ItemGroup>
+    <!-- Fixtures report leftovers to the test (not from their disposal, which would hide the test's own failure). -->
+    <Compile Include="../Shared/Leftovers.cs" Link="Shared/Leftovers.cs" />
     <ProjectReference Include="../../src/ArcForges.Node.Platform.Linux/ArcForges.Node.Platform.Linux.csproj" />
     <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
     <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />

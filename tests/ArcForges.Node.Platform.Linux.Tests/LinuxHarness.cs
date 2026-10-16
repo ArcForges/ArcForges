@@ -5,13 +5,6 @@ using ArcForges.Tests;
 
 namespace ArcForges.Node.Platform.Linux.Tests;
 
-/// <summary>Real-OS tests of one class run one after another: they create units and CPU, memory or output load.</summary>
-[CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class SerialLinuxTests
-{
-    public const string Name = "linux-platform";
-}
-
 /// <summary>The executables under test: <c>ARCFORGES_HOST_PATH</c> / <c>ARCFORGES_TESTLOAD_PATH</c>, or the JIT builds next to the tests.</summary>
 internal static class TestPrograms
 {
@@ -192,7 +185,7 @@ internal sealed class LinuxHarness : IDisposable
         }
 
         var leftovers = Release();
-        Assert.True(leftovers.Count == 0, "Left running after the test: " + string.Join(", ", leftovers));
+        Leftovers.Report(leftovers);
     }
 
     private List<string> Release()

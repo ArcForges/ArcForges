@@ -11,7 +11,6 @@ namespace ArcForges.Node.Core.Tests;
 /// idempotent mutations (R-EXE-016), settings revisions, jobs and the notification centre. Each test has its own data root and
 /// endpoint.
 /// </summary>
-[Collection(SerialNodeTests.Name)]
 public sealed class NodeServiceTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
@@ -326,11 +325,4 @@ public sealed class NodeServiceTests
         change(hello);
         return await channel.Node.HelloAsync(new NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow + Deadline, cancellationToken: Ct);
     }
-}
-
-/// <summary>Node-component tests run one after another (each starts a real node; parallel runs would only add noise to timings).</summary>
-[CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class SerialNodeTests
-{
-    public const string Name = "node";
 }

@@ -314,6 +314,13 @@ public static class NodeHost
                 Version = NodeContract.ProductVersion,
             }.Write(NodeLocations.EndpointDescriptorFile(dataRoot));
 
+            if (faults.Take("slow-ready") is { } slowReady)
+            {
+                // Fault injection (test mode): the node listens and answers hellos in RECOVERING, but is not READY yet.
+                log.Warning("node.fault.slow_ready", new LogField("delayMs", (long)slowReady.TotalMilliseconds));
+                await Task.Delay(slowReady, cancellationToken).ConfigureAwait(false);
+            }
+
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
             if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
             {

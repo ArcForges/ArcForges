@@ -20,7 +20,6 @@ namespace ArcForges.Node.Core.Tests;
 /// refuse tasks requiring enforcement and label the others (R-RES-008). Each node has its own slice.
 /// </summary>
 [Trait("env", "linux-real")]
-[Collection(SerialNodeTests.Name)]
 [SupportedOSPlatform("linux")]
 public sealed class LinuxTaskTests
 {
@@ -44,6 +43,8 @@ public sealed class LinuxTaskTests
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(15, task.CurrentAttempt.Result.Signal);
         Assert.False(task.CurrentAttempt.Result.HasExitCode);
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 2 s timeout and the stop take a
+        // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"The timeout took {watch.Elapsed}.");
         Assert.All(File.ReadAllLines(pids), pid => Assert.False(Directory.Exists("/proc/" + pid), $"Process {pid} survived."));
 
@@ -79,11 +80,12 @@ public sealed class LinuxTaskTests
 
         // A tree that ends on the stop signal ends in the graceful phase.
         var marker = Path.Combine(node.Root, "polite.txt");
-        var polite = Tasks.Argv(node.Root, "/bin/sh", "-c", "trap 'echo int > \"$1\"; exit 7' INT; sleep 60 & wait", "sh", marker);
+        var trapped = Path.Combine(node.Root, "trapped.txt");
+        var polite = Tasks.Argv(node.Root, "/bin/sh", "-c", "trap 'echo int > \"$1\"; exit 7' INT; echo trapped > \"$2\"; sleep 60 & wait", "sh", marker, trapped);
         polite.Resources = new ResourceSpec { StopSignal = "SIGINT" };
         var politeId = await Tasks.SubmitAsync(channel, polite);
         await Tasks.RunningAsync(channel, politeId);
-        await Task.Delay(300, Ct);
+        await Tasks.WaitForAsync(() => File.Exists(trapped), Tasks.Bound, "the shell to install its trap");
         await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = politeId }, cancellationToken: Ct);
         var ended = await Tasks.WaitAsync(channel, politeId);
         Assert.Equal(TaskState.Cancelled, ended.State);
@@ -91,7 +93,9 @@ public sealed class LinuxTaskTests
         Assert.Equal("int", File.ReadAllText(marker).Trim());
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the overshoot (rate over 500 ms) is a timing bound of the enforcement loop.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task OutputBeyondTheLimitFreezesAndStopsTheAttemptAtOnceWithinTheStatedBound()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -117,8 +121,14 @@ public sealed class LinuxTaskTests
         Assert.StartsWith("arcforges-a-", stop.GetProperty("fields").GetProperty("container").GetString(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput()
+    /// <summary>
+    /// Under NOTIFY the attempt runs on and gets one finding, whether an enforcement pass sees the output cross the limit while it runs
+    /// (6 MiB/s: about half a second) or the attempt ends before any pass does (unthrottled: the final tail at finalization finds it).
+    /// </summary>
+    [Theory(Timeout = 120_000)]
+    [InlineData(6_291_456)]
+    [InlineData(0)]
+    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput(int rate)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
@@ -128,7 +138,7 @@ public sealed class LinuxTaskTests
             policy.Storage.DiskLimitAction = DiskLimitAction.Notify;
         })).StartAsync();
         await using var channel = await node.ChannelAsync();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", "6291456")));
+        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture))));
         Assert.Equal(TaskState.Succeeded, task.State);
         Assert.Equal(3_145_728, (await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout)).Length);
         var finding = Assert.Single(node.Runtime.Store.Read(reader => Execution.ExecutionFindings.OpenFor(reader, "attempt", task.CurrentAttempt.AttemptId.Value.Span)));
@@ -150,7 +160,7 @@ public sealed class LinuxTaskTests
             policy.Resources.ReserveMemFraction = 0;
         })).StartAsync();
         await using var channel = await node.ChannelAsync();
-        var slice = SystemdTestEnvironment.CgroupDirectory(node.Slice)!;
+        var slice = "/sys/fs/cgroup" + SystemdTestEnvironment.RequiredProperty(node.Slice, "ControlGroup");
         var sliceMax = long.Parse(File.ReadAllText(Path.Combine(slice, "memory.max")), CultureInfo.InvariantCulture);
         Assert.Equal(Managed - (Managed % Environment.SystemPageSize), sliceMax);
         Assert.Equal("0", File.ReadAllText(Path.Combine(slice, "memory.swap.max")).Trim());
@@ -320,18 +330,25 @@ public sealed class LinuxTaskTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
         await using var node = await InProcessNode.Create().StartAsync();
-        Id longId, shortId;
+        Id longId, shortId, longAttempt, shortAttempt;
         var longPid = Path.Combine(node.Root, "long.txt");
+
+        // Both attempts wait for the go file the test writes once the node stopped, so neither can finish before the stop.
+        var go = Path.Combine(node.Root, "go");
         await using (var channel = await node.ChannelAsync())
         {
-            longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "echo $$ > \"$1\"; echo before; sleep 2; echo while-down; exec sleep 60", "sh", longPid));
-            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "sleep 2; echo done; exit 5"));
-            await Tasks.RunningAsync(channel, longId);
-            await Tasks.RunningAsync(channel, shortId);
+            longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c",
+                "echo $$ > \"$1\"; echo before; while [ ! -e \"$2\" ]; do sleep 0.05; done; echo while-down; exec sleep 60", "sh", longPid, go));
+            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "while [ ! -e \"$1\" ]; do sleep 0.05; done; echo done; exit 5", "sh", go));
+            longAttempt = (await Tasks.RunningAsync(channel, longId)).AttemptId;
+            shortAttempt = (await Tasks.RunningAsync(channel, shortId)).AttemptId;
         }
 
+        // While the node is down the short attempt ends with a durable exit record, and the long one keeps running (its next line).
         await node.StopAsync();
-        await Task.Delay(TimeSpan.FromSeconds(4), Ct);
+        File.WriteAllText(go, "go");
+        await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath)
+            && Tasks.ReadShared(Tasks.Files(node, longAttempt).StdoutPath).Contains("while-down", StringComparison.Ordinal), Tasks.Bound, "the attempts to progress while the node is down");
         var pid = File.ReadAllText(longPid).Trim();
         Assert.True(Directory.Exists("/proc/" + pid), "The attempt survived the node.");
         await node.StartAsync();

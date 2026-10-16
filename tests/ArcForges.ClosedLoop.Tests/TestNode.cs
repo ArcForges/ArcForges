@@ -10,12 +10,6 @@ using Microsoft.Data.Sqlite;
 
 namespace ArcForges.ClosedLoop.Tests;
 
-/// <summary>Closed-loop tests run one after another: the leftover-process check counts every node and supervisor of the binaries under test.</summary>
-[CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class SerialProcessTests
-{
-    public const string Name = "processes";
-}
 
 /// <summary>One run of a CLI or node process.</summary>
 internal sealed record ProcessRun(int ExitCode, string Output, string Error)
@@ -37,6 +31,7 @@ internal sealed class TestNode : IAsyncDisposable
 {
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(60);
     private readonly DateTime _created = DateTime.Now.AddSeconds(-1);
+    private readonly HashSet<string> _uninspectable = [];
     private readonly List<Process> _children = [];
 
     private TestNode(string root)
@@ -72,8 +67,10 @@ internal sealed class TestNode : IAsyncDisposable
     public List<string> Units { get; } = [];
 
     /// <summary>
-    /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled), and
-    /// reloads the manager; the unit is stopped and removed when the environment is disposed.
+    /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled); the unit is
+    /// stopped and removed when the environment is disposed. <paramref name="name"/> must be new: the manager loads a unit it has not
+    /// loaded yet from the unit directories on its first use, so no daemon-reload is needed (a reload stalls the manager for every test
+    /// running beside this one).
     /// </summary>
     public string InstallUnit(string name, string content)
     {
@@ -81,7 +78,6 @@ internal sealed class TestNode : IAsyncDisposable
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, name), content);
         Units.Add(name);
-        Assert.Equal(0, ArcForges.Tests.SystemdTestEnvironment.Systemctl("daemon-reload").ExitCode);
         return name;
     }
 
@@ -237,7 +233,28 @@ internal sealed class TestNode : IAsyncDisposable
     public async Task WaitReadyAsync(Process? node = null)
     {
         var run = await CliAsync("node", "wait-ready", "--timeout", "30s");
-        Assert.True(run.ExitCode == 0, $"The node did not become ready: {run}" + (node is { HasExited: true } ? $" (node exited {node.ExitCode})" : string.Empty));
+        Assert.True(run.ExitCode == 0, $"The node did not become ready: {run}" + (node is { HasExited: true } ? $" (node exited {node.ExitCode})" : string.Empty)
+            + Diagnostics());
+    }
+
+    /// <summary>Runs <c>node stop --verbose</c> (its transport attempts on stderr) and fails with <see cref="Diagnostics"/> unless it exits 0.</summary>
+    public async Task<ProcessRun> StopNodeAsync()
+    {
+        var run = await CliAsync("node", "stop", "--verbose");
+        Assert.True(run.ExitCode == 0, run + Diagnostics());
+        return run;
+    }
+
+    /// <summary>
+    /// What a failed CLI call against this environment's node needs next to it: the descriptor's process and whether it is alive, the
+    /// supervisor log and the end of the node log.
+    /// </summary>
+    public string Diagnostics()
+    {
+        var descriptor = Descriptor();
+        var process = descriptor is null ? "no endpoint descriptor" : $"descriptor pid {descriptor.ProcessId}, alive {descriptor.ProcessIsAlive()}";
+        static string Tail(string path, int lines) => string.Join('\n', ReadShared(path).Split('\n').TakeLast(lines));
+        return $"\n--- {process}\n--- supervisor log:\n{Tail(SupervisorLog, 60)}\n--- node log (last 40 lines):\n{Tail(NodeLog, 40)}";
     }
 
     /// <summary>The node's endpoint descriptor, or null.</summary>
@@ -256,6 +273,46 @@ internal sealed class TestNode : IAsyncDisposable
         {
             Assert.True(TimeProvider.System.GetElapsedTime(started) < timeout, $"Timed out after {timeout.TotalSeconds:0} s waiting for {what}.");
             await Task.Delay(100);
+        }
+    }
+
+    /// <summary>
+    /// How long after its start a node with the hang fault <paramref name="fault"/> (<c>name=seconds</c>, ExecutionFaults) would have
+    /// stopped renewing its heartbeat: the fault's delay; for a hung probe, the probe timeout (5 s) and up to three missed probes one second
+    /// apart; and two heartbeat intervals (1 s each).
+    /// </summary>
+    public static TimeSpan FaultHorizon(string fault, int seconds) =>
+        TimeSpan.FromSeconds(seconds + (fault == "hang-probe-after" ? 8 : 0) + 2);
+
+    /// <summary>
+    /// Waits until the node heartbeat (<c>run/node-heartbeat</c>) changes once <paramref name="horizon"/> has passed on
+    /// <paramref name="since"/>: a condition that proves the node still renews it, instead of a fixed wait. Bounded by 30 s past the horizon.
+    /// </summary>
+    public async Task WaitHeartbeatChangeAsync(Stopwatch since, TimeSpan horizon)
+    {
+        var path = ArcForges.Node.Platform.AttemptFiles.HeartbeatPath(DataRoot);
+        var seen = ReadShared(path);
+        await WaitAsync(() =>
+        {
+            var current = ReadShared(path);
+            var changed = current.Length > 0 && current != seen;
+            seen = current;
+            return changed && since.Elapsed > horizon;
+        }, horizon + TimeSpan.FromSeconds(30), $"the heartbeat to change more than {horizon.TotalSeconds:0} s after the start");
+    }
+
+    /// <summary>A file another process replaces or writes, or an empty string while it is missing.</summary>
+    public static string ReadShared(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
         }
     }
 
@@ -288,20 +345,42 @@ internal sealed class TestNode : IAsyncDisposable
         return new ProcessRun(process.ExitCode, await output, await error);
     }
 
-    /// <summary>Running processes of the binaries under test started since this environment was created.</summary>
+    /// <summary>
+    /// Running processes of the binaries under test started since this environment was created that belong to it: they carry its
+    /// endpoint in their environment (every node, supervisor, holder and helper it started inherits it), or on Linux run in its slice
+    /// (the helpers of its attempt units). Tests run in parallel, so the processes of another environment are never counted. A running
+    /// process whose environment cannot be read is neither counted nor dropped: the last scan remembers it and the fixture reports it.
+    /// </summary>
     public List<Process> LiveProcesses()
     {
         var binaries = new[] { Host, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
             .Select(path => Path.GetFullPath(path)).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var live = new List<Process>();
+        lock (_uninspectable)
+        {
+            // Only the last scan counts: a process may be briefly uninspectable while it starts or exits.
+            _uninspectable.Clear();
+        }
+
         foreach (var process in Process.GetProcessesByName("arcforges").Concat(Process.GetProcessesByName("arcforges-supervisor")))
         {
             try
             {
                 if (!process.HasExited && process.MainModule?.FileName is { } file && binaries.Contains(Path.GetFullPath(file)) && process.StartTime >= _created)
                 {
-                    live.Add(process);
-                    continue;
+                    switch (Owns(process.Id))
+                    {
+                        case true:
+                            live.Add(process);
+                            continue;
+                        case null when !process.HasExited && !ArcForges.Tests.ProcessInspection.IsZombie(process.Id):
+                            lock (_uninspectable)
+                            {
+                                _uninspectable.Add($"{process.ProcessName} (pid {process.Id}, started {process.StartTime:O}): its environment cannot be read, so it may belong to this test");
+                            }
+
+                            break;
+                    }
                 }
             }
             catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -313,6 +392,29 @@ internal sealed class TestNode : IAsyncDisposable
         }
 
         return live;
+    }
+
+    /// <summary>True when the process belongs to this environment, false when it does not, null when that cannot be told.</summary>
+    private bool? Owns(int pid)
+    {
+        if (!OperatingSystem.IsWindows() && ProcessCgroup(pid) is { } cgroup && cgroup.Contains("/" + Slice + "/", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return ArcForges.Tests.ProcessInspection.TryEnvironmentValue(pid, NodeLocations.EndpointVariable, out var endpoint) ? endpoint == Endpoint : null;
+    }
+
+    private static string? ProcessCgroup(int pid)
+    {
+        try
+        {
+            return File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -345,13 +447,10 @@ internal sealed class TestNode : IAsyncDisposable
                     File.Delete(Path.Combine(unitDirectory, unit));
                 }
 
-                if (Units.Count > 0)
+                // No daemon-reload (see InstallUnit): a stopped unit whose file is gone is unloaded once it is not failed.
+                foreach (var unit in Units)
                 {
-                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("daemon-reload");
-                    foreach (var unit in Units)
-                    {
-                        ArcForges.Tests.SystemdTestEnvironment.Systemctl("reset-failed", unit);
-                    }
+                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("reset-failed", unit);
                 }
             }
 
@@ -363,6 +462,12 @@ internal sealed class TestNode : IAsyncDisposable
                 process.Kill(entireProcessTree: true);
                 process.WaitForExit(TimeSpan.FromSeconds(10));
                 process.Dispose();
+            }
+
+            lock (_uninspectable)
+            {
+                // Not killed: it may be another test's.
+                leftovers.AddRange(_uninspectable);
             }
         }
         finally
@@ -394,7 +499,7 @@ internal sealed class TestNode : IAsyncDisposable
             }
         }
 
-        Assert.True(leftovers.Count == 0, "Processes were left running after the test: " + string.Join(", ", leftovers));
+        ArcForges.Tests.Leftovers.Report(leftovers);
     }
 
     /// <summary>The attempts of this node's store.</summary>

@@ -20,6 +20,7 @@ and the committed `packages.lock.json` files.
 | ArcForges.LocalRpc, ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security, ArcForges.Foundation | [ArcForges DesktopPlatform](https://github.com/ArcForges/DesktopPlatform), AGPL-3.0-only |
 | .NET runtime | [dotnet/runtime](https://github.com/dotnet/runtime), MIT plus third-party notices |
 | xUnit and Microsoft.Testing.Platform | Test-only dependencies; see their NuGet license metadata |
+| CsCheck | Test-only dependency ([CsCheck](https://github.com/AnthonyLloyd/CsCheck)), Apache-2.0 |
 | Grpc.Tools | Build-only code generator (protoc); see its NuGet license metadata |
 
 System libraries and fonts come from the host OS. No font or proprietary asset is bundled.

@@ -20,7 +20,6 @@ namespace ArcForges.ClosedLoop.Tests;
 /// </summary>
 [Trait("loop", "local")]
 [Trait("env", "windows-real")]
-[Collection(SerialProcessTests.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class ExecutionTests
 {
@@ -91,7 +90,9 @@ public sealed class ExecutionTests
         Assert.NotEqual(9, (await node.CliBytesAsync(Bound, "tasks", "wait", runningId, "--output", "none")).ExitCode);
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the caller-gone cancellation within 5 s (AD-0006 section 7) is a product timing contract.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -108,6 +109,8 @@ public sealed class ExecutionTests
         Assert.Contains("arcforges tasks wait ", message, StringComparison.Ordinal);
         Assert.Contains("arcforges tasks cancel ", message, StringComparison.Ordinal);
         var handedOff = message.Split("arcforges tasks wait ")[1].Split('\n')[0].Trim();
+
+        // A deliberate hold longer than the 5 s caller-gone window (AD-0006 section 7): the handed-off task is not cancelled.
         await Task.Delay(TimeSpan.FromSeconds(7), Ct);
         Assert.Contains("TASK_STATE_RUNNING", (await node.CliAsync("tasks", "show", handedOff, "--json")).Output, StringComparison.Ordinal);
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", handedOff)).ExitCode);
@@ -144,20 +147,24 @@ public sealed class ExecutionTests
         await using var node = TestNode.Create();
         var first = await node.StartNodeAsync();
         var marker = Path.Combine(node.Root, "f.txt");
-        var shortMarker = Path.Combine(node.Root, "s.txt");
         var detached = await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker);
         var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
-        var shortRun = await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "signal", "--hold-ms", "3000", "--marker", shortMarker);
-        var shortId = Encoding.UTF8.GetString(shortRun.Stdout).Trim();
-        await TestNode.WaitAsync(() => Marker(marker).Count > 0 && Marker(shortMarker).Count > 0, Bound, "the attempts to run");
 
-        // The node is killed (not stopped): the attempts continue under their holders.
+        // The short attempt runs until the test writes the go file once the node is dead, so it cannot finish before the kill however
+        // slowly the test runs (a fixed 3 s hold raced with it under load).
+        var go = Path.Combine(node.Root, "go");
+        var shortRun = await node.CliBytesAsync(Bound, ["run", "--detach", "--", .. WaitForFile(go)]);
+        var shortId = Encoding.UTF8.GetString(shortRun.Stdout).Trim();
+        await TestNode.WaitAsync(() => Marker(marker).Count > 0, Bound, "the attempts to run");
+        var shortAttempt = await AttemptDirectoryAsync(node, shortId);
+
+        // The node is killed (not stopped): the attempts continue under their holders, and the short one's holder records its exit alone.
         first.Kill();
         await first.WaitForExitAsync(Ct);
+        File.WriteAllText(go, "go");
         var attempt = MarkerProcess(marker);
-        await Task.Delay(TimeSpan.FromSeconds(4), Ct);
+        await TestNode.WaitAsync(() => File.Exists(Path.Combine(shortAttempt, "exit.json")), Bound, "the short attempt's exit record while the node is down");
         Assert.True(attempt.IsRunning(), "The attempt survived the node.");
-        Assert.False(MarkerProcess(shortMarker).IsRunning(), "The short attempt finished while the node was down.");
 
         await node.StartNodeAsync();
         var shortTask = JsonDocument.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output).RootElement;
@@ -262,6 +269,8 @@ public sealed class ExecutionTests
         Assert.True(first.WaitForExit(TimeSpan.FromSeconds(30)), "The node did not kill itself after recording the attempt.");
         var holders = node.LiveProcesses().Select(process => ProcessIdentity.Capture(process.Id)).OfType<ProcessIdentity>().ToList();
         Assert.Single(holders);
+
+        // A deliberate hold (the absence of an exit cannot be awaited): the holder still waits for the acknowledgement 2 s later.
         await Task.Delay(TimeSpan.FromSeconds(2), Ct);
         Assert.True(holders[0].IsRunning(), "The holder waits for the acknowledgement.");
 
@@ -293,7 +302,9 @@ public sealed class ExecutionTests
         Assert.Single(node.LiveProcesses());
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the takeover delay (takeover + 1 s) and the overshoot (rate over 500 ms) are timing bounds.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheHolderTakesOverTheOutputLimitWhileTheNodeIsDown()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -334,7 +345,9 @@ public sealed class ExecutionTests
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
 
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: the overshoot bound depends on 300 ms node lifetimes and the guard's timing.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheHolderStopsTheFloodWhileTheNodeRestartsFasterThanTheTakeover()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -415,6 +428,7 @@ public sealed class ExecutionTests
         var watch = Stopwatch.StartNew();
         await TestNode.WaitAsync(() => node.Descriptor() is { } descriptor && descriptor.ProcessId != first && descriptor.ProcessIsAlive(),
             TimeSpan.FromSeconds(90), "the supervisor to restart the hung node");
+        var restarted = Stopwatch.StartNew();
         var log = File.ReadAllText(node.SupervisorLog);
         TestContext.Current.TestOutputHelper?.WriteLine($"restarted after {watch.Elapsed.TotalSeconds:0.0} s");
         Assert.Contains("node.first_heartbeat", log, StringComparison.Ordinal);
@@ -422,11 +436,11 @@ public sealed class ExecutionTests
         var stall = long.Parse(log.Split("stallMs=")[1].Split(' ', '\n', '\r')[0], CultureInfo.InvariantCulture);
         Assert.InRange(stall, 30_000, 33_000);
 
-        // The fault fires once per data root: the restarted node keeps its heartbeat.
+        // The fault fires once per data root: the restarted node's heartbeat still changes after the moment the fault would have stopped it.
         await node.WaitReadyAsync();
-        await Task.Delay(TimeSpan.FromSeconds(3), Ct);
+        await node.WaitHeartbeatChangeAsync(restarted, TestNode.FaultHorizon(fault, 3));
         Assert.Single(File.ReadAllText(node.SupervisorLog).Split("node.hung").Skip(1));
-        Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+        await node.StopNodeAsync();
         Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
         Assert.Equal(0, supervisor.ExitCode);
     }
@@ -443,13 +457,15 @@ public sealed class ExecutionTests
         await TestNode.WaitAsync(async () => (await node.CliAsync("node", "wait-ready", "--timeout", "20s")).ExitCode == 0, TimeSpan.FromSeconds(90), "the slow node");
         Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(34), $"Ready after {watch.Elapsed}: the slow startup did not take effect.");
         var pid = node.NodePid();
+
+        // A deliberate hold (the absence of a restart cannot be awaited): the supervisor keeps the node over the next 5 s of heartbeats.
         await Task.Delay(TimeSpan.FromSeconds(5), Ct);
         Assert.Equal(pid, node.NodePid());
         var log = File.ReadAllText(node.SupervisorLog);
         Assert.DoesNotContain("node.hung", log, StringComparison.Ordinal);
         Assert.DoesNotContain("node.crashed", log, StringComparison.Ordinal);
         Assert.Contains("node.first_heartbeat", log, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+        await node.StopNodeAsync();
         Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
         Assert.Equal(0, supervisor.ExitCode);
     }
@@ -469,6 +485,13 @@ public sealed class ExecutionTests
             await Task.Delay(100, Ct);
         }
     }
+
+    /// <summary>A command that exits 0 once <paramref name="file"/> exists (checked every 50 ms): an attempt that ends when the test says so.</summary>
+    internal static string[] WaitForFile(string file) =>
+    [
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+        "-NoProfile", "-NonInteractive", "-Command", $"while (-not (Test-Path -LiteralPath '{file}')) {{ Start-Sleep -Milliseconds 50 }}",
+    ];
 
     private static (int ExitCode, byte[] Stdout, byte[] Stderr) Direct(string[] argv)
     {

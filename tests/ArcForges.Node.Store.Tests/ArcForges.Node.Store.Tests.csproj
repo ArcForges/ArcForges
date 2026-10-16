@@ -9,5 +9,8 @@
     <ProjectReference Include="../../src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
     <ProjectReference Include="../../tools/ArcForges.Bench/ArcForges.Bench.csproj" />
     <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Property-based and model-based tests (16-testing-strategy; AD-0016). -->
+    <PackageReference Include="CsCheck" />
+    <Compile Include="../Shared/PropertyRuns.cs" Link="Shared/PropertyRuns.cs" />
   </ItemGroup>
 </Project>

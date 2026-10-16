@@ -22,6 +22,13 @@ internal static class Tasks
 
     public static string Cmd => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
 
+    /// <summary>A Windows command that exits 0 once <paramref name="file"/> exists (checked every 50 ms): an attempt that ends when the test says so.</summary>
+    public static string[] WaitForFile(string file) =>
+    [
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+        "-NoProfile", "-NonInteractive", "-Command", $"while (-not (Test-Path -LiteralPath '{file}')) {{ Start-Sleep -Milliseconds 50 }}",
+    ];
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>An argv spec in <paramref name="directory"/> inheriting the node's environment.</summary>
@@ -207,4 +214,19 @@ internal static class Tasks
     }
 
     public static ByteString Bytes(string text) => ByteString.CopyFromUtf8(text);
+
+    /// <summary>A file another process still writes, or an empty string while it is missing.</summary>
+    public static string ReadShared(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
 }
