@@ -115,8 +115,9 @@ The owner's PRs are verified by the repository's pre-push hook, not by hosted CI
 The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges/Plan/blob/main/AGENTS.md) rules 6 and 7.
 
 - **Install** once per clone, from the main checkout on `main`: `python eng/verify.py install`. It copies `.githooks/*`
-  into the clone's common hooks directory, so every worktree runs them, and removes any `core.hooksPath`. Re-run it
-  when `.githooks/` changes.
+  into the clone's common hooks directory, so every worktree runs them, and removes any `core.hooksPath`, including
+  per-worktree values left by older scripts, and refuses while one remains elsewhere. Re-run it when `.githooks/`
+  changes.
 - `python eng/verify.py list` shows the profile and steps of `HEAD`. `python eng/verify.py run` verifies `HEAD` now; the
   push reuses that pass for the identical tree, step set, scripts and tools (the secret scan also binds it to the exact
   merge base and head).
