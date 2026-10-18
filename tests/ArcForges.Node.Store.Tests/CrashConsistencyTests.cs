@@ -9,7 +9,8 @@ namespace ArcForges.Node.Store.Tests;
 /// Crash consistency (16-testing-strategy section 1, store layer; fault injection): a real process writing the store through
 /// its submit path (arcforges-bench store-growth, JIT or the Native AOT binary of ARCFORGES_BENCH_PATH) is killed during
 /// writes; the store then passes <c>PRAGMA integrity_check</c> and <c>foreign_key_check</c>, every acknowledged command is
-/// present with its stored response, and the cross-table invariants hold.
+/// present with its stored response, the cross-table invariants hold, and the sealed values written before the kill still open with
+/// the node data key the writer kept in the data root's file-backed isolated secret store (16-testing-strategy section 2).
 /// </summary>
 [Trait("env", "windows-real")]
 [Trait("env", "linux-real")]
@@ -21,7 +22,6 @@ public sealed class CrashConsistencyTests
     [InlineData(420)]
     public async Task AStoreKilledDuringWritesReopensConsistent(int acknowledgedBeforeKill)
     {
-        TestSecretStores.RequireRealSecretStore();
         using var root = new TemporaryDataRoot();
         var acknowledged = await RunAndKillAsync(root.Path, acknowledgedBeforeKill, TestContext.Current.CancellationToken);
         Assert.True(acknowledged.Count >= acknowledgedBeforeKill);
@@ -34,7 +34,8 @@ public sealed class CrashConsistencyTests
         // 2. The store reopens (its previous run did not shut down cleanly) and the invariants hold.
         using var store = root.Open(new ManualClock(), boot: "after-kill");
         Assert.False(store.Metadata.PreviousShutdownClean);
-        using var keys = new NodeDataKeyRing(store, TestSecretStores.Select(root.Path));
+        // The writer kept its node data key in the data root's isolated secret store (arcforges-bench never uses an OS-wide store).
+        using var keys = new NodeDataKeyRing(store, NodeSecretStores.ForTestDataRoot(root.Path));
         try
         {
             store.Read(reader =>
@@ -85,6 +86,8 @@ public sealed class CrashConsistencyTests
         {
             keys.DeleteKeys();
         }
+
+        TestSecretStores.AssertNoLeaks(store, root.Path);
     }
 
     /// <summary>

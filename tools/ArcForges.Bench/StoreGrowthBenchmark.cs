@@ -7,7 +7,6 @@ using System.Text.Json;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store;
-using ArcForges.Security.Secrets;
 using Google.Protobuf;
 
 namespace ArcForges.Bench;
@@ -25,9 +24,10 @@ namespace ArcForges.Bench;
 /// <remarks>
 /// The rows of later subsystems (task, attempt, records) are written with their node-store.sql columns; their exact content
 /// is the workload profile stated in the result (<see cref="Profile"/>), not the output of those subsystems, which do not
-/// exist yet. Time is simulated: 1,000 attempts per day. On Linux the benchmark never uses the session's Secret Service: the
-/// node data key goes to the owner-only file fallback inside the benchmark's data root. On Windows it is a uniquely named
-/// Credential Manager entry, deleted when the run ends.
+/// exist yet. Time is simulated: 1,000 attempts per day. The node data key lives in the file-backed isolated secret store of the
+/// benchmark's data root (as for a node started with <c>--test-mode</c>; 16-testing-strategy section 2), never in an OS-wide
+/// secret store: the benchmark runs in the pre-push verification and under the store tests (crash consistency), which must not
+/// reach the user's Credential Manager or Secret Service. The key is outside the database, so the measured growth is unaffected.
 /// </remarks>
 internal static class StoreGrowthBenchmark
 {
@@ -112,15 +112,7 @@ internal static class StoreGrowthBenchmark
             var store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = "store-growth-benchmark", Clock = clock });
             store.Checkpoint();
             var baselineBytes = new FileInfo(StorePaths.Database(dataRoot)).Length;
-            var selection = OperatingSystem.IsWindows()
-                ? OsSecretStore.SelectForCurrentPlatform(dataRoot)
-                : OsSecretStore.SelectForCurrentPlatform(dataRoot, new SecretServiceOptions
-                {
-                    // A bus that does not exist: the user's session keyring is never touched.
-                    BusAddress = "unix:path=" + Path.Combine(dataRoot, "run", "no-session-bus"),
-                    CallTimeout = TimeSpan.FromSeconds(2),
-                });
-            using var keys = new NodeDataKeyRing(store, selection);
+            using var keys = new NodeDataKeyRing(store, NodeSecretStores.ForTestDataRoot(dataRoot));
             WorkloadCounts counts;
             try
             {

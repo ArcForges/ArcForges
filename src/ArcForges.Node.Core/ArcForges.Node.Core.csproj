@@ -19,7 +19,7 @@
     <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
     <PackageReference Include="ArcForges.Contracts.Node" />
     <!--
-      ArcForges.Observability 1.0.0-ci.138.1 and its ArcForges.Capabilities and ArcForges.Foundation pin
+      ArcForges.Observability 1.0.0-ci.141.1 and its ArcForges.Capabilities and ArcForges.Foundation pin
       ArcForges.Contracts.Foundation to exactly 1.0.0-ci.216.1, as Security.Secrets does in the store; the node contracts need
       1.0.0-ci.375.1. NU1608 is accepted for this package's graph only (recorded in eng/policy/dependency-admissions.json).
     -->

@@ -46,17 +46,21 @@ public sealed class NodeDataKeyUnavailableException : InvalidOperationException
 }
 
 /// <summary>
-/// The node data key (AES-256) that seals task secrets (04-execution section 2), held in the OS secret store selected by
-/// DesktopPlatform's <c>OsSecretStore.SelectForCurrentPlatform</c>: Windows Credential Manager, the Linux Secret Service,
-/// or the reported owner-only file fallback. The store records each key version with the backend that holds it
+/// The node data key (AES-256) that seals task secrets (04-execution section 2), held in the node's secret store
+/// (<see cref="NodeSecretStores.ForNode(string, bool)"/>): in production the OS secret store DesktopPlatform's selection chooses
+/// (Windows Credential Manager, the Linux Secret Service, or the reported owner-only file fallback); under <c>--test-mode</c> and in
+/// tests an isolated backend (16-testing-strategy section 2). The store records each key version with the backend that holds it
 /// (<c>node_setting</c> <see cref="SettingName"/>), because selection can differ between runs (Security.Secrets consumer
 /// obligation): a key is read only from the backend recorded for it. When the recorded key is missing, or the selected
 /// backend changed, a new key version is created in the selected backend; values sealed under an unreachable key are then
 /// unavailable and their retries fail with <c>STATE/secrets_unavailable</c> (never a partial environment).
 /// </summary>
 /// <remarks>
-/// A locked Linux keyring without a desktop prompter fails closed in Security.Secrets; this ring reports it as an
-/// unavailable key and never redirects the key to the file fallback on its own.
+/// <para>A locked Linux keyring without a desktop prompter fails closed in Security.Secrets; this ring reports it as an
+/// unavailable key and never redirects the key to the file fallback on its own.</para>
+/// <para>Production read-back policy (04-execution section 2): a key is never read back after it was written. It stays in memory;
+/// a lost write surfaces at the next load (a node restart) as a missing key and fails closed as above. Read-back and absence checks
+/// are test verification only (16 section 1).</para>
 /// </remarks>
 public sealed class NodeDataKeyRing : IDisposable
 {
@@ -66,28 +70,31 @@ public sealed class NodeDataKeyRing : IDisposable
     /// <summary>The key length (AES-256).</summary>
     public const int KeyBytes = 32;
 
-    private const string TargetPrefix = "ArcForges.Secrets.v1.";
+    private const string TargetPrefix = NodeSecretStores.TargetPrefix;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, byte[]> _cache = new(StringComparer.Ordinal);
     private readonly NodeStore _store;
-    private readonly SecretStoreSelection _selection;
+    private readonly NodeSecretStore _secrets;
     private bool _disposed;
 
-    /// <summary>Creates the ring over the store and the selected secret store.</summary>
-    public NodeDataKeyRing(NodeStore store, SecretStoreSelection selection)
+    /// <summary>Creates the ring over the store and the node's secret store.</summary>
+    internal NodeDataKeyRing(NodeStore store, NodeSecretStore secrets)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _selection = selection ?? throw new ArgumentNullException(nameof(selection));
+        _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
     }
 
     /// <summary>The selected backend; new keys are created there.</summary>
-    public SecretStoreBackend Backend => _selection.Backend;
+    public SecretStoreBackend Backend => _secrets.Backend;
 
     /// <summary>How the selected backend protects the key at rest; anything but the OS secret store is reported as weaker.</summary>
-    public SecretStoreProtection Protection => _selection.Protection;
+    public SecretStoreProtection Protection => _secrets.Protection;
 
     /// <summary>Why the OS secret store was not selected, or <see langword="null"/>.</summary>
-    public string? FallbackReason => _selection.FallbackReason;
+    public string? FallbackReason => _secrets.FallbackReason;
+
+    /// <summary>Whether the key lives in an isolated test backend (<c>--test-mode</c> or a test), never in an OS-wide store.</summary>
+    public bool Isolated => _secrets.Isolated;
 
     /// <summary>The secret store target of a key: <c>ArcForges.Secrets.v1.</c> and 64 uppercase hexadecimal digits.</summary>
     public static string TargetName(ReadOnlySpan<byte> nodeId, string keyId)
@@ -113,8 +120,8 @@ public sealed class NodeDataKeyRing : IDisposable
             var nodeId = _store.Metadata.NodeId.Span;
             foreach (var key in _store.Read(reader => ReadRecords(reader).Keys))
             {
-                if (string.Equals(key.Backend, _selection.Backend.ToString(), StringComparison.Ordinal)
-                    && _selection.Store.Delete(TargetName(nodeId, key.KeyId)))
+                if (string.Equals(key.Backend, _secrets.Backend.ToString(), StringComparison.Ordinal)
+                    && _secrets.Store.Delete(TargetName(nodeId, key.KeyId)))
                 {
                     deleted++;
                 }
@@ -145,7 +152,7 @@ public sealed class NodeDataKeyRing : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             var records = _store.Read(ReadRecords);
             var current = records.Keys.LastOrDefault(key => string.Equals(key.KeyId, records.Current, StringComparison.Ordinal));
-            if (current is not null && string.Equals(current.Backend, _selection.Backend.ToString(), StringComparison.Ordinal)
+            if (current is not null && string.Equals(current.Backend, _secrets.Backend.ToString(), StringComparison.Ordinal)
                 && TryLoad(current.KeyId, out _, out _))
             {
                 unavailableReason = null;
@@ -159,13 +166,13 @@ public sealed class NodeDataKeyRing : IDisposable
             created = RandomNumberGenerator.GetBytes(KeyBytes);
             try
             {
-                _selection.Store.Write(TargetName(_store.Metadata.NodeId.Span, keyId), created);
+                _secrets.Store.Write(TargetName(_store.Metadata.NodeId.Span, keyId), created);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 CryptographicOperations.ZeroMemory(created);
                 // A reason code and the exception type only: secret-store messages are not logged (R-SEC-003, reason codes only).
-                unavailableReason = $"secret_store_write_failed backend={_selection.Backend} errorType={exception.GetType().Name}";
+                unavailableReason = $"secret_store_write_failed backend={_secrets.Backend} errorType={exception.GetType().Name}";
                 return null;
             }
         }
@@ -177,7 +184,7 @@ public sealed class NodeDataKeyRing : IDisposable
             {
                 var records = ReadRecords(transaction);
                 var current = records.Keys.LastOrDefault(key => string.Equals(key.KeyId, records.Current, StringComparison.Ordinal));
-                if (current is not null && string.Equals(current.Backend, _selection.Backend.ToString(), StringComparison.Ordinal)
+                if (current is not null && string.Equals(current.Backend, _secrets.Backend.ToString(), StringComparison.Ordinal)
                     && _cache.ContainsKey(current.KeyId))
                 {
                     // Another caller created a usable key meanwhile; it stays current.
@@ -187,8 +194,8 @@ public sealed class NodeDataKeyRing : IDisposable
                 records.Keys.Add(new DataKeyInfo
                 {
                     KeyId = keyId,
-                    Backend = _selection.Backend.ToString(),
-                    Protection = _selection.Protection.ToString(),
+                    Backend = _secrets.Backend.ToString(),
+                    Protection = _secrets.Protection.ToString(),
                     CreatedAt = transaction.NowMicroseconds,
                 });
                 records.Current = keyId;
@@ -211,7 +218,7 @@ public sealed class NodeDataKeyRing : IDisposable
         });
         if (!string.Equals(recorded, keyId, StringComparison.Ordinal))
         {
-            _selection.Store.Delete(TargetName(_store.Metadata.NodeId.Span, keyId));
+            _secrets.Store.Delete(TargetName(_store.Metadata.NodeId.Span, keyId));
             CryptographicOperations.ZeroMemory(created);
         }
 
@@ -245,7 +252,7 @@ public sealed class NodeDataKeyRing : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             var records = ReadRecords(transaction);
             var current = records.Keys.LastOrDefault(key => string.Equals(key.KeyId, records.Current, StringComparison.Ordinal));
-            if (current is not null && string.Equals(current.Backend, _selection.Backend.ToString(), StringComparison.Ordinal)
+            if (current is not null && string.Equals(current.Backend, _secrets.Backend.ToString(), StringComparison.Ordinal)
                 && TryLoad(current.KeyId, out var existing, out _))
             {
                 return (current.KeyId, existing);
@@ -258,20 +265,20 @@ public sealed class NodeDataKeyRing : IDisposable
             var key = RandomNumberGenerator.GetBytes(KeyBytes);
             try
             {
-                _selection.Store.Write(TargetName(_store.Metadata.NodeId.Span, keyId), key);
+                _secrets.Store.Write(TargetName(_store.Metadata.NodeId.Span, keyId), key);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 CryptographicOperations.ZeroMemory(key);
                 throw new NodeDataKeyUnavailableException(
-                    $"The node data key could not be stored in {_selection.Backend}: {exception.Message}", exception);
+                    $"The node data key could not be stored in {_secrets.Backend}: {exception.Message}", exception);
             }
 
             records.Keys.Add(new DataKeyInfo
             {
                 KeyId = keyId,
-                Backend = _selection.Backend.ToString(),
-                Protection = _selection.Protection.ToString(),
+                Backend = _secrets.Backend.ToString(),
+                Protection = _secrets.Protection.ToString(),
                 CreatedAt = transaction.NowMicroseconds,
             });
             records.Current = keyId;
@@ -307,10 +314,10 @@ public sealed class NodeDataKeyRing : IDisposable
                 return false;
             }
 
-            if (!string.Equals(record.Backend, _selection.Backend.ToString(), StringComparison.Ordinal))
+            if (!string.Equals(record.Backend, _secrets.Backend.ToString(), StringComparison.Ordinal))
             {
                 key = [];
-                reason = $"node data key {keyId} is held by {record.Backend}, which is not the selected secret store ({_selection.Backend})";
+                reason = $"node data key {keyId} is held by {record.Backend}, which is not the selected secret store ({_secrets.Backend})";
                 return false;
             }
 
@@ -330,19 +337,19 @@ public sealed class NodeDataKeyRing : IDisposable
         byte[]? loaded;
         try
         {
-            loaded = _selection.Store.Read(TargetName(_store.Metadata.NodeId.Span, keyId));
+            loaded = _secrets.Store.Read(TargetName(_store.Metadata.NodeId.Span, keyId));
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             key = [];
-            reason = $"node data key {keyId} could not be read from {_selection.Backend}: {exception.Message}";
+            reason = $"node data key {keyId} could not be read from {_secrets.Backend}: {exception.Message}";
             return false;
         }
 
         if (loaded is null)
         {
             key = [];
-            reason = $"node data key {keyId} is missing from {_selection.Backend}";
+            reason = $"node data key {keyId} is missing from {_secrets.Backend}";
             return false;
         }
 
@@ -350,7 +357,7 @@ public sealed class NodeDataKeyRing : IDisposable
         {
             CryptographicOperations.ZeroMemory(loaded);
             key = [];
-            reason = $"node data key {keyId} in {_selection.Backend} has the wrong length";
+            reason = $"node data key {keyId} in {_secrets.Backend} has the wrong length";
             return false;
         }
 

@@ -21,11 +21,14 @@ internal sealed record ProcessRun(int ExitCode, string Output, string Error)
 
 /// <summary>
 /// An isolated node environment for real processes: its own <c>node.json</c> (through <c>ARCFORGES_CONFIG_DIR</c>), data root and
-/// endpoint (<c>ARCFORGES_ENDPOINT</c>), passed to every <c>arcforges</c> process it starts with <c>--test-mode</c>. The child
-/// environment has no CI markers (unless a test adds them), and on Linux a session bus address that does not exist, so the node data
-/// key uses the owner-only file fallback under the data root instead of the user's keyring. Disposing stops the node, deletes its data
-/// key from the OS secret store, removes the files, and fails when any <c>arcforges</c> or <c>arcforges-supervisor</c> process started
-/// from the binaries under test during the test is still running (16-testing-strategy section 4).
+/// endpoint (<c>ARCFORGES_ENDPOINT</c>), passed to every <c>arcforges</c> process it starts with <c>--test-mode</c> (<see cref="Start"/>
+/// refuses to start the node, CLI or supervisor binaries without it). Under <c>--test-mode</c> the node keeps its node data key in the
+/// file-backed isolated secret store of its data root and never selects an OS-wide secret store (02-node-service section 4); the child
+/// environment never carries the OS secret-store tier's opt-in <c>ARCFORGES_OS_SECRET_STORE_TESTS</c>, which alone would lift that
+/// rule. It has no CI markers (unless a test adds them), and on Linux a session bus address that does not exist. Disposing stops the
+/// node, deletes its data key, verifies that every recorded key is absent from the data root's isolated store and that nothing else
+/// is left there (a leak is reported by name), removes the files, and fails when any <c>arcforges</c> or <c>arcforges-supervisor</c>
+/// process started from the binaries under test during the test is still running (16-testing-strategy section 4).
 /// </summary>
 internal sealed class TestNode : IAsyncDisposable
 {
@@ -47,6 +50,9 @@ internal sealed class TestNode : IAsyncDisposable
         {
             Environment[marker] = null;
         }
+
+        // A stray tier opt-in in the test process must never reach a test node (16-testing-strategy section 1, guard item 1).
+        Environment[OsSecretStoreGuard.OptInVariable] = null;
 
         if (!OperatingSystem.IsWindows())
         {
@@ -195,9 +201,21 @@ internal sealed class TestNode : IAsyncDisposable
         return process;
     }
 
-    /// <summary>Starts a process with the environment's variables; it is tracked and killed at the end if it still runs.</summary>
+    /// <summary>
+    /// Starts a process with the environment's variables; it is tracked and killed at the end if it still runs. The node, CLI and
+    /// supervisor binaries start only with <c>--test-mode</c> (16-testing-strategy section 1: a test never starts a node without it),
+    /// and the tier opt-in is removed even if a test put it back into <see cref="Environment"/>.
+    /// </summary>
     public Process Start(string executable, IEnumerable<string> arguments)
     {
+        var argumentList = arguments.ToList();
+        var binary = Path.GetFileNameWithoutExtension(executable);
+        if (binary is "arcforges" or "arcforges-supervisor" && !argumentList.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException($"{executable} must be started with {NodeLocations.TestModeOption} in a test.");
+        }
+
+        arguments = argumentList;
         var start = new ProcessStartInfo(executable)
         {
             UseShellExecute = false,
@@ -223,6 +241,7 @@ internal sealed class TestNode : IAsyncDisposable
             }
         }
 
+        start.Environment.Remove(OsSecretStoreGuard.OptInVariable);
         var process = Process.Start(start) ?? throw new InvalidOperationException($"{executable} did not start.");
         process.StandardInput.Close();
         _children.Add(process);
@@ -490,7 +509,7 @@ internal sealed class TestNode : IAsyncDisposable
                 child.Dispose();
             }
 
-            DeleteDataKeys();
+            leftovers.AddRange(DeleteDataKeys());
             SqliteConnection.ClearAllPools();
             Directory.Delete(Root, recursive: true);
             if (!OperatingSystem.IsWindows() && Directory.Exists(Path.GetDirectoryName(Endpoint)))
@@ -599,19 +618,30 @@ internal sealed class TestNode : IAsyncDisposable
         return running;
     }
 
-    private void DeleteDataKeys()
+    /// <summary>
+    /// Deletes the node data keys the store records from the data root's isolated secret store (where every test node keeps them), then
+    /// verifies that each is absent and nothing else is left there; returns what is left, by name (test verification).
+    /// </summary>
+    private List<string> DeleteDataKeys()
     {
         if (!File.Exists(StorePaths.Database(DataRoot)))
         {
-            return;
+            return [];
         }
 
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" });
-        var selection = OperatingSystem.IsWindows()
-            ? OsSecretStore.SelectForCurrentPlatform(DataRoot)
-            : OsSecretStore.SelectForCurrentPlatform(DataRoot, new SecretServiceOptions { BusAddress = Environment["DBUS_SESSION_BUS_ADDRESS"], CallTimeout = TimeSpan.FromSeconds(2) });
-        using var keys = new NodeDataKeyRing(store, selection);
-        keys.DeleteKeys();
+        var secrets = NodeSecretStores.ForTestDataRoot(DataRoot);
+        var files = (TestDataRootSecretStore)secrets.Store;
+        List<string> names;
+        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" }))
+        using (var keys = new NodeDataKeyRing(store, secrets))
+        {
+            names = [.. keys.Keys().Select(key => NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, key.KeyId))];
+            keys.DeleteKeys();
+        }
+
+        var remaining = names.Where(name => files.Read(name) is not null).ToList();
+        return [.. remaining.Select(name => "node data key " + name + " still in the isolated secret store after its delete"),
+            .. files.Names().Except(remaining, StringComparer.Ordinal).Select(name => "isolated secret store entry " + name)];
     }
 
     private static string Binary(string variable, string name)

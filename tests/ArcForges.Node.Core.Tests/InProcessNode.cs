@@ -8,7 +8,6 @@ using ArcForges.Node.Api;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Store;
-using ArcForges.Security.Secrets;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
 
@@ -17,7 +16,10 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>
 /// A real node in the test process: <see cref="NodeHost.RunAsync"/> with its own <c>node.json</c>, data root and endpoint (a unique
 /// named pipe, or a socket in a fresh owner-only directory), served by the real LocalRpc service mode and reached through the real
-/// client library. Disposing stops it through the host's shutdown, deletes its node data key from the OS secret store and its files.
+/// client library. Its node data key lives in an isolated in-memory secret store (16-testing-strategy section 2), one per node, so
+/// restarts keep it and the real OS secret store is never reached. Disposing stops it through the host's shutdown, deletes its node
+/// data key, verifies that every recorded key is absent from the isolated store and that nothing else is left there (a leak is reported
+/// by name, as a leftover), and removes its files.
 /// </summary>
 internal sealed class InProcessNode : IAsyncDisposable
 {
@@ -95,13 +97,8 @@ internal sealed class InProcessNode : IAsyncDisposable
         return node;
     }
 
-    public static SecretStoreSelection SecretStore(string dataRoot) => OperatingSystem.IsWindows()
-        ? OsSecretStore.SelectForCurrentPlatform(dataRoot)
-        : OsSecretStore.SelectForCurrentPlatform(dataRoot, new SecretServiceOptions
-        {
-            BusAddress = "unix:path=" + Path.Combine(dataRoot, "run", "no-session-bus"),
-            CallTimeout = TimeSpan.FromSeconds(2),
-        });
+    /// <summary>The node's isolated secret store (in memory, kept across restarts of this node).</summary>
+    public ArcForges.Tests.IsolatedSecretStore Secrets { get; } = new();
 
     /// <summary>Starts the node (again, after a stop: a restart with the same files and endpoint) and waits until it serves.</summary>
     public async Task<InProcessNode> StartAsync()
@@ -124,7 +121,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             Endpoint = Endpoint,
             StreamBuffer = StreamBuffer,
             Ready = runtime => _ready.TrySetResult(runtime),
-            SecretStore = SecretStore,
+            SecretStore = _ => Secrets.Selection,
             Output = TextWriter.Null,
             Error = TextWriter.Null,
             HelperExecutable = HelperExecutable,
@@ -206,6 +203,7 @@ internal sealed class InProcessNode : IAsyncDisposable
         finally
         {
             _stop.Dispose();
+            List<string> remaining = [];
             SqliteConnection.ClearAllPools();
             if (File.Exists(StorePaths.Database(DataRoot)))
             {
@@ -221,10 +219,16 @@ internal sealed class InProcessNode : IAsyncDisposable
                     leftovers = ArcForges.Tests.SystemdTestEnvironment.Cleanup(Slice, AttemptNames(store));
                 }
 
-                using var keys = new NodeDataKeyRing(store, SecretStore(DataRoot));
+                using var keys = new NodeDataKeyRing(store, Secrets.Selection);
+                var names = keys.Keys().Select(key => NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, key.KeyId)).ToList();
                 keys.DeleteKeys();
+
+                // Test verification of the cleanup (never a production read-back): every recorded key is absent, nothing else is left.
+                remaining = Secrets.Remaining(names);
+                leftovers.AddRange(remaining.Select(name => "node data key " + name + " still in the isolated secret store after its delete"));
             }
 
+            leftovers.AddRange(Secrets.TakeLeaks(remaining));
             SqliteConnection.ClearAllPools();
             for (var tries = 0; ; tries++)
             {

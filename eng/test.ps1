@@ -60,6 +60,12 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path $PSScriptRoot -Parent
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
+# The single opt-in of the OS secret-store tier (16-testing-strategy section 1). Every suite this script runs is routine, so none
+# inherits it: a stray value is removed before anything runs. Only eng/os_secret_store_tier.py runs the tier, never this script.
+if (Test-Path Env:ARCFORGES_OS_SECRET_STORE_TESTS) {
+  Remove-Item Env:ARCFORGES_OS_SECRET_STORE_TESTS
+  Write-Host 'test.ps1: removed ARCFORGES_OS_SECRET_STORE_TESTS from the environment: routine suites never reach a real OS secret store (only eng/os_secret_store_tier.py runs the OS secret-store tier).'
+}
 
 $suites = [ordered]@{}
 $kinds = [ordered]@{}

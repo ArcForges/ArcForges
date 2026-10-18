@@ -9,6 +9,16 @@
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
+  <!--
+    The runtime tripwire of the OS secret-store guard (16-testing-strategy section 1, item 2): every test project, the OS secret-store
+    tier's included, denies the real OS secret stores through its runtime configuration. DesktopPlatform's adapters then refuse
+    Credential Manager and the user's Secret Service before any OS call unless ARCFORGES_OS_SECRET_STORE_TESTS=1 is set, which only the
+    tier's runner and hosted job do. Production projects (src/, tools/) never set it; ArcForges.Repository.Tests checks both in the
+    built runtime configurations.
+  -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="ArcForges.Security.Secrets.DenyOsStores" Value="true" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3.mtp-v2" />
     <Using Include="Xunit" />

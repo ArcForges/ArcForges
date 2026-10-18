@@ -16,7 +16,6 @@ public sealed class StoreGrowthTests
     [Fact]
     public async Task ThousandAttemptsStayWithinTheScaledGrowthLimit()
     {
-        TestSecretStores.RequireRealSecretStore();
         var written = Path.Combine(Path.GetTempPath(), "arcforges-store-growth-" + Guid.NewGuid().ToString("N") + ".json");
         using var process = Process.Start(BenchExecutable.StartInfo("store-growth", "--attempts", "1000", "--seed", "7", "--output", written))!;
         var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);

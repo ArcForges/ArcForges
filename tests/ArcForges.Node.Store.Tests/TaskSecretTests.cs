@@ -4,31 +4,31 @@ using System.Text;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Node.Store.Proto;
 using ArcForges.Security.Secrets;
+using ArcForges.Tests;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.Store.Tests;
 
 /// <summary>
-/// task_secret sealing with the node data key in the real OS secret store (R-EXE-017; 04-execution section 2): values
-/// round-trip across restarts only with the node data key, and a purge after the retention leaves STATE/secrets_unavailable.
-/// Windows uses Credential Manager with a uniquely named entry per test node, deleted by the test; Linux uses the owner-only
-/// file fallback under the test's data root (never the user's keyring).
+/// task_secret sealing with the node data key (R-EXE-017; 04-execution section 2): values round-trip across restarts only with the
+/// node data key, and a purge after the retention leaves STATE/secrets_unavailable. The key lives in an isolated secret-store backend
+/// (16-testing-strategy section 2), one per test, that reports the backend and protection of the node's selection; the real OS
+/// secret stores are reached only by the OS secret-store tier (the user's decisions of 2026-10-17). Each test ends by verifying that
+/// every key it recorded is absent after its deletes and that nothing else is left in the backend.
 /// </summary>
-[Trait("env", "windows-real")]
-[Trait("env", "linux-real")]
 public sealed class TaskSecretTests
 {
     [Fact]
     public void SealedValuesRoundTripAcrossARestartWithTheRecordedBackend()
     {
-        TestSecretStores.RequireRealSecretStore();
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
+        var backend = new IsolatedSecretStore();
         var secrets = Secrets("synthetic-github-value", "synthetic-npm-value");
         byte[] taskId;
         using (var store = root.Open(clock))
-        using (var keys = new NodeDataKeyRing(store, TestSecretStores.Select(root.Path)))
+        using (var keys = new NodeDataKeyRing(store, backend.Selection))
         {
             try
             {
@@ -42,8 +42,8 @@ public sealed class TaskSecretTests
                 var key = Assert.Single(keys.Keys());
                 Assert.Equal("1", key.KeyId);
                 Assert.Equal(keys.Backend.ToString(), key.Backend);
-                Assert.Equal(OperatingSystem.IsWindows() ? "WindowsCredentialManager" : "OwnerOnlyFile", key.Backend);
-                Assert.Equal(OperatingSystem.IsWindows() ? "OsSecretStore" : "FileOwnerOnly", key.Protection);
+                Assert.Equal(NodeSecretStores.TestBackend.ToString(), key.Backend);
+                Assert.Equal(NodeSecretStores.TestProtection.ToString(), key.Protection);
                 var stored = store.Read(reader => (byte[])reader.Scalar("SELECT ciphertext FROM task_secret;")!);
                 Assert.DoesNotContain("synthetic", Encoding.UTF8.GetString(stored), StringComparison.Ordinal);
                 Assert.Equal("[\"GITHUB_TOKEN\",\"NPM_TOKEN\"]", store.Read(reader => reader.Scalar("SELECT names_json FROM task_secret;")));
@@ -57,7 +57,7 @@ public sealed class TaskSecretTests
 
         // A restarted node (new store and key ring instances) opens the values with the key the store recorded.
         using (var store = root.Open(clock))
-        using (var keys = new NodeDataKeyRing(store, TestSecretStores.Select(root.Path)))
+        using (var keys = new NodeDataKeyRing(store, backend.Selection))
         {
             try
             {
@@ -68,8 +68,6 @@ public sealed class TaskSecretTests
                 Assert.Equal(["GITHUB_TOKEN", "NPM_TOKEN"], opened.Names);
                 if (OperatingSystem.IsLinux())
                 {
-                    var file = Path.Combine(root.Path, "run", "secrets", NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, "1"));
-                    Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
                     Assert.Equal(StorePaths.PrivateDirectoryMode, File.GetUnixFileMode(root.Path));
                 }
             }
@@ -77,17 +75,19 @@ public sealed class TaskSecretTests
             {
                 Assert.Equal(1, keys.DeleteKeys());
             }
+
+            TestSecretStores.AssertNoLeaks(store, backend);
         }
     }
 
     [Fact]
     public void SealedValuesOpenOnlyWithTheNodeDataKeyAndTheirTaskId()
     {
-        TestSecretStores.RequireRealSecretStore();
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         using var store = root.Open(clock);
-        var selection = TestSecretStores.Select(root.Path);
+        var backend = new IsolatedSecretStore();
+        var selection = backend.Selection;
         using var keys = new NodeDataKeyRing(store, selection);
         try
         {
@@ -108,14 +108,14 @@ public sealed class TaskSecretTests
 
             // Another key under the same name (a different node data key) does not open the values.
             var target = NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, "1");
-            selection.Store.Write(target, System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            backend.Write(target, System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             using (var restarted = new NodeDataKeyRing(store, selection))
             {
                 AssertKeyUnavailable(new TaskSecrets(store, restarted).Unseal(taskId), "do not open with node data key 1");
             }
 
             // A lost key: values sealed under it are unavailable, and the next seal creates key 2.
-            Assert.True(selection.Store.Delete(target));
+            Assert.True(backend.Delete(target));
             using (var restarted = new NodeDataKeyRing(store, selection))
             {
                 var sealer = new TaskSecrets(store, restarted);
@@ -137,15 +137,17 @@ public sealed class TaskSecretTests
         {
             keys.DeleteKeys();
         }
+
+        TestSecretStores.AssertNoLeaks(store, backend);
     }
 
     [Fact]
     public void AKeyRecordedInAnotherBackendIsNotReadFromTheSelectedOne()
     {
-        TestSecretStores.RequireRealSecretStore();
         using var root = new TemporaryDataRoot();
         using var store = root.Open(new ManualClock());
-        var selection = TestSecretStores.Select(root.Path);
+        var backend = new IsolatedSecretStore();
+        var selection = backend.Selection;
         using var keys = new NodeDataKeyRing(store, selection);
         try
         {
@@ -179,22 +181,24 @@ public sealed class TaskSecretTests
             Assert.Equal(1, restarted.DeleteKeys());
 
             // Key 1 is still in the selected backend under its name; remove it too.
-            selection.Store.Delete(NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, "1"));
+            backend.Delete(NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, "1"));
         }
         finally
         {
             keys.DeleteKeys();
         }
+
+        TestSecretStores.AssertNoLeaks(store, backend);
     }
 
     [Fact]
     public void PurgeAfterTheRetentionLeavesSecretsUnavailable()
     {
-        TestSecretStores.RequireRealSecretStore();
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         using var store = root.Open(clock);
-        using var keys = new NodeDataKeyRing(store, TestSecretStores.Select(root.Path));
+        var backend = new IsolatedSecretStore();
+        using var keys = new NodeDataKeyRing(store, backend.Selection);
         try
         {
             var sealer = new TaskSecrets(store, keys);
@@ -249,15 +253,17 @@ public sealed class TaskSecretTests
         {
             keys.DeleteKeys();
         }
+
+        TestSecretStores.AssertNoLeaks(store, backend);
     }
 
     [Fact]
     public void PurgeTaskRecordPurgesAtOnceAndDeletingTheTaskRemovesTheRow()
     {
-        TestSecretStores.RequireRealSecretStore();
         using var root = new TemporaryDataRoot();
         using var store = root.Open(new ManualClock());
-        using var keys = new NodeDataKeyRing(store, TestSecretStores.Select(root.Path));
+        var backend = new IsolatedSecretStore();
+        using var keys = new NodeDataKeyRing(store, backend.Selection);
         try
         {
             var sealer = new TaskSecrets(store, keys);
@@ -279,6 +285,8 @@ public sealed class TaskSecretTests
         {
             keys.DeleteKeys();
         }
+
+        TestSecretStores.AssertNoLeaks(store, backend);
     }
 
     /// <summary>Purged values: errors.md details <c>state.reason</c> = the purge time, exactly the RFC 3339 UTC instant.</summary>

@@ -6,7 +6,7 @@ using Xunit.v3;
 namespace ArcForges.Tests;
 
 /// <summary>
-/// What a test left running (16-testing-strategy section 4). A fixture reports it here from its disposal instead of throwing there: a
+/// What a test left running (16-testing-strategy section 4), or left in its isolated secret store after deleting it (section 2). A fixture reports it here from its disposal instead of throwing there: a
 /// disposal that throws while the test's own failure unwinds replaces that failure, and the cause is lost. <see cref="FailOnLeftoversAttribute"/>
 /// fails the test after it ran, next to its own failure. Linked into the test projects whose fixtures check for leftovers.
 /// </summary>
@@ -40,7 +40,7 @@ internal static class Leftovers
     /// <summary>Takes what <paramref name="test"/> left running, if anything.</summary>
     public static IReadOnlyCollection<string> Take(string test) => Reported.TryRemove(test, out var queue) ? queue.ToArray() : [];
 
-    public static string Message(IEnumerable<string> leftovers) => "Processes were left running after the test: " + string.Join(", ", leftovers);
+    public static string Message(IEnumerable<string> leftovers) => "Left behind after the test (processes still running, or isolated secret-store entries still present after their delete): " + string.Join(", ", leftovers);
 }
 
 /// <summary>Fails a test after it ran when its fixtures reported leftovers (<see cref="Leftovers"/>).</summary>

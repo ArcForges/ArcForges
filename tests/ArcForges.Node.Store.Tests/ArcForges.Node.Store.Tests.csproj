@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    Store-layer tests of 16-testing-strategy: real SQLite, a controllable clock, the real OS secret store (Windows Credential
-    Manager; on Linux the owner-only file fallback through a private, absent bus), and real processes killed during writes
-    (the store growth workload of arcforges-bench; ARCFORGES_BENCH_PATH selects a published Native AOT binary). No fakes.
+    Store-layer tests of 16-testing-strategy: real SQLite, a controllable clock, the isolated secret-store backend for the node data
+    key (section 2: in memory, or the file-backed store of a data root that arcforges-bench also uses; never a real OS secret store),
+    and real processes killed during writes (the store growth workload of arcforges-bench; ARCFORGES_BENCH_PATH selects a published
+    Native AOT binary). The negative tests of the OS secret-store guard (16 section 1, item 4) run here too.
   -->
   <ItemGroup>
     <ProjectReference Include="../../src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
@@ -12,5 +13,9 @@
     <!-- Property-based and model-based tests (16-testing-strategy; AD-0016). -->
     <PackageReference Include="CsCheck" />
     <Compile Include="../Shared/PropertyRuns.cs" Link="Shared/PropertyRuns.cs" />
+    <!-- The isolated secret-store backend of 16-testing-strategy section 2. -->
+    <Compile Include="../Shared/IsolatedSecretStore.cs" Link="Shared/IsolatedSecretStore.cs" />
+    <!-- The OS secret-store tier's fixture, for the guard's negative test of its opt-in (it refuses before any call without it). -->
+    <Compile Include="../ArcForges.OsSecretStoreTier/OsSecretStoreTier.cs" Link="Shared/OsSecretStoreTier.cs" />
   </ItemGroup>
 </Project>
