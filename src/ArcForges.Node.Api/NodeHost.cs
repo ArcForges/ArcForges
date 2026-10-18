@@ -146,7 +146,8 @@ public static class NodeHost
 
         using var log = new NodeLog(Path.Combine(dataRoot, "logs", "node"), NodeConfiguration.ParseLogLevel(configuration.LogLevel), clock);
         log.Info("node.starting", new LogField("pid", Environment.ProcessId), new LogField("version", NodeContract.ProductVersion),
-            new LogField("testMode", options.TestMode), new LogField("systemd", options.Systemd));
+            new LogField("testMode", options.TestMode), new LogField("systemd", options.Systemd),
+            new LogField("osStoresDenied", ArcForges.Security.Secrets.OsSecretStoreGuard.IsDenied));
         var faults = ExecutionFaults.FromEnvironment(options.TestMode, dataRoot);
         if (faults.Take("slow-startup") is { } slow)
         {

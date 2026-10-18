@@ -12,8 +12,9 @@ user's applications, and it happens only on the user's explicit opt-in, from a c
 Without the opt-in nothing runs and the tier is reported as not run, with the reason (exit code 3). The runner never sets the opt-in
 itself and passes it only to the one `dotnet test` of the tier project, which runs alone (no other test or node process of the run),
 sequentially, under the tier fixture's limits (4 entries at once, 32 store calls, 10 s per call, 5 minutes). The run's name list is
-written to artifacts/evidence/os-secret-store-tier/ and is kept with the run's evidence. The node binding's Linux Secret Service tier
-(in the isolated ArcForgesTest WSL distribution) is not delivered yet; on Linux the runner refuses outside ArcForgesTest.
+written to artifacts/evidence/os-secret-store-tier/ and is kept with the run's evidence. A run in which the tier's test did not run
+(skipped, or none found) fails (--fail-skips on, --minimum-expected-tests 1). The node binding's Linux Secret Service tier (in the
+isolated ArcForgesTest WSL distribution) is not delivered yet, so on Linux the tier is reported as not run.
 """
 from __future__ import annotations
 
@@ -26,7 +27,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OPT_IN = "ARCFORGES_OS_SECRET_STORE_TESTS"
 PROJECT = "tests/ArcForges.OsSecretStoreTier/ArcForges.OsSecretStoreTier.csproj"
-LINUX_DISTRIBUTION = "ArcForgesTest"
 EVIDENCE = ROOT / "artifacts/evidence/os-secret-store-tier"
 NOT_RUN = 3
 # The fixture bounds the tier to five minutes; the process bound adds the cleanup allowance after a failed run (8 calls of at
@@ -39,12 +39,11 @@ def refusal(environ: dict[str, str], platform: str) -> tuple[int, str] | None:
     if environ.get(OPT_IN) != "1":
         return NOT_RUN, (f"NOT RUN: the OS secret-store tier needs the explicit opt-in {OPT_IN}=1 in this environment; without it "
                          "no test reaches a real OS secret store")
-    if platform.startswith("linux") and environ.get("WSL_DISTRO_NAME") != LINUX_DISTRIBUTION:
-        return 1, (f"REFUSED: the Linux Secret Service tier runs only in the isolated {LINUX_DISTRIBUTION} WSL distribution "
-                   f"(WSL_DISTRO_NAME is {environ.get('WSL_DISTRO_NAME')!r}), never in the development distribution or a user's "
-                   "session keyring")
-    if not (platform.startswith("linux") or platform == "win32"):
-        return 1, "REFUSED: the OS secret-store tier covers Windows and Linux only"
+    if platform.startswith("linux"):
+        return NOT_RUN, ("NOT RUN: ArcForges's OS secret-store tier has no Linux Secret Service test yet (the node binding's Linux "
+                         "tier, in the isolated ArcForgesTest WSL distribution, is not delivered); it runs on Windows only")
+    if platform != "win32":
+        return 1, "REFUSED: the OS secret-store tier covers Windows only"
     return None
 
 
@@ -53,8 +52,9 @@ def build_command() -> list[str]:
 
 
 def test_command() -> list[str]:
-    return ["dotnet", "test", "--project", PROJECT, "-c", "Release", "--no-build", "--results-directory", str(EVIDENCE),
-            "--report-xunit-trx", "--report-xunit-trx-filename", "os-secret-store-tier.trx"]
+    # A skipped-only or empty run fails: the tier's evidence is a test that ran.
+    return ["dotnet", "test", "--project", PROJECT, "-c", "Release", "--no-build", "--minimum-expected-tests", "1", "--fail-skips", "on",
+            "--results-directory", str(EVIDENCE), "--report-xunit-trx", "--report-xunit-trx-filename", "os-secret-store-tier.trx"]
 
 
 def main() -> int:

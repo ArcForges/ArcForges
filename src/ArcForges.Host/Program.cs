@@ -6,6 +6,7 @@ using ArcForges.Node.Api;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform.Linux;
 using ArcForges.Node.Platform.Windows;
+using ArcForges.Node.Store;
 
 namespace ArcForges.Host;
 
@@ -22,6 +23,10 @@ internal static class Program
 {
     private static Task<int> Main(string[] args)
     {
+        // A process started with --test-mode (before any '--' that ends the options) gets the OS secret-store tripwire unless the tier's
+        // exact opt-in is set (16-testing-strategy section 1, item 2; 02 section 4). Production processes are unaffected.
+        var options = args.TakeWhile(argument => argument != "--");
+        NodeSecretStores.ApplyTestModeTripwire(options.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal));
         if (args.Length >= 2 && args[0] == "node" && args[1] is "exec-wrap" or "signal" or "exec-launch" or "exec-stop" or "exit-record" or "guard")
         {
             return Task.FromResult(RunHelperRole(args[1], args[2..]));

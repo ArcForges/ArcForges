@@ -51,6 +51,27 @@ internal static class NodeSecretStores
     /// </summary>
     public static bool UsesOsSecretStore(bool testMode, string? optIn) => !testMode || optIn == "1";
 
+    /// <summary>
+    /// The runtime tripwire for a process started with <c>--test-mode</c> (16-testing-strategy section 1, item 2): unless the tier's
+    /// exact opt-in is set, sets the AppContext switch <c>ArcForges.Security.Secrets.DenyOsStores</c> in this process, so a test node,
+    /// CLI or helper also refuses the user's OS secret stores before any OS call, as every test process does. Without test mode
+    /// (production) nothing is set. Returns whether the switch was set.
+    /// </summary>
+    public static bool ApplyTestModeTripwire(bool testMode) =>
+        ApplyTestModeTripwire(testMode, Environment.GetEnvironmentVariable(OsSecretStoreGuard.OptInVariable));
+
+    /// <summary>As <see cref="ApplyTestModeTripwire(bool)"/> with the opt-in's value given.</summary>
+    internal static bool ApplyTestModeTripwire(bool testMode, string? optIn)
+    {
+        if (UsesOsSecretStore(testMode, optIn))
+        {
+            return false;
+        }
+
+        AppContext.SetSwitch(OsSecretStoreGuard.DenyOsStoresSwitch, true);
+        return true;
+    }
+
     /// <summary>The file-backed isolated store under <paramref name="dataRoot"/>, with the test labels.</summary>
     public static NodeSecretStore ForTestDataRoot(string dataRoot) =>
         new(new TestDataRootSecretStore(dataRoot), TestBackend, TestProtection, OperatingSystem.IsWindows() ? null : TestBackendReason, isolated: true);

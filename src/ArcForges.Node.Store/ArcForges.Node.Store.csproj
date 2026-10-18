@@ -37,6 +37,8 @@
       secret-store tier binds it to the real store.
     -->
     <InternalsVisibleTo Include="ArcForges.Node.Api" />
+    <!-- The arcforges host applies the test-mode tripwire at startup (NodeSecretStores.ApplyTestModeTripwire). -->
+    <InternalsVisibleTo Include="arcforges" />
     <InternalsVisibleTo Include="arcforges-bench" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
     <InternalsVisibleTo Include="ArcForges.ClosedLoop.Tests" />

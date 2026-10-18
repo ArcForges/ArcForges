@@ -82,6 +82,15 @@ public sealed class OsSecretStoreTier : IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="name"/> is on this run's name list and may exist (its outcome is not recorded yet). The tier's stores write
+    /// and delete only such names, so no call can touch an entry the run did not list first.
+    /// </summary>
+    public bool IsListed(string name)
+    {
+        lock (_gate) return _live.ContainsKey(name);
+    }
+
     /// <summary>The canonical name of the run's n-th entry.</summary>
     public static string EntryName(string runId, int n) => NamePrefix + Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(NameDomain + "|" + runId + "|" + n.ToString(CultureInfo.InvariantCulture))));

@@ -117,8 +117,21 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     [InlineData("[LibraryImport(\"Advapi32.dll\", EntryPoint = \"CredEnumerateW\")]")]
     [InlineData("Process.Start(\"cmdkey.exe\", \"/list\")")]
     [InlineData("secret-tool lookup application arcforges")]
+    [InlineData("[DllImport(\"advapi32.dll\", SetLastError = true)]\n    private static extern bool CredProtectW(bool asSelf, string credentials);")]
+    [InlineData("[LibraryImport(\"advapi32.dll\", EntryPoint = \"CredMarshalCredentialW\", StringMarshalling = StringMarshalling.Utf16)]")]
+    [InlineData("[LibraryImport(\"advapi32\")] internal static partial int CredUnprotectW(int a, char* b, int c, char* d, ref int e);")]
+    [InlineData("vaultcmd /listcreds:\"Windows Credentials\"")]
+    [InlineData("var vault = new Windows.Security.Credentials.PasswordVault();")]
+    [InlineData("& cmdkey.exe /list")]
     public void TheDirectStoreCheckCatchesTheCredentialApiAndTheStoreClients(string source) =>
         Assert.Matches(DirectStoreAccess(), source);
+
+    [Theory]
+    [InlineData("the Windows Credential Manager holds the node data key")]
+    [InlineData("public bool CredentialInOsStore => Protection == SecretStoreProtection.OsSecretStore;")]
+    [InlineData("[LibraryImport(\"kernel32.dll\")] private static partial int CreateJobObjectW(nint a, string b);")]
+    public void TheDirectStoreCheckIgnoresProseAndOtherNativeCalls(string source) =>
+        Assert.DoesNotMatch(DirectStoreAccess(), source);
 
     [Fact]
     public void ProductionSourcesNameTheOsStoresOnlyAtTheReviewedCompositionRootWhichFollowsTheTestModeRule()
@@ -143,6 +156,18 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         // The node host takes its store from the composition root unless a test overrides it.
         var host = File.ReadAllText(Path.Combine(Root, "src/ArcForges.Node.Api/NodeHost.cs"));
         Assert.Contains("options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode)", host, StringComparison.Ordinal);
+
+        // Every --test-mode process of the arcforges host and the supervisor sets the runtime tripwire at startup unless the exact opt-in
+        // is set; production is unaffected (16 section 1, item 2).
+        Assert.Contains("AppContext.SetSwitch(OsSecretStoreGuard.DenyOsStoresSwitch, true);", root, StringComparison.Ordinal);
+        var program = File.ReadAllText(Path.Combine(Root, "src/ArcForges.Host/Program.cs"));
+        Assert.Contains("NodeSecretStores.ApplyTestModeTripwire(options.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal));", program,
+            StringComparison.Ordinal);
+        var supervisor = File.ReadAllText(Path.Combine(Root, "src/ArcForges.Supervisor/Program.cs"));
+        Assert.Contains("DenyOsStoresSwitch = \"" + DenySwitch + "\";", supervisor, StringComparison.Ordinal);
+        Assert.Contains("OsSecretStoreOptIn = \"" + OptIn + "\";", supervisor, StringComparison.Ordinal);
+        Assert.Contains("if (testMode && Environment.GetEnvironmentVariable(OsSecretStoreOptIn) != \"1\")", supervisor, StringComparison.Ordinal);
+        Assert.Contains("AppContext.SetSwitch(DenyOsStoresSwitch, true);", supervisor, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -152,18 +177,37 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         foreach (var path in Sources().Where(path => !IsProduction(path) && path.EndsWith(".cs", StringComparison.Ordinal) && path != ThisFile))
         {
             var text = File.ReadAllText(Path.Combine(Root, path));
-            foreach (Match match in Regex.Matches(text, @"\bnew\s+NodeHostOptions\b"))
-            {
-                var initializer = Initializer(text, match.Index + match.Length);
-                Assert.True(initializer is not null && Regex.IsMatch(initializer, @"\bSecretStore\s*="),
-                    $"{path}: a NodeHostOptions built at offset {match.Index} does not override SecretStore with an isolated backend");
-                built++;
-            }
-
-            Assert.DoesNotMatch(new Regex(@"\bNodeHostOptions\b[^;]*\bwith\s*\{[^}]*\bSecretStore\s*=\s*null"), text);
+            var (count, offenders) = NodeHostsWithoutSecretStore(text);
+            Assert.True(offenders.Count == 0, $"{path}: a NodeHostOptions built at offset {string.Join(", ", offenders)} does not override "
+                + "SecretStore with an isolated backend");
+            built += count;
         }
 
         Assert.True(built > 0, "No test builds a NodeHost: the check would pass unchecked.");
+    }
+
+    [Theory]
+    [InlineData("var options = new NodeHostOptions { TestMode = true };")]
+    [InlineData("var options = new NodeHostOptions() { Endpoint = endpoint };")]
+    [InlineData("var options = new NodeHostOptions();")]
+    [InlineData("NodeHostOptions options = new() { TestMode = true };")]
+    [InlineData("NodeHostOptions options = new(){ Endpoint = endpoint };")]
+    [InlineData("NodeHostOptions options = new();")]
+    [InlineData("NodeHostOptions? options = new() { ConfigPath = path };")]
+    [InlineData("await NodeHost.RunAsync(new() { ConfigPath = path }, token);")]
+    [InlineData("var copy = options with { SecretStore = null };")]
+    public void TheNodeHostCheckCatchesEveryConstructionWithoutAnIsolatedSecretStore(string source) =>
+        Assert.NotEmpty(NodeHostsWithoutSecretStore(source).Offenders);
+
+    [Theory]
+    [InlineData("var options = new NodeHostOptions { SecretStore = _ => secrets.Selection, TestMode = false };")]
+    [InlineData("NodeHostOptions options = new() { Endpoint = endpoint, SecretStore = _ => secrets.Selection };")]
+    [InlineData("await NodeHost.RunAsync(new() { SecretStore = _ => secrets.Selection }, token);")]
+    public void TheNodeHostCheckAcceptsAConstructionWithAnIsolatedSecretStore(string source)
+    {
+        var (count, offenders) = NodeHostsWithoutSecretStore(source);
+        Assert.Equal(1, count);
+        Assert.Empty(offenders);
     }
 
     [Fact]
@@ -298,6 +342,9 @@ public sealed partial class OsSecretStoreGuardPolicyTests
             || (Indent(lines[index]) < 6 && lines[index].Trim().Length > 0), lines.Length);
         Assert.Contains("dotnet test --project " + TierProject, string.Join('\n', lines[step..next]), StringComparison.Ordinal);
         Assert.Contains(lines[step..next], line => line.Trim() == "timeout-minutes: 7");
+        Assert.Contains("--no-build --minimum-expected-tests 1 --fail-skips on ", string.Join('\n', lines[step..next]), StringComparison.Ordinal);
+        Assert.Contains("\"--minimum-expected-tests\", \"1\", \"--fail-skips\", \"on\"", File.ReadAllText(Path.Combine(Root, TierRunner)),
+            StringComparison.Ordinal);
 
         // Triggers and the job condition of the AD-0016 amendment: external PRs, merge_group, dispatch and a weekly schedule; never a
         // push, and skipped for the owner's PRs.
@@ -361,6 +408,32 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         Assert.True(checkedProduction >= 4, "only " + checkedProduction + " production executables were checked");
     }
 
+    /// <summary>
+    /// The NodeHostOptions constructions in <paramref name="text"/> (explicit, target-typed, or passed to <c>NodeHost.RunAsync</c>) and the
+    /// offsets of those whose initializer does not set <c>SecretStore</c>, plus any <c>with</c> expression that resets it to null.
+    /// </summary>
+    private static (int Count, List<int> Offenders) NodeHostsWithoutSecretStore(string text)
+    {
+        var count = 0;
+        var offenders = new List<int>();
+        foreach (var pattern in (string[])[@"\bnew\s+NodeHostOptions\b", @"\bNodeHostOptions\??\s+\w+\s*=\s*new\b(?!\s+\w)",
+            @"\bNodeHost\.RunAsync\(\s*new\b(?!\s+\w)"])
+        {
+            foreach (Match match in Regex.Matches(text, pattern))
+            {
+                count++;
+                var initializer = Initializer(text, match.Index + match.Length);
+                if (initializer is null || !Regex.IsMatch(initializer, @"\bSecretStore\s*="))
+                {
+                    offenders.Add(match.Index);
+                }
+            }
+        }
+
+        offenders.AddRange(Regex.Matches(text, @"\bwith\s*\{[^}]*\bSecretStore\s*=\s*null").Select(match => match.Index));
+        return (count, offenders);
+    }
+
     private static bool Denies(string runtimeConfiguration)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(runtimeConfiguration));
@@ -411,11 +484,17 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     // Test, tool, benchmark and script sources are everything outside src/.
     private static bool IsProduction(string path) => path.StartsWith("src/", StringComparison.Ordinal);
 
-    private static bool InTier(string path) => path.StartsWith(TierDirectory, StringComparison.Ordinal) || path == TierRunner;
+    private static bool InTier(string path) => path.StartsWith(TierDirectory, StringComparison.Ordinal) || path == TierRunner || path == TierWorkflow;
 
-    private static IEnumerable<string> Sources() => TrackedFiles().Where(path => path.EndsWith(".cs", StringComparison.Ordinal)
-        || path.EndsWith(".py", StringComparison.Ordinal) || path.EndsWith(".ps1", StringComparison.Ordinal)
-        || path.EndsWith(".sh", StringComparison.Ordinal) || path.StartsWith(".githooks/", StringComparison.Ordinal));
+    // Code, build and script sources: C#, Python, PowerShell scripts and modules, shell and cmd scripts, MSBuild project, props and
+    // targets files, the hooks and the workflows.
+    private static readonly string[] SourceExtensions = [".cs", ".py", ".ps1", ".psm1", ".sh", ".cmd", ".csproj", ".props", ".targets"];
+
+    private static IEnumerable<string> Sources() => TrackedFiles().Where(path =>
+        SourceExtensions.Any(extension => path.EndsWith(extension, StringComparison.Ordinal))
+        || path.StartsWith(".githooks/", StringComparison.Ordinal)
+        || (path.StartsWith(".github/workflows/", StringComparison.Ordinal) && (path.EndsWith(".yml", StringComparison.Ordinal)
+            || path.EndsWith(".yaml", StringComparison.Ordinal))));
 
     private static IEnumerable<string> TrackedFiles() =>
         Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories)
@@ -428,7 +507,11 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     [GeneratedRegex(@"(?<!SecretStoreProtection\.)\bOsSecretStore\b|\bWindowsCredentialManagerSecretStore\b|\bSecretServiceSecretStore\b")]
     private static partial Regex AdapterReference();
 
-    [GeneratedRegex(@"\bCred(?:Read|Write|Delete|Enumerate|Free|Rename|GetTargetInfo)[AW]?\b|\bcmdkey\b|\bsecret-tool\b", RegexOptions.IgnoreCase)]
+    // The Credential Manager API by name, any Cred* export bound through DllImport or LibraryImport (an attribute naming it as its entry
+    // point, or the declaration that follows the attribute), and the store's command-line and WinRT clients.
+    [GeneratedRegex(@"\bCred(?:Read|Write|Delete|Enumerate|Free|Rename|GetTargetInfo)[AW]?\b|\bcmdkey\b|\bsecret-tool\b|\bvaultcmd\b|\bPasswordVault\b"
+        + @"|\b(?:DllImport|LibraryImport)\s*\([^)]*\bEntryPoint\s*=\s*""Cred[A-Z]\w*""|\b(?:DllImport|LibraryImport)\s*\([^)]*\)\s*\][^;{]*?\bCred[A-Z]\w*\s*\(",
+        RegexOptions.IgnoreCase)]
     private static partial Regex DirectStoreAccess();
 
     [GeneratedRegex(@"\[Trait\(\s*""env""\s*,\s*""os-secret-store""\s*\)\]")]

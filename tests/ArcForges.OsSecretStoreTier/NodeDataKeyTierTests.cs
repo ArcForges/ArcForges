@@ -81,7 +81,7 @@ public sealed class NodeDataKeyTierTests(OsSecretStoreTier tier)
             var other = RandomNumberGenerator.GetBytes(NodeDataKeyRing.KeyBytes);
             try
             {
-                tier.Call("overwrite " + name, () => selected.Store.Write(name, other));
+                counted.Store.Write(name, other);
             }
             finally
             {
@@ -125,13 +125,18 @@ public sealed class NodeDataKeyTierTests(OsSecretStoreTier tier)
         return taskId;
     }
 
-    /// <summary>Routes every call of the node's key ring through the tier fixture, which counts and bounds it.</summary>
+    /// <summary>
+    /// Routes every call of the node's key ring (and the test's overwrite) through the tier fixture, which counts and bounds it. A write
+    /// or delete of a name that is not on the run's name list right now is refused before any store call: the tier never creates or
+    /// removes an entry it did not list first.
+    /// </summary>
     private sealed class TierCalls(OsSecretStoreTier tier, ISecretBackingStore store) : ISecretBackingStore
     {
         public SecretStoreIsolation Isolation => store.Isolation;
 
         public void Write(string opaqueTarget, ReadOnlySpan<byte> secret)
         {
+            RequireListed(opaqueTarget, "write");
             var copy = secret.ToArray();
             try
             {
@@ -145,6 +150,19 @@ public sealed class NodeDataKeyTierTests(OsSecretStoreTier tier)
 
         public byte[]? Read(string opaqueTarget) => tier.Call("read " + opaqueTarget, () => store.Read(opaqueTarget));
 
-        public bool Delete(string opaqueTarget) => tier.Call("delete " + opaqueTarget, () => store.Delete(opaqueTarget));
+        public bool Delete(string opaqueTarget)
+        {
+            RequireListed(opaqueTarget, "delete");
+            return tier.Call("delete " + opaqueTarget, () => store.Delete(opaqueTarget));
+        }
+
+        private void RequireListed(string opaqueTarget, string operation)
+        {
+            if (!tier.IsListed(opaqueTarget))
+            {
+                throw new InvalidOperationException("The OS secret-store tier refused to " + operation + " " + opaqueTarget
+                    + ": the name is not on this run's name list.");
+            }
+        }
     }
 }

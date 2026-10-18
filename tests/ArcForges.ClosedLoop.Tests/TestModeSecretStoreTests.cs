@@ -9,7 +9,8 @@ namespace ArcForges.ClosedLoop.Tests;
 /// the OS secret-store guard's negative test, 16-testing-strategy section 1 item 4): without the tier's opt-in the node never selects an
 /// OS-wide secret store; it keeps its node data key in the file-backed isolated store of its data root, which survives its restart, and
 /// the environment's cleanup removes it (and verifies its absence). The child node carries no tripwire switch (it is a production
-/// binary), so this rule is what keeps it away from the user's Credential Manager or Secret Service.
+/// binary), so this rule keeps it away from the user's Credential Manager or Secret Service; the host also sets the runtime tripwire
+/// at startup in every <c>--test-mode</c> process, which the node reports in its <c>node.starting</c> log record.
 /// </summary>
 [Trait("loop", "local")]
 public sealed class TestModeSecretStoreTests
@@ -25,6 +26,10 @@ public sealed class TestModeSecretStoreTests
         await using var node = TestNode.Create();
         using (var first = await node.StartNodeAsync())
         {
+            // The --test-mode process has the runtime tripwire too (set at startup; reading it makes no OS call).
+            var starting = Assert.Single(TestNode.LogEvents(node.NodeLog, "node.starting")).GetProperty("fields");
+            Assert.True(starting.GetProperty("testMode").GetBoolean(), starting.ToString());
+            Assert.True(starting.GetProperty("osStoresDenied").GetBoolean(), starting.ToString());
             var loaded = await DataKeyLoadedAsync(node, 1);
             Assert.True(loaded.GetProperty("isolated").GetBoolean(), loaded.ToString());
             Assert.Equal(NodeSecretStores.TestBackend.ToString(), loaded.GetProperty("backend").GetString());

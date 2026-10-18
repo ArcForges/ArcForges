@@ -99,6 +99,18 @@ public sealed class OsSecretStoreGuardTests : IDisposable
         Assert.Equal(osStore, NodeSecretStores.UsesOsSecretStore(testMode, optIn));
 
     [Fact]
+    public void ATestModeProcessSetsTheTripwireUnlessTheExactOptInIsSetAndProductionNever()
+    {
+        // Only the decision is varied; setting the switch again in this test process (where it is already set) changes nothing.
+        Assert.False(NodeSecretStores.ApplyTestModeTripwire(testMode: false, optIn: null));
+        Assert.False(NodeSecretStores.ApplyTestModeTripwire(testMode: true, optIn: "1"));
+        Assert.True(NodeSecretStores.ApplyTestModeTripwire(testMode: true, optIn: null));
+        Assert.True(NodeSecretStores.ApplyTestModeTripwire(testMode: true, optIn: "true"));
+        Assert.True(AppContext.TryGetSwitch(OsSecretStoreGuard.DenyOsStoresSwitch, out var deny) && deny);
+        Assert.True(OsSecretStoreGuard.IsDenied);
+    }
+
+    [Fact]
     public void TheTiersFixtureRefusesWithoutTheOptInBeforeAnyCall()
     {
         var backend = new IsolatedSecretStore();
@@ -110,6 +122,7 @@ public sealed class OsSecretStoreGuardTests : IDisposable
             Assert.ThrowsAny<InvalidOperationException>(() => tier.NewEntry(backend));
             var name = OsSecretStoreTier.EntryName(tier.RunId, 1);
             Assert.ThrowsAny<InvalidOperationException>(() => tier.NewEntry(name, backend));
+            Assert.False(tier.IsListed(name));
             Assert.ThrowsAny<InvalidOperationException>(() => tier.Call("read " + name, () => backend.Read(name)));
             Assert.Equal(0, tier.Calls);
         }
