@@ -2,7 +2,6 @@
 using System.Diagnostics;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store.Migrations;
-using ArcForges.Security.Secrets;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
 
@@ -43,24 +42,41 @@ internal sealed class TemporaryDataRoot : IDisposable
     }
 }
 
-/// <summary>The real OS secret store for tests, never the user's session keyring.</summary>
+/// <summary>
+/// The secret stores of the store tests: always isolated backends (16-testing-strategy section 2), never a real OS secret store (the
+/// user's decisions of 2026-10-17; the OS secret-store tier alone reaches one).
+/// </summary>
 internal static class TestSecretStores
 {
     /// <summary>
-    /// Windows: Credential Manager (entries are uniquely named per node ID and deleted by the test). Linux: selection with a
-    /// private bus address that does not exist, so the owner-only file fallback under the test's data root is selected, as
-    /// DesktopPlatform's selection tests do; the user's Secret Service is never contacted.
+    /// After a test deleted its keys: every key the store recorded must read back absent from <paramref name="secrets"/>, and nothing
+    /// else may be left in it. Fails with the names (test verification; never a production read-back).
     /// </summary>
-    public static SecretStoreSelection Select(string dataRoot) => OperatingSystem.IsWindows()
-        ? OsSecretStore.SelectForCurrentPlatform(dataRoot)
-        : OsSecretStore.SelectForCurrentPlatform(dataRoot, new SecretServiceOptions
-        {
-            BusAddress = "unix:path=" + Path.Combine(dataRoot, "run", "no-session-bus"),
-            CallTimeout = TimeSpan.FromSeconds(2),
-        });
+    public static void AssertNoLeaks(NodeStore store, ArcForges.Tests.IsolatedSecretStore secrets)
+    {
+        var recorded = KeyNames(store);
+        var remaining = secrets.Remaining(recorded);
+        var leaks = secrets.TakeLeaks(remaining);
+        Assert.True(remaining.Count == 0 && leaks.Count == 0,
+            "The isolated secret store still holds entries after the test's deletes: " + string.Join(", ", remaining.Concat(leaks)));
+    }
 
-    public static void RequireRealSecretStore() =>
-        Assert.SkipUnless(OperatingSystem.IsWindows() || OperatingSystem.IsLinux(), "The node data key needs Windows Credential Manager or Linux.");
+    /// <summary>As <see cref="AssertNoLeaks(NodeStore, ArcForges.Tests.IsolatedSecretStore)"/> for the file-backed store of a data root.</summary>
+    public static void AssertNoLeaks(NodeStore store, string dataRoot)
+    {
+        var files = new TestDataRootSecretStore(dataRoot);
+        var remaining = KeyNames(store).Where(name => files.Read(name) is not null).ToList();
+        var left = files.Names().Except(remaining, StringComparer.Ordinal).ToList();
+        Assert.True(remaining.Count == 0 && left.Count == 0,
+            "The data root's isolated secret store still holds entries after the test's deletes: " + string.Join(", ", remaining.Concat(left)));
+    }
+
+    /// <summary>The target names of every key version <paramref name="store"/> records.</summary>
+    public static List<string> KeyNames(NodeStore store)
+    {
+        using var keys = new NodeDataKeyRing(store, new ArcForges.Tests.IsolatedSecretStore().Selection);
+        return [.. keys.Keys().Select(key => NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, key.KeyId))];
+    }
 }
 
 /// <summary>Minimal rows of later subsystems that the store's foreign keys need.</summary>

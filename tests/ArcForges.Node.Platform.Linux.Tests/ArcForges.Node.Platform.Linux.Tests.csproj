@@ -16,7 +16,7 @@
     <ProjectReference Include="../../src/ArcForges.Node.Platform.Linux/ArcForges.Node.Platform.Linux.csproj" />
     <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
     <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
-    <!-- The host's graph carries the DesktopPlatform 1.0.0-ci.138.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
+    <!-- The host's graph carries the DesktopPlatform 1.0.0-ci.141.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
   </ItemGroup>
 </Project>

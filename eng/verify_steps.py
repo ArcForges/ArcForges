@@ -32,7 +32,22 @@ Differences from the hosted jobs:
   win-arm64 and linux-arm64 (removed from the owner path by the user's instruction), the artifact uploads.
 Only Markdown outside the code, test, tool, script and workflow directories (and not THIRD_PARTY_NOTICES.md, which the
 desktop publish ships) selects the `docs` profile: the secret scan alone.
+No step runs the OS secret-store tier, and the verification refuses to run at all while the tier's opt-in is set (below);
+eng/test.ps1 and eng/test.sh also remove it for every suite they run.
 """
+
+import os
+
+# The single opt-in of the OS secret-store integration tier (ArcForges-Design 16-testing-strategy section 1). Only the tier's runner
+# (eng/os_secret_store_tier.py) and its hosted job set it; the pre-push verification refuses to run while it is present, so a stray
+# value can never reach a routine suite.
+OS_SECRET_STORE_OPT_IN = "ARCFORGES_OS_SECRET_STORE_TESTS"
+if OS_SECRET_STORE_OPT_IN in os.environ:
+    raise SystemExit(
+        f"arcforges-verify: FAIL {OS_SECRET_STORE_OPT_IN} is set in this environment. It is the opt-in of the OS secret-store "
+        "integration tier, which only that tier's runner or hosted job sets, and the pre-push verification refuses to run with it "
+        f"(routine suites never reach a real OS secret store). Remove it (PowerShell: Remove-Item Env:{OS_SECRET_STORE_OPT_IN}; "
+        f"bash: unset {OS_SECRET_STORE_OPT_IN}) and run again.")
 
 REPOSITORY = "ArcForges"
 RID_WIN, RID_LINUX = "win-x64", "linux-x64"

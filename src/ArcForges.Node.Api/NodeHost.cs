@@ -9,7 +9,6 @@ using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
-using ArcForges.Security.Secrets;
 
 namespace ArcForges.Node.Api;
 
@@ -60,10 +59,12 @@ public sealed record NodeHostOptions
     public Action<NodeRuntime>? Ready { get; init; }
 
     /// <summary>
-    /// Selects the OS secret store of the node data key for a data root (default <c>OsSecretStore.SelectForCurrentPlatform</c>;
-    /// component tests on Linux select the owner-only file fallback so the user's keyring is never touched).
+    /// The secret store of the node data key for a data root. Null (the executable): <see cref="NodeSecretStores.ForNode(string, bool)"/>,
+    /// the OS secret store in production and, with <see cref="TestMode"/>, the file-backed isolated store of the test data root unless
+    /// the OS secret-store tier's opt-in is set (02-node-service section 4). Every in-process test node sets it to an isolated backend
+    /// (16-testing-strategy section 2; ArcForges.Repository.Tests checks this).
     /// </summary>
-    public Func<string, SecretStoreSelection> SecretStore { get; init; } = dataRoot => OsSecretStore.SelectForCurrentPlatform(dataRoot);
+    internal Func<string, NodeSecretStore>? SecretStore { get; init; }
 
     /// <summary>
     /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
@@ -202,7 +203,7 @@ public static class NodeHost
         var settings = new NodeSettingsManager(configPath, dataRoot, log);
 
         // The node data key loads at startup, outside the writer (secret-store I/O must never run under the writer lock).
-        var keys = new NodeDataKeyRing(store, options.SecretStore(dataRoot));
+        var keys = new NodeDataKeyRing(store, options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode));
         var keyLoad = Task.Run(() =>
         {
             var keyId = keys.Prepare(out var reason);
@@ -212,7 +213,8 @@ public static class NodeHost
             }
             else
             {
-                log.Info("node.data_key.loaded", new LogField("keyId", keyId), new LogField("backend", keys.Backend), new LogField("protection", keys.Protection));
+                log.Info("node.data_key.loaded", new LogField("keyId", keyId), new LogField("backend", keys.Backend), new LogField("protection", keys.Protection),
+                    new LogField("isolated", keys.Isolated));
             }
         }, CancellationToken.None);
 

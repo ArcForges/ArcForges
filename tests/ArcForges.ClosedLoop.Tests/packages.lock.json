@@ -30,11 +30,11 @@
       },
       "ArcForges.Capabilities": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.138.1",
-        "contentHash": "6kElTgGQMzOJf7RZGHNdINq4gr0q4m6dj5ebluBR7brSpm9ZKWCffiy7xFNA9rOuciHPmUXfoK1MGOY8uGPkEA==",
+        "resolved": "1.0.0-ci.141.1",
+        "contentHash": "fc2JQFrLG33ozu7m9jVP7PB6Ia2C2noNndm3zDvhFPfjYf11D7R/PPT4bIYRoFslvWu8X2NSIUzjHY14qZ6r5A==",
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.138.1]",
+          "ArcForges.Foundation": "[1.0.0-ci.141.1]",
           "ArcForges.Sdk.Contracts": "[1.0.0-ci.216.1]"
         }
       },
@@ -50,8 +50,8 @@
       },
       "ArcForges.Foundation": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.138.1",
-        "contentHash": "8poLjYyB40v+TlyAL8dQKPqUK8hQrmSAT5G/W98KHmhzVwAjRTRtEoPpaob65IjI76zLLpdKFiz3TyfTYhVS3w==",
+        "resolved": "1.0.0-ci.141.1",
+        "contentHash": "pW8c6mtNz/ct5fTjL1c8Oohfr9DkcuOwyL9zFpxEseABvNrujtzO9causpGbp3hvfV5iSAF5UP4rpl696EdJhQ==",
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]"
         }
@@ -69,11 +69,11 @@
       },
       "ArcForges.Security": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.138.1",
-        "contentHash": "mWvxu8rqDWweRGhGHOBrRe+B6FGSuIlZOvYrImp96pr2Sus+kr3JvKYIJwjyvNnVSmuJN2oQORONKJqC54L/oA==",
+        "resolved": "1.0.0-ci.141.1",
+        "contentHash": "+LhQxWTBb1jmgkQBj5My5OzoNi8YGLahn5ZgjUkEI0lHv5IjBXybOi60zdnWkdlhwPu2VlziIOvjtimga9vh3g==",
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.138.1]"
+          "ArcForges.Foundation": "[1.0.0-ci.141.1]"
         }
       },
       "Google.Protobuf": {
@@ -320,7 +320,7 @@
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.Node.Store": "[0.1.0-dev, )",
-          "ArcForges.Observability": "[1.0.0-ci.138.1, )"
+          "ArcForges.Observability": "[1.0.0-ci.141.1, )"
         }
       },
       "arcforges.node.platform": {
@@ -349,7 +349,7 @@
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
-          "ArcForges.Security.Secrets": "[1.0.0-ci.138.1, )",
+          "ArcForges.Security.Secrets": "[1.0.0-ci.141.1, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )"
         }
       },
@@ -376,23 +376,23 @@
       },
       "ArcForges.Observability": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.138.1, )",
-        "resolved": "1.0.0-ci.138.1",
-        "contentHash": "dxWIRxLva5p3Xt5Bd5Sa87nMessMmSel7nf+btaPXlasWSVWz8fmC7C5B6SUd5t82bsOBfGMwkoFVwzLgkRe/w==",
+        "requested": "[1.0.0-ci.141.1, )",
+        "resolved": "1.0.0-ci.141.1",
+        "contentHash": "Lk9bt6glfiQ6vsm6uiYB4I3VQnnuFzSUKzvC0skpLHrjApz1uSmWoIcYhp1dnMbNT5SZ2896B00v4NXsU0qBdw==",
         "dependencies": {
-          "ArcForges.Capabilities": "[1.0.0-ci.138.1]",
+          "ArcForges.Capabilities": "[1.0.0-ci.141.1]",
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.138.1]"
+          "ArcForges.Foundation": "[1.0.0-ci.141.1]"
         }
       },
       "ArcForges.Security.Secrets": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.138.1, )",
-        "resolved": "1.0.0-ci.138.1",
-        "contentHash": "52soPnc43Vngo6bZXqzHo/oTMFAwPjHRqlueK0W6qbxFbAKxBaL2tRnM3V93Q3+CUlDQDmFxeUR35pssP3s6kg==",
+        "requested": "[1.0.0-ci.141.1, )",
+        "resolved": "1.0.0-ci.141.1",
+        "contentHash": "NH1UH6xDnu/lNQmrmHgMbM6sAooVoTn3n7nAGhbLZzBJSxxyjyEKXYR5WcI1B6lXCRdca88aGQnse7hdRDqLVw==",
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Security": "[1.0.0-ci.138.1]",
+          "ArcForges.Security": "[1.0.0-ci.141.1]",
           "Tmds.DBus.Protocol": "[0.94.1]"
         }
       },

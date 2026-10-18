@@ -19,6 +19,12 @@ set -f # trait filters contain '*', which must reach the test applications unexp
 
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export AVALONIA_TELEMETRY_OPTOUT=1
+# The single opt-in of the OS secret-store tier (16-testing-strategy section 1). Every suite this script runs is routine, so none
+# inherits it: a stray value is removed before anything runs. Only eng/os_secret_store_tier.py runs the tier, never this script.
+if [ -n "${ARCFORGES_OS_SECRET_STORE_TESTS+x}" ]; then
+  unset ARCFORGES_OS_SECRET_STORE_TESTS
+  echo "test.sh: removed ARCFORGES_OS_SECRET_STORE_TESTS from the environment: routine suites never reach a real OS secret store (only eng/os_secret_store_tier.py runs the OS secret-store tier)."
+fi
 
 configuration=Release
 build=1

@@ -81,11 +81,23 @@ any change. They are binding; this file summarizes them and adds the repository 
   run real `arcforges` processes (JIT next to the tests, or `ARCFORGES_HOST_PATH`), each node isolated with
   `--test-mode` and the `ARCFORGES_ENDPOINT` / `ARCFORGES_CONFIG_DIR` hooks; their fixture fails a test that leaves a
   node or supervisor of its own environment (its endpoint, or on Linux its slice) running and deletes the node data key it created in
-  the OS secret store. On Linux each test node gets its
+  its data root's isolated secret store, then verifies its absence. On Linux each test node gets its
   own slice `arcforges-test-<id>.slice` (`ARCFORGES_SLICE`) and the fixtures stop its units, slice and test units and fail on anything
   left running (the shared parent slices stay); a test that freezes a unit must thaw it before it is killed (the user manager blocks spawning into a frozen cgroup). On Windows a
   shell inside a job without breakaway (an AI-client sandbox) refuses auto-start by design, so the auto-start
   test skips there with its reason.
+- **OS secret stores (16-testing-strategy sections 1-2; the user's decisions of 2026-10-17).** Routine tests, the pre-push hook and
+  the deep tier never reach the real Windows Credential Manager or Secret Service. Tests use `tests/Shared/IsolatedSecretStore.cs`
+  (in memory, scripted faults); nodes started with `--test-mode` and `arcforges-bench` keep keys in the file-backed store under
+  their data root (`NodeSecretStores`, the only production source that names the OS selection). The guard: every test project sets
+  the AppContext switch `ArcForges.Security.Secrets.DenyOsStores` (`tests/Directory.Build.props`), so the adapters refuse before
+  any OS call; `eng/test.ps1`/`eng/test.sh` remove a stray `ARCFORGES_OS_SECRET_STORE_TESTS`, `eng/verify_steps.py` refuses to
+  run with it, and `ArcForges.Repository.Tests` (`OsSecretStoreGuardPolicyTests`) checks sources, `--test-mode`, the tier's
+  isolation and every runtime configuration. The OS secret-store tier (`tests/ArcForges.OsSecretStoreTier`: one sequential
+  write, read, overwrite, delete and absence cycle of the node data key, at most 4 entries, 32 calls, 10 s per call, 5 minutes,
+  exact-name cleanup from its name list) runs only in `.github/workflows/os-secret-store-tier.yml` (external PRs, merge queue,
+  dispatch, weekly; the opt-in on its test step only) or, on the user's explicit opt-in, through `eng/os_secret_store_tier.py`.
+  Agents never set the opt-in, never run the tier and never stress an OS store.
 - **Workloads and benchmarks:** `arcforges-testload` (cpu, mem-ramp, output, fork) is a
   deterministic synthetic workload, not a fake; evidence names the scenario and parameters.
   `arcforges-bench` (size, startup, compare-startup, store-growth) produces the JSON results of

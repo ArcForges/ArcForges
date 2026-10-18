@@ -24,6 +24,7 @@
     <Project Path="tests/ArcForges.Node.Platform.Linux.Tests/ArcForges.Node.Platform.Linux.Tests.csproj" />
     <Project Path="tests/ArcForges.Node.Platform.Windows.Tests/ArcForges.Node.Platform.Windows.Tests.csproj" />
     <Project Path="tests/ArcForges.Node.Store.Tests/ArcForges.Node.Store.Tests.csproj" />
+    <Project Path="tests/ArcForges.OsSecretStoreTier/ArcForges.OsSecretStoreTier.csproj" />
     <Project Path="tests/ArcForges.Repository.Tests/ArcForges.Repository.Tests.csproj" />
     <Project Path="tests/ArcForges.Tools.Tests/ArcForges.Tools.Tests.csproj" />
   </Folder>
