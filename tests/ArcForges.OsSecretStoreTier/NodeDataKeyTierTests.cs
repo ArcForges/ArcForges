@@ -27,7 +27,7 @@ public sealed class OsSecretStoreTierDefinition : ICollectionFixture<OsSecretSto
 /// every call counted and bounded by the tier fixture (at most 4 entries, 32 calls, 10 s per call, 5 minutes), the name listed before
 /// it is created and deleted by that exact name only. The read-backs and the absence check are test verification; production never
 /// reads a key back after writing it (04-execution section 2), which the first step also shows. The Linux Secret Service binding
-/// (in the isolated ArcForgesTest distribution) is not delivered yet.
+/// (on the isolated Linux secret-store test host, ArcForges-Design AD-0019 section 6) is not delivered yet.
 /// </summary>
 [Collection(OsSecretStoreTierDefinition.Name)]
 [Trait("env", "os-secret-store")]
