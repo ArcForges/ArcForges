@@ -18,6 +18,9 @@ public sealed class HolderTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(60);
 
+    /// <summary>A failed launch is reported within milliseconds of the holder's start; the bound leaves room for a loaded machine.</summary>
+    private static readonly TimeSpan LaunchFailureBound = TimeSpan.FromSeconds(20);
+
     [Fact(Timeout = 120_000)]
     public async Task TheHolderRecordsTheExitWithAccountingAndKeepsTheJobUntilAcknowledged()
     {
@@ -107,7 +110,9 @@ public sealed class HolderTests
         Assert.False(File.Exists(rootMarker), "The command never started.");
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: it sets this process's error mode, which every holder started meanwhile would inherit.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AProgramThatCannotBeStartedIsAFailedLaunch()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -115,8 +120,21 @@ public sealed class HolderTests
         using var harness = PlatformHarness.Start();
         var notAProgram = Path.Combine(harness.Root, "not-a-program.exe");
         File.WriteAllText(notAProgram, "this is text, not a Windows program");
-        var handle = harness.Launch([notAProgram]);
-        Assert.Null(await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken));
+
+        // The holder inherits this process's error mode. Without SEM_FAILCRITICALERRORS (an interactive shell's default) the file
+        // raises a system hard error, and the launch must still fail at once instead of waiting for its message box.
+        var previousMode = PlatformHarness.SetErrorMode(0);
+        WindowsAttemptHandle handle;
+        try
+        {
+            handle = harness.Launch([notAProgram]);
+        }
+        finally
+        {
+            _ = PlatformHarness.SetErrorMode(previousMode);
+        }
+
+        Assert.Null(await handle.Started.WaitAsync(LaunchFailureBound, TestContext.Current.CancellationToken));
         harness.WaitExit(handle, Bound);
         var launch = handle.TryReadLaunchFailure();
         Assert.NotNull(launch);

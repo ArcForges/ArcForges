@@ -87,12 +87,16 @@ public sealed partial class StoreCreationTests
     }
 
     [Fact]
-    public void AGuestNodeStoreRecordsItsRole()
+    public void AGuestNodeStoreIsRefused()
     {
+        // WSL guest nodes are retired (ArcForges-Design AD-0018): every node is a HOST, and the store refuses any other role.
         using var root = new TemporaryDataRoot();
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "boot", Role = NodeRole.Guest, Clock = new ManualClock() });
 
-        Assert.Equal(NodeRole.Guest, store.Metadata.Role);
+        var refused = Assert.Throws<ArgumentException>(() => NodeStore.Open(
+            new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "boot", Role = NodeRole.Guest, Clock = new ManualClock() }));
+
+        Assert.Contains("HOST", refused.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(StorePaths.Database(root.Path)));
     }
 
     [Fact]

@@ -37,7 +37,6 @@ public static class NodeInfoJson
                 WriteEnum(writer, "role", "NODE_ROLE", node.Role.ToString(), (int)node.Role);
             }
 
-            WriteId(writer, "hostNodeId", node.HostNodeId);
             if (node.HasOs)
             {
                 WriteEnum(writer, "os", "OS_FAMILY", node.Os.ToString(), (int)node.Os);
@@ -111,11 +110,6 @@ public static class NodeInfoJson
         if (info.HasLanEnabled)
         {
             writer.WriteBoolean("lanEnabled", info.LanEnabled);
-        }
-
-        if (info.HasGuestLinks)
-        {
-            writer.WriteNumber("guestLinks", info.GuestLinks);
         }
 
         if (info.HasEdition)

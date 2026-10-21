@@ -39,7 +39,7 @@ delivery plan: [Plan](https://github.com/ArcForges/Plan).
 
 ## Build and test
 
-Use the .NET SDK in `global.json` (10.0.401) on Windows 11 or Linux (WSL2 Debian for development).
+Use the .NET SDK in `global.json` (10.0.401) on Windows 11 or Linux.
 
 ```sh
 dotnet restore ArcForges.slnx --locked-mode
@@ -56,7 +56,7 @@ Native AOT publish (fails on any build, trim or AOT warning), benchmarks and the
 ./eng/package.ps1 -RuntimeIdentifier win-x64   # artifacts/packages/arcforges-desktop-win-x64.zip
 ```
 
-Linux executables are published on Linux or WSL, for example
+Linux executables are published on Linux, for example
 `dotnet publish src/ArcForges.Host -c Release -r linux-x64 -warnaserror`.
 
 ## The node and the CLI
@@ -106,7 +106,7 @@ arcforges-bench store-growth --environment tests/ArcForges.Node.Store.Tests/Fixt
 Equal parameters give equal bytes and digests on every run and platform; `--help` lists the options.
 
 The owner's pushes are verified locally by the pre-push hook (`python eng/verify.py install` once, then `python eng/verify.py run`;
-[AGENTS.md](AGENTS.md) §5) on Windows and WSL2 Debian. CI verifies external pull requests the same way on Windows and Ubuntu
+[AGENTS.md](AGENTS.md) §5): a Windows leg on native Windows and a Linux leg on a real Linux host. CI verifies external pull requests the same way on Windows and Ubuntu
 (the closed-loop node and CLI tests on the JIT build and on the native binaries), publishes Native AOT for
 **win-x64, win-arm64, linux-x64 and linux-arm64**, gates binary sizes, node store growth and CLI cold-start regressions against
 the base commit, checks that the node store schema only expands, and checks formatting, analyzers, dependencies, secrets and

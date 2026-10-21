@@ -162,7 +162,6 @@ public sealed class NodeRuntime : IDisposable
             Capabilities = Capabilities,
             AccountLinked = false,
             LanEnabled = false,
-            GuestLinks = 0,
             Edition = Edition.Free,
             State = Lifecycle.State,
         };

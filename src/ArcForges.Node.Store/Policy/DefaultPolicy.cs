@@ -57,7 +57,6 @@ public static class DefaultPolicy
                 },
                 SwapAllowanceBytes = 0,
                 LargeTaskReservationMaxMs = 30 * 60 * 1_000,
-                GuestStandaloneFraction = 0.25,
             },
             Agents = new AgentPolicy
             {

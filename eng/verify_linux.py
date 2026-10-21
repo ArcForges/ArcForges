@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """The linux-x64 gates of the local pre-push verification (eng/verify_steps.py) that hosted CI runs through PowerShell.
 
-WSL Debian has no PowerShell, so each command does for linux-x64 exactly what the named script does (keep them in step):
+The Linux host needs no PowerShell: each command does for linux-x64 exactly what the named script does (keep them in step):
 
   python eng/verify_linux.py publish <group>...          eng/publish.ps1 -RuntimeIdentifier linux-x64 -NoRestore
   python eng/verify_linux.py bench                        eng/bench.ps1 -RuntimeIdentifier linux-x64
@@ -205,7 +205,7 @@ def main() -> int:
     commands.add_parser("package")
     args = parser.parse_args()
     if not sys.platform.startswith("linux"):
-        print("verify_linux.py runs on Linux (WSL Debian); on Windows use the eng/*.ps1 scripts.", file=sys.stderr)
+        print("verify_linux.py runs on Linux; on Windows use the eng/*.ps1 scripts.", file=sys.stderr)
         return 2
     os.environ["AVALONIA_TELEMETRY_OPTOUT"] = "1"
     try:
