@@ -110,7 +110,9 @@ public sealed class HolderTests
         Assert.False(File.Exists(rootMarker), "The command never started.");
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: it sets this process's error mode, which every holder started meanwhile would inherit.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task AProgramThatCannotBeStartedIsAFailedLaunch()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
