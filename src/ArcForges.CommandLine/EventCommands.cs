@@ -26,7 +26,6 @@ internal static class EventCommands
         ["workspaces"] = EventTopic.Workspaces,
         ["jobs"] = EventTopic.Jobs,
         ["peers"] = EventTopic.Peers,
-        ["guests"] = EventTopic.Guests,
         ["policy"] = EventTopic.Policy,
         ["updates"] = EventTopic.Updates,
         ["account"] = EventTopic.Account,

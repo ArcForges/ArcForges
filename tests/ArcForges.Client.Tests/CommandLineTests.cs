@@ -275,8 +275,7 @@ public sealed class CommandLineTests
         var info = new NodeInfo { Node = new NodeRef { NodeId = CommandIds.New(), Name = "box" }, State = NodeLifecycleState.Degraded };
         if (full)
         {
-            info.Node.Role = NodeRole.Guest;
-            info.Node.HostNodeId = CommandIds.New();
+            info.Node.Role = NodeRole.Host;
             info.Node.Os = OsFamily.Linux;
             info.Node.Arch = CpuArchitecture.Arm64;
             info.Version = "0.1.0-dev+abc";
@@ -308,7 +307,6 @@ public sealed class CommandLineTests
             info.UpdateChannel = "beta";
             info.AccountLinked = false;
             info.LanEnabled = true;
-            info.GuestLinks = 0;
             info.Edition = Edition.Pro;
             info.State = (NodeLifecycleState)99;
         }

@@ -14,7 +14,7 @@ namespace ArcForges.Node.Store;
 /// (<see cref="TestDataRootSecretStore"/>), which keeps restart and retry tests' keys.</item>
 /// </list>
 /// Every secret the node holds in the OS secret store takes its store from here. Today that is the node data key; the node
-/// credential, the WSL guest link tokens and the LAN link tokens (09-lan section 9) and the CNG node key (AF-LAN-01) are not
+/// credential, the LAN link tokens and the CNG node key (AF-LAN-01) are not
 /// delivered yet. <em>Note (2026-10-18):</em> when they are, they take their store from <see cref="ForNode(string, bool)"/> (the CNG
 /// node key a file-backed key in the test data root under the same rule), so <c>--test-mode</c> keeps them in the test data root too.
 /// </summary>

@@ -5,7 +5,6 @@
 # No second account is created: the other process runs under an unused uid through setpriv, as root.
 #
 #   sudo tests/ArcForges.ClosedLoop.Tests/Procedures/ar02-other-uid.sh <arcforges binary> <node owner user> [other uid (1077)]
-#   (in WSL: wsl -d Debian -u root -- bash <this script> <binary> sammiller)
 #
 # 1. The owner starts a test node (its own configuration, data root and socket under a fresh directory).
 # 2. The other uid connects to the socket: refused by the 0700 socket directory (EACCES).

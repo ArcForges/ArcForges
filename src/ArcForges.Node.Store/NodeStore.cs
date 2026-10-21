@@ -19,7 +19,7 @@ public sealed class NodeStoreOptions
     /// </summary>
     public required string BootIdentity { get; init; }
 
-    /// <summary>The node's role, recorded when the store is created.</summary>
+    /// <summary>The node's role, recorded when the store is created: always HOST (guest nodes are retired, ArcForges-Design AD-0018).</summary>
     public NodeRole Role { get; init; } = NodeRole.Host;
 
     /// <summary>The clock (the node's IClock; tests use a controllable one).</summary>
@@ -167,9 +167,9 @@ public sealed class NodeStore : IDisposable
             throw new ArgumentException("The node data root must be an absolute path.", nameof(options));
         }
 
-        if (options.Role is not (NodeRole.Host or NodeRole.Guest))
+        if (options.Role is not NodeRole.Host)
         {
-            throw new ArgumentException("The node role is HOST or GUEST.", nameof(options));
+            throw new ArgumentException("The node role is HOST; WSL guest nodes are retired (ArcForges-Design AD-0018).", nameof(options));
         }
 
         SQLitePCL.Batteries_V2.Init();
