@@ -265,6 +265,10 @@ internal sealed partial class PlatformHarness : IDisposable
         return new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
     }
 
+    /// <summary>Sets this process's error mode, which the processes it creates inherit; returns the previous mode.</summary>
+    [LibraryImport("kernel32.dll")]
+    internal static partial uint SetErrorMode(uint mode);
+
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsProcessInJob(nint process, nint job, [MarshalAs(UnmanagedType.Bool)] out bool result);

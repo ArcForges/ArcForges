@@ -272,6 +272,44 @@ public sealed class NodeServiceTests
     }
 
     [Fact(Timeout = 60_000)]
+    public async Task TheNodeStopsCleanlyWhileAnotherProcessHoldsItsEndpointDescriptor()
+    {
+        // A scanner or an older client may hold run/endpoint.json open without delete sharing while the node stops: on Windows the
+        // descriptor then cannot be deleted, and the shutdown still completes (clients ignore a descriptor whose process is gone).
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var descriptor = NodeLocations.EndpointDescriptorFile(node.DataRoot);
+        using (new FileStream(descriptor, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            // Reading the descriptor meanwhile neither fails nor adds a lock of its own.
+            Assert.NotNull(EndpointDescriptor.TryRead(descriptor));
+            await using (var channel = await node.ChannelAsync(helloAsHuman: true))
+            {
+                var response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = InProcessNode.Command(), Reason = "test" },
+                    deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+                Assert.Equal(EffectCertainty.Happened, response.Value.Receipt.Effect);
+            }
+
+            Assert.Equal(0, await node.Exit.WaitAsync(TimeSpan.FromSeconds(15), ct));
+        }
+
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "check" });
+        Assert.True(store.Metadata.PreviousShutdownClean);
+        var log = File.ReadAllText(Path.Combine(node.DataRoot, "logs", "node", "node.log"));
+        Assert.Contains("\"event\":\"node.stopped\"", log, StringComparison.Ordinal);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Contains("\"event\":\"node.descriptor.delete_failed\"", log, StringComparison.Ordinal);
+            Assert.True(File.Exists(descriptor));
+        }
+        else
+        {
+            // Unlinking an open file succeeds on Linux.
+            Assert.False(File.Exists(descriptor));
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
     public async Task HealthAndCapabilitiesReportTheBuildsEnforcement()
     {
         // Windows enforces through job objects (AF-EXEC-01) and is READY; Linux enforces through transient units of the user manager

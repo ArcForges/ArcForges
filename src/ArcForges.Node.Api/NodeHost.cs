@@ -415,11 +415,38 @@ public static class NodeHost
         var descriptorPath = NodeLocations.EndpointDescriptorFile(dataRoot);
         if (EndpointDescriptor.TryRead(descriptorPath) is { } descriptor && descriptor.ProcessId == Environment.ProcessId)
         {
-            File.Delete(descriptorPath);
+            await DeleteDescriptorAsync(node.Log, descriptorPath).ConfigureAwait(false);
         }
 
         node.Log.Info("node.stopped", new LogField("shutdownMs", (long)node.Clock.GetElapsedTime(started).TotalMilliseconds));
         return NodeExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Deletes the node's endpoint descriptor. Another process may hold it open without delete sharing for a moment (a scanner, an
+    /// older client); after a bounded retry the descriptor stays and the shutdown goes on: clients ignore a descriptor whose process
+    /// is gone (02 section 3 step 2) and the next node replaces it.
+    /// </summary>
+    private static async Task DeleteDescriptorAsync(NodeLog log, string path)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Delete(path);
+                return;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 10)
+                {
+                    log.Warning("node.descriptor.delete_failed", new LogField("errorType", exception.GetType().Name), new LogField("attempts", attempt));
+                    return;
+                }
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+        }
     }
 
     private static async Task HousekeepAsync(NodeRuntime node, NodeDataKeyRing keys, PeriodicTimer timer, CancellationToken cancellationToken)

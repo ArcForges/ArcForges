@@ -39,14 +39,21 @@ public sealed class EndpointDescriptor
     /// <summary>The node's version.</summary>
     public required string Version { get; init; }
 
-    /// <summary>Reads a descriptor, or returns <see langword="null"/> when it is absent or unreadable.</summary>
+    /// <summary>
+    /// Reads a descriptor, or returns <see langword="null"/> when it is absent or unreadable. The file is shared for writing and
+    /// deletion while it is read, so a reader never makes the node's replace or delete of the descriptor fail on Windows.
+    /// </summary>
     public static EndpointDescriptor? TryRead(string path)
     {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
         try
         {
-            return File.Exists(path)
-                ? JsonSerializer.Deserialize(File.ReadAllBytes(path), ClientJsonContext.Default.EndpointDescriptor)
-                : null;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return JsonSerializer.Deserialize(stream, ClientJsonContext.Default.EndpointDescriptor);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {

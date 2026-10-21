@@ -44,6 +44,7 @@ internal static unsafe partial class Native
     public const uint CreateUnicodeEnvironment = 0x00000400;
     public const uint ExtendedStartupInfoPresent = 0x00080000;
     public const uint CreateNoWindow = 0x08000000;
+    public const uint SemFailCriticalErrors = 0x0001;
     public const int StartfUseStdHandles = 0x00000100;
     public const nint ProcThreadAttributeHandleList = 0x00020002;
     public const nint ProcThreadAttributeParentProcess = 0x00020000;
@@ -312,6 +313,10 @@ internal static unsafe partial class Native
     public static partial bool CreateProcess(string? application, char* commandLine, nint processAttributes, nint threadAttributes,
         [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint creationFlags, char* environment, string? currentDirectory, StartupInfoEx* startupInfo,
         out ProcessInformation processInformation);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetThreadErrorMode(uint newMode, out uint oldMode);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
