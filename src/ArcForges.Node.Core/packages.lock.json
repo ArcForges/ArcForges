@@ -30,13 +30,13 @@
       },
       "ArcForges.Observability": {
         "type": "Direct",
-        "requested": "[1.0.0-ci.141.1, )",
-        "resolved": "1.0.0-ci.141.1",
-        "contentHash": "Lk9bt6glfiQ6vsm6uiYB4I3VQnnuFzSUKzvC0skpLHrjApz1uSmWoIcYhp1dnMbNT5SZ2896B00v4NXsU0qBdw==",
+        "requested": "[1.0.0-ci.143.1, )",
+        "resolved": "1.0.0-ci.143.1",
+        "contentHash": "s2FdqLS2HJPk4zQ1zZ21w6GsC65mwAzTh+Ymnx0On7iRWBgAPJyFwYIxmklWm9CEX28cjoewfX8a4rqXnHhysw==",
         "dependencies": {
-          "ArcForges.Capabilities": "[1.0.0-ci.141.1]",
+          "ArcForges.Capabilities": "[1.0.0-ci.143.1]",
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.141.1]"
+          "ArcForges.Foundation": "[1.0.0-ci.143.1]"
         }
       },
       "Microsoft.NET.ILLink.Tasks": {
@@ -47,11 +47,11 @@
       },
       "ArcForges.Capabilities": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.141.1",
-        "contentHash": "fc2JQFrLG33ozu7m9jVP7PB6Ia2C2noNndm3zDvhFPfjYf11D7R/PPT4bIYRoFslvWu8X2NSIUzjHY14qZ6r5A==",
+        "resolved": "1.0.0-ci.143.1",
+        "contentHash": "JCbdybK1vH72sPn+rI1g62a7Hi7eY48H87r+YwwDMmxdEhRRjCdYFNsMyF9pO4fhb9aNeVJJdWfQQZ5ArWvukA==",
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.141.1]",
+          "ArcForges.Foundation": "[1.0.0-ci.143.1]",
           "ArcForges.Sdk.Contracts": "[1.0.0-ci.216.1]"
         }
       },
@@ -67,8 +67,8 @@
       },
       "ArcForges.Foundation": {
         "type": "Transitive",
-        "resolved": "1.0.0-ci.141.1",
-        "contentHash": "pW8c6mtNz/ct5fTjL1c8Oohfr9DkcuOwyL9zFpxEseABvNrujtzO9causpGbp3hvfV5iSAF5UP4rpl696EdJhQ==",
+        "resolved": "1.0.0-ci.143.1",
+        "contentHash": "7ncy+p2enebOZuyDMxw9J1S+aOyyBZBOnKkHWjZz/Kg7gq631nzKSQyy9Bt6V3q+uAD/f8yb4d6PaQnXqOMZLA==",
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]"
         }
