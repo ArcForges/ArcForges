@@ -13,8 +13,9 @@ Without the opt-in nothing runs and the tier is reported as not run, with the re
 itself and passes it only to the one `dotnet test` of the tier project, which runs alone (no other test or node process of the run),
 sequentially, under the tier fixture's limits (4 entries at once, 32 store calls, 10 s per call, 5 minutes). The run's name list is
 written to artifacts/evidence/os-secret-store-tier/ and is kept with the run's evidence. A run in which the tier's test did not run
-(skipped, or none found) fails (--fail-skips on, --minimum-expected-tests 1). The node binding's Linux Secret Service tier (in the
-isolated ArcForgesTest WSL distribution) is not delivered yet, so on Linux the tier is reported as not run.
+(skipped, or none found) fails (--fail-skips on, --minimum-expected-tests 1). The node binding's Linux Secret Service tier (on the
+isolated Linux secret-store test host behind the Linux MCP server, ArcForges-Design AD-0019 section 6) is not delivered yet,
+so on Linux the tier is reported as not run.
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ def refusal(environ: dict[str, str], platform: str) -> tuple[int, str] | None:
                          "no test reaches a real OS secret store")
     if platform.startswith("linux"):
         return NOT_RUN, ("NOT RUN: ArcForges's OS secret-store tier has no Linux Secret Service test yet (the node binding's Linux "
-                         "tier, in the isolated ArcForgesTest WSL distribution, is not delivered); it runs on Windows only")
+                         "tier, on the isolated Linux secret-store test host, is not delivered); it runs on Windows only")
     if platform != "win32":
         return 1, "REFUSED: the OS secret-store tier covers Windows only"
     return None

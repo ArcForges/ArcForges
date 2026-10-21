@@ -39,10 +39,9 @@ any change. They are binding; this file summarizes them and adds the repository 
 - No proxy or network changes; no installs by agents (installs are the user's); reuse installed
   toolchains and caches.
 - No macOS, device, GUI, browser, live-service or inference CI. Desktop UI tests are Avalonia headless.
-- Linux tests run on a native Linux host (the Linux leg, [§5](#5-local-verification-ad-0016)); local WSL is not a
-  development dependency ([AD-0018](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0018-native-platforms-without-wsl-integration.md)).
-  Never use the `ArcForgesTest` WSL distribution for development tests; where it exists it is reserved for installation
-  and restart tests. No SSH.
+- Linux tests run on the Linux MCP host, through the Linux MCP server (the Linux leg, [§5](#5-local-verification-ad-0016);
+  [AD-0019](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0019-mcp-first-verification.md)). Local WSL is never used for development or verification, not even as a fallback, and need
+  not be installed; no WSL distribution, `ArcForgesTest` included, is a test venue. No SSH.
 - Never touch Dependabot PRs, never enable auto-merge, never change repository security settings.
 - Diagnose before rerunning; bounded backoff; read hosted CI (external PRs) through the PR tools, never by polling loops.
 - Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; PR bodies
@@ -133,12 +132,20 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
   into the clone's common hooks directory, so every worktree runs them, and removes any `core.hooksPath`, including
   per-worktree values left by older scripts, and refuses while one remains elsewhere. Re-run it when `.githooks/`
   changes.
-- **Two legs on two machines** ([AD-0018](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0018-native-platforms-without-wsl-integration.md) §5).
+- **Two legs on two machines** ([AD-0018](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0018-native-platforms-without-wsl-integration.md) §5, as amended by
+  [AD-0019](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0019-mcp-first-verification.md)).
   Each step runs on one host: `win` (native Windows) or `linux` (native Linux). `eng/verify.py` runs only the leg of
   the machine's own operating system, never through WSL or a remote shell. The Windows leg runs on the Windows 11
-  workstation (from a Claude Code Cloud session, through Windows-MCP); the Linux leg runs on a real Linux host with a
-  systemd user manager and cpu, memory and pids delegated on cgroups v2, which its first step, `linux-real-os`, checks
-  (the Claude Code Cloud container has no user manager, so this repository's Linux leg fails there by design).
+  workstation, through the Windows MCP server; the Linux leg runs on the Linux MCP host, through the Linux MCP server,
+  with a systemd user manager and cpu, memory and pids delegated on cgroups v2, which its first step, `linux-real-os`,
+  checks (an agent's own sandbox, such as the Claude Code Cloud container, has no user manager, so this repository's
+  Linux leg fails there by design). Both are standard MCP servers that Claude Code and Codex share; their client
+  configuration and credentials stay outside this repository. Local WSL is never a venue, not even as a fallback.
+- **Stop rule** (AD-0019 §5). If the Linux (or Windows) MCP server is unavailable, unreachable or its host lacks a
+  prerequisite, stop verification and report the exact failure: the leg has no record, so the push stays rejected.
+  Never skip, mock or weaken a step, run the leg on another host (local WSL or an agent's own sandbox included), write
+  a record by hand, or bypass the hook. Until the Linux MCP server exists (Plan H-22), no Linux leg can be recorded, so
+  every push is rejected; there is no transition venue (AD-0019 §8).
 - `python eng/verify.py list` shows the profile, the steps and the state of each leg of `HEAD`. `python eng/verify.py
   run` verifies this machine's leg of `HEAD` now and records it, keyed by the tree, the merge base, the step set and the
   scripts (the secret scan also binds it to the exact head); a local record is reused while the tool versions are
