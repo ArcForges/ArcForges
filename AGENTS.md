@@ -178,6 +178,7 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
   produces it. The test projects' own logs are in the verification checkout's `artifacts/test-logs/`. Read
   the log, fix the cause, push again.
 - AI agents must never use `git push --no-verify` to bypass required validation.
+- Only `python eng/verify.py import` brings in another machine's leg, and only the record that `python eng/verify.py run` wrote on that machine at the exact commit: writing, editing or reusing a pass record by hand is circumventing the hooks.
 - They must also never disable, remove, modify, or otherwise circumvent the hooks merely to allow a push.
 - If validation fails, investigate and fix the underlying issue.
 - If a required local test cannot run, do not silently skip it or claim successful verification.
