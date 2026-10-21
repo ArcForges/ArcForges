@@ -7,7 +7,7 @@
   (arcforges-supervisor.exe; Windows RIDs only; the install layout puts it beside arcforges.exe),
   desktop (arcforges-desktop), testload (arcforges-testload), bench (arcforges-bench).
   Windows targets need the MSVC linker (Visual Studio C++ tools); Linux targets need clang and
-  zlib1g-dev and are published on Linux or WSL.
+  zlib1g-dev and are published on Linux.
 .EXAMPLE
   ./eng/publish.ps1 -RuntimeIdentifier win-x64
   ./eng/publish.ps1 -RuntimeIdentifier linux-x64 -Component host,testload

@@ -2,26 +2,29 @@
 """Local verification steps of ArcForges, loaded by eng/verify.py (which injects `Step`).
 
 The full profile is what the hosted `Native (win-x64)` and `Native (linux-x64)` jobs of .github/workflows/ci.yml and the
-`Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, on this workstation:
+`Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, in two legs on two native machines
+(eng/verify.py; AGENTS.md section 5): the Windows leg on the Windows 11 workstation, the Linux leg on a real Linux host:
 - lane `win` (Windows, in <main checkout>/.worktree/_verify): locked restore, Release build with analyzers as errors,
   the ci suite, the store schema check, Native AOT publish of every win-x64 component with zero warnings (in the Visual
   Studio developer environment), the tools suite against the native TestLoad and Bench, the closed-loop suite against
   the native host, the size and store-growth gates, packaging.
-- lane `wsl` (WSL Debian, in ~/.cache/arcforges-verify/ArcForges): the same for linux-x64, plus the format check, which
-  runs once, here, as hosted CI runs it on linux-x64 (measured warm: 29 s here against 47 s on Windows, where the win
-  lane is the longer one).
-- lanes `win-base` and `wsl-base`: the Native AOT host of the merge base, for the startup gate, in
+- lane `linux` (Linux, in ~/.cache/arcforges-verify/ArcForges): first `linux-real-os`, which fails unless a systemd user
+  manager runs for the user with cpu, memory and pids delegated on cgroups v2 (the linux-real, closed-loop and exclusive
+  tests skip with a reason without them, so a Linux leg on a machine without them would pass without the real tests;
+  it must fail instead), then the same as lane `win` for linux-x64, plus the format check, which runs once, here, as
+  hosted CI runs it on linux-x64.
+- lanes `win-base` and `linux-base`: the Native AOT host of the merge base, for the startup gate, in
   <main checkout>/.worktree/_verify-base and ~/.cache/arcforges-verify/ArcForges-base; rebuilt only when the merge base
   changed since the last run.
 - exclusive phase, alone after every lane: the exclusive suite on the JIT build and against the native host (as hosted
   CI runs it twice), on Windows and on Linux, then the startup regression gate per platform: the merge base's CLI and this
   commit's CLI measured here interleaved (p50 of 50 runs; a regression exceeds both 25 % and 5 ms).
-- lane `scan`: gitleaks over the pushed range ({range}) with the pinned image digest and .gitleaksignore, in WSL Docker
-  without network and with a read-only mount of the verification clone.
+- lane `scan`: gitleaks over the pushed range ({range}) with the pinned image digest and .gitleaksignore, in Docker on
+  the Linux host without network and with a read-only mount of the verification clone.
 - lane `actionlint`: only when .github/workflows/** changed.
 
 Differences from the hosted jobs:
-- WSL Debian has no PowerShell, so eng/verify_linux.py does for linux-x64 what eng/publish.ps1, bench.ps1,
+- The Linux host needs no PowerShell: eng/verify_linux.py does for linux-x64 what eng/publish.ps1, bench.ps1,
   compare-startup.ps1 and package.ps1 do there; the Windows lane runs the scripts themselves. The `tool=pwsh` tests
   (eng/compare-startup.ps1) therefore run on Windows only.
 - The startup gate's baseline is the merge base with main built here, where external-PR CI builds the PR's base commit
@@ -73,7 +76,7 @@ FINGERPRINT = {
         "msvc": ["pwsh", "-NoProfile", "-NonInteractive", "-Command", VSDEV + "$env:VCToolsVersion"],
         "pwsh": ["pwsh", "--version"],
     },
-    "wsl": {
+    "linux": {
         "dotnet-sdks": "dotnet --list-sdks | tr '\\n' ' '",
         "dotnet-runtimes": "dotnet --list-runtimes | tr '\\n' ' '",
         "clang": "clang --version | head -n 1",
@@ -83,12 +86,12 @@ FINGERPRINT = {
 # The environment of ci.yml, without CI=true (see above).
 ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1", "AVALONIA_TELEMETRY_OPTOUT": "1"}
 
-# Timeouts are five to ten times the cold durations measured on this workstation (18 logical processors, Windows and WSL
-# lanes concurrently, fresh verification checkouts), with a floor of five minutes.
+# Timeouts are five to ten times the cold durations measured on the workstation (18 logical processors, the Windows and
+# Linux lanes then ran concurrently on it, fresh verification checkouts), with a floor of five minutes.
 
 # Paths of the merge base's host.
 WIN_BASE = "(Join-Path (Split-Path (git rev-parse --path-format=absolute --git-common-dir) -Parent) '.worktree/_verify-base')"
-WSL_BASE = "$HOME/.cache/arcforges-verify/ArcForges-base"
+LINUX_BASE = "$HOME/.cache/arcforges-verify/ArcForges-base"
 BASE_SOURCE = "merge base {base}, built and measured on this machine"
 
 
@@ -145,8 +148,8 @@ WIN_BASE_HOST = (
     "-p:IlcUseEnvironmentalTools=true -o (Split-Path $exe); if ($LASTEXITCODE) { throw 'publish failed' }; "
     "Set-Content -LiteralPath $marker -Value '{base}'"
 )
-WSL_BASE_HOST = (
-    f"set -euo pipefail; b=\"{WSL_BASE}\"; exe=\"$b/artifacts/publish/{RID_LINUX}/host/arcforges\"; "
+LINUX_BASE_HOST = (
+    f"set -euo pipefail; b=\"{LINUX_BASE}\"; exe=\"$b/artifacts/publish/{RID_LINUX}/host/arcforges\"; "
     "marker=\"$b/artifacts/verify-base-sha\"; "
     "if [ ! -e \"$b/.git\" ]; then git worktree prune; git worktree add --force --detach \"$b\" {base}; "
     "elif [ \"$(git -C \"$b\" rev-parse HEAD)\" = {base} ] && [ -x \"$exe\" ] && [ \"$(cat \"$marker\" 2>/dev/null)\" = {base} ]; "
@@ -168,7 +171,8 @@ SECRET_SCAN = (
     "--log-opts=\"--full-history {range}\""
 )
 
-# security.yml's Workflow lint: actionlint as pinned there, cached once in WSL; the archive is checked on every run.
+# security.yml's Workflow lint: actionlint as pinned there, cached once on the Linux host; the archive is checked on every
+# run.
 ACTIONLINT = (
     "set -euo pipefail; v=1.7.12; "
     "sum=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8; "
@@ -198,11 +202,30 @@ def win(step_id: str, cmd: list[str], timeout: int, **options) -> Step:
     return Step(step_id, "win", cmd, timeout=timeout, env=ENV, **options)
 
 
-def wsl(step_id: str, cmd: str, timeout: int, **options) -> Step:
-    return Step(step_id, "wsl", cmd, timeout=timeout, env=ENV, **options)
+def linux(step_id: str, cmd: str, timeout: int, **options) -> Step:
+    return Step(step_id, "linux", cmd, timeout=timeout, env=ENV, **options)
 
 
-LINUX_BASE_HOST = f"{WSL_BASE}/artifacts/publish/{RID_LINUX}/host/arcforges"
+LINUX_BASE_EXE = f"{LINUX_BASE}/artifacts/publish/{RID_LINUX}/host/arcforges"
+
+# The Linux leg's real-OS prerequisites, as tests/Shared/SystemdTestEnvironment.cs reads them (UserManagerAvailable and
+# FullyEnforced): without them the linux-real, closed-loop and exclusive tests skip with a reason, so this step fails the
+# leg instead of letting it pass without its real tests (AD-0018 section 5).
+LINUX_REAL_OS = (
+    "set -euo pipefail; uid=$(id -u); "
+    "s=\"${XDG_RUNTIME_DIR:-}/systemd/private\"; "
+    "if [ -z \"${XDG_RUNTIME_DIR:-}\" ] || [ ! -S \"$s\" ]; then "
+    "echo \"No systemd user manager runs for uid $uid (XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}', no $s). The Linux leg needs a "
+    "real Linux host with a systemd user manager and cpu, memory and pids delegated on cgroups v2 (AGENTS.md section 5).\" >&2; "
+    "exit 1; fi; "
+    "if [ ! -x /usr/bin/systemctl ] && [ ! -x /bin/systemctl ]; then echo 'systemctl is not installed.' >&2; exit 1; fi; "
+    "c=/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/cgroup.controllers; "
+    "if [ ! -r \"$c\" ]; then echo \"$c is missing: cgroups v2 with a user manager slice is required.\" >&2; exit 1; fi; "
+    "have=\" $(cat \"$c\") \"; "
+    "for x in cpu memory pids; do case \"$have\" in *\" $x \"*) ;; *) "
+    "echo \"The user manager delegates only '$(cat \"$c\")'; cpu, memory and pids are required.\" >&2; exit 1;; esac; done; "
+    "echo \"systemd user manager for uid $uid with delegated controllers:$have\"; systemctl --version | head -n 1"
+)
 
 STEPS = [
     # ci.yml, Native (win-x64)
@@ -220,33 +243,34 @@ STEPS = [
     win("win-bench", pwsh(f"./eng/bench.ps1 -RuntimeIdentifier {RID_WIN}"), 600),
     win("win-package", pwsh(f"./eng/package.ps1 -RuntimeIdentifier {RID_WIN}"), 300),
     # ci.yml, Native (linux-x64)
-    wsl("wsl-restore", "dotnet restore ArcForges.slnx --locked-mode", 600),
-    wsl("wsl-format", "dotnet format ArcForges.slnx --verify-no-changes --no-restore", 600),
-    wsl("wsl-build", "dotnet build ArcForges.slnx -c Release --no-restore", 900),
-    wsl("wsl-ci", linux_tests("ci"), 1200),
-    wsl("wsl-store-schema", linux_tests("store-schema"), 300),
-    wsl("wsl-publish", f"python eng/verify_linux.py publish {' '.join(PUBLISH_GROUPS_LINUX)}", 900),
-    wsl("wsl-tools-native", f"set -e; export ARCFORGES_TESTLOAD_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/testload/arcforges-testload\" "
+    linux("linux-real-os", LINUX_REAL_OS, 60),
+    linux("linux-restore", "dotnet restore ArcForges.slnx --locked-mode", 600),
+    linux("linux-format", "dotnet format ArcForges.slnx --verify-no-changes --no-restore", 600),
+    linux("linux-build", "dotnet build ArcForges.slnx -c Release --no-restore", 900),
+    linux("linux-ci", linux_tests("ci"), 1200),
+    linux("linux-store-schema", linux_tests("store-schema"), 300),
+    linux("linux-publish", f"python eng/verify_linux.py publish {' '.join(PUBLISH_GROUPS_LINUX)}", 900),
+    linux("linux-tools-native", f"set -e; export ARCFORGES_TESTLOAD_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/testload/arcforges-testload\" "
         f"ARCFORGES_BENCH_PATH=\"$PWD/artifacts/publish/{RID_LINUX}/bench/arcforges-bench\"; "
         "bash eng/test.sh --suite tools --no-build", 300),
-    wsl("wsl-closed-loop-native", linux_tests("closed-loop", native=True), 600),
-    wsl("wsl-bench", "python eng/verify_linux.py bench", 600),
-    wsl("wsl-package", "python eng/verify_linux.py package", 300),
+    linux("linux-closed-loop-native", linux_tests("closed-loop", native=True), 600),
+    linux("linux-bench", "python eng/verify_linux.py bench", 600),
+    linux("linux-package", "python eng/verify_linux.py package", 300),
     # The merge base's host for the startup gate
     win("win-base-host", pwsh(WIN_BASE_HOST, devshell=True), 1200, lane="win-base"),
-    wsl("wsl-base-host", WSL_BASE_HOST, 1200, lane="wsl-base"),
+    linux("linux-base-host", LINUX_BASE_HOST, 1200, lane="linux-base"),
     # security.yml, Secret scan (over the pushed range) and Workflow lint (when a workflow changed)
-    wsl("secret-scan", SECRET_SCAN, 300, lane="scan", profiles=frozenset({"full", "docs"})),
-    wsl("actionlint", ACTIONLINT, 300, lane="actionlint", when=workflows_changed),
+    linux("secret-scan", SECRET_SCAN, 300, lane="scan", profiles=frozenset({"full", "docs"})),
+    linux("actionlint", ACTIONLINT, 300, lane="actionlint", when=workflows_changed),
     # Exclusive phase: timing-, CPU-share- and memory-sensitive tests and the startup gates, alone
     win("win-exclusive", tests("exclusive"), 600, exclusive=True),
     win("win-exclusive-native", tests("exclusive", native=True), 600, exclusive=True),
-    wsl("wsl-exclusive", linux_tests("exclusive"), 600, exclusive=True),
-    wsl("wsl-exclusive-native", linux_tests("exclusive", native=True), 600, exclusive=True),
+    linux("linux-exclusive", linux_tests("exclusive"), 600, exclusive=True),
+    linux("linux-exclusive-native", linux_tests("exclusive", native=True), 600, exclusive=True),
     win("win-startup-gate", pwsh(
         f"./eng/compare-startup.ps1 -RuntimeIdentifier {RID_WIN} "
         f"-BaselineExecutable (Join-Path {WIN_BASE} 'artifacts/publish/{RID_WIN}/host/arcforges.exe') "
         f"-BaselineSource '{BASE_SOURCE}'"), 300, exclusive=True),
-    wsl("wsl-startup-gate", f"python eng/verify_linux.py compare-startup \"{LINUX_BASE_HOST}\" --baseline-source '{BASE_SOURCE}'",
+    linux("linux-startup-gate", f"python eng/verify_linux.py compare-startup \"{LINUX_BASE_EXE}\" --baseline-source '{BASE_SOURCE}'",
         300, exclusive=True),
 ]

@@ -14,9 +14,9 @@ references or private package feeds.
   Use a Developer PowerShell (`Launch-VsDevShell.ps1`) if the linker is not discoverable;
   ARM64 targets also need the C++ ARM64 build tools.
 - Linux Native AOT publishing requires `clang` and `zlib1g-dev` (Debian/Ubuntu names).
-  Publish Linux executables on Linux or in WSL, not directly on Windows.
+  Publish Linux executables on Linux, not directly on Windows.
 - Desktop Linux needs an X11/XWayland session, fontconfig, standard system fonts,
-  libX11, libICE and libSM. WSL compilation alone is not native Linux desktop validation.
+  libX11, libICE and libSM. A headless Linux build alone is not native Linux desktop validation.
 - Reuse installed SDKs, package caches and toolchains. Avalonia build telemetry is disabled in
   `Directory.Build.targets`; the `eng/` scripts and CI also set `AVALONIA_TELEMETRY_OPTOUT=1`.
 
