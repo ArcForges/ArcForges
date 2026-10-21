@@ -215,9 +215,34 @@ public static unsafe class ProcessLauncher
             fixed (char* block = environment)
             {
                 var flags = options.Flags | Native.ExtendedStartupInfoPresent | (environment is null ? 0 : Native.CreateUnicodeEnvironment);
-                if (!Native.CreateProcess(options.Application, line, 0, 0, inherit, flags, block, options.WorkingDirectory, &startup, out var info))
+                Native.ProcessInformation info;
+                bool created;
+                var error = 0;
+
+                // A file that is not a program for this machine (ERROR_BAD_EXE_FORMAT, ERROR_EXE_MACHINE_TYPE_MISMATCH) otherwise
+                // raises a system hard error, and CreateProcess waits until someone answers its message box: under a process error
+                // mode without SEM_FAILCRITICALERRORS in an interactive session, the launch blocks indefinitely. The thread's mode
+                // makes it fail at once; the new process keeps inheriting the process error mode.
+                var modeSet = Native.SetThreadErrorMode(Native.SemFailCriticalErrors, out var previousMode);
+                try
                 {
-                    throw new Win32Exception(Native.LastError, $"CreateProcess({options.Application}) failed.");
+                    created = Native.CreateProcess(options.Application, line, 0, 0, inherit, flags, block, options.WorkingDirectory, &startup, out info);
+                    if (!created)
+                    {
+                        error = Native.LastError;
+                    }
+                }
+                finally
+                {
+                    if (modeSet)
+                    {
+                        _ = Native.SetThreadErrorMode(previousMode, out _);
+                    }
+                }
+
+                if (!created)
+                {
+                    throw new Win32Exception(error, $"CreateProcess({options.Application}) failed.");
                 }
 
                 return new LaunchedProcess(new SafeKernelHandle(info.Process, ownsHandle: true), new SafeKernelHandle(info.Thread, ownsHandle: true), info.ProcessId);
