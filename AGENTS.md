@@ -129,9 +129,10 @@ The owner's PRs are verified by the repository's pre-push hook, not by hosted CI
 The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges/Plan/blob/main/AGENTS.md) rules 6 and 7.
 
 - **Install** once per clone, from the main checkout on `main`: `python eng/verify.py install`. It copies `.githooks/*`
-  into the clone's common hooks directory, so every worktree runs them, and removes any `core.hooksPath`, including
-  per-worktree values left by older scripts, and refuses while one remains elsewhere. Re-run it when `.githooks/`
-  changes.
+  into the clone's common hooks directory and makes them executable (Git skips a non-executable hook with only a hint),
+  so every worktree runs them, and removes any `core.hooksPath`, including per-worktree values left by older scripts,
+  and refuses while one remains elsewhere. Re-run it when `.githooks/` changes, and once in a Linux or macOS clone
+  installed by an earlier `eng/verify.py`, whose hooks it left non-executable.
 - **Two legs on two machines** ([AD-0018](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0018-native-platforms-without-wsl-integration.md) §5, as amended by
   [AD-0019](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0019-mcp-first-verification.md)).
   Each step runs on one host: `win` (native Windows) or `linux` (native Linux). `eng/verify.py` runs only the leg of
