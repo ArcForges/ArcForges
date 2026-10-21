@@ -85,7 +85,7 @@
       "arcforges.node.store": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.394.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
           "ArcForges.Security.Secrets": "[1.0.0-ci.141.1, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )"
@@ -93,9 +93,9 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.375.1, )",
-        "resolved": "1.0.0-ci.375.1",
-        "contentHash": "v6kJFsDVjpdmii/UHu6hVoT6u3q7eYEfqrvwYD8WAd8vJS8DpTkh/dOkoHAYornz4Ih5oijK9ZBl94Cb2Zsl+g==",
+        "requested": "[1.0.0-ci.394.1, )",
+        "resolved": "1.0.0-ci.394.1",
+        "contentHash": "5kq8dp5aSUDoXjlyR5733YpW5lpR6fYeDr0SwAvs7LS7R/ckFrZcYcR1ybSwPPHuVG9N1t/PF+5lkhlVhtZ14g==",
         "dependencies": {
           "Google.Protobuf": "3.36.1"
         }

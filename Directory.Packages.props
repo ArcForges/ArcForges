@@ -6,7 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="ArcForges.Build.Policy" Version="1.0.0-ci.138.1" />
-    <PackageVersion Include="ArcForges.Contracts.Foundation" Version="1.0.0-ci.375.1" />
+    <PackageVersion Include="ArcForges.Contracts.Foundation" Version="1.0.0-ci.394.1" />
     <PackageVersion Include="ArcForges.Contracts.Node" Version="1.0.0-ci.375.1" />
     <PackageVersion Include="ArcForges.LocalRpc" Version="1.0.0-ci.138.1" />
     <PackageVersion Include="ArcForges.Observability" Version="1.0.0-ci.141.1" />
