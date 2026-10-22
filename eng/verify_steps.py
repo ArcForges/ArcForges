@@ -2,8 +2,9 @@
 """Local verification steps of ArcForges, loaded by eng/verify.py (which injects `Step`).
 
 The full profile is what the hosted `Native (win-x64)` and `Native (linux-x64)` jobs of .github/workflows/ci.yml and the
-`Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, in two legs on two native machines after the push,
-reported as the commit statuses arcforges/windows and arcforges/linux (eng/verify.py; AGENTS.md section 5): the Windows leg on the Windows 11 workstation, the Linux leg on a real Linux host:
+`Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, in two legs on two native machines
+after the push, reported as the commit statuses arcforges/windows and arcforges/linux (eng/verify.py; AGENTS.md
+section 5): the Windows leg on the Windows 11 workstation, the Linux leg on a real Linux host:
 - lane `win` (Windows, in <main checkout>/.worktree/_verify): locked restore, Release build with analyzers as errors,
   the ci suite, the store schema check, Native AOT publish of every win-x64 component with zero warnings (in the Visual
   Studio developer environment), the tools suite against the native TestLoad and Bench, the closed-loop suite against
@@ -19,7 +20,7 @@ reported as the commit statuses arcforges/windows and arcforges/linux (eng/verif
 - exclusive phase, alone after every lane: the exclusive suite on the JIT build and against the native host (as hosted
   CI runs it twice), on Windows and on Linux, then the startup regression gate per platform: the merge base's CLI and this
   commit's CLI measured here interleaved (p50 of 50 runs; a regression exceeds both 25 % and 5 ms).
-- lane `scan`: gitleaks over the pushed range ({range}) with the pinned image digest and .gitleaksignore, in Docker on
+- lane `scan`: gitleaks over the commits since the merge base ({range}) with the pinned image digest and .gitleaksignore, in Docker on
   the Linux host without network and with a read-only mount of the verification clone.
 - lane `actionlint`: only when .github/workflows/** changed.
 
@@ -161,7 +162,7 @@ LINUX_BASE_HOST = (
     "-o \"$(dirname \"$exe\")\"; echo {base} > \"$marker\""
 )
 
-# security.yml's Secret scan (same pinned image digest, .gitleaksignore and redaction), over the pushed range, without
+# security.yml's Secret scan (same pinned image digest, .gitleaksignore and redaction), over the commits since the merge base, without
 # network and with a read-only mount of the verification clone.
 SECRET_SCAN = (
     "docker run --rm --network none -v \"$PWD:/repo:ro\" "
@@ -259,7 +260,7 @@ STEPS = [
     # The merge base's host for the startup gate
     win("win-base-host", pwsh(WIN_BASE_HOST, devshell=True), 1200, lane="win-base"),
     linux("linux-base-host", LINUX_BASE_HOST, 1200, lane="linux-base"),
-    # security.yml, Secret scan (over the pushed range) and Workflow lint (when a workflow changed)
+    # security.yml, Secret scan (over the commits since the merge base) and Workflow lint (when a workflow changed)
     linux("secret-scan", SECRET_SCAN, 300, lane="scan", profiles=frozenset({"full", "docs"})),
     linux("actionlint", ACTIONLINT, 300, lane="actionlint", when=workflows_changed),
     # Exclusive phase: timing-, CPU-share- and memory-sensitive tests and the startup gates, alone

@@ -26,7 +26,7 @@ any change. They are binding; this file summarizes them and adds the repository 
 | Author | Targeted and affected tests, affected real Windows and real Linux tests, build, format, analyzers and Native AOT publish of affected components. Records exact commands and results in the PR. |
 | Reviewer (one, after the author) | Full diff review at the exact head against the design references and acceptance criteria; re-runs only doubted tests, changed scripts or workflows, or real-environment tests the author could not run. |
 | Host verification after the push (the merge gate of every PR) | The CI-equivalent profile of every pushed head: a Windows leg on native Windows and a Linux leg on a real Linux host, each reported as a required commit status, `arcforges/windows` and `arcforges/linux` ([§5](#5-verification-after-the-push-ad-0020)). The statuses at the head plus the review are the merge gate; hosted validation is skipped for the owner's (`deku2026`) PRs. |
-| Hosted CI (external PRs, ARM64, weekly security) | The merge gate of PRs by anyone else (Dependabot included), the merge queue and manual dispatch: build, analyzers, format, tests, AOT publish on win-x64, win-arm64, linux-x64 and linux-arm64, size and startup gates, packaging, workflow lint, secret scan, dependency review, CodeQL. CodeQL and the secret scan also run weekly. Push to main runs nothing. |
+| Hosted CI (external PRs, ARM64, weekly security) | Part of the merge gate of PRs by anyone else (Dependabot included), with the host statuses; the merge queue and manual dispatch: build, analyzers, format, tests, AOT publish on win-x64, win-arm64, linux-x64 and linux-arm64, size and startup gates, packaging, workflow lint, secret scan, dependency review, CodeQL. CodeQL and the secret scan also run weekly. Push to main runs nothing. |
 
 - Tests follow [16-testing-strategy](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/16-testing-strategy.md).
   Fakes are allowed only where the task's `fakes_allowed` lists them, never for the behaviour under test.
@@ -118,8 +118,8 @@ any change. They are binding; this file summarizes them and adds the repository 
 - Keep the CI check names stable: `Native (<rid>)` for win-x64, win-arm64, linux-x64 and
   linux-arm64, `Verify`, `Workflow lint`, `Secret scan`,
   `Dependency review`, `CodeQL (csharp)`, `CodeQL (actions)`. They run for external PRs, the merge queue and manual
-  dispatch (CodeQL and the secret scan also weekly) and show as skipped on the owner's PRs. No status check is required on this
-  repository. `Verify` requires every `Native (<rid>)` job, not the Security jobs or code scanning's separate `CodeQL`
+  dispatch (CodeQL and the secret scan also weekly) and show as skipped on the owner's PRs. No hosted check is required on this
+  repository; the `main` ruleset requires the host statuses `arcforges/windows` and `arcforges/linux` ([§5](#5-verification-after-the-push-ad-0020)). `Verify` requires every `Native (<rid>)` job, not the Security jobs or code scanning's separate `CodeQL`
   alert check: an external PR merges only when none of them is failing.
 
 ## 5. Verification after the push (AD-0020)
@@ -163,7 +163,8 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
 
   The command exits 0 after success, 1 when a step failed and 2 when the leg could not complete or be reported. The host
   reports with `ARCFORGES_STATUS_TOKEN` when set (a token limited to commit statuses), otherwise with its own `gh`
-  login. Steps never see either; never print them.
+  login. Steps never receive either through their environment, and neither is printed. The `gh` login stays readable
+  from the host's `gh` configuration by the code being verified, so set `ARCFORGES_STATUS_TOKEN` on the host.
 - **Required checks.** The `main` ruleset requires both statuses for every PR, with no bypass actors, and the branch must
   be up to date with `main`; every new push needs verifying again on both hosts. The hosted `Verify` check of external
   PRs is unchanged ([§4](#4-repository-rules)).
