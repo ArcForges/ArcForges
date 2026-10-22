@@ -181,7 +181,7 @@
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
-          "ArcForges.LocalRpc": "[1.0.0-ci.138.1, )"
+          "ArcForges.LocalRpc": "[1.0.0-ci.143.1, )"
         }
       },
       "arcforges.node.platform": {
@@ -201,9 +201,9 @@
       },
       "ArcForges.LocalRpc": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.138.1, )",
-        "resolved": "1.0.0-ci.138.1",
-        "contentHash": "uHKx2cj+EJv19ythAdMvS1WdNMNAq3EwDs1P/oUTDb6JENe8AewZ7YlJ+1NA4iLmYYagzrtD0IxUAD7buNOO6Q==",
+        "requested": "[1.0.0-ci.143.1, )",
+        "resolved": "1.0.0-ci.143.1",
+        "contentHash": "bB453vZ21QXMuBG3SYoiX6RqllzGhxiH53d3PmnZ25wXXhL0AOu/R/XS5Z9rGxvSubAx3WX4te4Q1Icz5y4WeA==",
         "dependencies": {
           "Grpc.AspNetCore.Server": "[2.83.0]",
           "Grpc.Net.Client": "[2.84.0]"
