@@ -26,7 +26,7 @@ namespace ArcForges.Bench;
 /// is the workload profile stated in the result (<see cref="Profile"/>), not the output of those subsystems, which do not
 /// exist yet. Time is simulated: 1,000 attempts per day. The node data key lives in the file-backed isolated secret store of the
 /// benchmark's data root (as for a node started with <c>--test-mode</c>; 16-testing-strategy section 2), never in an OS-wide
-/// secret store: the benchmark runs in the pre-push verification and under the store tests (crash consistency), which must not
+/// secret store: the benchmark runs in the host verification and under the store tests (crash consistency), which must not
 /// reach the user's Credential Manager or Secret Service. The key is outside the database, so the measured growth is unaffected.
 /// </remarks>
 internal static class StoreGrowthBenchmark

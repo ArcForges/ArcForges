@@ -35,8 +35,9 @@ Do not commit build output, local settings, secrets or signing keys. Explain wha
 and what you actually verified, with exact commands. CI publishes build artifacts only: no
 automatic release, deployment, privileged code execution or merge. The expected checks on a contributor's pull request are
 `Native (win-x64)`, `Native (win-arm64)`, `Native (linux-x64)`, `Native (linux-arm64)`, `Verify`, `Workflow lint`,
-`Secret scan`, `Dependency review`, and both `CodeQL` jobs; contributors need no local hook. The maintainer's own pull
-requests are verified by the local pre-push hook instead ([AGENTS.md](AGENTS.md) §5).
+`Secret scan`, `Dependency review`, and both `CodeQL` jobs; contributors need no local hook. Every pull request, the maintainer's included,
+also needs the `arcforges/windows` and `arcforges/linux` statuses of the maintainer's verification hosts, which run it
+after the push ([AGENTS.md](AGENTS.md) §5); for the maintainer's own pull requests they replace the hosted jobs.
 
 Do not bypass failing security checks or silence AOT and trim warnings without investigating them.
 Do not rerun the whole build matrix locally just to duplicate hosted CI.

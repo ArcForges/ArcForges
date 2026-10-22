@@ -10,7 +10,7 @@ namespace ArcForges.Tools.Tests;
 /// <c>ThisRoutineTestProcessDeniesTheOsStoresThroughItsRuntimeConfiguration</c>, which fails at once if it sees the variable and
 /// otherwise shows that the tripwire refuses the store: so the script removed it and the access is refused. The probe's project
 /// reaches no OS secret store in any case: it asserts the variable's absence before anything else, and its refused calls make no OS
-/// call even without the tripwire. The pre-push step table (<c>eng/verify_steps.py</c>) refuses to load at all with the opt-in set.
+/// call even without the tripwire. The host verification's step table (<c>eng/verify_steps.py</c>) refuses to load at all with the opt-in set.
 /// The opt-in is set only in those child processes' environments, never in this process.
 /// </summary>
 public sealed class OsSecretStoreOptInScriptTests

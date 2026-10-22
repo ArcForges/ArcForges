@@ -1,7 +1,8 @@
 name: CI
 
-# Owner (deku2026) PRs are verified by the local pre-push hook (eng/verify.py, AD-0016), which runs the win-x64 and
-# linux-x64 legs below on the workstation, so both jobs are skipped for them. External PRs (Dependabot included), the
+# Every PR is verified after the push on the Windows and Linux hosts (eng/verify.py run-and-report, ArcForges-Design
+# AD-0020), which run the win-x64 and linux-x64 legs below and report the statuses main requires, so both jobs are
+# skipped for owner (deku2026) PRs. External PRs (Dependabot included), the
 # merge queue and manual dispatch run everything. Push to main runs nothing: this repository has no delivery job, and
 # every main commit arrived through a PR verified one way or the other.
 # merge_group runs the jobs for every author, but only matters if a merge queue is configured (none is today).

@@ -9,7 +9,7 @@
   millisecond-scale startups from failing on jitter.
 
   Same machine: -BaselineExecutable is the Native AOT host of the base commit built on this machine (external-PR CI: the
-  PR's base commit, published on the same runner; the local pre-push verification: the merge base with main). Both
+  PR's base commit, published on the same runner; the host verification after the push: the merge base with main). Both
   executables run here, alternating run by run with the same warm-up and count, so the comparison is free of the
   machine-to-machine variance of hosted runners. A p50 recorded on another machine is never compared.
 

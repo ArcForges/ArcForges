@@ -2,8 +2,8 @@
 """Local verification steps of ArcForges, loaded by eng/verify.py (which injects `Step`).
 
 The full profile is what the hosted `Native (win-x64)` and `Native (linux-x64)` jobs of .github/workflows/ci.yml and the
-`Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, in two legs on two native machines
-(eng/verify.py; AGENTS.md section 5): the Windows leg on the Windows 11 workstation, the Linux leg on a real Linux host:
+`Workflow lint` and `Secret scan` jobs of .github/workflows/security.yml verify, in two legs on two native machines after the push,
+reported as the commit statuses arcforges/windows and arcforges/linux (eng/verify.py; AGENTS.md section 5): the Windows leg on the Windows 11 workstation, the Linux leg on a real Linux host:
 - lane `win` (Windows, in <main checkout>/.worktree/_verify): locked restore, Release build with analyzers as errors,
   the ci suite, the store schema check, Native AOT publish of every win-x64 component with zero warnings (in the Visual
   Studio developer environment), the tools suite against the native TestLoad and Bench, the closed-loop suite against
@@ -42,13 +42,13 @@ eng/test.ps1 and eng/test.sh also remove it for every suite they run.
 import os
 
 # The single opt-in of the OS secret-store integration tier (ArcForges-Design 16-testing-strategy section 1). Only the tier's runner
-# (eng/os_secret_store_tier.py) and its hosted job set it; the pre-push verification refuses to run while it is present, so a stray
+# (eng/os_secret_store_tier.py) and its hosted job set it; the host verification refuses to run while it is present, so a stray
 # value can never reach a routine suite.
 OS_SECRET_STORE_OPT_IN = "ARCFORGES_OS_SECRET_STORE_TESTS"
 if OS_SECRET_STORE_OPT_IN in os.environ:
     raise SystemExit(
         f"arcforges-verify: FAIL {OS_SECRET_STORE_OPT_IN} is set in this environment. It is the opt-in of the OS secret-store "
-        "integration tier, which only that tier's runner or hosted job sets, and the pre-push verification refuses to run with it "
+        "integration tier, which only that tier's runner or hosted job sets, and the host verification refuses to run with it "
         f"(routine suites never reach a real OS secret store). Remove it (PowerShell: Remove-Item Env:{OS_SECRET_STORE_OPT_IN}; "
         f"bash: unset {OS_SECRET_STORE_OPT_IN}) and run again.")
 
@@ -68,7 +68,7 @@ VSDEV = (
     "$env:PATH = \"$dotnet;$env:PATH\"; "
 )
 
-# Tool versions that key a reusable pass (the python running eng/verify.py is added by the core).
+# Tool versions recorded in each leg's summary (the python running eng/verify.py is added by the core).
 FINGERPRINT = {
     "win": {
         "dotnet-sdks": ["dotnet", "--list-sdks"],
