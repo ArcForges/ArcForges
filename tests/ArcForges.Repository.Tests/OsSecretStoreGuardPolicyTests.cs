@@ -8,7 +8,7 @@ namespace ArcForges.Repository.Tests;
 /// <summary>
 /// The repository check of the OS secret-store test guard (ArcForges-Design 16-testing-strategy section 1, guard item 3; AD-0016
 /// amendment of 2026-10-17), following DesktopPlatform's ArchitectureTests policy (OsSecretStoreTierPolicyTests). It runs in the
-/// pre-push hook and in external-PR CI with the other repository tests: test, tool, benchmark and script sources outside the tier never
+/// host verification and in external-PR CI with the other repository tests: test, tool, benchmark and script sources outside the tier never
 /// name the real OS stores; production names them only at the reviewed composition root, which follows the <c>--test-mode</c> rule;
 /// every in-process node of a test overrides its secret store and every node process of a test runs with <c>--test-mode</c>; only the
 /// tier's own runner and workflow select the tier, whose opt-in is set only on the hosted tier job's test step; and every test project,
@@ -358,7 +358,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         Assert.All(conditions, condition => Assert.Equal("${{ " + TierCondition + " }}", condition));
         Assert.Contains("runs-on: windows-latest", workflow, StringComparison.Ordinal);
 
-        // The routine scripts remove a stray opt-in, and the pre-push verification refuses to run with one.
+        // The routine scripts remove a stray opt-in, and the host verification refuses to run with one.
         Assert.Contains("Remove-Item Env:" + OptIn, File.ReadAllText(Path.Combine(Root, "eng/test.ps1")), StringComparison.Ordinal);
         Assert.Contains("unset " + OptIn, File.ReadAllText(Path.Combine(Root, "eng/test.sh")), StringComparison.Ordinal);
         Assert.Contains("if OS_SECRET_STORE_OPT_IN in os.environ:\n    raise SystemExit(", File.ReadAllText(Path.Combine(Root, "eng/verify_steps.py")),

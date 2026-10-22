@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The linux-x64 gates of the local pre-push verification (eng/verify_steps.py) that hosted CI runs through PowerShell.
+"""The linux-x64 gates of the host verification (eng/verify_steps.py) that hosted CI runs through PowerShell.
 
 The Linux host needs no PowerShell: each command does for linux-x64 exactly what the named script does (keep them in step):
 

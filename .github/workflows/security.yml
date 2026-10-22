@@ -1,8 +1,8 @@
 name: Security
 
-# Owner (deku2026) PRs are verified by the local pre-push hook (eng/verify.py, AD-0016: actionlint when a workflow
-# changed, gitleaks over the pushed range), so every job is skipped for them; CodeQL and dependency review are GitHub
-# services the hook does not reproduce. External PRs (Dependabot included), the merge queue and manual dispatch run the
+# Owner (deku2026) PRs are verified after the push on the hosts (eng/verify.py, AD-0020: actionlint when a workflow
+# changed, gitleaks over the commits since the merge base), so every job is skipped for them; CodeQL and dependency
+# review are GitHub services the host verification does not reproduce. External PRs (Dependabot included), the merge queue and manual dispatch run the
 # jobs; the weekly schedule runs the security analysis (secret scan, CodeQL), not the workflow lint. Push to main runs nothing: every main commit arrived through a verified PR.
 # merge_group runs the jobs for every author, but only matters if a merge queue is configured (none is today).
 on:

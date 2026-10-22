@@ -105,8 +105,9 @@ arcforges-bench store-growth --environment tests/ArcForges.Node.Store.Tests/Fixt
 
 Equal parameters give equal bytes and digests on every run and platform; `--help` lists the options.
 
-The owner's pushes are verified locally by the pre-push hook (`python eng/verify.py install` once, then `python eng/verify.py run`;
-[AGENTS.md](AGENTS.md) §5): a Windows leg on native Windows and a Linux leg on a real Linux host. CI verifies external pull requests the same way on Windows and Ubuntu
+Every pushed head is verified after the push on the owner's two hosts (`python eng/verify.py run-and-report` in a worktree at the
+commit; [AGENTS.md](AGENTS.md) §5): a Windows leg on native Windows and a Linux leg on a real Linux host, reported as the commit
+statuses `arcforges/windows` and `arcforges/linux` that `main` requires. CI verifies external pull requests the same way on Windows and Ubuntu
 (the closed-loop node and CLI tests on the JIT build and on the native binaries), publishes Native AOT for
 **win-x64, win-arm64, linux-x64 and linux-arm64**, gates binary sizes, node store growth and CLI cold-start regressions against
 the base commit, checks that the node store schema only expands, and checks formatting, analyzers, dependencies, secrets and
