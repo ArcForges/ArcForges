@@ -155,6 +155,9 @@ internal sealed class TestNode : IAsyncDisposable
     /// </summary>
     public static string DiskParent { get; } = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory))!;
 
+    /// <summary>The <c>arcforges</c> that <see cref="StartNodeAsync"/> runs as the node: <see cref="Host"/>, or a copy in a version directory.</summary>
+    public string NodeExecutable { get; set; } = Host;
+
     public string Root { get; }
 
     public string ConfigDirectory { get; }
@@ -245,7 +248,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>Starts <c>arcforges node run --test-mode</c> as a child of the test and waits until it answers.</summary>
     public async Task<Process> StartNodeAsync()
     {
-        var process = Start(Host, ["node", "run", NodeLocations.TestModeOption]);
+        var process = Start(NodeExecutable, ["node", "run", NodeLocations.TestModeOption]);
         _children.Add(process);
         await WaitReadyAsync(process);
         return process;
@@ -422,7 +425,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// </summary>
     public List<Process> LiveProcesses()
     {
-        var binaries = new[] { Host, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
+        var binaries = new[] { Host, NodeExecutable, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
             .Select(path => Path.GetFullPath(path)).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var live = new List<Process>();
         lock (_uninspectable)

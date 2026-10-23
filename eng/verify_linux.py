@@ -186,6 +186,13 @@ def package() -> None:
     }
     (stage / "build-info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
+    # AD-0007 section 8: digests.json lists the SHA-256 of every file of the version directory except itself (relative paths
+    # with / separators); a node running from the version directory makes its files read-only and verifies them after startup.
+    version = re.search(r"<Version>([^<]+)</Version>", (REPOSITORY / "Directory.Build.props").read_text(encoding="utf-8")).group(1)
+    files = sorted(path.relative_to(stage).as_posix() for path in stage.rglob("*") if path.is_file())
+    digests = {relative: hashlib.sha256((stage / relative).read_bytes()).hexdigest() for relative in files if relative != "digests.json"}
+    (stage / "digests.json").write_text(json.dumps({"version": version, "files": digests}, indent=2) + "\n", encoding="utf-8")
+
     archive = packages / f"arcforges-desktop-{RID}.tar.gz"
     run(["tar", "-czf", str(archive), "-C", str(stage), "."])
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()

@@ -73,6 +73,12 @@ public sealed record NodeHostOptions
     /// </summary>
     public string? HelperExecutable { get; init; }
 
+    /// <summary>
+    /// The version directory the node runs from, whose <c>digests.json</c> the node verifies after startup (AD-0007 section 8): by default
+    /// the directory of <see cref="HelperExecutable"/>, else of this executable; component tests name a temporary one.
+    /// </summary>
+    public string? VersionDirectory { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -112,6 +118,9 @@ public static class NodeHost
     public static readonly TimeSpan ShutdownBudget = TimeSpan.FromSeconds(10);
 
     private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMinutes(10);
+
+    /// <summary>How long after READY the version directory check starts (AD-0007 section 8: off the startup path).</summary>
+    private static readonly TimeSpan VersionCheckDelay = TimeSpan.FromSeconds(5);
 
     /// <summary>Runs the node until it is stopped; returns the process exit code.</summary>
     public static async Task<int> RunAsync(NodeHostOptions options, CancellationToken cancellationToken)
@@ -264,6 +273,10 @@ public static class NodeHost
         {
             Execution = execution,
         };
+        var versionDirectory = options.VersionDirectory
+            ?? (options.HelperExecutable is { } helperPath ? Path.GetDirectoryName(Path.GetFullPath(helperPath)) : null)
+            ?? AppContext.BaseDirectory;
+        node.SetFact(VersionIntegrity.FactName, VersionIntegrity.InitialFact(versionDirectory));
 
         // The capability report's root_* facts follow the root limits the scheduler applies from the measured budgets (03 section 5.1).
         execution.RootLimitsApplied = _ => node.Reevaluate();
@@ -272,6 +285,7 @@ public static class NodeHost
         LocalRpcServer? server = null;
         using var housekeeping = new PeriodicTimer(HousekeepingInterval);
         Task housekeepingLoop = Task.CompletedTask;
+        Task versionCheck = Task.CompletedTask;
         using var loops = new CancellationTokenSource();
         try
         {
@@ -368,6 +382,9 @@ public static class NodeHost
                 new LogField("transport", endpoint.Transport), new LogField("platform", platform?.Name ?? "none"),
                 new LogField("heartbeatInstance", heartbeat.Instance));
 
+            // AD-0007 section 8: the version directory is made read-only and verified against its digests off the startup path.
+            versionCheck = CheckVersionAsync(node, versionDirectory, loops.Token);
+
             try
             {
                 await Task.Delay(Timeout.Infinite, node.Stopping).ConfigureAwait(false);
@@ -376,7 +393,7 @@ public static class NodeHost
             {
             }
 
-            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, keyLoad]).ConfigureAwait(false);
+            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, keyLoad, versionCheck]).ConfigureAwait(false);
         }
         finally
         {
@@ -514,6 +531,91 @@ public static class NodeHost
         }
 
         return OperatingSystem.IsLinux() ? new ArcForges.Node.Platform.Linux.LinuxResourceSampler() : null;
+    }
+
+    /// <summary>
+    /// Makes the version directory read-only and verifies it against its <c>digests.json</c> on a background thread of below-normal priority
+    /// (AD-0007 section 8), <see cref="VersionCheckDelay"/> after the node is ready, so the first clients' exchanges never compete with it;
+    /// then reports the fact <c>version_integrity</c>; a mismatch raises the tamper finding ENFORCEMENT_DEGRADED (11 section 1) with the
+    /// paths. Without a manifest nothing runs (the fact stays "not checked").
+    /// </summary>
+    private static async Task CheckVersionAsync(NodeRuntime node, string directory, CancellationToken cancellationToken)
+    {
+        if (!VersionIntegrity.HasManifest(directory))
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(VersionCheckDelay, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        var checkedReport = new TaskCompletionSource<VersionIntegrityReport?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                checkedReport.TrySetResult(VersionIntegrity.Check(directory, cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                checkedReport.TrySetResult(null);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                node.Log.Warning("node.version_integrity.failed", new LogField("errorType", exception.GetType().Name));
+                checkedReport.TrySetResult(null);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "ArcForges version integrity",
+            Priority = ThreadPriority.BelowNormal,
+        };
+        thread.Start();
+        await RecordVersionCheckAsync(node, directory, checkedReport.Task).ConfigureAwait(false);
+    }
+
+    private static async Task RecordVersionCheckAsync(NodeRuntime node, string directory, Task<VersionIntegrityReport?> check)
+    {
+        if (await check.ConfigureAwait(false) is not { } report)
+        {
+            return;
+        }
+
+        node.SetFact(VersionIntegrity.FactName, report.Fact);
+        if (report.Mismatches == 0)
+        {
+            node.Log.Info("node.version_integrity.verified", new LogField("directory", directory), new LogField("madeReadOnly", report.MadeReadOnly),
+                new LogField("notReadOnly", report.NotReadOnly.Count));
+            return;
+        }
+
+        node.Log.Warning("node.version_integrity.mismatch", new LogField("directory", directory), new LogField("missing", report.Missing.Count),
+            new LogField("changed", report.Changed.Count), new LogField("unlisted", report.Unlisted.Count), new LogField("manifest", report.Problem ?? "ok"));
+        static string Paths(IReadOnlyList<string> paths) => paths.Count == 0 ? "-" : NodeLog.OneLine(string.Join(", ", paths.Take(50))) + (paths.Count > 50 ? $" (+{paths.Count - 50} more)" : string.Empty);
+        try
+        {
+            await node.Processor.ExecuteAsync(context =>
+            {
+                ExecutionFindings.Raise(context, FindingKind.EnforcementDegraded, Severity.Error, "node", node.NodeId.Span,
+                    "The installed version's files do not match their digests",
+                    $"{report.Mismatches} files in the version directory {directory} are missing, changed or not listed in its digests.json (AD-0007 section 8). "
+                    + "The files may have been modified after installation; reinstall or repair this version.",
+                    [("directory", directory), ("missing", Paths(report.Missing)), ("changed", Paths(report.Changed)), ("unlisted", Paths(report.Unlisted)),
+                     ("manifest", report.Problem ?? "ok")]);
+                return 0;
+            }).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException or ObjectDisposedException)
+        {
+            node.Log.Warning("node.version_integrity.finding_failed", new LogField("errorType", exception.GetType().Name));
+        }
     }
 
     private static IExecutionPlatform? StartPlatform(NodeHostOptions options, NodeStore store, NodeLog log)

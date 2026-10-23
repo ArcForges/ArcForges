@@ -30,12 +30,19 @@ public sealed record AdoptionOutcome(byte[] TaskId, int AdoptedChildren, int Fai
 /// with each result recorded), is placed in an adoption container by the platform, and a synthetic task (<c>kind=ADOPTED</c>) with one
 /// ADOPTED attempt records it, so the process appears in every surface: the task lists, <c>ListProcesses</c> (label ADOPTED) and the process
 /// controls. Adoption is explicit and HUMAN-only (11 section 1). An adopted task is never admitted, queued, preempted, paused or retried:
-/// it is RUNNING from adoption until its container is empty. A container that empties by itself ends the task LOST (an adopted process has no
-/// exit capture, so how it ended is unknown); <c>CancelTask</c> terminates the container and ends it CANCELLED. After a node restart the
-/// container is re-opened by name; a container that cannot be re-opened ends the task LOST with that evidence.
+/// it is RUNNING from adoption until its container is empty. A container that empties by itself ends the task LOST ("no exit status: the
+/// node is not the adopted process's parent"); <c>CancelTask</c> terminates the container and ends it CANCELLED. After a node restart the
+/// container is re-opened by name; one the node cannot re-open (a Windows adoption job has no holder, L-14) follows the SM-TASK recovery rule
+/// "container missing -> LOST".
 /// </summary>
 public sealed class Adoptions : IDisposable
 {
+    /// <summary>The reason of an adopted task whose container emptied by itself (04 section 10).</summary>
+    public const string NoExitStatus = "no exit status: the node is not the adopted process's parent";
+
+    /// <summary>The reason prefix of an adopted task whose container could not be re-opened after a restart (SM-TASK recovery).</summary>
+    public const string ContainerMissing = "container_missing";
+
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
 
     private readonly ExecutionSupervisor _execution;
@@ -194,7 +201,7 @@ public sealed class Adoptions : IDisposable
             }
             else if (row.Container is null || _execution.Platform?.ReopenAdopted(row.Container) is not { } reopened)
             {
-                why = "container_missing: the adoption container " + (row.Container ?? "(none)") + " could not be re-opened after the node restarted";
+                why = ContainerMissing + ": the adoption container " + (row.Container ?? "(none)") + " could not be re-opened after the node restarted";
             }
             else
             {
@@ -267,7 +274,7 @@ public sealed class Adoptions : IDisposable
                     cancelled ? TerminationReason.Cancelled : TerminationReason.Lost,
                     cancelled
                         ? "the adopted processes were terminated on request"
-                        : "the adopted processes ended; an adopted process has no exit capture, so how it ended is unknown").GetAwaiter().GetResult();
+                        : NoExitStatus).GetAwaiter().GetResult();
             }
         }
         catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException)

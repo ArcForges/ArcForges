@@ -40,7 +40,12 @@ public sealed class AdoptionTests
             created = identity;
             using var handle = ProcessInfo.Open(identity.Pid)!;
             Assert.False(job.Contains(handle), "A WMI-created process does not join the creator's job (V-W01).");
-            Assert.True(Native.IsProcessInJob(handle, 0, out var inAnyJob) && !inAnyJob, "It is outside every job.");
+            // Whether it is in some other job does not matter here: on some machines every process of the session is in a job (even
+            // explorer.exe), and WMI's provider host may run in one.
+            Assert.True(Native.IsProcessInJob(handle, 0, out var inAnyJob));
+            TestContext.Current.TestOutputHelper?.WriteLine(inAnyJob
+                ? "The WMI-created process is in a job, but not the creator's."
+                : "The WMI-created process is outside every job.");
             var parent = ProcessInfo.Snapshot().Single(entry => entry.Pid == identity.Pid).ParentPid;
             Assert.NotEqual(member.ProcessId, parent);
 
@@ -99,12 +104,23 @@ public sealed class AdoptionTests
             var rootPid = started.Single(process => table.Single(entry => entry.Pid == process.Pid).ParentPid is var parent && started.All(other => other.Pid != parent)).Pid;
             var childPid = started.Single(process => process.Pid != rootPid).Pid;
             long created;
+            bool inAnyJob;
             using (var probe = ProcessInfo.Open(rootPid)!)
             {
                 created = ProcessInfo.CreationFileTime(probe);
+                Assert.True(Native.IsProcessInJob(probe, 0, out inAnyJob));
             }
 
             var start = ProcessInfo.FromFileTime(created);
+            if (inAnyJob)
+            {
+                // 04 section 10 refuses a process in any job. Where every process this test can create is in one (the session's processes
+                // run in a job on some machines), the refusal is what can be shown; the adoption itself cannot run here.
+                var refused = Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], rootPid, start)));
+                Assert.Contains("already in a job", refused.Message, StringComparison.Ordinal);
+                Assert.Skip("Every process this test can create is in a job on this machine (WMI-created ones included), and 04 section 10 refuses those: "
+                    + "adoption of a process outside every job cannot be shown here.");
+            }
             Assert.True(Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x1", rootPid, start.AddSeconds(-30)))).NotFound);
             var result = platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], rootPid, start));
             container = result.Container;

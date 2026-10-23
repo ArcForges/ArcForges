@@ -12,6 +12,8 @@ namespace ArcForges.Node.Core;
 public sealed class NodeRuntime : IDisposable
 {
     private readonly CancellationTokenSource _stop = new();
+    private readonly Dictionary<string, string> _nodeFacts = new(StringComparer.Ordinal);
+    private readonly Lock _capabilitiesLock = new();
     private CapabilityReport _capabilities;
     private long _rpcCalls;
 
@@ -119,8 +121,46 @@ public sealed class NodeRuntime : IDisposable
             NodeCapabilities.AddDataRootFact(report, DataRoot);
         }
 
-        Volatile.Write(ref _capabilities, report);
+        lock (_capabilitiesLock)
+        {
+            WithNodeFacts(report);
+            Volatile.Write(ref _capabilities, report);
+        }
+
         return report;
+    }
+
+    /// <summary>
+    /// Sets a platform fact the node itself determines (for example <c>version_integrity</c>): it replaces the fact of that name in the
+    /// current report and is kept across re-evaluations.
+    /// </summary>
+    public void SetFact(string name, string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(value);
+        lock (_capabilitiesLock)
+        {
+            _nodeFacts[name] = value;
+            var report = Capabilities.Clone();
+            WithNodeFacts(report);
+            Volatile.Write(ref _capabilities, report);
+        }
+    }
+
+    private void WithNodeFacts(CapabilityReport report)
+    {
+        foreach (var (name, value) in _nodeFacts)
+        {
+            var existing = report.PlatformFacts.FirstOrDefault(fact => fact.Name == name);
+            if (existing is null)
+            {
+                report.PlatformFacts.Add(new KeyValue { Name = name, Value = value });
+            }
+            else
+            {
+                existing.Value = value;
+            }
+        }
     }
 
     /// <summary>Moves the lifecycle and journals the change on topic NODE (through the command processor).</summary>

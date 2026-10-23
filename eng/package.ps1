@@ -59,6 +59,19 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not identify local changes.' }
   distribution = 'unsigned-development-preview'
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'build-info.json') -Encoding utf8
 
+# AD-0007 section 8: digests.json lists the SHA-256 of every file of the version directory except itself (relative paths with
+# / separators); a node running from the version directory makes its files read-only and verifies them after startup.
+$version = (Select-Xml -LiteralPath (Join-Path $repository 'Directory.Build.props') -XPath '//Version' | Select-Object -First 1).Node.InnerText
+$relativePaths = [string[]] @(Get-ChildItem -LiteralPath $stage -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($stage, $_.FullName).Replace('\', '/') })
+[Array]::Sort($relativePaths, [StringComparer]::Ordinal)
+$digests = [ordered]@{}
+foreach ($relative in $relativePaths) {
+  if ($relative -ceq 'digests.json') { continue }
+  $digests[$relative] = (Get-FileHash -LiteralPath (Join-Path $stage $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+[ordered]@{ version = $version; files = $digests } | ConvertTo-Json -Depth 3 |
+  Set-Content -LiteralPath (Join-Path $stage 'digests.json') -Encoding utf8NoBOM
+
 if ($RuntimeIdentifier.StartsWith('win-')) {
   $archive = Join-Path $packages "arcforges-desktop-$RuntimeIdentifier.zip"
   Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force

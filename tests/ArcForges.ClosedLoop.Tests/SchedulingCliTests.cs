@@ -75,9 +75,22 @@ public sealed class SchedulingCliTests
         var dependent = await RunAsync("--depends-on", holder + ":finished", "--", TestNode.TestLoad, "hold", "--hold-ms", "100", "--marker", Hold("dependent"));
         var explained = await ExplainedAsync(writer, "exclusive_key");
         Assert.Contains("name:db", explained.GetProperty("blockingKeys").EnumerateArray().Select(key => key.GetString()));
-        var text = await node.CliAsync("queue", "explain", writer);
-        Assert.True(text.ExitCode == 0, text.ToString());
-        Assert.Contains("name:db", text.Output, StringComparison.Ordinal);
+        // The text view of the same explanation (bounded: under the parallel suites' load another blocking reason, such as the CPU budget,
+        // may be reported first for a moment, and the keys are listed with the exclusive_key reason).
+        var watchText = Stopwatch.StartNew();
+        while (true)
+        {
+            var text = await node.CliAsync("queue", "explain", writer);
+            Assert.True(text.ExitCode == 0, text.ToString());
+            if (text.Output.Contains("name:db", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            Assert.True(watchText.Elapsed < Bound, $"queue explain {writer}: the key name:db is not listed ({text.Output})");
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+        }
+
         await ExplainedAsync(dependent, "dependency");
         var show = await node.CliAsync("queue", "show");
         Assert.True(show.ExitCode == 0, show.ToString());

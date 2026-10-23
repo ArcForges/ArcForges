@@ -69,6 +69,9 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>Linux: the controllers treated as delegated (simulated missing delegation).</summary>
     public IReadOnlyCollection<string>? LinuxControllers { get; set; }
 
+    /// <summary>The version directory whose digests the node verifies after startup (default: the directory of the helper executable).</summary>
+    public string? VersionDirectory { get; set; }
+
     /// <summary>The node's own slice on Linux (16 section 4).</summary>
     public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
 
@@ -135,6 +138,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             LinuxSlice = Slice,
             SystemdAddress = SystemdAddress,
             LinuxControllers = LinuxControllers,
+            VersionDirectory = VersionDirectory,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;
