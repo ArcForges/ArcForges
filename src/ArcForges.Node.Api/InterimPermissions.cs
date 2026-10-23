@@ -14,6 +14,9 @@ internal enum GatedOperation
     /// <summary>Change a task's priority (<c>SetTaskPriority</c>): HUMAN A, SCRIPT A, AGENT P.</summary>
     ChangeTaskPriority,
 
+    /// <summary>Freeze a running task (<c>PauseTask</c>, api-catalogue): HUMAN A, SCRIPT A, AGENT P. <c>ResumeTask</c> is A for all three.</summary>
+    PauseTask,
+
     /// <summary>Pause or resume a pool: HUMAN A, SCRIPT A, AGENT P.</summary>
     PauseOrResumePool,
 
@@ -61,7 +64,7 @@ internal static class InterimPermissions
     {
         (Origin.Human, _) => Cell.Allow,
         (Origin.Script or Origin.Agent, GatedOperation.ChangeRetrySafety) => Cell.Deny,
-        (Origin.Script, GatedOperation.ChangeTaskPriority or GatedOperation.PauseOrResumePool) => Cell.Allow,
+        (Origin.Script, GatedOperation.ChangeTaskPriority or GatedOperation.PauseOrResumePool or GatedOperation.PauseTask) => Cell.Allow,
         (Origin.Agent, GatedOperation.LowerOwnSessionParallelism) => Cell.Allow,
         (Origin.Script or Origin.Agent, _) => Cell.Approval,
         _ => Cell.Deny,

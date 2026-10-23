@@ -20,6 +20,7 @@ internal static class Program
         scenarios:
           cpu       --threads N (1)  --iterations N per thread (100000000)  --seed N (1)
           mem-ramp  --target-mb MiB (256)  --step-mb MiB (64)  --step-ms ms (0)  --hold-ms ms (0)  --seed N (1)
+                    --until-file <path>   (holds until the file exists, at most hold-ms)
           output    --bytes N (1048576)  --line-bytes N (100)  --stream stdout|stderr|both|none (stdout)  --seed N (1)
                     [--rate bytes-per-second (0 = as fast as the reader accepts)]
           fork      --width N (2)  --depth N (2)  --hold-ms ms (0)  --seed N (1)  [--fail-node id]
@@ -30,6 +31,7 @@ internal static class Program
                     (records ready/break/close lines in the marker; break exits 3, WM_CLOSE exits 4)
           hold      --hold-ms ms (1000)  --ready-after-ms ms (0)  --ready-line text  --port N (0)  --file <path>
                     --exit-code N (0)  --marker <file>   (records start/end lines; then prints, listens, creates)
+                    --until-file <path>   (holds until the file exists, at most hold-ms)
           probe     --period-ms ms (100)  --deadline-ms ms (10)  --work-us us (2000)  --duration-ms ms (60000)
                     (an unmanaged interactive probe: misses are periods whose fixed work ends after the deadline)
 

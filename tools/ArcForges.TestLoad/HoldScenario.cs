@@ -11,6 +11,8 @@ namespace ArcForges.TestLoad;
 /// (03 section 4; 04 section 8). It records <c>start &lt;pid&gt; &lt;unix ms&gt;</c> and, before it exits, <c>end &lt;pid&gt; &lt;unix ms&gt;</c>
 /// in the <c>marker</c> file; after <c>ready-after-ms</c> it prints <c>ready-line</c> on standard output, listens on
 /// <c>127.0.0.1:port</c> and creates <c>file</c> (each when given), records <c>ready &lt;pid&gt; &lt;unix ms&gt;</c>, then holds for <c>hold-ms</c> and exits with <c>exit-code</c>.
+/// With <c>until-file</c> it holds until that file exists instead (polled every 20 ms; <c>hold-ms</c> then bounds the hold), so a test releases
+/// it rather than racing a wall-clock window.
 /// </summary>
 internal static class HoldScenario
 {
@@ -25,6 +27,7 @@ internal static class HoldScenario
         var readyLine = options.GetOptional("ready-line");
         var file = options.GetUnrecorded("file");
         var marker = options.GetUnrecorded("marker");
+        var untilFile = options.GetUnrecorded("until-file");
         options.GetUnrecorded("report");
         options.EnsureAllUsed();
 
@@ -50,7 +53,18 @@ internal static class HoldScenario
         }
 
         Mark(marker, "ready");
-        Thread.Sleep(TimeSpan.FromMilliseconds(holdMs));
+        if (untilFile is null)
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(holdMs));
+        }
+        else
+        {
+            var held = Stopwatch.StartNew();
+            while (!File.Exists(untilFile) && held.ElapsedMilliseconds < holdMs)
+            {
+                Thread.Sleep(20);
+            }
+        }
         listener?.Stop();
         Mark(marker, "end");
         if (exitCode != 0)

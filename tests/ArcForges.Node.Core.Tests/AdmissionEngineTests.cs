@@ -326,6 +326,71 @@ public sealed class AdmissionEngineTests
     // ------------------------------------------------------------------------------------------------------------------ limits
 
     [Fact]
+    public void ADemotedTaskAgesFromTheChangeNotFromItsQueueing()
+    {
+        // Queued at 0 as BACKGROUND, at 25 min (2.5 starvation bounds) it has aged to NORMAL; SetTaskPriority then demotes it to LOW, which
+        // restarts its aging clock (aged_at = 25 min). Counted from its queueing it would be HIGH at once; from the change it stays LOW
+        // until a new bound has elapsed, then rises one class.
+        var engine = new AdmissionEngine();
+        QueuedCandidate Demoted() => new()
+        {
+            Task = "demoted",
+            Pool = "default",
+            BasePriority = Priority.Low,
+            EffectivePriority = Priority.Low,
+            Owner = "user:",
+            QueuedAt = 0,
+            AgingFrom = 25 * Minute,
+            Cpu = 100,
+            MemExpected = 64 * MiB,
+        };
+        var paused = new List<PoolLimits> { new("default", 1, 64, Paused: true) };
+        Assert.Empty(engine.Pass(Input(25 * Minute, [Demoted()], pools: paused)).Aged);
+        Assert.Empty(engine.Pass(Input(34 * Minute, [Demoted()], pools: paused)).Aged);
+        Assert.Equal(Priority.Normal, engine.Pass(Input(35 * Minute, [Demoted()], pools: paused)).Aged["demoted"]);
+
+        // Without the restart (no aging start) the same task is HIGH at 25 min.
+        var counted = Demoted();
+        Assert.Equal(Priority.High, engine.Pass(Input(25 * Minute, [new QueuedCandidate
+        {
+            Task = counted.Task,
+            Pool = counted.Pool,
+            BasePriority = counted.BasePriority,
+            EffectivePriority = counted.EffectivePriority,
+            Owner = counted.Owner,
+            QueuedAt = counted.QueuedAt,
+            Cpu = counted.Cpu,
+            MemExpected = counted.MemExpected,
+        }], pools: paused)).Aged["demoted"]);
+    }
+
+    [Fact]
+    public void TheLongestWaitingQualifyingTaskTakesTheReservation()
+    {
+        // 03 section 4: two tasks waited longer than large_task_bypass and do not fit beside the running work; the walk offers the HIGH one
+        // first (strict class), but the NORMAL one has waited longer, so it takes the reservation.
+        var engine = new AdmissionEngine();
+        var running = new List<RunningLoad> { Running("r1", 1_000), Running("r2", 1_000) };
+        // At 9 min neither has aged (the starvation bound is 10 min); both waited longer than large_task_bypass (2 min).
+        var result = engine.Pass(Input(9 * Minute,
+            [Task("older", queuedAt: 0, cpu: 4_000), Task("newer", queuedAt: 4 * Minute, cpu: 4_000, priority: Priority.High)], running));
+        Assert.Equal("older", result.Reservation?.Task);
+        Assert.Equal(BlockingReasons.BudgetCpu, result.Waiting["older"].Reason);
+        Assert.Equal(BlockingReasons.BudgetCpu, result.Waiting["newer"].Reason);
+    }
+
+    [Fact]
+    public void AQueuePositionCountsOnlyTheTasksStillWaitingBeforeIt()
+    {
+        // Two tasks are admitted in this pass and two wait (the pool runs at most two): the waiting ones are positions 1 and 2.
+        var result = new AdmissionEngine().Pass(Input(0, [Task("a", queuedAt: 0, cpu: 100), Task("b", queuedAt: 1, cpu: 100), Task("c", queuedAt: 2, cpu: 100),
+            Task("d", queuedAt: 3, cpu: 100)], poolLimit: 2));
+        Assert.Equal(["a", "b"], result.Admitted.Select(admission => admission.Task));
+        Assert.Equal(1, result.Waiting["c"].Position);
+        Assert.Equal(2, result.Waiting["d"].Position);
+    }
+
+    [Fact]
     public void ParallelismDisabledPerScopeRunsOneTaskAtATime()
     {
         var queued = new[] { Task("t1", 0, workspace: "W", session: "S"), Task("t2", 1, workspace: "W", session: "S") };

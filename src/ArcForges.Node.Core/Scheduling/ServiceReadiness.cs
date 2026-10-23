@@ -30,7 +30,10 @@ public sealed class ServiceReadiness
     /// <summary>The default <c>readiness_timeout</c>.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(120);
 
-    /// <summary>The longest line the regex is matched against (a longer line is matched by its first 64 KiB).</summary>
+    /// <summary>
+    /// The longest line the regex is matched against: a longer line is matched by its first 64 KiB, and the rest of it, up to its newline,
+    /// is skipped (never joined to later output).
+    /// </summary>
     public const int MaxLine = 64 * 1024;
 
     private static readonly TimeSpan ProbeInterval = TimeSpan.FromMilliseconds(500);
@@ -39,6 +42,12 @@ public sealed class ServiceReadiness
     private readonly string? _file;
     private readonly long[] _offsets = new long[2];
     private readonly StringBuilder[] _partial = [new(), new()];
+
+    // Each stream is decoded as a stream: a UTF-8 sequence split across two reads is decoded whole on the second.
+    private readonly Decoder[] _decoders = [Encoding.UTF8.GetDecoder(), Encoding.UTF8.GetDecoder()];
+
+    // A line longer than MaxLine was matched by its first MaxLine characters; its rest is skipped up to its newline.
+    private readonly bool[] _skipping = new bool[2];
     private long _lastProbe = long.MinValue;
 
     private ServiceReadiness(Regex? regex, int? port, string? file, TimeSpan timeout)
@@ -127,8 +136,24 @@ public sealed class ServiceReadiness
         }
 
         _offsets[slot] += chunk.Length;
+        var decoder = _decoders[slot];
+        var decoded = new char[decoder.GetCharCount(chunk, 0, chunk.Length, flush: false)];
+        decoder.GetChars(chunk, 0, chunk.Length, decoded, 0, flush: false);
+        var from = 0;
+        if (_skipping[slot])
+        {
+            var end = Array.IndexOf(decoded, '\n');
+            if (end < 0)
+            {
+                return false;
+            }
+
+            _skipping[slot] = false;
+            from = end + 1;
+        }
+
         var partial = _partial[slot];
-        partial.Append(Encoding.UTF8.GetString(chunk));
+        partial.Append(decoded, from, decoded.Length - from);
         var text = partial.ToString();
         var start = 0;
         while (true)
@@ -148,7 +173,14 @@ public sealed class ServiceReadiness
         }
 
         partial.Clear();
-        partial.Append(text.AsSpan(start, Math.Min(text.Length - start, MaxLine)));
+        if (text.Length - start > MaxLine)
+        {
+            // The pending line outgrew MaxLine: it is matched by its first MaxLine characters once, and the rest of it is skipped.
+            _skipping[slot] = true;
+            return Matches(text.AsSpan(start, MaxLine));
+        }
+
+        partial.Append(text.AsSpan(start));
         return partial.Length > 0 && Matches(partial.ToString());
     }
 

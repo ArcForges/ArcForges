@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -11,11 +12,16 @@ namespace ArcForges.TestLoad;
 /// misses its deadline when the loop completes later than <c>deadline-ms</c> after the scheduled start (the wake-up latency counts: an
 /// interactive program that waits for its turn is late). A period skipped because the probe fell behind by a whole period counts as a
 /// miss. It runs for <c>duration-ms</c> and reports the periods, the misses and the completion latencies (p50, p99, maximum, in
-/// microseconds). The wait uses a high-resolution waitable timer on Windows and <c>Thread.Sleep</c> (whole milliseconds) on Linux, then
+/// microseconds); to line them up with other events it also reports when period 0 was scheduled (<c>originMs</c>, from the process's
+/// start), the longest period's index, and the index and latency of the first 8 missed periods (<c>missN*</c>; -1 for a skipped one).
+/// The wait uses a high-resolution waitable timer on Windows and <c>Thread.Sleep</c> (whole milliseconds) on Linux, then
 /// spins to the scheduled start, so the work never starts before it and an early wake never hides latency.
 /// </summary>
 internal static partial class ProbeScenario
 {
+    /// <summary>The missed periods whose index and latency the report lists.</summary>
+    private const int MissesReported = 8;
+
     public static ScenarioReport Run(ScenarioOptions options)
     {
         var periodMs = options.GetInt64("period-ms", 100, 10, 10_000);
@@ -32,9 +38,12 @@ internal static partial class ProbeScenario
         var deadline = deadlineMs * frequency / 1000;
         var periods = durationMs / periodMs;
         var latencies = new List<long>((int)periods);
-        long misses = 0, skipped = 0, state = 1;
+        long misses = 0, skipped = 0, state = 1, longestIndex = -1, longest = -1;
+        var missed = new List<(long Index, long LatencyUs)>(MissesReported);
         using var timer = OperatingSystem.IsWindows() ? WindowsTimer.Create() : null;
         var origin = Stopwatch.GetTimestamp() + period;
+        using var self = Process.GetCurrentProcess();
+        var originMs = (long)(DateTime.Now - self.StartTime).TotalMilliseconds + periodMs;
         for (var index = 0L; index < periods; index++)
         {
             var start = origin + (index * period);
@@ -44,6 +53,11 @@ internal static partial class ProbeScenario
                 // Behind by a whole period or more: this period's work could not even begin in it.
                 misses++;
                 skipped++;
+                if (missed.Count < MissesReported)
+                {
+                    missed.Add((index, -1));
+                }
+
                 continue;
             }
 
@@ -61,10 +75,20 @@ internal static partial class ProbeScenario
 
             state = (long)CpuScenario.Spin((ulong)state, iterations);
             var latency = Stopwatch.GetTimestamp() - start;
-            latencies.Add(latency * 1_000_000 / frequency);
+            var latencyUs = latency * 1_000_000 / frequency;
+            latencies.Add(latencyUs);
+            if (latencyUs > longest)
+            {
+                (longest, longestIndex) = (latencyUs, index);
+            }
+
             if (latency > deadline)
             {
                 misses++;
+                if (missed.Count < MissesReported)
+                {
+                    missed.Add((index, latencyUs));
+                }
             }
         }
 
@@ -77,6 +101,13 @@ internal static partial class ProbeScenario
         measured["maxUs"] = latencies.Count == 0 ? 0 : latencies[^1];
         measured["calibratedIterations"] = iterations;
         measured["skipped"] = skipped;
+        measured["originMs"] = originMs;
+        measured["longestIndex"] = longestIndex;
+        for (var number = 0; number < missed.Count; number++)
+        {
+            measured[string.Create(CultureInfo.InvariantCulture, $"miss{number + 1}Index")] = missed[number].Index;
+            measured[string.Create(CultureInfo.InvariantCulture, $"miss{number + 1}Us")] = missed[number].LatencyUs;
+        }
         measured["state"] = state & 0xFF;
         using var digest = Deterministic.StartDigest(options.Canonical("probe"));
         return new ScenarioReport

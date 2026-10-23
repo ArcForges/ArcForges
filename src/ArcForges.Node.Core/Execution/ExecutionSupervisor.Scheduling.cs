@@ -227,6 +227,7 @@ public sealed partial class ExecutionSupervisor
                 Session = row.Session is { } session ? IdText.Format(session) : null,
                 Workspace = row.Workspace is { } workspace ? IdText.Format(workspace) : null,
                 QueuedAt = row.QueuedAt,
+                AgingFrom = row.AgingFrom,
                 Sequence = row.CreatedAt,
                 Cpu = request.Cpu,
                 MemExpected = request.Expected,
@@ -323,7 +324,8 @@ public sealed partial class ExecutionSupervisor
 
         foreach (var taskId in due)
         {
-            transaction.Execute("UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, retry_at = NULL, rev = rev + 1 WHERE task_id = $id AND state = 6;",
+            transaction.Execute(
+                "UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, retry_at = NULL, effective_priority = priority, aged_at = NULL, rev = rev + 1 WHERE task_id = $id AND state = 6;",
                 ("$now", now), ("$id", taskId));
             EmitTask(context, taskId, TaskState.RetryWait);
         }
@@ -436,8 +438,10 @@ public sealed partial class ExecutionSupervisor
 
             foreach (var (name, priority) in result.Aged)
             {
-                if (transaction.Execute("UPDATE task SET effective_priority = $priority, aged_at = $now, rev = rev + 1 WHERE task_id = $id AND state = 1;",
-                    ("$priority", (int)priority), ("$now", now), ("$id", byName[name].TaskId)) == 1)
+                var aging = byName[name];
+                if (transaction.Execute(
+                    "UPDATE task SET effective_priority = $priority, rev = rev + 1 WHERE task_id = $id AND state = 1 AND priority = $base AND effective_priority = $was AND coalesce(aged_at, -1) = $from;",
+                    ("$priority", (int)priority), ("$id", aging.TaskId), ("$base", (int)aging.Priority), ("$was", (int)aging.Effective), ("$from", aging.AgedAt ?? -1)) == 1)
                 {
                     changed.Add(name);
                 }
@@ -648,7 +652,7 @@ public sealed partial class ExecutionSupervisor
         using var command = reader.CreateCommand(
             """
             SELECT task_id, pool, priority, effective_priority, owner, owner_session_id, workspace_id, coalesce(queued_at, created_at), created_at,
-                   reservation_lapsed_at, spec, spec_digest, state_reason, kind, title
+                   reservation_lapsed_at, spec, spec_digest, state_reason, kind, title, aged_at
             FROM task WHERE state = 1 ORDER BY queued_at, created_at, task_id LIMIT $limit;
             """);
         command.Parameters.AddWithValue("$limit", MaxQueuedRead);
@@ -660,7 +664,8 @@ public sealed partial class ExecutionSupervisor
             result.Add(new QueuedRow(taskId, IdText.Format(taskId), rows.GetString(1), (Priority)rows.GetInt32(2), (Priority)rows.GetInt32(3),
                 ActorRef.Parser.ParseFrom((byte[])rows.GetValue(4)), rows.IsDBNull(5) ? null : (byte[])rows.GetValue(5), rows.IsDBNull(6) ? null : (byte[])rows.GetValue(6),
                 rows.GetInt64(7), rows.GetInt64(8), rows.IsDBNull(9) ? null : rows.GetInt64(9), TaskSpec.Parser.ParseFrom((byte[])rows.GetValue(10)),
-                (byte[])rows.GetValue(11), rows.IsDBNull(12) ? null : rows.GetString(12), (TaskKind)rows.GetInt32(13), rows.GetString(14)));
+                (byte[])rows.GetValue(11), rows.IsDBNull(12) ? null : rows.GetString(12), (TaskKind)rows.GetInt32(13), rows.GetString(14),
+                rows.IsDBNull(15) ? null : rows.GetInt64(15)));
         }
 
         return result;
@@ -1140,7 +1145,7 @@ public sealed partial class ExecutionSupervisor
 
                 var memory = Math.Max(1024 * 1024, attempt.Usage?.MemoryBytes ?? attempt.PeakObserved);
                 var trigger = string.Create(CultureInfo.InvariantCulture,
-                    $"frozen at memory pressure ({state.PressureTrigger}; {state.AvailableMemory} of {state.CapacityMemory} bytes available); MemoryHigh lowered to {memory} bytes");
+                    $"{PressureFrozen}: frozen at memory pressure ({state.PressureTrigger}; {state.AvailableMemory} of {state.CapacityMemory} bytes available); MemoryHigh lowered to {memory} bytes");
                 PlatformCalls.Post("freeze " + attempt.Name, () => Freeze(attempt, handle, trigger, pressure: true, lowerMemoryTo: memory));
             }
         }
@@ -1249,6 +1254,16 @@ public sealed partial class ExecutionSupervisor
             attempt.PauseInFlight = false;
         }
     }
+
+    /// <summary>
+    /// The token that starts the <c>state_reason</c> of a task frozen at Pressure: the persisted cause of the pause, so that an attempt
+    /// recovered PAUSED after a node restart is known to be pressure-frozen and thaws after 30 s at Normal with its launch MemoryHigh.
+    /// </summary>
+    public const string PressureFrozen = "pressure_frozen";
+
+    /// <summary>True when a PAUSED task's <c>state_reason</c> records a pressure freeze (not a PauseTask).</summary>
+    public static bool IsPressureFrozen(string? stateReason) =>
+        stateReason is not null && stateReason.StartsWith(PressureFrozen + ":", StringComparison.Ordinal);
 
     /// <summary>After 30 s at Normal, the pressure-frozen attempts thaw in priority order (the highest class first, 03 section 7).</summary>
     private void ThawPressureFrozen()
@@ -1434,8 +1449,8 @@ public sealed partial class ExecutionSupervisor
 
         var newPriority = priority ?? row.Priority;
         transaction.Execute(
-            "UPDATE task SET priority = $priority, effective_priority = $priority, aged_at = NULL, pool = $pool, rev = rev + 1 WHERE task_id = $id;",
-            ("$priority", (int)newPriority), ("$pool", pool ?? row.Pool), ("$id", taskId.ToArray()));
+            "UPDATE task SET priority = $priority, effective_priority = $priority, aged_at = $now, pool = $pool, rev = rev + 1 WHERE task_id = $id;",
+            ("$priority", (int)newPriority), ("$now", transaction.NowMicroseconds), ("$pool", pool ?? row.Pool), ("$id", taskId.ToArray()));
         EmitTask(context, taskId, row.State);
         _workPending = true;
         return (new QueueInfo { Position = TaskRecords.QueuePosition(transaction, taskId) }, null);
@@ -1445,6 +1460,11 @@ public sealed partial class ExecutionSupervisor
     private sealed record WorkspaceInfo(string Root, WorkspaceConcurrency Mode);
 
     /// <summary>A queued task row as the admission pass reads it.</summary>
+    /// <param name="AgedAt"><c>aged_at</c>: when SetTaskPriority last changed the waiting task's class (its aging restarts there).</param>
     private sealed record QueuedRow(byte[] TaskId, string Name, string Pool, Priority Priority, Priority Effective, ActorRef Owner, byte[]? Session, byte[]? Workspace,
-        long QueuedAt, long CreatedAt, long? LapsedAt, TaskSpec Spec, byte[] SpecDigest, string? StateReason, TaskKind Kind, string Title);
+        long QueuedAt, long CreatedAt, long? LapsedAt, TaskSpec Spec, byte[] SpecDigest, string? StateReason, TaskKind Kind, string Title, long? AgedAt)
+    {
+        /// <summary>The start of the aging clock: the later of the queueing and the last SetTaskPriority.</summary>
+        public long AgingFrom => AgedAt is { } changed ? Math.Max(QueuedAt, changed) : QueuedAt;
+    }
 }

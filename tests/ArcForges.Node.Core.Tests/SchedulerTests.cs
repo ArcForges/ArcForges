@@ -355,6 +355,32 @@ public sealed class SchedulerTests
         await OnLinuxAsync(PressureAsync);
     }
 
+    // isolation=exclusive: like the Pressure test, it moves the node to Pressure through the policy thresholds and waits for the thaw.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("env", "linux-real")]
+    [Trait("isolation", "exclusive")]
+    public async Task APressureFrozenAttemptThawsAfterANodeRestartOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await OnLinuxAsync(PressureRestartAsync);
+    }
+
+    [Fact(Timeout = 120_000)]
+    [Trait("env", "windows-real")]
+    public async Task SetTaskPriorityRestartsAWaitingTasksAgingOnWindows()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await OnWindowsAsync(AgingRestartAsync);
+    }
+
+    [Fact(Timeout = 120_000)]
+    [Trait("env", "linux-real")]
+    public async Task SetTaskPriorityRestartsAWaitingTasksAgingOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await OnLinuxAsync(AgingRestartAsync);
+    }
+
     // ---------------------------------------------------------------------------------------------------------- benchmarks
 
     // category=perf (15 section 4 fairness: 10 minutes of CPU-seconds; ARCFORGES_FAIRNESS_MINUTES shortens it), never by default.
@@ -407,7 +433,8 @@ public sealed class SchedulerTests
         await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.WidenAsync(channel);
         var (ma, mf, mb, mc, md) = (M(node, "a"), M(node, "f"), M(node, "b"), M(node, "c"), M(node, "d"));
-        var first = await Tasks.SubmitAsync(channel, Sched.Hold(node, ma, 2_000));
+        var releaseFirst = Path.Combine(node.Root, "first-release.flag");
+        var first = await Tasks.SubmitAsync(channel, Sched.Hold(node, ma, 120_000, "--until-file", releaseFirst));
         var failing = await Tasks.SubmitAsync(channel, Sched.Hold(node, mf, 1_500, "--exit-code", "3"));
         var afterFirst = await Tasks.SubmitAsync(channel, Sched.DependsOn(Sched.Hold(node, mb, 100), first));
         var afterFinished = await Tasks.SubmitAsync(channel, Sched.DependsOn(Sched.Hold(node, mc, 100), failing, DependencyCondition.Finished));
@@ -419,6 +446,7 @@ public sealed class SchedulerTests
         var explained = await Sched.ExplainAsync(channel, afterFirst);
         Assert.Equal("dependency", explained.BlockingReason);
         Assert.Contains(first, explained.WaitingOnTasks);
+        await File.WriteAllTextAsync(releaseFirst, "release", Ct);
 
         Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, afterFirst)).State);
         Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, afterFinished)).State);
@@ -507,15 +535,21 @@ public sealed class SchedulerTests
         };
         static TaskSpec With(TaskSpec spec, string key, KeyMode mode) => mode == KeyMode.Exclusive ? Sched.Exclusive(spec, key) : Sched.Shared(spec, key);
 
+        // Each first task holds its key until the test releases it (a file its hold waits for), so the outcome never depends on how soon a
+        // below-normal process starts under load: "together" is both RUNNING at once (the second runs to its end while the first still holds),
+        // "one after the other" is the second never starting while the first holds.
+        var release = Path.Combine(node.Root, "keys-release.flag");
         var firsts = new List<Id>();
         foreach (var (name, key, mode, _, _, _) in cases)
         {
-            firsts.Add(await Tasks.SubmitAsync(channel, With(Sched.Hold(node, M(node, name + "-1"), 8_000), key, mode)));
+            firsts.Add(await Tasks.SubmitAsync(channel, With(Sched.Hold(node, M(node, name + "-1"), 120_000, "--until-file", release), key, mode)));
         }
 
-        foreach (var first in firsts)
+        foreach (var (first, index) in firsts.Select((first, index) => (first, index)))
         {
             await Tasks.RunningAsync(channel, first);
+            var marker = M(node, cases[index].Name + "-1");
+            await Tasks.WaitForAsync(() => Sched.ReadyAt(marker) > 0, Tasks.Bound, cases[index].Name + ": the first task's hold to start");
         }
 
         var seconds = new List<Id>();
@@ -532,20 +566,35 @@ public sealed class SchedulerTests
 
         for (var index = 0; index < cases.Length; index++)
         {
-            if (!cases[index].Together)
+            if (cases[index].Together)
             {
-                var explained = await Sched.ExplainedAsync(channel, seconds[index], "exclusive_key", what: cases[index].Name);
-                Assert.Contains(firsts[index], explained.WaitingOnTasks);
-                Assert.NotEmpty(explained.BlockingKeys);
-                if (cases[index].Name == "writers")
-                {
-                    Assert.Contains("name:db", explained.BlockingKeys);
-                    Assert.Equal("exclusive_key", (await Tasks.GetAsync(channel, seconds[index])).Queue.BlockingReason);
-                    Assert.Contains("name:db", (await Tasks.GetAsync(channel, seconds[index], full: true)).ExclusiveKeys);
-                }
+                Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, seconds[index])).State);
+                Assert.Equal(TaskState.Running, (await Tasks.GetAsync(channel, firsts[index])).State);
+                continue;
+            }
+
+            var explained = await Sched.ExplainedAsync(channel, seconds[index], "exclusive_key", what: cases[index].Name);
+            Assert.Contains(firsts[index], explained.WaitingOnTasks);
+            Assert.NotEmpty(explained.BlockingKeys);
+            if (cases[index].Name == "writers")
+            {
+                Assert.Contains("name:db", explained.BlockingKeys);
+                Assert.Equal("exclusive_key", (await Tasks.GetAsync(channel, seconds[index])).Queue.BlockingReason);
+                Assert.Contains("name:db", (await Tasks.GetAsync(channel, seconds[index], full: true)).ExclusiveKeys);
             }
         }
 
+        // While every first task still holds (none is released yet), no conflicting second task has started.
+        for (var index = 0; index < cases.Length; index++)
+        {
+            if (!cases[index].Together)
+            {
+                Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, seconds[index])).State);
+                Assert.Equal(-1, Sched.Window(M(node, cases[index].Name + "-2")).Start);
+            }
+        }
+
+        await File.WriteAllTextAsync(release, "release", Ct);
         foreach (var id in firsts.Concat(seconds))
         {
             Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, id)).State);
@@ -601,12 +650,17 @@ public sealed class SchedulerTests
         });
         var serialKey = "ws:" + IdText.Format(serial);
 
-        var one = await Tasks.SubmitAsync(channel, Sched.Hold(serialRoot, M(node, "serial-1"), 6_000));
+        // The holders below hold until the test releases them (a file their hold waits for), so no outcome depends on how soon a
+        // below-normal process starts under load.
+        var releaseOne = Path.Combine(node.Root, "serial-release.flag");
+        var one = await Tasks.SubmitAsync(channel, Sched.Hold(serialRoot, M(node, "serial-1"), 120_000, "--until-file", releaseOne));
         await Tasks.RunningAsync(channel, one);
         var two = await Tasks.SubmitAsync(channel, Sched.Hold(serialRoot, M(node, "serial-2"), 200));
         var explained = await Sched.ExplainedAsync(channel, two, "exclusive_key");
         Assert.Contains(serialKey, explained.BlockingKeys);
         Assert.Contains(one, explained.WaitingOnTasks);
+        Assert.Equal(-1, Sched.Window(M(node, "serial-2")).Start);
+        await File.WriteAllTextAsync(releaseOne, "release", Ct);
         Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, two)).State);
         Assert.False(Sched.Overlap(Sched.Window(M(node, "serial-1")), Sched.Window(M(node, "serial-2"))), "A SERIAL workspace runs its tasks one at a time.");
 
@@ -624,7 +678,8 @@ public sealed class SchedulerTests
         await Sched.CancelAsync(channel, serviceId);
 
         var adapterKey = "ws:" + IdText.Format(adapter);
-        var exclusive = Sched.Hold(adapterRoot, M(node, "exclusive"), 6_000);
+        var releaseExclusive = Path.Combine(node.Root, "exclusive-release.flag");
+        var exclusive = Sched.Hold(adapterRoot, M(node, "exclusive"), 120_000, "--until-file", releaseExclusive);
         exclusive.Concurrency = new ConcurrencySpec { Access = WorkspaceAccess.Exclusive };
         var exclusiveId = await Tasks.SubmitAsync(channel, exclusive);
         await Tasks.RunningAsync(channel, exclusiveId);
@@ -632,9 +687,11 @@ public sealed class SchedulerTests
         var keyed = await Tasks.SubmitAsync(channel, Sched.Shared(Sched.Hold(adapterRoot, M(node, "keyed"), 200), adapterKey + "/src"));
         var keyless = await Tasks.SubmitAsync(channel, Sched.Hold(adapterRoot, M(node, "keyless"), 1_000));
         Assert.Contains(adapterKey, (await Sched.ExplainedAsync(channel, keyed, "exclusive_key")).BlockingKeys);
-        await Task.Delay(500, Ct);
-        var beside = await Sched.ExplainAsync(channel, keyless);
-        var besideText = $"{beside.State} {beside.BlockingReason}: {beside.Text}";
+        var beside = await Tasks.WaitAsync(channel, keyless);
+        var besideText = $"{beside.State} {beside.StateReason}";
+        Assert.Equal(TaskState.Running, (await Tasks.GetAsync(channel, exclusiveId)).State);
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, keyed)).State);
+        await File.WriteAllTextAsync(releaseExclusive, "release", Ct);
         foreach (var id in new[] { exclusiveId, keyed, keyless })
         {
             Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, id)).State);
@@ -687,7 +744,9 @@ public sealed class SchedulerTests
         var created = await channel.Queue.CreatePoolAsync(new QueueServiceCreatePoolRequest { Meta = Tasks.Meta(), Name = "serial" }, cancellationToken: Ct);
         Assert.Null(created.Error);
         await Sched.SetParallelismAsync(channel, ParallelismScope.Pool, "serial", ParallelismMode.Disabled);
-        var outside = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, "pool-outside"), 3_000));
+        var releaseOutside = Path.Combine(node.Root, "outside-release.flag");
+        var outside = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, "pool-outside"), 120_000, "--until-file", releaseOutside));
+        await Tasks.WaitForAsync(() => Sched.ReadyAt(M(node, "pool-outside")) > 0, Tasks.Bound, "the other pool's task to start");
         var pooled = new List<Id>();
         foreach (var index in new[] { 0, 1 })
         {
@@ -697,7 +756,10 @@ public sealed class SchedulerTests
         }
 
         Assert.Equal((uint)1, (await Sched.ExplainedAsync(channel, pooled[1], "pool_limit")).PoolMaxParallel);
-        await AllAsync([outside, .. pooled]);
+        await AllAsync(pooled);
+        Assert.Equal(TaskState.Running, (await Tasks.GetAsync(channel, outside)).State);
+        await File.WriteAllTextAsync(releaseOutside, "release", Ct);
+        await AllAsync([outside]);
         Apart("POOL", M(node, "pool-0"), M(node, "pool-1"));
         Assert.True(Sched.Overlap(Sched.Window(M(node, "pool-outside")), Sched.Window(M(node, "pool-0"))), "Another pool's task ran beside the serial pool.");
 
@@ -764,7 +826,16 @@ public sealed class SchedulerTests
             Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, id)).State);
         }
 
-        var windows = tasks.Select(task => (Window: Sched.Window(task.Marker), task.First)).OrderBy(task => task.Window.Start).ToList();
+        // The node's records (when admission started each task and when it ended): what the deficit round robin decides, independent of
+        // how soon each below-normal process runs under load.
+        var windows = new List<((long Start, long End) Window, bool First)>();
+        foreach (var (id, _, isFirst) in tasks)
+        {
+            var record = await Tasks.GetAsync(channel, id);
+            windows.Add(((Sched.Ms(record.StartedAt), Sched.Ms(record.FinishedAt)), isFirst));
+        }
+
+        windows = [.. windows.OrderBy(task => task.Window.Start)];
         var firstStarts = windows.Take(PerSession).Count(task => task.First);
         TestContext.Current.TestOutputHelper?.WriteLine($"first session: {firstStarts} of the first {PerSession} starts");
         Assert.InRange(firstStarts, 5, 7);
@@ -985,12 +1056,17 @@ public sealed class SchedulerTests
             return spec;
         }
 
-        var first = await Tasks.SubmitAsync(channel, Large("first", 4_000));
+        var releaseLarge = Path.Combine(node.Root, "large-release.flag");
+        var firstSpec = Large("first", 120_000);
+        firstSpec.Command.Argv.Argv.Add("--until-file");
+        firstSpec.Command.Argv.Argv.Add(releaseLarge);
+        var first = await Tasks.SubmitAsync(channel, firstSpec);
         await Tasks.RunningAsync(channel, first);
         var second = await Tasks.SubmitAsync(channel, Large("second", 200));
         var explained = await Sched.ExplainedAsync(channel, second, "budget_memory");
         Assert.True(explained.AvailableMemBytes < each, $"available {explained.AvailableMemBytes} < requested {each}");
         Assert.Equal("FEASIBLE", explained.Feasibility);
+        await File.WriteAllTextAsync(releaseLarge, "release", Ct);
         Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, first)).State);
         Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, second)).State);
         Assert.False(Sched.Overlap(Sched.Window(M(node, "first")), Sched.Window(M(node, "second"))));
@@ -1163,9 +1239,12 @@ public sealed class SchedulerTests
         var latencies = new List<long>();
         for (var round = 0; round < 5; round++)
         {
-            var running = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, $"running-{round}"), 1_000));
+            var release = Path.Combine(node.Root, $"release-{round}.flag");
+            var running = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, $"running-{round}"), 120_000, "--until-file", release));
             await Tasks.RunningAsync(channel, running);
             var queued = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, $"queued-{round}"), 100));
+            await Sched.ExplainedAsync(channel, queued, "global_limit");
+            await File.WriteAllTextAsync(release, "release", Ct);
             var ended = await Tasks.WaitAsync(channel, running);
             var next = await Tasks.WaitAsync(channel, queued);
             latencies.Add(Sched.Ms(next.StartedAt) - Sched.Ms(ended.FinishedAt));
@@ -1251,6 +1330,105 @@ public sealed class SchedulerTests
         await Sched.UntilAsync(channel, againId, task => task.State == TaskState.Paused, "PAUSED");
         await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = againId }, cancellationToken: Ct);
         Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(channel, againId)).State);
+    }
+
+    /// <summary>
+    /// 03 section 4 aging with SetTaskPriority: a BACKGROUND task that has waited 2.5 starvation bounds (its queueing moved 25 minutes back in
+    /// the store, the default bound being 10 minutes) has aged to NORMAL; demoted to LOW, it stays LOW over later passes, because its aging
+    /// restarts at the change (task.aged_at), and rises to NORMAL once a new bound has elapsed since the change (aged_at moved back 10
+    /// minutes). The task waits in a paused pool, so no process runs.
+    /// </summary>
+    private static async Task AgingRestartAsync()
+    {
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
+        var execution = node.Runtime.Execution!;
+        Assert.Null((await channel.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), Pool = "default" }, cancellationToken: Ct)).Error);
+        var spec = Sched.Hold(node, M(node, "aging"), 100);
+        spec.Priority = Priority.Background;
+        var taskId = await Tasks.SubmitAsync(channel, spec);
+        var id = taskId.Value.ToByteArray();
+        const long Minute = 60L * 1_000_000;
+        node.Runtime.Store.Write(transaction => transaction.Execute("UPDATE task SET queued_at = queued_at - $back WHERE task_id = $id;", ("$back", 25 * Minute), ("$id", id)));
+        execution.Kick();
+        await Sched.UntilAsync(channel, taskId, task => task.EffectivePriority == Priority.Normal, "aging to NORMAL after 2.5 bounds");
+
+        var demoted = await channel.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest { Meta = Tasks.Meta(), TaskId = taskId, Priority = Priority.Low },
+            cancellationToken: Ct);
+        Assert.True(demoted.Error is null, $"SetTaskPriority: {demoted.Error?.Code}");
+        Assert.Equal(Priority.Low, (await Tasks.GetAsync(channel, taskId)).EffectivePriority);
+
+        // Passes run every 2 s while a task waits: after several of them it is still LOW.
+        for (var pass = 0; pass < 3; pass++)
+        {
+            execution.Kick();
+            await Task.Delay(2_500, Ct);
+            Assert.Equal(Priority.Low, (await Tasks.GetAsync(channel, taskId)).EffectivePriority);
+        }
+
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, taskId)).State);
+        node.Runtime.Store.Write(transaction => transaction.Execute("UPDATE task SET aged_at = aged_at - $back WHERE task_id = $id;", ("$back", 10 * Minute), ("$id", id)));
+        execution.Kick();
+        await Sched.UntilAsync(channel, taskId, task => task.EffectivePriority == Priority.Normal, "aging one class a bound after the change");
+        await Sched.CancelAsync(channel, taskId);
+    }
+
+    /// <summary>
+    /// 03 section 7 across a node restart: an attempt frozen at Pressure (its MemoryHigh lowered) stays PAUSED while the node is down and
+    /// after it starts again, and thaws once the level has been Normal for 30 s, with its launch MemoryHigh restored: the cause of the
+    /// pause is persisted in the task's state_reason (pressure_frozen).
+    /// </summary>
+    private static async Task PressureRestartAsync()
+    {
+        await using var node = await InProcessNode.Create().StartAsync();
+        Id backgroundId;
+        string unit, launchHigh;
+        await using (var channel = await node.ChannelAsync(helloAsHuman: true))
+        {
+            var background = Sched.Hold(node, M(node, "frozen"), 240_000);
+            background.Priority = Priority.Background;
+            background.Resources.Pausable = true;
+            backgroundId = await Tasks.SubmitAsync(channel, background);
+            var attempt = await Tasks.RunningAsync(channel, backgroundId);
+            unit = ArcForges.Tests.SystemdTestEnvironment.AttemptUnit(IdText.Format(attempt.AttemptId));
+            launchHigh = ArcForges.Tests.SystemdTestEnvironment.Property(unit, "MemoryHigh");
+            var execution = node.Runtime.Execution!;
+            var forced = await Sched.ChangePolicyAsync(channel, policy =>
+            {
+                policy.Resources.Pressure ??= new PressureThresholds();
+                policy.Resources.Pressure.TightAvailableFraction = 0.995;
+                policy.Resources.Pressure.PressureAvailableFraction = 0.99;
+                policy.Resources.Pressure.CriticalAvailableFraction = 0.001;
+            });
+            Assert.True(forced.Error is null, $"UpdatePolicy: {forced.Error?.Code} {forced.Error?.Details}");
+            await Tasks.WaitForAsync(() => execution.Resources?.Current?.Pressure == PressureLevel.Pressure, TimeSpan.FromSeconds(60), "the Pressure level");
+            var frozen = await Sched.UntilAsync(channel, backgroundId, task => task.State == TaskState.Paused, "the freeze");
+            Assert.StartsWith("pressure_frozen:", frozen.StateReason, StringComparison.Ordinal);
+            await execution.PlatformCalls.DrainAsync(TimeSpan.FromSeconds(10));
+            Assert.NotEqual(launchHigh, ArcForges.Tests.SystemdTestEnvironment.Property(unit, "MemoryHigh"));
+
+            // Back to the default thresholds, and the node stops well within the 30 s at Normal that would thaw it.
+            var restored = await Sched.ChangePolicyAsync(channel, policy => policy.Resources.Pressure = new PressureThresholds
+            {
+                TightAvailableFraction = 0.10,
+                PressureAvailableFraction = 0.05,
+                CriticalAvailableFraction = 0.02,
+            });
+            Assert.True(restored.Error is null, $"UpdatePolicy: {restored.Error?.Code} {restored.Error?.Details}");
+            Assert.Equal(TaskState.Paused, (await Tasks.GetAsync(channel, backgroundId)).State);
+        }
+
+        await node.StopAsync();
+        await node.StartAsync();
+        await using var after = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Equal(TaskState.Paused, (await Tasks.GetAsync(after, backgroundId)).State);
+        var watch = Stopwatch.StartNew();
+        await Sched.UntilAsync(after, backgroundId, task => task.State == TaskState.Running, "the thaw after the restart", TimeSpan.FromSeconds(120));
+        TestContext.Current.TestOutputHelper?.WriteLine($"thawed {watch.Elapsed.TotalSeconds:0.0} s after the restart");
+        Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(25), $"The thaw came {watch.Elapsed} after the restart, before 30 s at Normal.");
+        await node.Runtime.Execution!.PlatformCalls.DrainAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(launchHigh, ArcForges.Tests.SystemdTestEnvironment.Property(unit, "MemoryHigh"));
+        await Sched.CancelAsync(after, backgroundId);
     }
 
     /// <summary>

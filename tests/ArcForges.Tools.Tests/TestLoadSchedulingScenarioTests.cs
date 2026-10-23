@@ -57,6 +57,30 @@ public sealed class TestLoadSchedulingScenarioTests
     }
 
     [Fact(Timeout = 60_000)]
+    public async Task HoldWithAnUntilFileHoldsUntilTheFileExists()
+    {
+        using var directory = new TemporaryDirectory();
+        var marker = Path.Combine(directory.Path, "marker.txt");
+        var release = Path.Combine(directory.Path, "release.flag");
+        var run = ToolProcess.RunAsync(ToolProcess.TestLoad, ["hold", "--hold-ms", "30000", "--until-file", release, "--marker", marker],
+            TestContext.Current.CancellationToken);
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (!File.Exists(marker) || !File.ReadAllText(marker).Contains("ready", StringComparison.Ordinal))
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the hold did not become ready");
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        }
+
+        // It holds while the file is absent (the 30 s hold-ms is only its bound), and ends once the file exists.
+        await Task.Delay(1_000, TestContext.Current.CancellationToken);
+        Assert.False(run.IsCompleted, "the hold ended before its release file existed");
+        await File.WriteAllTextAsync(release, "go", TestContext.Current.CancellationToken);
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["start", "ready", "end"], File.ReadAllLines(marker).Select(line => line.Split(' ')[0]));
+    }
+
+    [Fact(Timeout = 60_000)]
     public async Task ProbeCountsItsPeriodsAndMissedDeadlines()
     {
         using var directory = new TemporaryDirectory();

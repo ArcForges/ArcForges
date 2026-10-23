@@ -86,7 +86,10 @@ internal static class RunCommand
         var dependsOn = new Option<string[]>("--depends-on") { Description = "Start after a task (repeatable): <id>[:succeeded|finished|ready]", HelpName = "id[:condition]" };
         var exclusive = new Option<string[]>("--exclusive") { Description = "An exclusive key (repeatable): ws:<w>[/<dir>][:<purpose>], tool:<name>:<scope>, name:<text>", HelpName = "key" };
         var shared = new Option<string[]>("--shared") { Description = "A shared (reader) key (repeatable)", HelpName = "key" };
-        var exclusiveWorkspace = new Option<bool>("--exclusive-workspace") { Description = "Run alone among the managed tasks of the workspace (access EXCLUSIVE)" };
+        var exclusiveWorkspace = new Option<bool>("--exclusive-workspace")
+        {
+            Description = "Take the workspace key ws:<workspace> exclusively (access EXCLUSIVE): tasks holding keys of the workspace wait; commands without keys may still run beside it",
+        };
         var readyRegex = new Option<string?>("--ready-regex") { Description = "Service: ready when a line of output matches", HelpName = "regex" };
         var readyPort = new Option<int?>("--ready-port") { Description = "Service: ready when it listens on this localhost TCP port", HelpName = "port" };
         var readyFile = new Option<string?>("--ready-file") { Description = "Service: ready when this file exists", HelpName = "path" };

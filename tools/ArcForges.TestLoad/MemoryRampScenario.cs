@@ -5,7 +5,8 @@ namespace ArcForges.TestLoad;
 
 /// <summary>
 /// <c>mem-ramp</c>: grows resident memory in steps of <c>step-mb</c> MiB up to <c>target-mb</c> MiB,
-/// waiting <c>step-ms</c> after each step, then holds the memory for <c>hold-ms</c> and exits.
+/// waiting <c>step-ms</c> after each step, then holds the memory for <c>hold-ms</c> and exits; with <c>until-file</c> it holds until that file
+/// exists instead (polled every 20 ms; <c>hold-ms</c> then bounds the hold), so a test releases it rather than racing a wall-clock window.
 /// Every allocated byte is written with deterministic content, so the memory is committed and
 /// resident (not merely reserved), and the content digest is reproducible.
 /// <para>
@@ -32,6 +33,7 @@ internal static class MemoryRampScenario
         var stepMs = options.GetInt64("step-ms", 0, 0, MaxStepMs);
         var holdMs = options.GetInt64("hold-ms", 0, 0, MaxHoldMs);
         var seed = options.GetSeed();
+        var untilFile = options.GetUnrecorded("until-file");
         options.GetUnrecorded("report");
         options.EnsureAllUsed();
 
@@ -54,7 +56,15 @@ internal static class MemoryRampScenario
             }
         }
 
-        if (holdMs > 0)
+        if (untilFile is not null)
+        {
+            var held = Stopwatch.StartNew();
+            while (!File.Exists(untilFile) && held.ElapsedMilliseconds < holdMs)
+            {
+                Thread.Sleep(20);
+            }
+        }
+        else if (holdMs > 0)
         {
             Thread.Sleep(TimeSpan.FromMilliseconds(holdMs));
         }

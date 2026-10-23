@@ -18,10 +18,10 @@ namespace ArcForges.Node.Api;
 /// <summary>
 /// <c>arcforges.node.v1.TaskService</c> (tasks.proto; architecture 04; AD-0006): Submit (with dependencies, keys and the side-effect class
 /// from the caller or a <c>retry_safety</c> rule), Get, List, Wait, Attach (with STREAM stdin through Write/CloseTaskInput),
-/// ReleaseCallerBinding, Cancel, Retry (manual, with an optional larger memory grant), Pause and Resume (Linux; Windows reports pause
-/// unsupported), Pin, PurgeTaskRecord, ReadTaskOutput, WatchTaskOutput, GetAttempt and ListAttempts. Mutations are idempotent by
-/// <c>meta.command_id</c> (24 h; the payload digest of the request's wire bytes). <c>SetTaskPriority</c> and <c>GetTimeline</c> belong to
-/// later tasks; the generated base answers them <c>UNIMPLEMENTED</c>.
+/// ReleaseCallerBinding, Cancel, Retry (manual, with an optional larger memory grant), SetTaskPriority (the class or pool of a waiting task,
+/// the class and CPU weight of a running one), Pause and Resume (Linux; Windows reports pause unsupported), Pin, PurgeTaskRecord,
+/// ReadTaskOutput, WatchTaskOutput, GetAttempt and ListAttempts. Mutations are idempotent by <c>meta.command_id</c> (24 h; the payload
+/// digest of the request's wire bytes). <c>GetTimeline</c> belongs to a later task; the generated base answers it <c>UNIMPLEMENTED</c>.
 /// </summary>
 public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 {
@@ -767,7 +767,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new TaskServicePauseTaskResponse { Meta = Meta(request.Meta) };
-        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id") ?? OthersTask(context, request.TaskId, "PauseTask")) is { } refused)
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")
+            ?? InterimPermissions.Check(_sessions.OriginOf(context), GatedOperation.PauseTask, "PauseTask") ?? OthersTask(context, request.TaskId, "PauseTask")) is { } refused)
         {
             response.Error = refused;
             return response;

@@ -347,6 +347,15 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 running.Observe(load.Accounted);
                 running.Ready = load.Ready;
                 running.Paused = row.State == AttemptState.Paused;
+
+                // A frozen attempt keeps the cause of its pause across the restart (task.state_reason): a pressure-frozen one thaws after 30 s
+                // at Normal with its launch MemoryHigh (below), one paused by PauseTask waits for ResumeTask.
+                running.PausedByPressure = running.Paused && IsPressureFrozen(task?.StateReason);
+                if (running.Paused)
+                {
+                    running.PausedSince = _clock.GetTimestamp();
+                }
+
                 running.MemoryHighBytes = Math.Min((long)(1.25 * load.Expected), load.Ceiling);
                 running.Keys.AddRange(load.Keys);
             }
@@ -984,7 +993,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         transaction.Execute(
-            "UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, finished_at = NULL, retry_at = NULL, effective_priority = priority, rev = rev + 1 WHERE task_id = $id;",
+            "UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, finished_at = NULL, retry_at = NULL, effective_priority = priority, aged_at = NULL, rev = rev + 1 WHERE task_id = $id;",
             ("$now", transaction.NowMicroseconds), ("$id", taskId.ToArray()));
         transaction.Execute("UPDATE task_secret SET purge_after = NULL WHERE task_id = $id AND key_id <> 'purged';", ("$id", taskId.ToArray()));
         EmitTask(context, taskId, row.State);

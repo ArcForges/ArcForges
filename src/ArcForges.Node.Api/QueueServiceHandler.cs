@@ -516,7 +516,8 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                         }
                     }
 
-                    var queuedAt = reader.Scalar("SELECT coalesce(queued_at, created_at) FROM task WHERE task_id = $id;", ("$id", id)) is long at ? at : 0;
+                    // The aging clock starts at the later of the queueing and the last SetTaskPriority (task.aged_at).
+                    var queuedAt = reader.Scalar("SELECT max(coalesce(queued_at, created_at), coalesce(aged_at, 0)) FROM task WHERE task_id = $id;", ("$id", id)) is long at ? at : 0;
                     if (AdmissionEngine.AgesAt(task.EffectivePriority, queuedAt, reader.NowMicroseconds, (long)settings.StarvationBound.TotalMicroseconds) is { } ages)
                     {
                         explanation.AgesAt = Notifications.Time(ages);

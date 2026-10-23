@@ -490,13 +490,33 @@ internal static class TaskCommands
             }
             else
             {
-                cli.Output.Line($"{IdText.Format(taskId)} queued at position {response.Value.Queue?.Position ?? 0}");
+                // A running or paused task has no queue position: it shows its new class and its container's CPU weight (03 section 5.2).
+                var task = await session.Channel.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = Cli.Meta(), TaskId = taskId },
+                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (task.Value?.Task is { State: TaskState.Running or TaskState.Paused } running)
+                {
+                    cli.Output.Line(string.Create(CultureInfo.InvariantCulture,
+                        $"{IdText.Format(taskId)} {TaskText.Word(running.State)}: class {running.EffectivePriority.ToString().ToUpperInvariant()}, CPU weight {CpuWeight(running.EffectivePriority)}"));
+                }
+                else
+                {
+                    cli.Output.Line($"{IdText.Format(taskId)} queued at position {response.Value.Queue?.Position ?? 0}");
+                }
             }
 
             return ExitCodes.Success;
         });
         return command;
     }
+    /// <summary>The CPU weight of a priority class (03 section 5.2: 9, 7, 5, 3, 1; a Linux unit's CPUWeight is derived from it).</summary>
+    private static int CpuWeight(Priority priority) => priority switch
+    {
+        Priority.Interactive => 9,
+        Priority.High => 7,
+        Priority.Low => 3,
+        Priority.Background => 1,
+        _ => 5,
+    };
     private static Command Pause(Func<ParseResult, Cli> factory, bool pause)
     {
         var id = new Argument<string>("id") { Description = "The task ID or a unique prefix (at least 6 characters)" };

@@ -94,6 +94,7 @@ public sealed partial class ResourceTests
             managed.Add(sample.Managed.CpuMillicores);
             samples.Add(new System.Text.Json.Nodes.JsonObject
             {
+                ["atMs"] = (long)(DateTime.Now - probe.StartTime).TotalMilliseconds,
                 ["managed"] = sample.Managed.CpuMillicores,
                 ["budget"] = sample.BudgetCpuMillicores,
                 ["unmanaged"] = sample.UnmanagedCpuMillicores,
@@ -128,6 +129,13 @@ public sealed partial class ResourceTests
             ["host"] = TestNode.Host,
             ["samples"] = samples,
         };
+
+        // Where the missed and the longest periods fall (period N is scheduled at originMs + N x 100 ms of the probe's process time, the
+        // samples' atMs), to line them up with the samples.
+        foreach (var property in measured.EnumerateObject().Where(property => property.Name is "originMs" or "longestIndex" || property.Name.StartsWith("miss", StringComparison.Ordinal)))
+        {
+            summary[property.Name] = property.Value.GetInt64();
+        }
         TestContext.Current.TestOutputHelper?.WriteLine(summary.ToJsonString());
         if (Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 } directory)
         {

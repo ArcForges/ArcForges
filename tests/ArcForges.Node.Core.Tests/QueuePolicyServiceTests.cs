@@ -167,6 +167,17 @@ public sealed class QueuePolicyServiceTests
             TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
             Priority = Priority.Low,
         }, cancellationToken: Ct)).Error;
+        // PauseTask: HUMAN A, SCRIPT A, AGENT P; ResumeTask: A for all three (api-catalogue). A missing task is not_found once allowed.
+        async Task<ArcError?> PauseTaskAsync(NodeChannel channel) => (await channel.Tasks.PauseTaskAsync(new TaskServicePauseTaskRequest
+        {
+            Meta = Tasks.Meta(),
+            TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
+        }, cancellationToken: Ct)).Error;
+        async Task<ArcError?> ResumeTaskAsync(NodeChannel channel) => (await channel.Tasks.ResumeTaskAsync(new TaskServiceResumeTaskRequest
+        {
+            Meta = Tasks.Meta(),
+            TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
+        }, cancellationToken: Ct)).Error;
         void Approval(ArcError? error)
         {
             Assert.Equal("permission_denied", error?.Code);
@@ -179,13 +190,17 @@ public sealed class QueuePolicyServiceTests
         Approval((await Sched.ChangePolicyAsync(script, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
         Assert.Null(await PauseAsync(script));
         Assert.Equal("not_found", (await PriorityAsync(script))?.Code);
+        Assert.Equal("not_found", (await PauseTaskAsync(script))?.Code);
+        Assert.Equal("not_found", (await ResumeTaskAsync(script))?.Code);
 
-        // AGENT: everything here is P.
+        // AGENT: everything here is P, except ResumeTask (A).
         Approval(await CreatePoolAsync(agent, "agent-pool"));
         Approval(await ParallelismAsync(agent));
         Approval((await Sched.ChangePolicyAsync(agent, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
         Approval(await PauseAsync(agent));
         Approval(await PriorityAsync(agent));
+        Approval(await PauseTaskAsync(agent));
+        Assert.Equal("not_found", (await ResumeTaskAsync(agent))?.Code);
 
         // Nothing changed; reads are allowed for every origin.
         Assert.Equal(revision, (await agent.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Revision.Revision.Value);
@@ -196,6 +211,7 @@ public sealed class QueuePolicyServiceTests
         Assert.Null(await ParallelismAsync(human));
         Assert.Null(await PauseAsync(human));
         Assert.Equal("not_found", (await PriorityAsync(human))?.Code);
+        Assert.Equal("not_found", (await PauseTaskAsync(human))?.Code);
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => (policy.RetrySafety ??= new RetrySafetyPolicy()).AcceptAgentAssertions = true)).Error);
     }
 

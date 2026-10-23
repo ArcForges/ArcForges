@@ -85,6 +85,12 @@ public sealed class QueuedCandidate
     /// <summary>When the task was queued.</summary>
     public long QueuedAt { get; init; }
 
+    /// <summary>
+    /// When its aging clock started, or <see langword="null"/> for <see cref="QueuedAt"/>: SetTaskPriority restarts it (persisted in
+    /// <c>task.aged_at</c>), so a changed class ages from the change, not from the queueing.
+    /// </summary>
+    public long? AgingFrom { get; init; }
+
     /// <summary>A tie-breaker of FIFO order (the creation time).</summary>
     public long Sequence { get; init; }
 
@@ -285,7 +291,10 @@ public sealed class AdmissionEngine
         : memExpected > idleBudgetMemory ? Scheduling.Feasibility.ExceedsBudget
         : Scheduling.Feasibility.Feasible;
 
-    /// <summary>The effective class of a task that waited since <paramref name="queuedAt"/>: one class per bound waited, up to HIGH.</summary>
+    /// <summary>
+    /// The effective class of a task whose aging clock started at <paramref name="queuedAt"/> (its queueing, or the last SetTaskPriority)
+    /// in <paramref name="basePriority"/>: one class per bound waited, up to HIGH.
+    /// </summary>
     public static Priority Aged(Priority basePriority, Priority effective, long queuedAt, long now, long bound)
     {
         if (basePriority <= Priority.High || bound <= 0)
@@ -326,7 +335,7 @@ public sealed class AdmissionEngine
         var effective = new Dictionary<string, Priority>(StringComparer.Ordinal);
         foreach (var task in input.Queued)
         {
-            var aged = Aged(task.BasePriority, task.EffectivePriority, task.QueuedAt, now, input.StarvationBound);
+            var aged = Aged(task.BasePriority, task.EffectivePriority, task.AgingFrom ?? task.QueuedAt, now, input.StarvationBound);
             effective[task.Task] = aged;
             if (aged != task.EffectivePriority)
             {
@@ -403,8 +412,26 @@ public sealed class AdmissionEngine
             _rings.Remove(key);
         }
 
+        // The reservation is taken before the walk (03 section 4: "the longest-waiting qualifying task holds it"): among the tasks that
+        // waited longer than large_task_bypass, pass every admission gate and do not fit beside the running work, the one queued first.
+        if (reservation is null)
+        {
+            var qualifying = input.Queued
+                .Where(candidate => !candidate.Light && now - candidate.QueuedAt > input.LargeTaskBypass && !result.Lapsed.Contains(candidate.Task)
+                    && (candidate.LapsedAt is not { } lapsed || now - lapsed >= input.ReservationMax)
+                    && Gate(candidate, effective[candidate.Task], pools[candidate.Pool]) is null
+                    && Short(candidate))
+                .OrderBy(candidate => candidate.QueuedAt).ThenBy(candidate => candidate.Sequence).ThenBy(candidate => candidate.Task, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (qualifying is not null)
+            {
+                reservation = new Reservation(qualifying.Task, now);
+            }
+        }
+
         // The walk: the pool with the most round-robin credit offers its next candidate (strict class, then the deficit round robin);
-        // an admission moves the pool's credit and the owner's deficit, a refusal only marks the candidate decided for this pass.
+        // an admission moves the pool's credit and the owner's deficit, a refusal only marks the candidate decided for this pass. A
+        // waiting task's position counts only the tasks of its pool still waiting before it (not those admitted earlier in the pass).
         var positions = new Dictionary<string, int>(StringComparer.Ordinal);
         while (true)
         {
@@ -418,80 +445,25 @@ public sealed class AdmissionEngine
             var (candidate, priority, commit) = pool.Next(this);
             pool.Decided.Add(candidate.Task);
             result.Order.Add(candidate.Task);
-            var position = positions[pool.Pool] = positions.GetValueOrDefault(pool.Pool) + 1;
+            var position = positions.GetValueOrDefault(pool.Pool) + 1;
             var limits = pools[pool.Pool];
             var feasibility = result.Feasibility[candidate.Task];
             var clamped = Math.Min(candidate.Cpu, Math.Max(0, input.BudgetCpu));
             Verdict Wait(string reason, string text, KeyConflict? conflict = null) =>
                 new(candidate.Task, reason, feasibility, position, conflict?.Keys ?? [], conflict?.Holders ?? [], text);
 
-            Verdict? verdict = null;
-            if (feasibility == Scheduling.Feasibility.ExceedsCapacity)
-            {
-                verdict = Wait(BlockingReasons.ExceedsCapacity, string.Create(CultureInfo.InvariantCulture,
-                    $"mem_expected {candidate.MemExpected} B exceeds the managed share {maxShare} B or max_task_memory {input.MaxTaskMemory} B; it can never run under the current reserve"));
-            }
-            else if (feasibility == Scheduling.Feasibility.ExceedsBudget)
-            {
-                verdict = Wait(BlockingReasons.ExceedsBudget, string.Create(CultureInfo.InvariantCulture,
-                    $"mem_expected {candidate.MemExpected} B exceeds the idle budget {idleBudget} B; it fits only if unmanaged memory ({input.UnmanagedMemory} B) falls"));
-            }
-            else if (limits.Paused)
-            {
-                verdict = Wait(BlockingReasons.PoolLimit, $"admission from pool '{pool.Pool}' is paused");
-            }
-            else if (input.Pressure >= PressureLevel.Critical)
-            {
-                verdict = Wait(BlockingReasons.BudgetMemory, "admission stops at Critical memory pressure (03 section 7)");
-            }
-            else if (input.Pressure >= PressureLevel.Tight && priority != Priority.Interactive)
-            {
-                verdict = Wait(BlockingReasons.BudgetMemory, $"only INTERACTIVE tasks are admitted at {input.Pressure.ToString().ToUpperInvariant()} pressure (03 section 7)");
-            }
-            else if (globalRunning >= input.GlobalMaxRunning)
-            {
-                verdict = Wait(BlockingReasons.GlobalLimit, string.Create(CultureInfo.InvariantCulture, $"{globalRunning} attempts run; global_max_running is {input.GlobalMaxRunning}"));
-            }
-            else if (input.GlobalParallelism is { } global && globalRunning >= global)
-            {
-                verdict = Wait(BlockingReasons.GlobalLimit, string.Create(CultureInfo.InvariantCulture, $"global parallelism is limited to {global}"));
-            }
-            else if (!candidate.Light && poolRunning.GetValueOrDefault(pool.Pool) >= limits.MaxParallel)
-            {
-                verdict = Wait(BlockingReasons.PoolLimit, string.Create(CultureInfo.InvariantCulture,
-                    $"pool '{pool.Pool}' runs {poolRunning.GetValueOrDefault(pool.Pool)} of max_parallel {limits.MaxParallel}"));
-            }
-            else if (candidate.Workspace is { } workspace && input.WorkspaceParallelism.TryGetValue(workspace, out var workspaceLimit)
-                && workspaceRunning.GetValueOrDefault(workspace) >= workspaceLimit)
-            {
-                verdict = Wait(BlockingReasons.PoolLimit, string.Create(CultureInfo.InvariantCulture, $"workspace {workspace} parallelism is limited to {workspaceLimit}"));
-            }
-            else if (candidate.Session is { } session && input.SessionParallelism.TryGetValue(session, out var sessionLimit)
-                && sessionRunning.GetValueOrDefault(session) >= sessionLimit)
-            {
-                verdict = Wait(BlockingReasons.PoolLimit, string.Create(CultureInfo.InvariantCulture, $"session {session} parallelism is limited to {sessionLimit}"));
-            }
-            else if (holders.Conflict(candidate.Task, [.. candidate.Keys]) is { } conflict)
-            {
-                verdict = Wait(BlockingReasons.ExclusiveKey, $"keys held by running tasks conflict: {string.Join(", ", conflict.Keys)}", conflict);
-            }
-            else if (reservation is not null && reservation.Task != candidate.Task && !candidate.Light && priority >= effective[reservation.Task]
+            Verdict? verdict = Gate(candidate, priority, limits) is { } gate ? Wait(gate.Reason, gate.Text, gate.Conflict) : null;
+            if (verdict is null && reservation is not null && reservation.Task != candidate.Task && !candidate.Light && priority >= effective[reservation.Task]
                 && !Backfills(input, candidate) && Delays(byTask[reservation.Task], candidate, clamped, availMem, cpuLoad, cpuLimit, input.BudgetCpu))
             {
                 verdict = Wait(BlockingReasons.LargeTaskReserved, $"the large-task reservation of task {reservation.Task} holds back tasks of its class and below");
             }
-            else
+            else if (verdict is null)
             {
                 var memoryShort = candidate.MemExpected > availMem;
                 var cpuShort = cpuLoad + clamped > cpuLimit;
                 if (memoryShort || cpuShort)
                 {
-                    if (reservation is null && !candidate.Light && now - candidate.QueuedAt > input.LargeTaskBypass && !result.Lapsed.Contains(candidate.Task)
-                        && (candidate.LapsedAt is not { } lapsed || now - lapsed >= input.ReservationMax))
-                    {
-                        reservation = new Reservation(candidate.Task, now);
-                    }
-
                     verdict = memoryShort
                         ? Wait(BlockingReasons.BudgetMemory, string.Create(CultureInfo.InvariantCulture,
                             $"mem_expected {candidate.MemExpected} B exceeds avail_mem {Math.Max(0, availMem)} B (B_mem {input.BudgetMemory} B, accounted {accounted} B)"))
@@ -502,6 +474,7 @@ public sealed class AdmissionEngine
 
             if (verdict is not null)
             {
+                positions[pool.Pool] = position;
                 result.Waiting[candidate.Task] = verdict;
                 continue;
             }
@@ -545,6 +518,75 @@ public sealed class AdmissionEngine
         }
 
         return result;
+
+        // The admission gates before the reservation and the resources (feasibility, a paused pool, pressure, the global, pool, workspace
+        // and session limits, keys), against the state of the walk so far; null when the candidate passes them all.
+        (string Reason, string Text, KeyConflict? Conflict)? Gate(QueuedCandidate candidate, Priority priority, PoolLimits limits)
+        {
+            var feasibility = result.Feasibility[candidate.Task];
+            if (feasibility == Scheduling.Feasibility.ExceedsCapacity)
+            {
+                return (BlockingReasons.ExceedsCapacity, string.Create(CultureInfo.InvariantCulture,
+                    $"mem_expected {candidate.MemExpected} B exceeds the managed share {maxShare} B or max_task_memory {input.MaxTaskMemory} B; it can never run under the current reserve"), null);
+            }
+
+            if (feasibility == Scheduling.Feasibility.ExceedsBudget)
+            {
+                return (BlockingReasons.ExceedsBudget, string.Create(CultureInfo.InvariantCulture,
+                    $"mem_expected {candidate.MemExpected} B exceeds the idle budget {idleBudget} B; it fits only if unmanaged memory ({input.UnmanagedMemory} B) falls"), null);
+            }
+
+            if (limits.Paused)
+            {
+                return (BlockingReasons.PoolLimit, $"admission from pool '{limits.Name}' is paused", null);
+            }
+
+            if (input.Pressure >= PressureLevel.Critical)
+            {
+                return (BlockingReasons.BudgetMemory, "admission stops at Critical memory pressure (03 section 7)", null);
+            }
+
+            if (input.Pressure >= PressureLevel.Tight && priority != Priority.Interactive)
+            {
+                return (BlockingReasons.BudgetMemory, $"only INTERACTIVE tasks are admitted at {input.Pressure.ToString().ToUpperInvariant()} pressure (03 section 7)", null);
+            }
+
+            if (globalRunning >= input.GlobalMaxRunning)
+            {
+                return (BlockingReasons.GlobalLimit, string.Create(CultureInfo.InvariantCulture, $"{globalRunning} attempts run; global_max_running is {input.GlobalMaxRunning}"), null);
+            }
+
+            if (input.GlobalParallelism is { } global && globalRunning >= global)
+            {
+                return (BlockingReasons.GlobalLimit, string.Create(CultureInfo.InvariantCulture, $"global parallelism is limited to {global}"), null);
+            }
+
+            if (!candidate.Light && poolRunning.GetValueOrDefault(limits.Name) >= limits.MaxParallel)
+            {
+                return (BlockingReasons.PoolLimit, string.Create(CultureInfo.InvariantCulture,
+                    $"pool '{limits.Name}' runs {poolRunning.GetValueOrDefault(limits.Name)} of max_parallel {limits.MaxParallel}"), null);
+            }
+
+            if (candidate.Workspace is { } workspace && input.WorkspaceParallelism.TryGetValue(workspace, out var workspaceLimit)
+                && workspaceRunning.GetValueOrDefault(workspace) >= workspaceLimit)
+            {
+                return (BlockingReasons.PoolLimit, string.Create(CultureInfo.InvariantCulture, $"workspace {workspace} parallelism is limited to {workspaceLimit}"), null);
+            }
+
+            if (candidate.Session is { } session && input.SessionParallelism.TryGetValue(session, out var sessionLimit)
+                && sessionRunning.GetValueOrDefault(session) >= sessionLimit)
+            {
+                return (BlockingReasons.PoolLimit, string.Create(CultureInfo.InvariantCulture, $"session {session} parallelism is limited to {sessionLimit}"), null);
+            }
+
+            return holders.Conflict(candidate.Task, [.. candidate.Keys]) is { } conflict
+                ? (BlockingReasons.ExclusiveKey, $"keys held by running tasks conflict: {string.Join(", ", conflict.Keys)}", conflict)
+                : null;
+        }
+
+        // Short of memory or CPU beside the running work (the clamped grant against cpu_limit).
+        bool Short(QueuedCandidate candidate) =>
+            candidate.MemExpected > availMem || cpuLoad + Math.Min(candidate.Cpu, Math.Max(0, input.BudgetCpu)) > cpuLimit;
     }
 
     private static void Count(string? pool, string? workspace, string? session, Dictionary<string, int> pools, Dictionary<string, int> workspaces,

@@ -43,6 +43,9 @@ public sealed class TaskRow
     /// <summary>The pool.</summary>
     public string Pool { get; init; } = "default";
 
+    /// <summary><c>state_reason</c>, or <see langword="null"/>.</summary>
+    public string? StateReason { get; init; }
+
     /// <summary>Attempts so far.</summary>
     public int AttemptCount { get; init; }
 
@@ -133,7 +136,7 @@ public static class TaskRecords
         ArgumentNullException.ThrowIfNull(reader);
         using var command = reader.CreateCommand(
             "SELECT task_id, state, kind, spec, env_digest, owner, effective_priority, side_effect, attempt_count, current_attempt_id, caller_released_at, purged_at, rev, " +
-            "side_effect_source, pool FROM task WHERE task_id = $id;");
+            "side_effect_source, pool, state_reason FROM task WHERE task_id = $id;");
         command.Parameters.AddWithValue("$id", taskId.ToArray());
         using var rows = command.ExecuteReader();
         if (!rows.Read())
@@ -158,6 +161,7 @@ public static class TaskRecords
             Revision = rows.GetInt64(12),
             SideEffectSource = (SideEffectSource)rows.GetInt32(13),
             Pool = rows.GetString(14),
+            StateReason = rows.IsDBNull(15) ? null : rows.GetString(15),
         };
     }
 

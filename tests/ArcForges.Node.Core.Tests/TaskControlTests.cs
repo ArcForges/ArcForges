@@ -60,7 +60,10 @@ public sealed class TaskControlTests
         await using var channel = await node.ChannelAsync();
         var marker = Path.Combine(node.Root, "ignore.txt");
         var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--on-break", "ignore", "--child", "same", "--marker", marker);
-        spec.Resources = new ResourceSpec { CancelGraceMs = 1_000 };
+        // The grace must outlast the start of each process's break handler: the attempt runs below normal priority (03 section 5.2, amended),
+        // and under the parallel suites' normal-priority load its handler thread can wait seconds for a processor (Windows' starvation boost
+        // runs a ready thread within about 4 s), so the forced phase waits 10 s; the assertions are unchanged.
+        spec.Resources = new ResourceSpec { CancelGraceMs = 10_000 };
         var taskId = await Tasks.SubmitAsync(channel, spec);
         await Tasks.RunningAsync(channel, taskId);
         await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "ready") == 2, Tasks.Bound, "the tree");
@@ -68,6 +71,7 @@ public sealed class TaskControlTests
 
         var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Reason = "test" }, cancellationToken: Ct);
         Assert.Equal(TaskState.Running, cancel.Value.State);
+        await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "break") == 2, TimeSpan.FromSeconds(10), "both processes to record the break");
         var task = await Tasks.WaitAsync(channel, taskId);
         Assert.Equal(TaskState.Cancelled, task.State);
         Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
@@ -109,7 +113,15 @@ public sealed class TaskControlTests
         var starts = markers.Select(marker => Tasks.Marker(marker).Single(line => line.Event == "ready").At).ToList();
         Assert.True(starts[2] >= Math.Min(starts[0], starts[1]) + 1_000, "The third task waited for a running one to finish.");
         Assert.True(starts[3] >= Math.Min(starts[0], starts[1]) + 1_000, "The fourth task waited for a running one to finish.");
-        Assert.True(starts[2] <= starts[3] + 200, "Queued tasks start in submission order.");
+        // The order is the node's: its start records (admission starts them in order), not the processes' markers, which a below-normal
+        // process under the parallel suites' load writes late.
+        var started = new List<long>();
+        foreach (var id in ids)
+        {
+            started.Add(Sched.Ms((await Tasks.GetAsync(channel, id)).StartedAt));
+        }
+
+        Assert.True(started[2] <= started[3], "Queued tasks start in submission order.");
     }
 
     [Fact(Timeout = 120_000)]
