@@ -115,9 +115,9 @@ public sealed record ClassifiedProcess(ProcessSample Process, ProcessLabel Label
 /// The resource monitor (03 sections 1, 2, 3 and 7; R-RES-001, R-RES-003, R-RES-009, R-RES-014). Every second it samples the machine
 /// and every running attempt's container, computes managed and unmanaged use, smooths <c>U</c> asymmetrically, derives the budgets, keeps
 /// each attempt's <c>peak_observed</c> and evaluates the pressure level (journaled on topic RESOURCES with a notification and a
-/// <c>MEMORY_PRESSURE</c> finding at Pressure and above, then handed to the pressure hooks). Every 5 s it reads the process table and
-/// takes the machine and managed samples; the buffered rows (and the 1 s attempt samples) are stored every 5 s while attempts run and
-/// every 30 s while the node is idle; every 10 min it downsamples (<see cref="ResourceSamples"/>).
+/// <c>MEMORY_PRESSURE</c> finding at Pressure and above, then handed to the pressure hooks). Every 5 s it takes the machine and managed
+/// samples. While attempts run it reads the process table every 5 s and stores the buffered rows (with the 1 s attempt samples) every 5 s;
+/// an idle node does both every 30 s. Every 10 min it downsamples (<see cref="ResourceSamples"/>).
 /// It runs on its own thread, so a slow sampler never delays the enforcement loop.
 /// </summary>
 public sealed class ResourceMonitor : IDisposable
@@ -130,6 +130,13 @@ public sealed class ResourceMonitor : IDisposable
 
     /// <summary>How often an idle node stores its buffered machine samples.</summary>
     public static readonly TimeSpan IdleFlushInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How often an idle node (no running attempt) reads the process table (the adaptive interval of the task's idle-CPU risk): at idle
+    /// the table only refreshes the node's own memory and the stored process count, and <c>ListProcesses</c> reads its own table at the
+    /// call; while attempts run it is read every 5 s (and every second where an attempt's memory is summed from it).
+    /// </summary>
+    public static readonly TimeSpan IdleProcessInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>How often the samples are downsampled.</summary>
     public static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMinutes(10);
@@ -333,8 +340,9 @@ public sealed class ResourceMonitor : IDisposable
         var machine = _sampler.Machine();
         var attempts = _execution.RunningAttempts.Where(attempt => attempt.Handle is not null && !attempt.Finalizing).ToList();
 
-        // The process table: every 5 s, and every second while an attempt's memory is summed from it (Windows).
-        if (Due(_tableAt, now, ProcessInterval) || attempts.Any(attempt => attempt.Handle!.UsageNeedsProcessTable))
+        // The process table: every 5 s while attempts run (every second while an attempt's memory is summed from it, Windows), every 30 s idle.
+        var tableInterval = attempts.Count > 0 ? ProcessInterval : IdleProcessInterval;
+        if (Due(_tableAt, now, tableInterval) || attempts.Any(attempt => attempt.Handle!.UsageNeedsProcessTable))
         {
             RefreshTable(now);
         }

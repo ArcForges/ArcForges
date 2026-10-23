@@ -134,8 +134,7 @@ public sealed partial class ResourceTests
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
-        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
-        var crossing = await SubmitAsync(channel, [cmd, "/d", "/c", $"\"{wsl}\" --list --quiet & ping -n 60 127.0.0.1 >nul"]);
+        var crossing = await SubmitAsync(channel, [], script: $"\"{wsl}\" --list --quiet & ping -n 60 127.0.0.1 >nul");
         var attempt = await RunningAttemptAsync(channel, crossing);
         var plain = await SubmitAsync(channel, [TestNode.TestLoad, "cpu", "--threads", "1", "--iterations", "20000000000"]);
         await RunningAttemptAsync(channel, plain);
@@ -157,7 +156,7 @@ public sealed partial class ResourceTests
         // The VM's worker (vmmem or vmmemWSL) is GUEST_VM, never controlled and never attributed to the task; nothing outside the
         // attempts' jobs is MANAGED.
         var all = await ProcessesAsync(channel, new ProcessFilter { TopN = 500 });
-        Assert.All(all.Where(process => process.Label == ProcessLabel.Managed), process => Assert.True(process.TaskId == crossing || process.TaskId == plain));
+        Assert.All(all.Where(process => process.Label == ProcessLabel.Managed), process => Assert.True(crossing.Equals(process.TaskId) || plain.Equals(process.TaskId), $"{process.Process.ImageName} ({process.Process.Pid}) is MANAGED outside both tasks"));
         var vm = all.Where(process => process.Process.ImageName.StartsWith("vmmem", StringComparison.OrdinalIgnoreCase)).ToList();
         Assert.All(vm, process =>
         {
@@ -167,7 +166,7 @@ public sealed partial class ResourceTests
         TestContext.Current.TestOutputHelper?.WriteLine(vm.Count == 0
             ? "No WSL VM worker runs on this machine: the GUEST_VM label was not observed (A-L01 stays unverified)."
             : $"WSL VM worker(s): {string.Join(", ", vm.Select(process => $"{process.Process.ImageName} ({process.Process.Pid}, {process.Usage.MemBytes} bytes)"))}");
-        Assert.Contains("resources.crosses_vm_boundary", File.ReadAllText(node.NodeLog), StringComparison.Ordinal);
+        await TestNode.WaitAsync(() => TestNode.LogEvents(node.NodeLog, "resources.crosses_vm_boundary").Count > 0, Bound, "the crossing in the node log");
         await CancelAsync(channel, crossing);
         await CancelAsync(channel, plain);
     }
@@ -194,9 +193,8 @@ public sealed partial class ResourceTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job platform test.");
-        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
-        await PeakObservedAsync(_ => [cmd, "/d", "/c",
-            $"\"{TestNode.TestLoad}\" mem-ramp --target-mb 256 --step-mb 32 --hold-ms 4000 --report nul && \"{TestNode.TestLoad}\" output --bytes 805306368 --line-bytes 4096 && ping -n 7 127.0.0.1 >nul"]);
+        await PeakObservedAsync(_ => [], $"\"{TestNode.TestLoad}\" mem-ramp --target-mb 256 --step-mb 32 --hold-ms 4000 --report nul && "
+            + $"\"{TestNode.TestLoad}\" output --bytes 805306368 --line-bytes 4096 && ping -n 7 127.0.0.1 >nul");
     }
 
     /// <summary>
@@ -205,13 +203,13 @@ public sealed partial class ResourceTests
     /// is never in a process's private working set). Its samples' peak reaches the 256 MiB, stays far below the cache, and never
     /// decreases, while the current memory falls after the ramp ends (03 section 3).
     /// </summary>
-    private static async Task PeakObservedAsync(Func<string, string[]> argv)
+    private static async Task PeakObservedAsync(Func<string, string[]> argv, string? script = null)
     {
         // A disk-backed data root: on tmpfs the output would be shared memory, which is not reclaimable cache.
         await using var node = TestNode.Create(OperatingSystem.IsWindows() ? null : AppContext.BaseDirectory);
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
-        var task = await SubmitAsync(channel, argv(node.Root), memExpected: 1024 * MiB, memCeiling: 2048 * MiB);
+        var task = await SubmitAsync(channel, argv(node.Root), memExpected: 1024 * MiB, memCeiling: 2048 * MiB, script: script);
         var attempt = await RunningAttemptAsync(channel, task);
         long cgroupMax = 0;
         var cgroup = OperatingSystem.IsLinux() ? SystemdTestEnvironment.CgroupDirectory(SystemdTestEnvironment.AttemptUnit(IdText.Format(attempt))) : null;
@@ -330,6 +328,21 @@ public sealed partial class ResourceTests
             + string.Join("; ", changes.Select(item => $"{item.GetProperty("at").GetString()} {item.GetProperty("fields").GetProperty("level").GetString()} "
                 + $"({item.GetProperty("fields").GetProperty("trigger").GetString()})")));
 
+        if (Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 } directory)
+        {
+            // Evidence for the record: the reaction time and the level changes of this run.
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "pressure-reaction-" + (OperatingSystem.IsWindows() ? "windows" : "linux") + ".json"),
+                new System.Text.Json.Nodes.JsonObject
+                {
+                    ["crossedAt"] = crossed.Value.ToString("O", CultureInfo.InvariantCulture),
+                    ["actedAt"] = acted.ToString("O", CultureInfo.InvariantCulture),
+                    ["reactionMs"] = Math.Round(reaction.TotalMilliseconds),
+                    ["criticalThresholdBytes"] = (long)threshold,
+                    ["levels"] = new System.Text.Json.Nodes.JsonArray([.. levels.Select(level => (System.Text.Json.Nodes.JsonNode?)level)]),
+                }.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        }
+
         // 03 section 5.4: detected within 1 s of sampling plus 5 s of persistence and acted on at once (the test polls every 50 ms).
         Assert.True(reaction <= TimeSpan.FromSeconds(6.25), $"the node acted {reaction.TotalMilliseconds:0} ms after available memory fell below Critical");
         Assert.True(reaction >= TimeSpan.FromSeconds(4), $"the node acted {reaction.TotalMilliseconds:0} ms after the crossing, before 5 s of persistence");
@@ -361,14 +374,15 @@ public sealed partial class ResourceTests
 
     private static RequestMeta Meta() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
 
+    /// <summary>Submits <paramref name="argv"/>, or with <paramref name="script"/> a <c>cmd</c> shell script (Windows quoting is the node's).</summary>
     private static async Task<Id> SubmitAsync(NodeChannel channel, string[] argv, Priority priority = Priority.Normal, bool preemptible = false,
-        long memExpected = 0, long memCeiling = 0)
+        long memExpected = 0, long memCeiling = 0, string? script = null)
     {
         var command = new ArgvCommand();
         command.Argv.Add(argv);
         var spec = new TaskSpec
         {
-            Command = new CommandSpec { Argv = command },
+            Command = script is null ? new CommandSpec { Argv = command } : new CommandSpec { Shell = new ShellCommand { Kind = ShellKind.Cmd, Script = script } },
             WorkingDirectory = Path.GetTempPath(),
             Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node },
             Priority = priority,
