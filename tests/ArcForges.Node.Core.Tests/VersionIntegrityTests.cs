@@ -129,7 +129,8 @@ public sealed class VersionIntegrityTests
     /// <summary>
     /// Review round 1, finding 1: a symbolic link inside the version directory, to a file and to a directory outside it, is a mismatch;
     /// neither link is followed, so the targets keep their permissions and are never hashed (a listed path under the directory link is
-    /// missing, not read through it).
+    /// missing, not read through it). On Windows, where creating a symbolic link needs a privilege this user may lack, the directory link is a
+    /// junction (a reparse point any user can create), and the file link is checked only where Windows allows it.
     /// </summary>
     [Fact(Timeout = 60_000)]
     public void ALinkToAnOutsideFileIsAMismatchAndItsTargetIsNeverChanged()
@@ -144,21 +145,31 @@ public sealed class VersionIntegrityTests
         });
         try
         {
+            var fileLink = true;
             try
             {
                 File.CreateSymbolicLink(Path.Combine(directory, "evil-link"), victim);
+            }
+            catch (Exception exception) when (OperatingSystem.IsWindows() && exception is IOException or UnauthorizedAccessException)
+            {
+                fileLink = false;
+                TestContext.Current.TestOutputHelper?.WriteLine($"Windows refused a file symbolic link for this user ({exception.Message}); the junction is checked.");
+            }
+
+            try
+            {
                 Directory.CreateSymbolicLink(Path.Combine(directory, "linked"), outside);
             }
             catch (Exception exception) when (OperatingSystem.IsWindows() && exception is IOException or UnauthorizedAccessException)
             {
-                Assert.Skip($"Windows refused to create a symbolic link for this user ({exception.GetType().Name}: {exception.Message}).");
+                Junction(Path.Combine(directory, "linked"), outside);
             }
 
             var report = VersionIntegrity.Check(directory, Ct);
-            Assert.Equal(["evil-link", "linked"], report.Links.Order(StringComparer.Ordinal));
+            Assert.Equal(fileLink ? ["evil-link", "linked"] : ["linked"], report.Links.Order(StringComparer.Ordinal));
             Assert.Equal(["linked/victim.txt"], report.Missing);
             Assert.Empty(report.Changed);
-            Assert.Equal("mismatch: 3 files", report.Fact);
+            Assert.Equal(fileLink ? "mismatch: 3 files" : "mismatch: 2 files", report.Fact);
             Assert.False(VersionIntegrity.IsReadOnly(victim), "The link's target is never changed.");
             Assert.Equal("outside", File.ReadAllText(victim));
         }
@@ -168,7 +179,15 @@ public sealed class VersionIntegrityTests
             {
                 if (new FileInfo(link).LinkTarget is not null)
                 {
-                    File.Delete(link);
+                    if (Directory.Exists(link))
+                    {
+                        // A directory link or junction: removing it never touches its target.
+                        Directory.Delete(link);
+                    }
+                    else
+                    {
+                        File.Delete(link);
+                    }
                 }
             }
 
@@ -249,6 +268,20 @@ public sealed class VersionIntegrityTests
 
             await Task.Delay(100, Ct);
         }
+    }
+
+    /// <summary>Creates a Windows directory junction (<c>mklink /J</c>; no privilege needed).</summary>
+    private static void Junction(string link, string target)
+    {
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), ["/d", "/c", "mklink", "/J", link, target])
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        })!;
+        var output = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
+        Assert.True(mklink.WaitForExit(30_000) && mklink.ExitCode == 0, "mklink /J failed: " + output);
     }
 
     /// <summary>A version directory of four files (one in a subdirectory) and its <c>digests.json</c> in the packaging step's format.</summary>
