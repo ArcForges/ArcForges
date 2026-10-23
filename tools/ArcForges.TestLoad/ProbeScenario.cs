@@ -82,7 +82,11 @@ internal static partial class ProbeScenario
         };
     }
 
-    /// <summary>The loop iterations that take <paramref name="workUs"/>: the median of 15 timed runs before the measurement starts.</summary>
+    /// <summary>
+    /// The loop iterations that take <paramref name="workUs"/> on an uncontended processor: the fastest of 31 timed runs before the
+    /// measurement starts (a run another thread interrupted is slower, so on a busy machine a median would shorten the work and make the
+    /// probe easier to satisfy).
+    /// </summary>
     private static long Calibrate(long workUs)
     {
         const long Trial = 200_000;
@@ -95,7 +99,7 @@ internal static partial class ProbeScenario
         }
 
         var samples = new List<double>();
-        for (var run = 0; run < 15; run++)
+        for (var run = 0; run < 31; run++)
         {
             var started = Stopwatch.GetTimestamp();
             CpuScenario.Spin((ulong)run + 1, Trial);
@@ -103,8 +107,7 @@ internal static partial class ProbeScenario
             samples.Add(Trial / Math.Max(1, elapsedUs));
         }
 
-        samples.Sort();
-        return Math.Max(1, (long)(samples[samples.Count / 2] * workUs));
+        return Math.Max(1, (long)(samples.Max() * workUs));
     }
 
     private static void Wait(WindowsTimer? timer, long ticks, long frequency)
