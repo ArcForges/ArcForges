@@ -203,7 +203,8 @@ public static class ExecLaunchRole
 /// <summary>
 /// <c>arcforges node exec-stop --attempt &lt;id&gt; --dir &lt;attempt directory&gt;</c>: the <c>ExecStop=-</c> of an attempt unit (04
 /// section 3). systemd runs it once the main process exited (every exit status and signal is a success status of the unit, so it always
-/// runs), before it stops the remaining processes. It runs the end steps of <c>steps.json</c> within the end-step budget (10 s; a
+/// runs), before it stops the remaining processes, and also when it stops the unit after an OOM kill (<c>OOMPolicy=stop</c>, L-27),
+/// when the main process may still be running: the forced phase then ends it with the other processes. It runs the end steps of <c>steps.json</c> within the end-step budget (10 s; a
 /// failing or slow step is recorded and never changes the attempt's result), waits up to <c>leftover_grace</c> for the unit's other
 /// processes to exit on their own, kills what is still running (SIGKILL, the forced phase) and writes it to <c>stop.json</c>;
 /// <c>exit-record</c> lists those processes as terminated leftovers. It always exits 0.

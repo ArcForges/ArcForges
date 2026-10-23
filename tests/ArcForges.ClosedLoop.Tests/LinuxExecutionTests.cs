@@ -96,13 +96,15 @@ public sealed class LinuxExecutionTests
         Assert.Contains("/" + node.Slice + "/", directory, StringComparison.Ordinal);
 
         // 03 section 5.2 from the node: CPUWeight by priority (HIGH 200), MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling,
-        // MemorySwapMax = swap_allowance (0), TasksMax 4096, OOMPolicy=kill (memory.oom.group).
+        // MemorySwapMax = swap_allowance (0), TasksMax 4096, OOMPolicy=stop: never memory.oom.group, whose group kill can kill the user
+        // manager (L-27).
         Assert.Equal("200", Read(directory, "cpu.weight"));
         Assert.Equal((80L << 20).ToString(CultureInfo.InvariantCulture), Read(directory, "memory.high"));
         Assert.Equal((128L << 20).ToString(CultureInfo.InvariantCulture), Read(directory, "memory.max"));
         Assert.Equal("0", Read(directory, "memory.swap.max"));
         Assert.Equal("4096", Read(directory, "pids.max"));
-        Assert.Equal("1", Read(directory, "memory.oom.group"));
+        Assert.Equal("0", Read(directory, "memory.oom.group"));
+        Assert.Equal("stop", SystemdTestEnvironment.Property(unit, "OOMPolicy"));
 
         // 03 section 5.1 on the slice: CPUQuota from B_cpu, MemoryHigh = B_mem, MemoryMax = C_mem - R_mem, MemorySwapMax 0, TasksMax 32768.
         var facts = Capabilities((await node.CliAsync("node", "capabilities", "--json")).Json());

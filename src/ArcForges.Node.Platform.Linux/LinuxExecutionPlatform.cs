@@ -509,7 +509,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             new("LimitNOFILESoft", nofileSoft),
             new("KillMode", "control-group"),
             new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + StopRecordMarginMs) * 1000),
-            // Failed units stay loaded (systemd skips ExecStopPost when OOMPolicy=kill fires), so the node records them from the unit.
+            // Failed units stay loaded (an OOM kill while ExecStopPost runs ends exit-record too), so the node records them from the unit.
             new("CollectMode", "inactive"),
             new("IgnoreSIGPIPE", false),
             new("CPUAccounting", true),
@@ -551,7 +551,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
                 properties.Add(new("MemorySwapMax", (ulong)swap));
             }
 
-            properties.Add(new("OOMPolicy", "kill"));
+            // stop, never kill (AD-0005 Linux section 2, L-27): kill sets memory.oom.group, and a group kill also signals the user
+            // manager's posix_spawn child while it still shares the manager's address space, which kills the user manager.
+            properties.Add(new("OOMPolicy", "stop"));
         }
 
         if (_controllers.Contains("pids"))
