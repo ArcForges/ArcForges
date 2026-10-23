@@ -81,7 +81,7 @@ internal static class Tasks
                 return response.Value.Task;
             }
 
-            Assert.True(watch.Elapsed < limit, $"Task {IdText.Format(taskId)} did not reach {target} within {limit.TotalSeconds:0} s (state {response.Value.Task.State}).");
+            Assert.True(watch.Elapsed < limit, $"Task {IdText.Format(taskId)} did not reach {target} within {limit.TotalSeconds:0} s (state {response.Value.Task.State}, reason {response.Value.Task.StateReason}).");
         }
     }
 

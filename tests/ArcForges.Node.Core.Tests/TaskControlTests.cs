@@ -79,7 +79,7 @@ public sealed class TaskControlTests
     }
 
     [Fact(Timeout = 180_000)]
-    public async Task TheInterimAdmissionRunsTasksInFifoOrderWithinTheGlobalLimit()
+    public async Task TasksOfOneOwnerAndClassRunInSubmissionOrderWithinTheGlobalLimit()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
@@ -96,7 +96,7 @@ public sealed class TaskControlTests
         if (queued.State == TaskState.Queued)
         {
             Assert.Equal("global_limit", queued.Queue.BlockingReason);
-            Assert.InRange(queued.Queue.Position, 1u, 3u);
+            Assert.InRange(queued.Queue.Position, 1u, 4u);
         }
 
         foreach (var id in ids)
@@ -181,23 +181,26 @@ public sealed class TaskControlTests
         Assert.Contains(finding.Evidence, item => item.Name == "detected_by" && item.Value == "NODE");
     }
 
+    /// <summary>
+    /// The attempt's commit limit in the mem-ramp scenario, through the node. The root's commit limit is <c>commit_factor x (C_mem - R_mem)</c>
+    /// (03 section 5.1), checked here; that it bounds all attempts together is proven with real jobs by the platform test
+    /// <c>JobTests.TheRootCommitLimitBoundsAllAttemptsTogether</c>: since admission (AF-SCHED-01) counts against <c>B_mem = C_mem - R_mem -
+    /// U_mem</c>, a node whose managed share is shrunk below the machine's unmanaged use admits nothing (<c>exceeds_budget</c>), so a node-level
+    /// scenario can no longer push two admitted attempts into a small root.
+    /// </summary>
     [Fact(Timeout = 180_000)]
-    public async Task NoAttemptOrRootExceedsItsCommitLimitInTheMemRampScenario()
+    public async Task NoAttemptExceedsItsCommitLimitInTheMemRampScenario()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows commit limits.");
-        const long Managed = 400L << 20;
-        var physical = ProcessInfo.PhysicalMemory();
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy =>
-        {
-            // C_mem - R_mem = 400 MiB: the root commit limit is 1.5 x 400 MiB = 600 MiB (03 section 5.1).
-            policy.Resources.ReserveMemFixedBytes = (ulong)(physical - Managed);
-            policy.Resources.ReserveMemFraction = 0;
-        })).StartAsync();
+        await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
         var nodeName = IdText.Format(node.Runtime.NodeId.Span);
         using var root = JobObject.Open(WindowsExecutionPlatform.JobName(nodeName, "root"))!;
-        Assert.Equal(Managed * 3 / 2, root.Limits().JobMemoryLimit);
+        var settings = node.Runtime.Execution!.Settings;
+        // The job rounds its limit down to a page.
+        var rootLimit = (long)(settings.CommitFactor * settings.ManagedMemory);
+        Assert.InRange(root.Limits().JobMemoryLimit, rootLimit - 4095, rootLimit);
 
         // One attempt with a 128 MiB ceiling: its commit limit is 192 MiB, its notification limit 128 MiB. The workload's heap limit is
         // lifted (hex without 0x, read by the JIT runtime and Native AOT): inside a job the .NET GC would otherwise refuse at 75% of the
@@ -216,29 +219,7 @@ public sealed class TaskControlTests
         // The job refused: its peak (which counts the refused request) reached the commit limit, within one 16 MiB step.
         Assert.InRange((long)finished.CurrentAttempt.Usage.MemPeakBytes, (192L - 16) << 20, (192L + 16) << 20);
         attemptMax.Stop();
-
-        // Two attempts whose ceilings together exceed the root: the root's commit limit holds for both.
-        var rootMax = Sample(root);
-        var ids = new List<Id>();
-        for (var index = 0; index < 2; index++)
-        {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "380", "--step-mb", "20", "--step-ms", "30", "--hold-ms", "3000");
-            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
-            spec.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 64L << 20, MemCeilingBytes = 300L << 20 } };
-            ids.Add(await Tasks.SubmitAsync(channel, spec));
-        }
-
-        var results = new List<ManagedTask>();
-        foreach (var id in ids)
-        {
-            results.Add(await Tasks.WaitAsync(channel, id));
-        }
-
-        rootMax.Stop();
-        TestContext.Current.TestOutputHelper?.WriteLine($"root committed at most {rootMax.Max} of {Managed * 3 / 2}; attempt at most {attemptMax.Max} of {192L << 20}");
-        Assert.True(rootMax.Max <= Managed * 3 / 2, $"The root committed {rootMax.Max}.");
-        Assert.True(root.Accounting().PeakJobMemory >= (Managed * 3 / 2) - (20L << 20), $"The root's peak {root.Accounting().PeakJobMemory} never reached its limit: the root did not refuse.");
-        Assert.Contains(results, task => task.State == TaskState.Failed);
+        TestContext.Current.TestOutputHelper?.WriteLine($"attempt committed at most {attemptMax.Max} of {192L << 20}");
     }
 
     [Fact(Timeout = 120_000)]

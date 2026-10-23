@@ -27,9 +27,10 @@ internal sealed class InProcessNode : IAsyncDisposable
     private TaskCompletionSource<NodeRuntime> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task<int>? _run;
 
-    private InProcessNode(string root, int streamBuffer, ILaunchStepProvider? steps)
+    private InProcessNode(string root, int streamBuffer, ILaunchStepProvider? steps, ArcForges.Node.Core.Scheduling.IToolConcurrency? tools = null)
     {
         Steps = steps;
+        Tools = tools;
         Root = root;
         DataRoot = Path.Combine(root, "data");
         ConfigPath = Path.Combine(root, "config", "node.json");
@@ -50,6 +51,9 @@ internal sealed class InProcessNode : IAsyncDisposable
 
     /// <summary>Launch and end steps the node's attempts get (synthetic steps in tests).</summary>
     public ILaunchStepProvider? Steps { get; }
+
+    /// <summary>The tool-level concurrency hook (a synthetic adapter in tests).</summary>
+    public ArcForges.Node.Core.Scheduling.IToolConcurrency? Tools { get; }
 
     /// <summary>
     /// The lifecycle state a started node reaches: READY with the Windows job platform, and on Linux with a user manager that delegates
@@ -80,12 +84,13 @@ internal sealed class InProcessNode : IAsyncDisposable
     public Task<int> Exit => _run ?? Task.FromResult(-1);
 
     /// <summary>Creates the node's files; <paramref name="seed"/> may write store rows before the node opens the store.</summary>
-    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, ILaunchStepProvider? steps = null, string? parent = null)
+    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, ILaunchStepProvider? steps = null, string? parent = null,
+        ArcForges.Node.Core.Scheduling.IToolConcurrency? tools = null)
     {
         var root = parent is null
             ? Directory.CreateTempSubdirectory("arcforges-node-tests-").FullName
             : Directory.CreateDirectory(Path.Combine(parent, "arcforges-node-tests-" + Guid.NewGuid().ToString("N")[..12])).FullName;
-        var node = new InProcessNode(root, streamBuffer, steps);
+        var node = new InProcessNode(root, streamBuffer, steps, tools);
         Directory.CreateDirectory(Path.GetDirectoryName(node.ConfigPath)!);
         File.WriteAllText(node.ConfigPath, "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");
         if (seed is not null)
@@ -126,6 +131,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             Error = TextWriter.Null,
             HelperExecutable = HelperExecutable,
             LaunchSteps = Steps,
+            ToolConcurrency = Tools,
             LinuxSlice = Slice,
             SystemdAddress = SystemdAddress,
             LinuxControllers = LinuxControllers,
@@ -172,10 +178,10 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// A connected session (the real client: endpoint, hello and all). A refused hello fails as the client library's connector fails it,
     /// with <see cref="NodeUnavailableException"/> (a stopping node is not ready yet), so a reconnecting stream cache retries it.
     /// </summary>
-    public async Task<NodeChannel> ChannelAsync(bool helloAsHuman = false)
+    public async Task<NodeChannel> ChannelAsync(bool helloAsHuman = false, ClientKind kind = ClientKind.Cli)
     {
         var channel = NodeChannel.Create(Endpoint);
-        var hello = ClientProcess.Hello(ClientKind.Cli);
+        var hello = ClientProcess.Hello(kind);
         hello.InteractiveTerminal = helloAsHuman;
         hello.CiMarkers.Clear();
         var response = await channel.Node.HelloAsync(new NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow.AddSeconds(10));

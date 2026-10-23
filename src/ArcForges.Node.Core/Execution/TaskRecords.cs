@@ -37,6 +37,12 @@ public sealed class TaskRow
     /// <summary>The side-effect class.</summary>
     public SideEffectClass SideEffect { get; init; }
 
+    /// <summary>Who established the class (AD-0006 section 4).</summary>
+    public SideEffectSource SideEffectSource { get; init; } = SideEffectSource.Default;
+
+    /// <summary>The pool.</summary>
+    public string Pool { get; init; } = "default";
+
     /// <summary>Attempts so far.</summary>
     public int AttemptCount { get; init; }
 
@@ -109,7 +115,8 @@ public static class TaskRecords
         "attempt_id, task_id, number, kind, state, executor_node_id, container_name, root_pid, root_start, boot_identity, request_cpu_millicores, " +
         "request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, unenforced, node_gap, created_at, started_at, finished_at, exit_code, " +
         "signal, windows_status, termination_reason, effect, detail, leftover_count, leftover_images_json, cpu_time_ms, mem_peak_bytes, io_read_bytes, " +
-        "io_write_bytes, stdout_bytes, stderr_bytes, stdout_offset, stderr_offset, index_offset, limit_enforced_by, guard_lost, rev, core_dumped";
+        "io_write_bytes, stdout_bytes, stderr_bytes, stdout_offset, stderr_offset, index_offset, limit_enforced_by, guard_lost, rev, core_dumped, tool, operation, " +
+        "tool_parallelism";
 
     private const string TaskColumns =
         "task_id, state, state_reason, kind, title, command_summary, spec, env_digest, owner, owner_origin, owner_session_id, workspace_id, pool, " +
@@ -125,8 +132,8 @@ public static class TaskRecords
     {
         ArgumentNullException.ThrowIfNull(reader);
         using var command = reader.CreateCommand(
-            "SELECT task_id, state, kind, spec, env_digest, owner, effective_priority, side_effect, attempt_count, current_attempt_id, caller_released_at, purged_at, rev " +
-            "FROM task WHERE task_id = $id;");
+            "SELECT task_id, state, kind, spec, env_digest, owner, effective_priority, side_effect, attempt_count, current_attempt_id, caller_released_at, purged_at, rev, " +
+            "side_effect_source, pool FROM task WHERE task_id = $id;");
         command.Parameters.AddWithValue("$id", taskId.ToArray());
         using var rows = command.ExecuteReader();
         if (!rows.Read())
@@ -149,6 +156,8 @@ public static class TaskRecords
             CallerReleasedAt = rows.IsDBNull(10) ? null : rows.GetInt64(10),
             Purged = !rows.IsDBNull(11),
             Revision = rows.GetInt64(12),
+            SideEffectSource = (SideEffectSource)rows.GetInt32(13),
+            Pool = rows.GetString(14),
         };
     }
 
@@ -176,22 +185,6 @@ public static class TaskRecords
         while (rows.Read())
         {
             result.Add(ReadAttemptRow(rows));
-        }
-
-        return result;
-    }
-
-    /// <summary>Queued task IDs in FIFO order (the interim admission of AF-EXEC-01; AF-SCHED-01 replaces the order).</summary>
-    public static List<byte[]> QueuedInOrder(StoreReader reader, int limit)
-    {
-        ArgumentNullException.ThrowIfNull(reader);
-        using var command = reader.CreateCommand("SELECT task_id FROM task WHERE state = 1 ORDER BY queued_at, created_at, task_id LIMIT $limit;");
-        command.Parameters.AddWithValue("$limit", limit);
-        using var rows = command.ExecuteReader();
-        var result = new List<byte[]>();
-        while (rows.Read())
-        {
-            result.Add((byte[])rows.GetValue(0));
         }
 
         return result;
@@ -349,13 +342,16 @@ public static class TaskRecords
         return result;
     }
 
-    /// <summary>The 1-based FIFO position of a queued task.</summary>
+    /// <summary>
+    /// The 1-based position of a queued task within its pool's order without the round robin: the effective class, then the queue time
+    /// (the admission pass's own order, with the fair share across owners, is in <c>QueueService.GetQueue</c>).
+    /// </summary>
     public static uint QueuePosition(StoreReader reader, ReadOnlySpan<byte> taskId)
     {
         ArgumentNullException.ThrowIfNull(reader);
         var value = reader.Scalar(
-            "SELECT count(*) FROM task WHERE state = 1 AND (queued_at, created_at, task_id) <= " +
-            "(SELECT queued_at, created_at, task_id FROM task WHERE task_id = $id);",
+            "SELECT count(*) FROM task t, (SELECT pool, effective_priority, queued_at, created_at, task_id FROM task WHERE task_id = $id) s " +
+            "WHERE t.state = 1 AND t.pool = s.pool AND (t.effective_priority, t.queued_at, t.created_at, t.task_id) <= (s.effective_priority, s.queued_at, s.created_at, s.task_id);",
             ("$id", taskId.ToArray()));
         return (uint)Convert.ToInt64(value ?? 0L, CultureInfo.InvariantCulture);
     }
@@ -363,15 +359,31 @@ public static class TaskRecords
     private static void Complete(StoreReader reader, ManagedTask task)
     {
         var id = task.TaskId.Value.ToByteArray();
-        if (task.State == TaskState.Queued)
+        if (task.State is TaskState.Queued or TaskState.WaitingDependency)
         {
             var queuedAt = reader.Scalar("SELECT queued_at FROM task WHERE task_id = $id;", ("$id", id));
             task.Queue = new QueueInfo
             {
-                Position = QueuePosition(reader, id),
-                BlockingReason = "global_limit",
+                // The admission pass records why a queued task waits in state_reason (03 section 4); a dependency wait is "dependency".
+                BlockingReason = task.State == TaskState.WaitingDependency ? "dependency" : task.HasStateReason && task.StateReason.Length > 0 && task.StateReason != "retry"
+                    ? task.StateReason
+                    : "global_limit",
                 WaitedMs = queuedAt is long since ? (ulong)Math.Max(0, (reader.NowMicroseconds - since) / 1000) : 0,
             };
+            if (task.State == TaskState.Queued)
+            {
+                task.Queue.Position = QueuePosition(reader, id);
+            }
+        }
+
+        using (var keys = reader.CreateCommand("SELECT concurrency_key, mode FROM task_concurrency_key WHERE task_id = $id ORDER BY concurrency_key;"))
+        {
+            keys.Parameters.AddWithValue("$id", id);
+            using var rows = keys.ExecuteReader();
+            while (rows.Read())
+            {
+                (rows.GetInt32(1) == 1 ? task.ExclusiveKeys : task.SharedKeys).Add(rows.GetString(0));
+            }
         }
 
         if (reader.Scalar("SELECT current_attempt_id FROM task WHERE task_id = $id;", ("$id", id)) is byte[] attemptId)
@@ -463,6 +475,20 @@ public static class TaskRecords
             GuardLost = rows.GetInt32(37) == 1,
             Revision = new Revision { Value = rows.GetInt64(38) },
         };
+        if (!rows.IsDBNull(40))
+        {
+            attempt.Tool = rows.GetString(40);
+        }
+
+        if (!rows.IsDBNull(41))
+        {
+            attempt.Operation = rows.GetString(41);
+        }
+
+        if (!rows.IsDBNull(42))
+        {
+            attempt.ToolParallelism = (uint)rows.GetInt32(42);
+        }
         if (!rows.IsDBNull(17))
         {
             attempt.StartedAt = Notifications.Time(rows.GetInt64(17));

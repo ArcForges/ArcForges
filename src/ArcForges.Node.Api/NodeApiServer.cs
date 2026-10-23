@@ -35,6 +35,8 @@ public static class NodeApiServer
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         builder.AddService(new TaskServiceHandler(node, sessions));
         builder.AddService(new ResourceServiceHandler(node));
+        builder.AddService(new QueueServiceHandler(node, sessions));
+        builder.AddService(new PolicyServiceHandler(node, sessions));
         builder.AuthorizeConnections(connection =>
         {
             // Reached only by same-user peers that LocalRpc identified (other users, exited and unresolvable peers are dropped

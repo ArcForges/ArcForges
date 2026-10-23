@@ -18,8 +18,9 @@ namespace ArcForges.CommandLine;
 /// program not found, 125 not started, 75 node unreachable; on Windows a termination exits 1 with a message). <c>Ctrl+C</c> once sends
 /// <c>CancelTask</c>; a second <c>Ctrl+C</c> detaches and leaves the task running. With <c>--client-timeout</c> the run hands off before
 /// the AI client's timeout: <c>ReleaseCallerBinding</c>, the task ID with the wait and cancel commands on stderr, exit 124 (AD-0006
-/// section 7). The global <c>--timeout</c> is the task's wall-clock timeout here. Options for features of later tasks (dependencies,
-/// placement on peers, keys, service readiness) are not offered by this build.
+/// section 7). The global <c>--timeout</c> is the task's wall-clock timeout here. Dependencies (<c>--depends-on</c>), keys
+/// (<c>--exclusive</c>, <c>--shared</c>, <c>--exclusive-workspace</c>) and service readiness (<c>--ready-regex</c>, <c>--ready-port</c>,
+/// <c>--ready-file</c>) are passed to the scheduler (03 section 4; 04 section 8); placement on peers is not offered by this build.
 /// </summary>
 internal static class RunCommand
 {
@@ -82,10 +83,19 @@ internal static class RunCommand
         var agent = new Option<string?>("--agent") { Description = "The agent ID within the session", HelpName = "id" };
         var shell = new Option<string?>("--shell") { Description = "Run a script with bash, sh, pwsh, powershell or cmd", HelpName = "kind" };
         shell.AcceptOnlyFromAmong("bash", "sh", "pwsh", "powershell", "cmd", "system");
+        var dependsOn = new Option<string[]>("--depends-on") { Description = "Start after a task (repeatable): <id>[:succeeded|finished|ready]", HelpName = "id[:condition]" };
+        var exclusive = new Option<string[]>("--exclusive") { Description = "An exclusive key (repeatable): ws:<w>[/<dir>][:<purpose>], tool:<name>:<scope>, name:<text>", HelpName = "key" };
+        var shared = new Option<string[]>("--shared") { Description = "A shared (reader) key (repeatable)", HelpName = "key" };
+        var exclusiveWorkspace = new Option<bool>("--exclusive-workspace") { Description = "Run alone among the managed tasks of the workspace (access EXCLUSIVE)" };
+        var readyRegex = new Option<string?>("--ready-regex") { Description = "Service: ready when a line of output matches", HelpName = "regex" };
+        var readyPort = new Option<int?>("--ready-port") { Description = "Service: ready when it listens on this localhost TCP port", HelpName = "port" };
+        var readyFile = new Option<string?>("--ready-file") { Description = "Service: ready when this file exists", HelpName = "path" };
+        var readyTimeout = new Option<string?>("--ready-timeout") { Description = "Service: how long to wait for readiness (default 120s)", HelpName = "dur" };
         var command = new Command("run", "Run a command under the node and mirror its output")
         {
             program, cwd, pool, priority, cpuLimit, env, inherit, unset, stdin, label, title, kind, sideEffect, retries, placement, clientTimeout, join,
-            cpu, mem, memMax, require, detach, wait, sessionOption, agent, shell,
+            cpu, mem, memMax, require, detach, wait, sessionOption, agent, shell, dependsOn, exclusive, shared, exclusiveWorkspace, readyRegex, readyPort, readyFile,
+            readyTimeout,
         };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
@@ -150,6 +160,51 @@ internal static class RunCommand
                 spec.Kind = TaskKind.Service;
             }
 
+            var readiness = new ReadinessCondition();
+            if (result.GetValue(readyRegex) is { } regex)
+            {
+                readiness.OutputRegex = regex;
+            }
+
+            if (result.GetValue(readyPort) is { } port)
+            {
+                readiness.TcpListenPort = port is >= 1 and <= 65_535 ? (uint)port : throw new UsageException("--ready-port: 1..65535.");
+            }
+
+            if (result.GetValue(readyFile) is { } readyPath)
+            {
+                readiness.FileExists = Path.GetFullPath(readyPath);
+            }
+
+            if ((result.GetValue(readyRegex) is not null ? 1 : 0) + (result.GetValue(readyPort) is not null ? 1 : 0) + (result.GetValue(readyFile) is not null ? 1 : 0) > 1)
+            {
+                throw new UsageException("give one of --ready-regex, --ready-port and --ready-file.");
+            }
+
+            if (result.GetValue(readyTimeout) is { } readyText)
+            {
+                readiness.ReadinessTimeoutMs = (ulong)Duration(readyText, "--ready-timeout").TotalMilliseconds;
+            }
+
+            if (readiness.ConditionCase != ReadinessCondition.ConditionOneofCase.None || readiness.HasReadinessTimeoutMs)
+            {
+                spec.Kind = TaskKind.Service;
+                spec.Readiness = readiness;
+            }
+
+            var exclusiveKeys = result.GetValue(exclusive) ?? [];
+            var sharedKeys = result.GetValue(shared) ?? [];
+            if (exclusiveKeys.Length > 0 || sharedKeys.Length > 0 || result.GetValue(exclusiveWorkspace))
+            {
+                spec.Concurrency = new ConcurrencySpec();
+                spec.Concurrency.ExclusiveKeys.Add(exclusiveKeys);
+                spec.Concurrency.SharedKeys.Add(sharedKeys);
+                if (result.GetValue(exclusiveWorkspace))
+                {
+                    spec.Concurrency.Access = WorkspaceAccess.Exclusive;
+                }
+            }
+
             if (result.GetValue(sideEffect) is { } effect)
             {
                 spec.SideEffect = effect switch
@@ -195,6 +250,26 @@ internal static class RunCommand
             }
 
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            foreach (var dependency in result.GetValue(dependsOn) ?? [])
+            {
+                var colon = dependency.LastIndexOf(':');
+                var (idText, conditionText) = colon > 0 ? (dependency[..colon], dependency[(colon + 1)..]) : (dependency, "succeeded");
+                var condition = conditionText.ToLowerInvariant() switch
+                {
+                    "succeeded" => DependencyCondition.Succeeded,
+                    "finished" => DependencyCondition.Finished,
+                    "ready" => DependencyCondition.Ready,
+                    _ => throw new UsageException($"--depends-on: '{conditionText}' is not succeeded, finished or ready."),
+                };
+                var (dependencyId, exit) = await TaskText.ResolveAsync(cli, session, idText, cancellationToken).ConfigureAwait(false);
+                if (dependencyId is null)
+                {
+                    return exit;
+                }
+
+                spec.DependsOn.Add(new Dependency { TaskId = dependencyId, Condition = condition });
+            }
+
             var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
             var submitted = await cli.MutateAsync("SubmitTask", request.Meta.CommandId, action, r => session.Channel.Tasks.SubmitTaskAsync(r,
                 deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);

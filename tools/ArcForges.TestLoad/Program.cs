@@ -28,6 +28,10 @@ internal static class Program
                     --free-console 0|1 (0)  --child none|same|group|console|window|breakaway (none)
                     --child-hold-ms ms (hold-ms)   (Windows only)
                     (records ready/break/close lines in the marker; break exits 3, WM_CLOSE exits 4)
+          hold      --hold-ms ms (1000)  --ready-after-ms ms (0)  --ready-line text  --port N (0)  --file <path>
+                    --exit-code N (0)  --marker <file>   (records start/end lines; then prints, listens, creates)
+          probe     --period-ms ms (100)  --deadline-ms ms (10)  --work-us us (2000)  --duration-ms ms (60000)
+                    (an unmanaged interactive probe: misses are periods whose fixed work ends after the deadline)
 
         probes:
           args      [anything...]  prints {"argv": [...], "cwd": "..."} (the arguments it received)
@@ -67,6 +71,8 @@ internal static class Program
                 "output" => OutputScenario.Run(options),
                 "fork" => await ForkScenario.RunAsync(options).ConfigureAwait(false),
                 "signal" => OperatingSystem.IsWindows() ? SignalScenario.Run(options) : throw new UsageException("The signal scenario runs on Windows."),
+                "hold" => HoldScenario.Run(options),
+                "probe" => ProbeScenario.Run(options),
                 _ => throw new UsageException($"Unknown scenario '{args[0]}'."),
             };
             await WriteReportAsync(report, options.GetUnrecorded("report")).ConfigureAwait(false);

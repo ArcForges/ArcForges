@@ -7,6 +7,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Scheduling;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -15,11 +16,12 @@ using Grpc.Core;
 namespace ArcForges.Node.Api;
 
 /// <summary>
-/// <c>arcforges.node.v1.TaskService</c> (tasks.proto; architecture 04; AD-0006): Submit, Get, List, Wait, Attach (with STREAM stdin
-/// through Write/CloseTaskInput), ReleaseCallerBinding, Cancel, Retry (manual), Pin, PurgeTaskRecord, ReadTaskOutput, WatchTaskOutput,
-/// GetAttempt and ListAttempts. Mutations are idempotent by <c>meta.command_id</c> (24 h; the payload digest of the request's wire
-/// bytes). <c>SetTaskPriority</c>, <c>PauseTask</c>, <c>ResumeTask</c> and <c>GetTimeline</c> belong to later tasks (pause with the pressure
-/// actions of AF-SCHED-01; the Linux platform already freezes and thaws units); the generated base answers them <c>UNIMPLEMENTED</c>.
+/// <c>arcforges.node.v1.TaskService</c> (tasks.proto; architecture 04; AD-0006): Submit (with dependencies, keys and the side-effect class
+/// from the caller or a <c>retry_safety</c> rule), Get, List, Wait, Attach (with STREAM stdin through Write/CloseTaskInput),
+/// ReleaseCallerBinding, Cancel, Retry (manual, with an optional larger memory grant), Pause and Resume (Linux; Windows reports pause
+/// unsupported), Pin, PurgeTaskRecord, ReadTaskOutput, WatchTaskOutput, GetAttempt and ListAttempts. Mutations are idempotent by
+/// <c>meta.command_id</c> (24 h; the payload digest of the request's wire bytes). <c>SetTaskPriority</c> and <c>GetTimeline</c> belong to
+/// later tasks; the generated base answers them <c>UNIMPLEMENTED</c>.
 /// </summary>
 public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 {
@@ -83,6 +85,24 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             }
         }
 
+        // R-EXE-012: a dependency must name a task of this node (a new task can never close a cycle: nothing depends on it yet).
+        if (refused is null && spec.DependsOn.Count > 0)
+        {
+            refused = _node.Store.Read(reader =>
+            {
+                for (var index = 0; index < spec.DependsOn.Count; index++)
+                {
+                    var dependency = spec.DependsOn[index].TaskId.Value.ToByteArray();
+                    if (TaskRecords.GetRow(reader, dependency) is not { Purged: false })
+                    {
+                        return NodeErrors.InvalidDependency(dependency, $"depends_on[{index}]: task {IdText.Format(dependency)} does not exist on this node");
+                    }
+                }
+
+                return (ArcError?)null;
+            });
+        }
+
         if (refused is not null)
         {
             response.Error = refused;
@@ -107,6 +127,21 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             source = SideEffectSource.Default;
         }
 
+        // 03 section 4 and 04 section 1: the workspace is the registered root that contains the working directory (longest prefix).
+        var workspace = _node.Store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, spec.WorkingDirectory));
+
+        // AD-0006 section 4: a HUMAN-edited retry_safety rule may assert PURE or IDEMPOTENT for a command no caller classified.
+        if (source == SideEffectSource.Default && settings.RetrySafetyRules.Count > 0
+            && PolicyRules.RetrySafety(settings.RetrySafetyRules, CommandLine(spec.Command), workspace ?? []) is { } ruled)
+        {
+            sideEffect = ruled;
+            source = SideEffectSource.Policy;
+        }
+
+        var (keys, _) = KeyHolders.FromSpec(spec.Concurrency?.ExclusiveKeys ?? [], spec.Concurrency?.SharedKeys ?? []);
+        var pool = spec.HasPool ? spec.Pool : "default";
+        var poolPolicy = settings.PoolPolicies.FirstOrDefault(candidate => candidate.Name == pool);
+
         if (execution.Unenforced)
         {
             warnings.Add("This node does not enforce every resource limit (" + (NodeCapabilities.MissingReason(_node.Capabilities) ?? "observe only")
@@ -128,12 +163,16 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             Fingerprint = CommandText.Fingerprint(spec.Command),
             CommandDigest = CommandText.Digest(spec, EnvironmentDigest(spec.Environment)),
             Kind = spec.HasKind ? spec.Kind : TaskKind.Command,
-            Pool = spec.HasPool ? spec.Pool : "default",
-            Priority = spec.HasPriority ? spec.Priority : Priority.Normal,
+            Pool = pool,
+            Priority = spec.HasPriority ? spec.Priority : poolPolicy is { HasDefaultPriority: true, DefaultPriority: not Priority.Unspecified } ? poolPolicy.DefaultPriority : Priority.Normal,
             SideEffect = sideEffect,
             SideEffectSource = source,
             Warnings = warnings,
             CommandId = request.Meta.CommandId,
+            Dependencies = [.. spec.DependsOn.Select(dependency => (dependency.TaskId.Value.ToByteArray(),
+                dependency.HasCondition ? dependency.Condition : DependencyCondition.Succeeded))],
+            Keys = keys,
+            WorkspaceId = workspace,
         };
         CallerKey? caller = request.CancelWhenCallerGone && session is not null
             ? new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)
@@ -620,9 +659,15 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             refused = NodeErrors.InvalidArgument("reason: <= 500 chars");
         }
 
-        if (refused is null && request.OverrideDemand is not null)
+        if (refused is null && request.OverrideDemand is { } demand)
         {
-            refused = NodeErrors.InvalidArgument("override_demand: larger grants after an OOM arrive with AF-SCHED-01");
+            var maxTask = Execution.Settings.MaxTaskMemory;
+            if ((demand.HasMemExpectedBytes && (demand.MemExpectedBytes < 1024 * 1024 || (long)demand.MemExpectedBytes > maxTask))
+                || (demand.HasMemCeilingBytes && ((long)demand.MemCeilingBytes > maxTask || (demand.HasMemExpectedBytes && demand.MemCeilingBytes < demand.MemExpectedBytes)))
+                || (demand.HasCpuMillicores && demand.CpuMillicores is < 1 or > 1_024_000))
+            {
+                refused = NodeErrors.InvalidArgument("override_demand: mem_expected_bytes 1 MiB..max_task_memory, mem_ceiling_bytes >= mem_expected_bytes and <= max_task_memory, cpu 1..1,024,000");
+            }
         }
 
         if (refused is not null)
@@ -635,7 +680,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var (result, replayed) = await Idempotent(request, request.Meta, context, "RetryTask", TaskServiceRetryTaskResponse.Parser,
             failure => new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
-            var (value, error) = Execution.Retry(command, id, request.Meta.CommandId);
+            var (value, error) = Execution.Retry(command, id, request.Meta.CommandId, request.OverrideDemand);
             return error is not null
                 ? new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Error = error }
                 : new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Value = value };
@@ -645,6 +690,60 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             Execution.Kick();
         }
 
+        return result;
+    }
+
+    /// <inheritdoc />
+    public override async Task<TaskServicePauseTaskResponse> PauseTask(TaskServicePauseTaskRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        var response = new TaskServicePauseTaskResponse { Meta = Meta(request.Meta) };
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")) is { } refused)
+        {
+            response.Error = refused;
+            return response;
+        }
+
+        var id = request.TaskId.Value.ToByteArray();
+        var done = Task.CompletedTask;
+        var (result, _) = await Idempotent(request, request.Meta, context, "PauseTask", TaskServicePauseTaskResponse.Parser,
+            failure => new TaskServicePauseTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
+                Execution.PauseTask(command.Transaction, id, out done) is { } error
+                    ? new TaskServicePauseTaskResponse { Meta = Meta(request.Meta), Error = error }
+                    : new TaskServicePauseTaskResponse
+                    {
+                        Meta = Meta(request.Meta),
+                        Value = new TaskServicePauseTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Paused },
+                    }).ConfigureAwait(false);
+        await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), context.CancellationToken)).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <inheritdoc />
+    public override async Task<TaskServiceResumeTaskResponse> ResumeTask(TaskServiceResumeTaskRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        var response = new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta) };
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")) is { } refused)
+        {
+            response.Error = refused;
+            return response;
+        }
+
+        var id = request.TaskId.Value.ToByteArray();
+        var done = Task.CompletedTask;
+        var (result, _) = await Idempotent(request, request.Meta, context, "ResumeTask", TaskServiceResumeTaskResponse.Parser,
+            failure => new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
+                Execution.ResumeTask(command.Transaction, id, out done) is { } error
+                    ? new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta), Error = error }
+                    : new TaskServiceResumeTaskResponse
+                    {
+                        Meta = Meta(request.Meta),
+                        Value = new TaskServiceResumeTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Running },
+                    }).ConfigureAwait(false);
+        await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), context.CancellationToken)).ConfigureAwait(false);
         return result;
     }
 
@@ -918,6 +1017,10 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         return Task.FromResult(response);
     }
+
+    /// <summary>The command line a <c>retry_safety</c> pattern is matched against: the argument vector joined by spaces, or the shell script.</summary>
+    internal static string CommandLine(CommandSpec command) =>
+        command.FormCase == CommandSpec.FormOneofCase.Argv ? string.Join(' ', command.Argv.Argv) : command.Shell?.Script ?? string.Empty;
 
     /// <summary>The digest of an environment spec (inherit mode, caller environment, set and unset, in canonical order).</summary>
     internal static byte[] EnvironmentDigest(EnvironmentSpec? environment)

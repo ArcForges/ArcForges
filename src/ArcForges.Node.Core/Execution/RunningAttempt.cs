@@ -174,6 +174,67 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>The attempt was seen crossing into a virtual machine (03 section 9); logged once.</summary>
     internal bool CrossingReported { get; set; }
 
+    /// <summary>The task's pool (admission counts the attempt against it).</summary>
+    public string Pool { get; internal set; } = "default";
+
+    /// <summary>The task's session (base32), or <see langword="null"/>.</summary>
+    public string? Session { get; internal set; }
+
+    /// <summary>The task's workspace (base32), or <see langword="null"/>.</summary>
+    public string? Workspace { get; internal set; }
+
+    /// <summary><c>mem_expected</c> of the attempt's request.</summary>
+    public long MemExpected { get; internal set; }
+
+    /// <summary><c>mem_ceiling</c> of the attempt's request.</summary>
+    public long MemCeiling { get; internal set; }
+
+    /// <summary>The CPU grant: <c>min(cpu_demand, B_cpu)</c> at admission (03 section 4).</summary>
+    public long CpuGrant { get; internal set; }
+
+    /// <summary><c>accounted_mem = max(mem_expected, peak_observed)</c> (03 section 3).</summary>
+    public long AccountedMemory => Math.Max(MemExpected, PeakObserved);
+
+    /// <summary>A light routed command (outside pool limits).</summary>
+    public bool Light { get; internal set; }
+
+    /// <summary><c>resources.pausable</c>: the pressure response may freeze the attempt (03 section 7).</summary>
+    public bool Pausable { get; internal set; }
+
+    /// <summary>The soft memory limit the attempt was launched with (Linux <c>MemoryHigh</c>), restored when a pressure freeze ends.</summary>
+    internal long MemoryHighBytes { get; set; }
+
+    /// <summary>The keys the attempt holds (released keys are removed); guarded by the attempt's lock.</summary>
+    internal List<Scheduling.HeldKey> Keys { get; } = [];
+
+    /// <summary>The readiness condition of a SERVICE attempt, or <see langword="null"/>.</summary>
+    internal Scheduling.ServiceReadiness? Readiness { get; set; }
+
+    /// <summary>The readiness condition held (recorded <c>ready=true</c>).</summary>
+    internal bool Ready { get; set; }
+
+    /// <summary><c>readiness_timeout</c> passed without the condition.</summary>
+    internal bool ReadinessTimedOut { get; set; }
+
+    /// <summary>The attempt is frozen (PAUSED).</summary>
+    internal bool Paused { get; set; }
+
+    /// <summary>The freeze came from the Pressure level (thawed after 30 s at Normal), not from <c>PauseTask</c>.</summary>
+    internal bool PausedByPressure { get; set; }
+
+    /// <summary>A freeze or a thaw is posted and not yet done.</summary>
+    internal bool PauseInFlight { get; set; }
+
+    /// <summary>When the current pause began (monotonic), or <see cref="long.MinValue"/>.</summary>
+    internal long PausedSince { get; set; } = long.MinValue;
+
+    /// <summary>The paused time of earlier pauses (stopwatch ticks).</summary>
+    internal long PausedTicks { get; set; }
+
+    /// <summary>The time the attempt was paused, the current pause included (the wall-clock timeout does not count it).</summary>
+    internal TimeSpan PausedTime(TimeProvider clock) =>
+        TimeSpan.FromSeconds((double)PausedTicks / clock.TimestampFrequency) + (PausedSince == long.MinValue ? TimeSpan.Zero : clock.GetElapsedTime(PausedSince));
+
     /// <summary>Raises <see cref="PeakObserved"/> to <paramref name="memory"/> when it is higher; returns the peak.</summary>
     internal long Observe(long memory)
     {

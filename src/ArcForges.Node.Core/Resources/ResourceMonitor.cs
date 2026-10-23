@@ -380,6 +380,15 @@ public sealed class ResourceMonitor : IDisposable
                 rate = elapsed > 0 ? (long)(work * 1000 / elapsed) : 0;
                 _windowManagedCpuMs += work;
             }
+            else if (_lastSelfCpuMs >= 0 && attempt.StartedTimestamp is { } started && started > _lastSelfAt)
+            {
+                // An attempt that started since the previous sample: its CPU so far ran in this window, which the machine's total counts;
+                // a rate of 0 would count it as unmanaged and drop B_cpu (and the root's CPU cap that follows it) for the smoother's decay.
+                var elapsed = _clock.GetElapsedTime(_lastSelfAt, now).TotalMilliseconds;
+                var work = Math.Max(0, usage.CpuTimeMs);
+                rate = elapsed > 0 ? (long)(work * 1000 / elapsed) : 0;
+                _windowManagedCpuMs += work;
+            }
 
             attempt.LastUsage = (usage.CpuTimeMs, now);
             attempt.Usage = usage;

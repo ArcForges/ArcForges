@@ -59,6 +59,9 @@ public sealed class ExecutionOptions
 
     /// <summary>The platform's observation sources (03 section 1), or <see langword="null"/> for a node that observes nothing.</summary>
     public IResourceSampler? Sampler { get; init; }
+
+    /// <summary>The tool-level concurrency hook of the adapters (03 section 5.3), or <see langword="null"/>.</summary>
+    public Scheduling.IToolConcurrency? Tools { get; init; }
 }
 
 /// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
@@ -102,6 +105,18 @@ public sealed class SubmitPlan
 
     /// <summary>The meta command ID.</summary>
     public required Id CommandId { get; init; }
+
+    /// <summary>The dependencies (04 section 8): the task waits in WAITING_DEPENDENCY until each condition holds.</summary>
+    public IReadOnlyList<(byte[] TaskId, DependencyCondition Condition)> Dependencies { get; init; } = [];
+
+    /// <summary>The caller's keys (03 section 4), stored with the task (<c>task_concurrency_key</c>, source caller).</summary>
+    public IReadOnlyList<Scheduling.HeldKey> Keys { get; init; } = [];
+
+    /// <summary>The owner's session (set by the node; sessions arrive with AF-AI-01), or <see langword="null"/>.</summary>
+    public byte[]? SessionId { get; init; }
+
+    /// <summary>The task's workspace (the longest registered root containing the working directory), or <see langword="null"/>.</summary>
+    public byte[]? WorkspaceId { get; init; }
 }
 
 /// <summary>A caller of <c>cancel_when_caller_gone</c>: the submitting client process.</summary>
@@ -110,12 +125,12 @@ public sealed class SubmitPlan
 public readonly record struct CallerKey(int ProcessId, long StartTicks);
 
 /// <summary>
-/// The execution supervisor (architecture 02 section 1; 04): admission (the interim global FIFO with <c>global_max_running</c> until
-/// AF-SCHED-01), launch through the platform, the enforcement loop (output tailer and index, the output limit, timeouts and CPU-time
-/// limits, the cancellation sequence, exit detection and the node heartbeat), finalization from the durable exit records, recovery
-/// after a node restart or a machine reboot (LOST), and <c>cancel_when_caller_gone</c>.
+/// The execution supervisor (architecture 02 section 1; 04): admission (03 section 4, in <c>ExecutionSupervisor.Scheduling.cs</c>), launch
+/// through the platform, the enforcement loop (output tailer and index, the output limit, timeouts and CPU-time limits, service readiness,
+/// the cancellation sequence, exit detection and the node heartbeat), finalization from the durable exit records with the automatic
+/// retries of AD-0006 section 4, recovery after a node restart or a machine reboot (LOST), and <c>cancel_when_caller_gone</c>.
 /// </summary>
-public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDisposable, IPressureResponse
+public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDisposable, IPressureResponse
 {
     /// <summary>The tailer interval (04 section 4).</summary>
     public static readonly TimeSpan TailInterval = TimeSpan.FromMilliseconds(100);
@@ -152,6 +167,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     private readonly ConcurrentDictionary<string, CallerKey> _bindings = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<CallerKey, int> _callerConnections = new();
     private readonly AsyncPulse _admission = new();
+    private int _kicked;
     private readonly AsyncPulse _loopWake = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly HeartbeatMonitor _tailerMonitor;
@@ -187,6 +203,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         _settings = new ExecutionSettings(_store.Policies.Current().Document, capacity.LogicalProcessors, capacity.PhysicalMemoryBytes);
         _lastSettingsRead = _clock.GetTimestamp();
         _tailerMonitor = Heartbeat.AddMonitor("output-tailer", TimeSpan.FromSeconds(5));
+        Tools = options.Tools;
+        PlatformCalls = new SerialWork(_log);
         if (options.Sampler is { } sampler)
         {
             Resources = new ResourceMonitor(sampler, this, _store, _processor, _log, _clock);
@@ -307,11 +325,30 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 StopSignal = task?.Spec.Resources is { HasStopSignal: true } stopResources ? stopResources.StopSignal : null,
                 Priority = task?.Priority ?? Priority.Normal,
                 Preemptible = task?.Spec.Resources?.Preemptible == true,
+                Pausable = task?.Spec.Resources?.Pausable == true,
                 WorkingDirectory = task?.Spec.WorkingDirectory,
+                Readiness = task is { } service ? Scheduling.ServiceReadiness.For(service.Spec) : null,
             };
             if (task?.Spec.Resources is { HasCancelGraceMs: true } resources)
             {
                 running.CancelGrace = TimeSpan.FromMilliseconds(resources.CancelGraceMs);
+            }
+
+            // Admission accounts a recovered attempt as it was admitted: its pool, owner scope, request, CPU grant and the keys it holds.
+            var accounting = _store.Read(reader => RecoveredLoad(reader, row.TaskId, row.AttemptId));
+            if (accounting is { } load)
+            {
+                running.Pool = load.Pool;
+                running.Session = load.Session;
+                running.Workspace = load.Workspace;
+                running.MemExpected = load.Expected;
+                running.MemCeiling = load.Ceiling;
+                running.CpuGrant = Math.Min(load.Cpu, Settings.BudgetCpu);
+                running.Observe(load.Accounted);
+                running.Ready = load.Ready;
+                running.Paused = row.State == AttemptState.Paused;
+                running.MemoryHighBytes = Math.Min((long)(1.25 * load.Expected), load.Ceiling);
+                running.Keys.AddRange(load.Keys);
             }
 
             if (row.StartedAt is { } startedAt)
@@ -407,8 +444,12 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         Kick();
     }
 
-    /// <summary>Wakes the admission loop.</summary>
-    public void Kick() => _admission.Pulse();
+    /// <summary>Wakes the admission loop; a kick that arrives during a pass runs another pass right after it (a kick is never lost).</summary>
+    public void Kick()
+    {
+        Volatile.Write(ref _kicked, 1);
+        _admission.Pulse();
+    }
 
     /// <summary>
     /// The node's shutdown (02 section 2): admissions stop; <c>kill_with_node</c> attempts are terminated and recorded
@@ -424,6 +465,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         await _stop.CancelAsync().ConfigureAwait(false);
         _loopWake.Pulse();
         _loop?.Join(TimeSpan.FromSeconds(2));
+        await PlatformCalls.DisposeAsync().ConfigureAwait(false);
         try
         {
             await _admissionLoop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
@@ -484,6 +526,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     /// </summary>
     void IPressureResponse.Respond(PressureLevel level, PressureLevel previous, ResourceState state)
     {
+        SchedulerRespond(level, previous, state);
         var victimRunning = _lastVictim is { } last && _running.TryGetValue(last.Name, out var current) && ReferenceEquals(current, last);
         var due = _shedding.ShouldStop(level, state.RawPressure, state.MemoryCritical, state.NewOomKills, victimRunning);
         if (level != PressureLevel.Critical)
@@ -621,18 +664,35 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         byte[]? envDigest = plan.Parts.Snapshot is { } snapshot ? EnvSnapshots.Reference(transaction, snapshot) : null;
         var specBytes = spec.ToByteArray();
         var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal), ExecutionJsonContext.Default.DictionaryStringString);
+
+        // 04 section 8: a task with dependencies starts in WAITING_DEPENDENCY; the admission pass queues or cancels it.
+        var waiting = plan.Dependencies.Count > 0;
         transaction.Execute(
             """
-            INSERT INTO task (task_id, state, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, pool, priority,
-                              effective_priority, side_effect, side_effect_source, command_fingerprint, command_digest, created_at, queued_at, pinned,
-                              labels_json, rev)
-            VALUES ($id, 1, $kind, $title, $summary, $spec, $env, $specDigest, $owner, $origin, $pool, $priority, $priority, $sideEffect, $source,
-                    $fingerprint, $digest, $now, $now, $pinned, $labels, 0);
+            INSERT INTO task (task_id, state, state_reason, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, owner_session_id,
+                              workspace_id, pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint, command_digest, created_at,
+                              queued_at, pinned, labels_json, rev)
+            VALUES ($id, $state, $reason, $kind, $title, $summary, $spec, $env, $specDigest, $owner, $origin, $session, $workspace, $pool, $priority, $priority,
+                    $sideEffect, $source, $fingerprint, $digest, $now, $now, $pinned, $labels, 0);
             """,
-            ("$id", taskId), ("$kind", (int)plan.Kind), ("$title", plan.Title), ("$summary", plan.Summary), ("$spec", specBytes), ("$env", envDigest),
+            ("$id", taskId), ("$state", waiting ? (int)TaskState.WaitingDependency : (int)TaskState.Queued), ("$reason", waiting ? Scheduling.BlockingReasons.Dependency : null),
+            ("$kind", (int)plan.Kind), ("$title", plan.Title), ("$summary", plan.Summary), ("$spec", specBytes), ("$env", envDigest),
             ("$specDigest", System.Security.Cryptography.SHA256.HashData(specBytes)), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
-            ("$pool", plan.Pool), ("$priority", (int)plan.Priority), ("$sideEffect", (int)plan.SideEffect), ("$source", (int)plan.SideEffectSource),
-            ("$fingerprint", plan.Fingerprint), ("$digest", plan.CommandDigest), ("$now", now), ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels));
+            ("$session", plan.SessionId), ("$workspace", plan.WorkspaceId), ("$pool", plan.Pool), ("$priority", (int)plan.Priority), ("$sideEffect", (int)plan.SideEffect),
+            ("$source", (int)plan.SideEffectSource), ("$fingerprint", plan.Fingerprint), ("$digest", plan.CommandDigest), ("$now", now),
+            ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels));
+        foreach (var (dependsOn, condition) in plan.Dependencies)
+        {
+            transaction.Execute("INSERT INTO task_dependency (task_id, depends_on_task_id, condition) VALUES ($id, $on, $condition);",
+                ("$id", taskId), ("$on", dependsOn), ("$condition", (int)condition));
+        }
+
+        foreach (var key in plan.Keys)
+        {
+            transaction.Execute("INSERT INTO task_concurrency_key (task_id, concurrency_key, mode, source, released_at) VALUES ($id, $key, $mode, $source, NULL);",
+                ("$id", taskId), ("$key", key.Key.Text), ("$mode", (int)key.Mode), ("$source", (int)key.Source));
+        }
+
         if (plan.Parts.Secrets is { } secrets)
         {
             _secrets.Seal(transaction, taskId, secrets);
@@ -682,7 +742,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         if (row.State is TaskState.Queued or TaskState.WaitingDependency or TaskState.RetryWait or TaskState.Placing)
         {
             transaction.Execute(
-                "UPDATE task SET state = 9, state_reason = $reason, finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
+                "UPDATE task SET state = 9, state_reason = $reason, finished_at = $now, retry_at = NULL, reserved_for_large = 0, rev = rev + 1 WHERE task_id = $id;",
                 ("$reason", Truncate(reason)), ("$now", transaction.NowMicroseconds), ("$id", taskId.ToArray()));
             TaskSecrets.SchedulePurge(transaction, taskId, transaction.NowMicroseconds, Settings.SecretRetention);
             EmitTask(context, taskId, row.State);
@@ -833,6 +893,18 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             GracefulOutcome? outcome = null;
             try
             {
+                if (attempt.Paused)
+                {
+                    // A frozen attempt cannot act on the graceful signal: it is thawed first (its launch MemoryHigh restored).
+                    if (attempt.MemoryHighBytes > 0)
+                    {
+                        attempt.Handle.SetMemoryHigh(attempt.MemoryHighBytes);
+                    }
+
+                    attempt.Handle.Thaw();
+                    attempt.Paused = false;
+                }
+
                 outcome = attempt.Handle.RequestGracefulStop(attempt.StopSignal);
             }
             catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or TimeoutException)
@@ -861,8 +933,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         });
     }
 
-    /// <summary>A manual retry (SM-TASK FAILED|CANCELLED|LOST -> QUEUED; AD-0006 section 4 rules shown as warnings).</summary>
-    public (TaskServiceRetryTaskValue? Value, ArcError? Error) Retry(CommandContext context, ReadOnlySpan<byte> taskId, Id commandId)
+    /// <summary>
+    /// A manual retry (SM-TASK FAILED|CANCELLED|LOST -> QUEUED; AD-0006 section 4 rules shown as warnings). <paramref name="demand"/> replaces
+    /// the fields it sets in the task's hint (a larger memory grant after an OOM kill).
+    /// </summary>
+    public (TaskServiceRetryTaskValue? Value, ArcError? Error) Retry(CommandContext context, ReadOnlySpan<byte> taskId, Id commandId, ResourceDemand? demand = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         var transaction = context.Transaction;
@@ -883,8 +958,33 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             return (null, unseal.Error);
         }
 
+        if (demand is not null)
+        {
+            var spec = row.Spec.Clone();
+            spec.Resources ??= new ResourceSpec();
+            spec.Resources.Hint ??= new ResourceDemand();
+            if (demand.HasCpuMillicores)
+            {
+                spec.Resources.Hint.CpuMillicores = demand.CpuMillicores;
+            }
+
+            if (demand.HasMemExpectedBytes)
+            {
+                spec.Resources.Hint.MemExpectedBytes = demand.MemExpectedBytes;
+            }
+
+            if (demand.HasMemCeilingBytes)
+            {
+                spec.Resources.Hint.MemCeilingBytes = demand.MemCeilingBytes;
+            }
+
+            var bytes = spec.ToByteArray();
+            transaction.Execute("UPDATE task SET spec = $spec, spec_digest = $digest WHERE task_id = $id;",
+                ("$spec", bytes), ("$digest", System.Security.Cryptography.SHA256.HashData(bytes)), ("$id", taskId.ToArray()));
+        }
+
         transaction.Execute(
-            "UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, finished_at = NULL, rev = rev + 1 WHERE task_id = $id;",
+            "UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, finished_at = NULL, retry_at = NULL, effective_priority = priority, rev = rev + 1 WHERE task_id = $id;",
             ("$now", transaction.NowMicroseconds), ("$id", taskId.ToArray()));
         transaction.Execute("UPDATE task_secret SET purge_after = NULL WHERE task_id = $id AND key_id <> 'purged';", ("$id", taskId.ToArray()));
         EmitTask(context, taskId, row.State);
@@ -1277,9 +1377,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             return;
         }
 
+        CheckReadiness(attempt, handle);
         if (attempt.StopReason is null && attempt.StartedTimestamp is { } since)
         {
-            if (attempt.TimeoutMs is { } timeout && _clock.GetElapsedTime(since) >= TimeSpan.FromMilliseconds(timeout))
+            // Frozen time does not count toward the wall-clock timeout (a paused attempt makes no progress).
+            if (attempt.TimeoutMs is { } timeout && _clock.GetElapsedTime(since) - attempt.PausedTime(_clock) >= TimeSpan.FromMilliseconds(timeout))
             {
                 Stop(attempt.Name, TerminationReason.TimedOut, null);
             }
@@ -1400,145 +1502,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
     // ---------------------------------------------------------------------------------------------------------------- admission
 
-    private async Task AdmissionLoopAsync()
-    {
-        while (!_stop.IsCancellationRequested)
-        {
-            try
-            {
-                await _admission.WaitAsync(TimeSpan.FromSeconds(1), _stop.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-
-            if (Platform is null)
-            {
-                continue;
-            }
-
-            try
-            {
-                var free = Settings.GlobalMaxRunning - _running.Count - Volatile.Read(ref _launching);
-                if (free <= 0)
-                {
-                    continue;
-                }
-
-                foreach (var taskId in _store.Read(reader => TaskRecords.QueuedInOrder(reader, free)))
-                {
-                    if (_stop.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    await StartAttemptAsync(taskId).ConfigureAwait(false);
-                }
-            }
-            catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException or IOException)
-            {
-                _log.Warning("execution.admission.failed", new LogField("errorType", exception.GetType().Name));
-            }
-        }
-    }
-
-    private async Task StartAttemptAsync(byte[] taskId)
-    {
-        var platform = Platform!;
-        var settings = Settings;
-        var attemptId = StoreIds.NewUuid7(_clock);
-        var name = IdText.Format(attemptId);
-        var files = new AttemptFiles(_dataRoot, name);
-        Interlocked.Increment(ref _launching);
-        RunningAttempt? attempt = null;
-        try
-        {
-            var admitted = await _processor.ExecuteAsync(context =>
-            {
-                var transaction = context.Transaction;
-                var row = TaskRecords.GetRow(transaction, taskId);
-                if (row is null || row.State != TaskState.Queued)
-                {
-                    return null;
-                }
-
-                var number = row.AttemptCount + 1;
-                var (cpu, expected, ceiling, source) = settings.Request(row.Spec.Resources?.Hint);
-                var now = transaction.NowMicroseconds;
-                transaction.Execute(
-                    """
-                    INSERT INTO attempt (attempt_id, task_id, number, kind, state, executor_node_id, container_name, boot_identity, request_cpu_millicores,
-                                         request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, accounted_mem_bytes, cpu_weight, unenforced,
-                                         created_at, rev)
-                    VALUES ($id, $task, $number, 1, 3, $node, $container, $boot, $cpu, $expected, $ceiling, $source, $expected, $weight, $unenforced, $now, 0);
-                    """,
-                    ("$id", attemptId), ("$task", taskId), ("$number", number), ("$node", _store.Metadata.NodeId.ToArray()),
-                    ("$container", platform.ContainerName(NodeName, name)), ("$boot", _store.Metadata.BootIdentity), ("$cpu", cpu),
-                    ("$expected", expected), ("$ceiling", ceiling), ("$source", (int)source), ("$weight", ExecutionSettings.Weight(row.Priority)),
-                    ("$unenforced", Unenforced ? 1 : 0), ("$now", now));
-                transaction.Execute(
-                    "UPDATE task SET state = 4, state_reason = NULL, current_attempt_id = $attempt, attempt_count = $number, started_at = coalesce(started_at, $now), rev = rev + 1 WHERE task_id = $id;",
-                    ("$attempt", attemptId), ("$number", number), ("$now", now), ("$id", taskId));
-                EmitAttempt(context, attemptId, AttemptState.Created);
-                EmitTask(context, taskId, TaskState.Queued);
-                return new Admitted(row, number, expected, ceiling);
-            }).ConfigureAwait(false);
-            if (admitted is null)
-            {
-                return;
-            }
-
-            var spec = admitted.Row.Spec;
-            attempt = new RunningAttempt(attemptId, taskId, name, admitted.Number, files)
-            {
-                KillWithNode = spec.Resources?.KillWithNode == true,
-                DiscardOutput = spec.Output?.Capture == OutputCapture.Discard,
-                TimeoutMs = spec.HasTimeoutMs ? spec.TimeoutMs : null,
-                CpuLimitMs = spec.HasCpuTimeLimitMs ? spec.CpuTimeLimitMs : null,
-                StopSignal = spec.Resources is { HasStopSignal: true } stopResources ? stopResources.StopSignal : null,
-                Priority = admitted.Row.Priority,
-                Preemptible = spec.Resources?.Preemptible == true,
-                WorkingDirectory = spec.WorkingDirectory,
-            };
-            if (spec.Resources is { HasCancelGraceMs: true } resources)
-            {
-                attempt.CancelGrace = TimeSpan.FromMilliseconds(resources.CancelGraceMs);
-            }
-
-            _running[name] = attempt;
-
-            // A cancel committed between the admission and this registration found no running attempt to stop and only marked the attempt
-            // STOPPING: it is taken over here, and the launch applies the forced phase once the handle exists (the stop is never lost).
-            if (_store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)), CultureInfo.InvariantCulture))
-                == (int)AttemptState.Stopping)
-            {
-                lock (attempt)
-                {
-                    attempt.StopReason ??= TerminationReason.Cancelled;
-                }
-            }
-
-            Launch(attempt, admitted, platform, settings);
-        }
-        catch (CommandRefusedException exception)
-        {
-            await SpawnFailedAsync(attempt, $"{exception.Code}: {exception.Reason}").ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException
-            or NodeDataKeyUnavailableException or ArgumentException)
-        {
-            _log.Warning("execution.launch.failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
-                new LogField("error", NodeLog.OneLine(exception.Message)));
-            await SpawnFailedAsync(attempt, "the attempt could not be launched: " + NodeLog.OneLine(exception.Message)).ConfigureAwait(false);
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _launching);
-        }
-    }
-
-    private void Launch(RunningAttempt attempt, Admitted admitted, IExecutionPlatform platform, ExecutionSettings settings)
+    private void Launch(RunningAttempt attempt, Admitted admitted, IExecutionPlatform platform, ExecutionSettings settings, Scheduling.ToolInvocation? tool)
     {
         var row = admitted.Row;
         var files = attempt.Files;
@@ -1550,6 +1514,12 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         }
 
         var spec = SubmittedEnvironment.Restore(row.Spec, snapshot, unseal.Values);
+        if (tool is not null)
+        {
+            // 03 section 5.3: the adapter's invocation carries the tool-level setting for the CPU grant (never called a limit).
+            spec.Command = new CommandSpec { Argv = new ArgvCommand() };
+            spec.Command.Argv.Argv.Add(tool.Argv);
+        }
         Directory.CreateDirectory(files.Directory);
         Directory.CreateDirectory(files.TempDirectory);
         var environment = ResolveEnvironment(spec, row, attempt, platform);
@@ -1614,7 +1584,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 CommitNotificationBytes = admitted.Ceiling,
 
                 // Linux (03 section 5.2): MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling, MemorySwapMax = swap_allowance.
-                MemoryHighBytes = Math.Min((long)(1.25 * admitted.Expected), admitted.Ceiling),
+                MemoryHighBytes = attempt.MemoryHighBytes = Math.Min((long)(1.25 * admitted.Expected), admitted.Ceiling),
                 MemoryMaxBytes = admitted.Ceiling,
                 SwapMaxBytes = settings.SwapAllowance,
             },
@@ -2012,12 +1982,21 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             TerminationReason.Lost => TaskState.Lost,
             _ => TaskState.Failed,
         };
+        var peak = Math.Max(attempt.PeakObserved, exit?.MemPeakBytes ?? accounting?.MemPeakBytes ?? 0);
         if (task.CurrentAttemptId is { } current && current.AsSpan().SequenceEqual(attempt.AttemptId) && !task.Terminal)
         {
-            transaction.Execute(
-                "UPDATE task SET state = $state, state_reason = coalesce(state_reason, $reason), finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
-                ("$state", (int)state), ("$reason", outcome.Reason.ToString().ToUpperInvariant()), ("$now", now), ("$id", attempt.TaskId));
-            TaskSecrets.SchedulePurge(transaction, attempt.TaskId, now, settings.SecretRetention);
+            if (state is TaskState.Failed or TaskState.Lost && task.State != TaskState.Cancelled
+                && ScheduleRetry(context, task, attempt.Number, outcome.Reason, succeeded: false, peak))
+            {
+                state = TaskState.RetryWait;
+            }
+            else
+            {
+                transaction.Execute(
+                    "UPDATE task SET state = $state, state_reason = coalesce(state_reason, $reason), finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
+                    ("$state", (int)state), ("$reason", outcome.Reason.ToString().ToUpperInvariant()), ("$now", now), ("$id", attempt.TaskId));
+                TaskSecrets.SchedulePurge(transaction, attempt.TaskId, now, settings.SecretRetention);
+            }
         }
 
         EmitAttempt(context, attempt.AttemptId, previous.State);
@@ -2069,10 +2048,14 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 transaction.Execute(
                     "UPDATE attempt SET state = 9, finished_at = $now, termination_reason = 9, effect = 1, detail = $detail, rev = rev + 1 WHERE attempt_id = $id;",
                     ("$now", now), ("$detail", detail), ("$id", attempt.AttemptId));
-                transaction.Execute(
-                    "UPDATE task SET state = 8, state_reason = 'SPAWN_FAILED', finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
-                    ("$now", now), ("$id", attempt.TaskId));
-                TaskSecrets.SchedulePurge(transaction, attempt.TaskId, now, Settings.SecretRetention);
+                var task = TaskRecords.GetRow(transaction, attempt.TaskId);
+                if (task is null || !ScheduleRetry(context, task, attempt.Number, TerminationReason.SpawnFailed, succeeded: false, peak: 0))
+                {
+                    transaction.Execute(
+                        "UPDATE task SET state = 8, state_reason = 'SPAWN_FAILED', finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
+                        ("$now", now), ("$id", attempt.TaskId));
+                    TaskSecrets.SchedulePurge(transaction, attempt.TaskId, now, Settings.SecretRetention);
+                }
                 EmitAttempt(context, attempt.AttemptId, previous?.State);
                 EmitTask(context, attempt.TaskId, TaskState.Running);
                 return 0;
@@ -2098,8 +2081,10 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 "UPDATE attempt SET state = 9, finished_at = $now, termination_reason = 8, effect = 3, detail = $detail, rev = rev + 1 WHERE attempt_id = $id;",
                 ("$now", now), ("$detail", evidence), ("$id", row.AttemptId));
             var task = TaskRecords.GetRow(transaction, row.TaskId);
-            if (task is not null && !task.Terminal && task.CurrentAttemptId is { } current && current.AsSpan().SequenceEqual(row.AttemptId))
+            if (task is not null && !task.Terminal && task.CurrentAttemptId is { } current && current.AsSpan().SequenceEqual(row.AttemptId)
+                && !ScheduleRetry(context, task, row.Number, TerminationReason.Lost, succeeded: false, peak: 0))
             {
+                // 04 section 9: a LOST attempt of a retryable task schedules a retry; others wait for a decision (RetryTask).
                 transaction.Execute("UPDATE task SET state = 10, state_reason = $reason, finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
                     ("$reason", reason), ("$now", now), ("$id", row.TaskId));
                 TaskSecrets.SchedulePurge(transaction, row.TaskId, now, Settings.SecretRetention);
@@ -2275,6 +2260,32 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     }
 
     private static string Truncate(string text) => text.Length <= 500 ? text : text[..500];
+
+    /// <summary>What a recovered attempt is accounted with (its task's pool and scope, its request, peak and held keys).</summary>
+    private static RecoveredAccounting? RecoveredLoad(StoreReader reader, byte[] taskId, byte[] attemptId)
+    {
+        using var command = reader.CreateCommand(
+            """
+            SELECT t.pool, t.owner_session_id, t.workspace_id, a.request_cpu_millicores, a.request_mem_expected_bytes, a.request_mem_ceiling_bytes,
+                   a.accounted_mem_bytes, t.ready
+            FROM attempt a JOIN task t ON t.task_id = a.task_id WHERE a.attempt_id = $id;
+            """);
+        command.Parameters.AddWithValue("$id", attemptId);
+        using var rows = command.ExecuteReader();
+        if (!rows.Read())
+        {
+            return null;
+        }
+
+        var accounting = new RecoveredAccounting(rows.GetString(0), rows.IsDBNull(1) ? null : IdText.Format((byte[])rows.GetValue(1)),
+            rows.IsDBNull(2) ? null : IdText.Format((byte[])rows.GetValue(2)), rows.GetInt64(3), rows.GetInt64(4), rows.GetInt64(5), rows.GetInt64(6),
+            rows.GetInt32(7) == 1, []);
+        rows.Close();
+        return accounting with { Keys = HeldKeys(reader, taskId) };
+    }
+
+    private sealed record RecoveredAccounting(string Pool, string? Session, string? Workspace, long Cpu, long Expected, long Ceiling, long Accounted, bool Ready,
+        List<Scheduling.HeldKey> Keys);
 
     private sealed record Admitted(TaskRow Row, int Number, long Expected, long Ceiling);
 

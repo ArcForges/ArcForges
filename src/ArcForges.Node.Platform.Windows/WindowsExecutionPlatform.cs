@@ -148,6 +148,9 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     public PreparedCommand Prepare(CommandRequest request) => WindowsCommands.Prepare(request);
 
     /// <inheritdoc />
+    public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
+
+    /// <inheritdoc />
     public IAttemptHandle Launch(AttemptLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);

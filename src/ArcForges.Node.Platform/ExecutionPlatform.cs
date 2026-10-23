@@ -324,6 +324,22 @@ public interface IAttemptHandle : IDisposable
     /// <summary>True when <see cref="Usage"/> sums the container's memory from the process table (the caller then reads one every second).</summary>
     bool UsageNeedsProcessTable => true;
 
+    /// <summary>True when the container can be paused as a whole (03 section 5.2: Linux <c>FreezeUnit</c>; Windows reports pause unsupported).</summary>
+    bool CanPause => false;
+
+    /// <summary>Pauses every process of the container (R-EXE-011: <c>FreezeUnit</c>, which returns once <c>cgroup.freeze</c> holds).</summary>
+    void Freeze() => throw new NotSupportedException("Pause is not supported on this platform.");
+
+    /// <summary>Resumes a paused container (<c>ThawUnit</c>).</summary>
+    void Thaw() => throw new NotSupportedException("Pause is not supported on this platform.");
+
+    /// <summary>
+    /// Sets the container's soft memory limit (Linux <c>MemoryHigh</c>, through the user manager); the Pressure level lowers it to current
+    /// usage to force reclaim and restores it at thaw (03 section 7). A platform without a soft limit ignores it.
+    /// </summary>
+    void SetMemoryHigh(long bytes)
+    {
+    }
     /// <summary>
     /// True once a process of the container was seen running a launcher into a virtual machine (<c>wsl.exe</c>; 03 section 9,
     /// R-RES-002): the processes it starts in the VM are outside the container and are never presented as controlled.
@@ -376,6 +392,11 @@ public interface IExecutionPlatform : IDisposable
     /// </summary>
     bool AcknowledgeRecorded(string nodeName, string attemptName);
 
+    /// <summary>
+    /// True when one of <paramref name="processIds"/> listens on TCP <paramref name="port"/> on a loopback or wildcard address (the
+    /// <c>tcp_listen_port</c> readiness condition of 04 section 8; only the service's own processes count).
+    /// </summary>
+    bool Listens(int port, IReadOnlyCollection<int> processIds) => false;
     /// <summary>The container name of an attempt (the Windows job name; the Linux unit name), recorded with the attempt.</summary>
     string ContainerName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
 }
