@@ -62,8 +62,8 @@ internal static class CpuScenario
     }
 
     /// <summary>
-    /// The per-thread work chain, compiled fully optimized from its first call (under the JIT, tiered compilation would otherwise speed it
-    /// up after the probe calibrated on it, shortening the probe's calibrated work).
+    /// The per-thread work chain, compiled fully optimized from its first call, so that under the JIT the probe's calibration and its
+    /// periods run the same code.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     public static ulong Spin(ulong state, long iterations)

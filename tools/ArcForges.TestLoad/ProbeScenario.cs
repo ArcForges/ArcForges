@@ -11,8 +11,8 @@ namespace ArcForges.TestLoad;
 /// misses its deadline when the loop completes later than <c>deadline-ms</c> after the scheduled start (the wake-up latency counts: an
 /// interactive program that waits for its turn is late). A period skipped because the probe fell behind by a whole period counts as a
 /// miss. It runs for <c>duration-ms</c> and reports the periods, the misses and the completion latencies (p50, p99, maximum, in
-/// microseconds). The wait uses a high-resolution waitable timer on Windows and <c>nanosleep</c> on Linux, so the timer's own granularity
-/// is not counted against the scheduler.
+/// microseconds). The wait uses a high-resolution waitable timer on Windows and <c>Thread.Sleep</c> (whole milliseconds) on Linux, then
+/// spins to the scheduled start, so the work never starts before it and an early wake never hides latency.
 /// </summary>
 internal static partial class ProbeScenario
 {
