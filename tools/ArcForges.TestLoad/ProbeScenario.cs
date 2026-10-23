@@ -86,6 +86,14 @@ internal static partial class ProbeScenario
     private static long Calibrate(long workUs)
     {
         const long Trial = 200_000;
+
+        // Warm up first (JIT, the processor's frequency ramp), so the calibration measures the speed the periods will see.
+        var warm = Stopwatch.StartNew();
+        while (warm.ElapsedMilliseconds < 100)
+        {
+            CpuScenario.Spin(7, Trial);
+        }
+
         var samples = new List<double>();
         for (var run = 0; run < 15; run++)
         {

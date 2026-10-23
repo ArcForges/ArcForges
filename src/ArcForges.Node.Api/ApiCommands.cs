@@ -10,9 +10,9 @@ using Grpc.Core;
 namespace ArcForges.Node.Api;
 
 /// <summary>
-/// The shared plumbing of the queue and policy services: response metas, the stopping check, the interim origin rule for mutations that
-/// the permission matrix marks <c>P</c> for agents (approvals arrive with AF-SEC-01; until then an agent's such call is refused with
-/// <c>AUTHORIZATION/permission_denied</c>, never executed without the approval) and idempotent commands by <c>meta.command_id</c>.
+/// The shared plumbing of the queue and policy services: response metas, the stopping check, the interim permission gate of the default
+/// matrix (<see cref="InterimPermissions"/>: <c>P</c> is refused for every origin until approvals arrive with AF-SEC-01) and idempotent
+/// commands by <c>meta.command_id</c>.
 /// </summary>
 internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, string service)
 {
@@ -38,13 +38,9 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     /// <summary>The caller's origin.</summary>
     public Origin OriginOf(ServerCallContext context) => sessions.OriginOf(context);
 
-    /// <summary>
-    /// The interim rule for an operation whose agent cell is <c>P</c> (approval required): agents are refused until approvals exist
-    /// (AF-SEC-01); HUMAN and SCRIPT callers proceed.
-    /// </summary>
-    public ArcError? AgentNeedsApproval(ServerCallContext context, string operation) => sessions.OriginOf(context) == Origin.Agent
-        ? NodeErrors.PermissionDenied(operation + " (AGENT: an approval is required; approvals arrive with AF-SEC-01)")
-        : null;
+    /// <summary>The interim permission gate (<see cref="InterimPermissions"/>) for the caller's origin.</summary>
+    public ArcError? Permit(ServerCallContext context, GatedOperation operation, string method) =>
+        InterimPermissions.Check(sessions.OriginOf(context), operation, method);
 
     /// <summary>The caller as a policy revision's actor.</summary>
     public ActorRef Actor(ServerCallContext context) => new()

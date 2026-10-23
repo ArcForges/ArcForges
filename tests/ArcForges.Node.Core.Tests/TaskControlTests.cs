@@ -31,15 +31,17 @@ public sealed class TaskControlTests
         await using var channel = await node.ChannelAsync();
         var marker = Path.Combine(node.Root, "timeout.txt");
         var timed = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--child", "same", "--marker", marker);
-        timed.TimeoutMs = 2_000;
+        // 5 s: the attempt runs below normal priority (03 section 5.2, amended), so under the parallel suites' load its child may take a few
+        // seconds to start; the timeout must fire after both processes are up for both to receive the break.
+        timed.TimeoutMs = 5_000;
         var watch = Stopwatch.StartNew();
         var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, timed));
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(3, task.CurrentAttempt.Result.ExitCode);
-        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 2 s timeout and the stop take a
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 5 s timeout and the stop take a
         // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"The timeout took {watch.Elapsed}.");
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"The timeout took {watch.Elapsed}.");
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
 
         var cpu = Tasks.Argv(node.Root, Tasks.TestLoad, "cpu", "--threads", "2", "--iterations", "20000000000");
@@ -261,6 +263,39 @@ public sealed class TaskControlTests
         }
     }
 
+    /// <summary>
+    /// 03 section 5.2 (amended for AF-SCHED-01): every process of an attempt runs below normal priority, enforced by its job
+    /// (<c>JOB_OBJECT_LIMIT_PRIORITY_CLASS</c>), so managed work always yields to the user's own normal-priority work. The attempt's shell
+    /// and a child it starts are BELOW_NORMAL, and the shell cannot raise itself to NORMAL or HIGH.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task AnAttemptsProcessesRunBelowNormalAndCannotRaiseThemselves()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var channel = await node.ChannelAsync();
+        var script = string.Join("; ",
+            "$p = [Diagnostics.Process]::GetCurrentProcess()",
+            "'before=' + $p.PriorityClass",
+            "try { $p.PriorityClass = 'High' } catch { 'high-refused' }",
+            "$p.Refresh(); 'after-high=' + $p.PriorityClass",
+            "try { $p.PriorityClass = 'Normal' } catch { 'normal-refused' }",
+            "$p.Refresh(); 'after-normal=' + $p.PriorityClass",
+            "$c = [Diagnostics.Process]::Start('cmd.exe', '/d /c ping -n 3 127.0.0.1 >nul')",
+            "'child=' + $c.PriorityClass",
+            "$c.WaitForExit()");
+        var spec = Tasks.Argv(node.Root, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+            "-NoProfile", "-NonInteractive", "-Command", script);
+        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
+        var output = System.Text.Encoding.UTF8.GetString(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout));
+        TestContext.Current.TestOutputHelper?.WriteLine(output);
+        Assert.Equal(TaskState.Succeeded, task.State);
+        Assert.Contains("before=BelowNormal", output, StringComparison.Ordinal);
+        Assert.Contains("after-high=BelowNormal", output, StringComparison.Ordinal);
+        Assert.Contains("after-normal=BelowNormal", output, StringComparison.Ordinal);
+        Assert.Contains("child=BelowNormal", output, StringComparison.Ordinal);
+    }
     [Fact(Timeout = 120_000)]
     public async Task AKillWithNodeTaskEndsWithTheNode()
     {

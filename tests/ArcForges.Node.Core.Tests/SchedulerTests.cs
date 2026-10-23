@@ -310,7 +310,7 @@ public sealed class SchedulerTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         var spec = Sched.Hold(node, Path.Combine(node.Root, "p.txt"), 30_000);
         spec.Resources.Pausable = true;
         var taskId = await Tasks.SubmitAsync(channel, spec);
@@ -389,7 +389,7 @@ public sealed class SchedulerTests
     private static async Task DependenciesAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.WidenAsync(channel);
         var (ma, mf, mb, mc, md) = (M(node, "a"), M(node, "f"), M(node, "b"), M(node, "c"), M(node, "d"));
         var first = await Tasks.SubmitAsync(channel, Sched.Hold(node, ma, 2_000));
@@ -425,7 +425,7 @@ public sealed class SchedulerTests
     private static async Task ReadinessAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.WidenAsync(channel);
         var port = Sched.FreePort();
         var flag = Path.Combine(node.Root, "ready.flag");
@@ -476,7 +476,7 @@ public sealed class SchedulerTests
     private static async Task KeysAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.WidenAsync(channel);
         var cases = new (string Name, string First, KeyMode FirstMode, string Second, KeyMode SecondMode, bool Together)[]
         {
@@ -574,7 +574,7 @@ public sealed class SchedulerTests
     private static async Task WorkspacesAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.WidenAsync(channel);
         var serialRoot = Directory.CreateDirectory(Path.Combine(node.Root, "serial")).FullName;
         var adapterRoot = Directory.CreateDirectory(Path.Combine(node.Root, "adapter")).FullName;
@@ -633,7 +633,7 @@ public sealed class SchedulerTests
     private static async Task ParallelismAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.WidenAsync(channel);
         void Apart(string what, params string[] markers)
         {
@@ -723,7 +723,7 @@ public sealed class SchedulerTests
     private static async Task FairnessAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         byte[] first = [], second = [];
         node.Runtime.Store.Write(transaction =>
         {
@@ -772,7 +772,7 @@ public sealed class SchedulerTests
         var minutes = double.TryParse(Environment.GetEnvironmentVariable("ARCFORGES_FAIRNESS_MINUTES"), NumberStyles.Float, CultureInfo.InvariantCulture, out var configured)
             ? configured : 10;
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         byte[] first = [], second = [];
         node.Runtime.Store.Write(transaction =>
         {
@@ -912,6 +912,7 @@ public sealed class SchedulerTests
     {
         await using var node = await InProcessNode.Create().StartAsync();
         Id sideEffecting, idempotent;
+        var lostAttempts = new List<Id>();
         await using (var channel = await node.ChannelAsync())
         {
             var first = Sched.Hold(node, M(node, "side-effecting"), 120_000);
@@ -921,8 +922,8 @@ public sealed class SchedulerTests
             second.Retry = FastRetry.Clone();
             sideEffecting = await Tasks.SubmitAsync(channel, first);
             idempotent = await Tasks.SubmitAsync(channel, second);
-            await Tasks.RunningAsync(channel, sideEffecting);
-            await Tasks.RunningAsync(channel, idempotent);
+            lostAttempts.Add((await Tasks.RunningAsync(channel, sideEffecting)).AttemptId);
+            lostAttempts.Add((await Tasks.RunningAsync(channel, idempotent)).AttemptId);
         }
 
         await node.StopAsync();
@@ -941,6 +942,15 @@ public sealed class SchedulerTests
         var retried = await Sched.UntilAsync(after, idempotent, task => task.AttemptCount == 2 && task.CurrentAttempt?.State == AttemptState.Running, "the retry after the node loss");
         Assert.Equal(AttemptState.Running, retried.CurrentAttempt.State);
         await Sched.CancelAsync(after, idempotent);
+
+        // The attempts of the simulated earlier boot still run (no reboot happened): on Linux their units are stopped here, as a reboot would.
+        if (OperatingSystem.IsLinux())
+        {
+            foreach (var attempt in lostAttempts)
+            {
+                ArcForges.Tests.SystemdTestEnvironment.Systemctl("stop", ArcForges.Tests.SystemdTestEnvironment.AttemptUnit(IdText.Format(attempt)));
+            }
+        }
     }
 
     /// <summary>
@@ -950,7 +960,7 @@ public sealed class SchedulerTests
     private static async Task MemoryAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         var snapshot = await Sched.SnapshotAsync(channel);
         var each = (ulong)(snapshot.BudgetMemBytes * 0.55);
         TaskSpec Large(string name, int holdMs)
@@ -982,7 +992,7 @@ public sealed class SchedulerTests
     private static async Task InfeasibleAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         var capacity = node.Runtime.Execution!.Settings.CapacityMemory;
         var changed = await Sched.ChangePolicyAsync(human, policy => policy.Resources.MaxTaskMemoryBytes = (ulong)capacity);
@@ -1017,7 +1027,7 @@ public sealed class SchedulerTests
     private static async Task CpuClampAsync()
     {
         await using var node = await InProcessNode.Create(tools: new Sched.TestLoadCpuAdapter()).StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         var snapshot = await Sched.SnapshotAsync(channel);
         var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "cpu", "--iterations", "200000000");
         spec.Resources = new ResourceSpec { Hint = new ResourceDemand { CpuMillicores = 1_000_000 } };
@@ -1041,7 +1051,7 @@ public sealed class SchedulerTests
     private static async Task ReservationAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         var changed = await Sched.ChangePolicyAsync(human, policy =>
         {
@@ -1133,7 +1143,7 @@ public sealed class SchedulerTests
     private static async Task QueueStartAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await Sched.SetParallelismAsync(channel, ParallelismScope.Global, string.Empty, ParallelismMode.Fixed, 1);
         var latencies = new List<long>();
         for (var round = 0; round < 5; round++)
@@ -1154,11 +1164,11 @@ public sealed class SchedulerTests
     private static async Task PauseAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         var marker = M(node, "paused");
         var spec = Sched.Hold(node, marker, 3_000);
         spec.Resources.Pausable = true;
-        spec.TimeoutMs = 6_000;
+        spec.TimeoutMs = 4_000;
         var taskId = await Tasks.SubmitAsync(channel, spec);
         await Tasks.RunningAsync(channel, taskId);
         await Tasks.WaitForAsync(() => Sched.Window(marker).Start > 0, Tasks.Bound, "the hold to start");
@@ -1168,14 +1178,15 @@ public sealed class SchedulerTests
         await Task.Delay(5_000, Ct);
         Assert.Equal(-1, Sched.Window(marker).End);
         Assert.Equal(TaskState.Paused, (await Tasks.GetAsync(channel, taskId)).State);
+        var resumedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var resume = await channel.Tasks.ResumeTaskAsync(new TaskServiceResumeTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
         Assert.True(resume.Error is null, $"ResumeTask: {resume.Error?.Code}");
         var done = await Tasks.WaitAsync(channel, taskId);
 
-        // Held 3 s of its own and 5 s frozen: the 6 s timeout counts only the running time.
+        // Its 3 s hold elapsed while it was frozen, so it ends once thawed; the 4 s timeout counts only the running time, not the 5 s frozen.
         Assert.Equal(TaskState.Succeeded, done.State);
-        var (start, end) = Sched.Window(marker);
-        Assert.True(end - start >= 7_500, $"The hold ran {end - start} ms including the pause.");
+        var (_, end) = Sched.Window(marker);
+        Assert.True(end >= resumedAt - 100, $"The hold ended at {end}, before the resume at {resumedAt}.");
 
         var plain = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, "plain"), 30_000));
         await Tasks.RunningAsync(channel, plain);
@@ -1201,7 +1212,7 @@ public sealed class SchedulerTests
     private static async Task PressureAsync()
     {
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         var background = Sched.Hold(node, M(node, "background"), 240_000);
         background.Priority = Priority.Background;

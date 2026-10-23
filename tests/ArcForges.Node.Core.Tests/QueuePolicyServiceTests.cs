@@ -21,7 +21,7 @@ public sealed class QueuePolicyServiceTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         var queue = channel.Queue;
         var pools = (await queue.ListPoolsAsync(new QueueServiceListPoolsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Pools;
         Assert.Contains(pools, pool => pool.Name == "default" && pool.BuiltIn);
@@ -131,26 +131,115 @@ public sealed class QueuePolicyServiceTests
         Assert.NotEqual(7, node.Runtime.Execution!.Settings.GlobalMaxRunning);
     }
 
+    /// <summary>
+    /// The interim gate per origin (11 section 1, until AF-SEC-01): HUMAN may do everything; SCRIPT may change a task's priority and pause or
+    /// resume a pool, while parallelism, policy and pool changes need an approval and are refused; AGENT is refused all of them. A refusal
+    /// of a <c>P</c> cell says that approvals arrive with AF-SEC-01, and nothing changes.
+    /// </summary>
     [Fact(Timeout = 120_000)]
-    public async Task AnAgentIsRefusedPolicyAndPoolChangesThatNeedAnApproval()
+    public async Task TheInterimGateFollowsTheDefaultMatrixPerOrigin()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
-        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
         await using var script = await node.ChannelAsync();
-        Assert.Equal("permission_denied", (await agent.Queue.CreatePoolAsync(new QueueServiceCreatePoolRequest { Meta = Tasks.Meta(), Name = "mine" }, cancellationToken: Ct)).Error?.Code);
-        Assert.Equal("permission_denied", (await agent.Queue.SetParallelismAsync(new QueueServiceSetParallelismRequest
+        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
+        var revision = (await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Revision.Revision.Value;
+
+        async Task<ArcError?> CreatePoolAsync(NodeChannel channel, string name) =>
+            (await channel.Queue.CreatePoolAsync(new QueueServiceCreatePoolRequest { Meta = Tasks.Meta(), Name = name }, cancellationToken: Ct)).Error;
+        async Task<ArcError?> ParallelismAsync(NodeChannel channel) => (await channel.Queue.SetParallelismAsync(new QueueServiceSetParallelismRequest
         {
             Meta = Tasks.Meta(),
             Scope = ParallelismScope.Global,
-            Mode = ParallelismMode.Disabled,
-        }, cancellationToken: Ct)).Error?.Code);
-        Assert.Equal("permission_denied", (await Sched.ChangePolicyAsync(agent, policy => policy.Resources.GlobalMaxRunning = 3)).Error?.Code);
+            Mode = ParallelismMode.Fixed,
+            Fixed = 4,
+        }, cancellationToken: Ct)).Error;
+        async Task<ArcError?> PauseAsync(NodeChannel channel)
+        {
+            var paused = (await channel.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), Pool = "background" }, cancellationToken: Ct)).Error;
+            return paused ?? (await channel.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = Tasks.Meta(), Pool = "background" }, cancellationToken: Ct)).Error;
+        }
 
-        // Reading is allowed; a SCRIPT may change the resource policy but not retry_safety.
-        Assert.Null((await agent.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error);
-        Assert.Null((await agent.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error);
-        Assert.Null((await Sched.ChangePolicyAsync(script, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
-        Assert.Equal("permission_denied", (await Sched.ChangePolicyAsync(script, policy => (policy.RetrySafety ??= new RetrySafetyPolicy()).AcceptAgentAssertions = true)).Error?.Code);
+        async Task<ArcError?> PriorityAsync(NodeChannel channel) => (await channel.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
+        {
+            Meta = Tasks.Meta(),
+            TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
+            Priority = Priority.Low,
+        }, cancellationToken: Ct)).Error;
+        void Approval(ArcError? error)
+        {
+            Assert.Equal("permission_denied", error?.Code);
+            Assert.Contains("AF-SEC-01", error!.ToString(), StringComparison.Ordinal);
+        }
+
+        // SCRIPT: priority and pool pausing are A; parallelism, policy and pools are P.
+        Approval(await CreatePoolAsync(script, "script-pool"));
+        Approval(await ParallelismAsync(script));
+        Approval((await Sched.ChangePolicyAsync(script, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
+        Assert.Null(await PauseAsync(script));
+        Assert.Equal("not_found", (await PriorityAsync(script))?.Code);
+
+        // AGENT: everything here is P.
+        Approval(await CreatePoolAsync(agent, "agent-pool"));
+        Approval(await ParallelismAsync(agent));
+        Approval((await Sched.ChangePolicyAsync(agent, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
+        Approval(await PauseAsync(agent));
+        Approval(await PriorityAsync(agent));
+
+        // Nothing changed; reads are allowed for every origin.
+        Assert.Equal(revision, (await agent.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Revision.Revision.Value);
+        Assert.Null((await script.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error);
+
+        // HUMAN: all A, retry_safety included.
+        Assert.Null(await CreatePoolAsync(human, "human-pool"));
+        Assert.Null(await ParallelismAsync(human));
+        Assert.Null(await PauseAsync(human));
+        Assert.Equal("not_found", (await PriorityAsync(human))?.Code);
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy => (policy.RetrySafety ??= new RetrySafetyPolicy()).AcceptAgentAssertions = true)).Error);
+    }
+
+    /// <summary>
+    /// Cancelling, pausing or re-prioritising another owner's task (11 section 1: HUMAN A, SCRIPT and AGENT P): a task an agent session owns
+    /// is refused to a SCRIPT caller (approvals arrive with AF-SEC-01) and cancelled by a HUMAN; the SCRIPT caller's own task is its own. The
+    /// tasks wait in a paused pool, so no process runs.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task AnotherOwnersTaskIsCancelledOnlyByAHumanUntilApprovalsExist()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        await using var script = await node.ChannelAsync();
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        byte[] session = [];
+        node.Runtime.Store.Write(transaction => session = Sched.SeedSession(transaction));
+        var others = await Sched.SubmitAsSessionAsync(node, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"), session);
+        var own = await Tasks.SubmitAsync(script, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
+
+        var refused = (await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others }, cancellationToken: Ct)).Error;
+        Assert.Equal("permission_denied", refused?.Code);
+        Assert.Contains("AF-SEC-01", refused!.ToString(), StringComparison.Ordinal);
+        Assert.Equal("permission_denied", (await script.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
+        {
+            Meta = Tasks.Meta(),
+            TaskId = others,
+            Priority = Priority.High,
+        }, cancellationToken: Ct)).Error?.Code);
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(human, others)).State);
+
+        // A SCRIPT caller re-prioritises and cancels its own task; a HUMAN cancels the session's.
+        var moved = await script.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest { Meta = Tasks.Meta(), TaskId = own, Priority = Priority.Low }, cancellationToken: Ct);
+        Assert.Null(moved.Error);
+        Assert.Equal(Priority.Low, (await Tasks.GetAsync(script, own)).EffectivePriority);
+        Assert.Equal(TaskState.Cancelled, (await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = own }, cancellationToken: Ct)).Value.State);
+        Assert.Equal(TaskState.Cancelled, (await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others }, cancellationToken: Ct)).Value.State);
+        Assert.Equal("invalid_state", (await human.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
+        {
+            Meta = Tasks.Meta(),
+            TaskId = others,
+            Priority = Priority.High,
+        }, cancellationToken: Ct)).Error?.Code);
     }
 }

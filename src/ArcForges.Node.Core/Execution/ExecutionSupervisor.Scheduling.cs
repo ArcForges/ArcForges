@@ -110,6 +110,9 @@ public sealed partial class ExecutionSupervisor
     /// <summary>The root limits last applied from the measured budgets, or <see langword="null"/> while the startup limits hold.</summary>
     public RootLimits? AppliedRootLimits { get; private set; }
 
+    /// <summary>Called on the platform-call queue after new root limits were applied (the node refreshes its capability report's facts).</summary>
+    public Action<RootLimits>? RootLimitsApplied { get; set; }
+
     /// <summary>The tool-level concurrency hook (03 section 5.3), or <see langword="null"/> without adapters.</summary>
     public IToolConcurrency? Tools { get; }
 
@@ -1091,7 +1094,11 @@ public sealed partial class ExecutionSupervisor
 
         _log.Info("execution.root_limits", new LogField("cpuRate", limits.CpuRate), new LogField("memoryHigh", limits.NotificationBytes),
             new LogField("budgetCpu", state.BudgetCpu), new LogField("budgetMemory", state.BudgetMemory), new LogField("forced", force));
-        PlatformCalls.Post("root-limits", () => platform.UpdateRootLimits(limits));
+        PlatformCalls.Post("root-limits", () =>
+        {
+            platform.UpdateRootLimits(limits);
+            RootLimitsApplied?.Invoke(limits);
+        });
     }
 
     /// <summary>
@@ -1378,6 +1385,35 @@ public sealed partial class ExecutionSupervisor
         return null;
     }
 
+    /// <summary>
+    /// <c>SetTaskPriority</c> (03 section 4): a waiting task (QUEUED, WAITING_DEPENDENCY, RETRY_WAIT) takes the new class and, when given, the
+    /// new pool; its aging restarts from the new class. A started task is refused (<c>STATE/invalid_state</c>): its attempt keeps the CPU weight
+    /// it was launched with.
+    /// </summary>
+    public (QueueInfo? Queue, ArcError? Error) SetPriority(CommandContext context, ReadOnlySpan<byte> taskId, Priority? priority, string? pool)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var transaction = context.Transaction;
+        var row = TaskRecords.GetRow(transaction, taskId);
+        if (row is null || row.Purged)
+        {
+            return (null, NodeErrors.NotFound("task", taskId));
+        }
+
+        if (row.State is not (TaskState.Queued or TaskState.WaitingDependency or TaskState.RetryWait or TaskState.Placing))
+        {
+            return (null, NodeErrors.InvalidState(row.State.ToString().ToUpperInvariant(),
+                "only a waiting task's priority or pool changes; a started attempt keeps the class it was launched with"));
+        }
+
+        var newPriority = priority ?? row.Priority;
+        transaction.Execute(
+            "UPDATE task SET priority = $priority, effective_priority = $priority, aged_at = NULL, pool = $pool, rev = rev + 1 WHERE task_id = $id;",
+            ("$priority", (int)newPriority), ("$pool", pool ?? row.Pool), ("$id", taskId.ToArray()));
+        EmitTask(context, taskId, row.State);
+        _workPending = true;
+        return (new QueueInfo { Position = TaskRecords.QueuePosition(transaction, taskId) }, null);
+    }
     private sealed record CachedRequest(byte[] Digest, (long Cpu, long Expected, long Ceiling, EstimateSource Source) Request);
 
     private sealed record WorkspaceInfo(string Root, WorkspaceConcurrency Mode);

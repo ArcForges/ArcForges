@@ -135,7 +135,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new QueueServiceCreatePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "CreatePool")
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "CreatePool")
             ?? PoolFields(request.HasName, request.Name, request.HasWeight, request.Weight, request.HasMaxParallelMode, request.MaxParallelMode, request.HasMaxParallelFixed,
                 request.MaxParallelFixed, request.HasDefaultPriority, request.DefaultPriority, nameRequired: true);
         if (refused is not null)
@@ -192,7 +192,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new QueueServiceUpdatePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "UpdatePool")
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "UpdatePool")
             ?? PoolFields(request.HasName, request.Name, request.HasWeight, request.Weight, request.HasMaxParallelMode, request.MaxParallelMode, request.HasMaxParallelFixed,
                 request.MaxParallelFixed, request.HasDefaultPriority, request.DefaultPriority, nameRequired: true);
         if (refused is not null)
@@ -258,7 +258,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new QueueServiceDeletePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "DeletePool")
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "DeletePool")
             ?? (request.HasName && request.Name.Length > 0 ? null : NodeErrors.InvalidArgument("name: required"));
         if (refused is not null)
         {
@@ -320,7 +320,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new QueueServicePausePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "PausePool") ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.PauseOrResumePool, "PausePool") ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
         if (refused is not null)
         {
             response.Error = refused;
@@ -352,7 +352,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new QueueServiceResumePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "ResumePool") ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.PauseOrResumePool, "ResumePool") ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
         if (refused is not null)
         {
             response.Error = refused;
@@ -383,7 +383,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new QueueServiceSetParallelismResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "SetParallelism") ?? ParallelismFields(request);
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangeParallelism, "SetParallelism") ?? ParallelismFields(request);
         if (refused is not null)
         {
             response.Error = refused;

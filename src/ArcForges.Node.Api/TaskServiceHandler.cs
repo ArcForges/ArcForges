@@ -610,6 +610,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             refused = NodeErrors.InvalidArgument("grace_ms: 0..300 s");
         }
 
+        refused ??= OthersTask(context, request.TaskId, "CancelTask");
         if (refused is not null)
         {
             response.Error = refused;
@@ -694,12 +695,79 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     /// <inheritdoc />
+    public override async Task<TaskServiceSetTaskPriorityResponse> SetTaskPriority(TaskServiceSetTaskPriorityRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        var response = new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta) };
+        var origin = _sessions.OriginOf(context);
+        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")
+            ?? InterimPermissions.Check(origin, GatedOperation.ChangeTaskPriority, "SetTaskPriority");
+        if (refused is null && !request.HasPriority && !request.HasPool)
+        {
+            refused = NodeErrors.InvalidArgument("priority or pool: at least one");
+        }
+
+        if (refused is null && request.HasPriority && (request.Priority == Priority.Unspecified || !Enum.IsDefined(request.Priority)))
+        {
+            refused = NodeErrors.InvalidArgument("priority: INTERACTIVE, HIGH, NORMAL, LOW or BACKGROUND");
+        }
+
+        if (refused is null && request.Priority == Priority.Interactive && origin != Origin.Human)
+        {
+            refused = NodeErrors.PermissionDenied("SetTaskPriority.priority INTERACTIVE (HUMAN origin or a session grant)");
+        }
+
+        if (refused is null && request.HasPool && !Execution.Settings.Pools.Contains(request.Pool, StringComparer.Ordinal))
+        {
+            refused = NodeErrors.InvalidArgument("pool: an existing pool");
+        }
+
+        refused ??= OthersTask(context, request.TaskId, "SetTaskPriority");
+        if (refused is not null)
+        {
+            response.Error = refused;
+            return response;
+        }
+
+        var id = request.TaskId.Value.ToByteArray();
+        var (result, replayed) = await Idempotent(request, request.Meta, context, "SetTaskPriority", TaskServiceSetTaskPriorityResponse.Parser,
+            failure => new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta), Error = failure }, command =>
+            {
+                var (queue, error) = Execution.SetPriority(command, id, request.HasPriority ? request.Priority : null, request.HasPool ? request.Pool : null);
+                return error is not null
+                    ? new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta), Error = error }
+                    : new TaskServiceSetTaskPriorityResponse
+                    {
+                        Meta = Meta(request.Meta),
+                        Value = new TaskServiceSetTaskPriorityValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, Queue = queue },
+                    };
+            }).ConfigureAwait(false);
+        if (!replayed && result.OutcomeCase == TaskServiceSetTaskPriorityResponse.OutcomeOneofCase.Value)
+        {
+            Execution.Kick();
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The interim gate for acting on another owner's task (11 section 1: cancel others' tasks, HUMAN A, SCRIPT and AGENT P): a task an agent
+    /// session owns belongs to that session, and until connections carry sessions (AF-AI-01) no SCRIPT or AGENT caller is that session.
+    /// </summary>
+    private ArcError? OthersTask(ServerCallContext context, Id taskId, string method)
+    {
+        var id = taskId.Value.ToByteArray();
+        var sessionOwned = _node.Store.Read(reader => reader.Scalar("SELECT owner_session_id FROM task WHERE task_id = $id;", ("$id", id))) is byte[] { Length: > 0 };
+        return sessionOwned ? InterimPermissions.Check(_sessions.OriginOf(context), GatedOperation.CancelOthersTask, method) : null;
+    }
+    /// <inheritdoc />
     public override async Task<TaskServicePauseTaskResponse> PauseTask(TaskServicePauseTaskRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new TaskServicePauseTaskResponse { Meta = Meta(request.Meta) };
-        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")) is { } refused)
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id") ?? OthersTask(context, request.TaskId, "PauseTask")) is { } refused)
         {
             response.Error = refused;
             return response;
@@ -726,7 +794,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta) };
-        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")) is { } refused)
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id") ?? OthersTask(context, request.TaskId, "ResumeTask")) is { } refused)
         {
             response.Error = refused;
             return response;

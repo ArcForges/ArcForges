@@ -80,22 +80,30 @@ public sealed class SchedulingCliTests
         await ExplainedAsync(dependent, "dependency");
         var show = await node.CliAsync("queue", "show");
         Assert.True(show.ExitCode == 0, show.ToString());
-        Assert.Contains("exclusive_key", show.Output, StringComparison.Ordinal);
+        Assert.Contains("budget", show.Output, StringComparison.Ordinal);
         Assert.Equal(0, (await node.CliAsync("queue", "show", "--json")).ExitCode);
 
         // Pools and parallelism.
         var pools = await node.CliAsync("queue", "pools");
         Assert.True(pools.ExitCode == 0, pools.ToString());
         Assert.Contains("default", pools.Output, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("queue", "pool", "create", "builds", "--weight", "2", "--max", "off")).ExitCode);
-        Assert.Equal(0, (await node.CliAsync("queue", "pool", "update", "builds", "--max", "3")).ExitCode);
-        Assert.Equal(0, (await node.CliAsync("queue", "pause", "builds")).ExitCode);
-        Assert.Contains("builds", (await node.CliAsync("queue", "pools")).Output, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("queue", "resume", "builds")).ExitCode);
-        Assert.Equal(0, (await node.CliAsync("queue", "pool", "delete", "builds")).ExitCode);
+        // The CLI here is a SCRIPT caller (no terminal): pausing a pool and changing a task's priority are allowed; pool, parallelism and
+        // policy changes need an approval (11 section 1) and are refused until AF-SEC-01.
+        async Task NeedsApprovalAsync(params string[] args)
+        {
+            var refused = await node.CliAsync(args);
+            Assert.True(refused.ExitCode != 0 && (refused.Output + refused.Error).Contains("AF-SEC-01", StringComparison.Ordinal), $"{string.Join(' ', args)}: {refused}");
+        }
+
+        Assert.Equal(0, (await node.CliAsync("tasks", "priority", writer, "low")).ExitCode);
+        Assert.Contains("PRIORITY_LOW", (await node.CliAsync("tasks", "show", writer, "--json")).Output, StringComparison.Ordinal);
+        Assert.Equal(2, (await node.CliAsync("tasks", "priority", writer)).ExitCode);
+        Assert.Equal(0, (await node.CliAsync("queue", "pause", "background")).ExitCode);
+        Assert.Contains("paused", (await node.CliAsync("queue", "pools")).Output, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, (await node.CliAsync("queue", "resume", "background")).ExitCode);
+        await NeedsApprovalAsync("queue", "pool", "create", "builds", "--weight", "2", "--max", "off");
+        await NeedsApprovalAsync("queue", "parallelism", "global", "4");
         Assert.NotEqual(0, (await node.CliAsync("queue", "pool", "delete", "default")).ExitCode);
-        Assert.Equal(0, (await node.CliAsync("queue", "parallelism", "global", "4")).ExitCode);
-        Assert.Equal(0, (await node.CliAsync("queue", "parallelism", "global", "auto")).ExitCode);
         Assert.Equal(2, (await node.CliAsync("queue", "parallelism", "everywhere", "off")).ExitCode);
 
         // The holder ends (cancelled): the writer gets the key and the FINISHED dependent starts.
@@ -127,6 +135,6 @@ public sealed class SchedulingCliTests
         Assert.Equal(0, (await node.CliAsync("policy", "validate", current)).ExitCode);
         var revisions = await node.CliAsync("policy", "revisions");
         Assert.True(revisions.ExitCode == 0, revisions.ToString());
-        Assert.Equal(0, (await node.CliAsync("policy", "restore", "1", "--comment", "back to the defaults")).ExitCode);
+        await NeedsApprovalAsync("policy", "restore", "1", "--comment", "back to the defaults");
     }
 }

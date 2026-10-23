@@ -80,12 +80,19 @@ public sealed unsafe class JobObject : IDisposable
     public static JobObject FromHandle(nint handle, string? name) => new(new SafeKernelHandle(handle, ownsHandle: true), name);
 
     /// <summary>
-    /// Sets the extended limits: the commit limit (0 = none), the active-process limit (null = none) and kill-on-close. No breakaway is
-    /// allowed: neither breakaway flag is ever set.
+    /// Sets the extended limits: the commit limit (0 = none), the active-process limit (null = none), kill-on-close and the priority class
+    /// every process of the job runs at (null = none; <c>JOB_OBJECT_LIMIT_PRIORITY_CLASS</c>: the job's processes cannot change it). No
+    /// breakaway is allowed: neither breakaway flag is ever set.
     /// </summary>
-    public void SetLimits(long commitLimitBytes, int? activeProcessLimit, bool killOnClose)
+    public void SetLimits(long commitLimitBytes, int? activeProcessLimit, bool killOnClose, uint? priorityClass = null)
     {
         var info = default(Native.JobObjectExtendedLimitInformation);
+        if (priorityClass is { } priority)
+        {
+            info.BasicLimitInformation.LimitFlags |= Native.JobObjectLimitPriorityClass;
+            info.BasicLimitInformation.PriorityClass = priority;
+        }
+
         if (commitLimitBytes > 0)
         {
             info.BasicLimitInformation.LimitFlags |= Native.JobObjectLimitJobMemory;
@@ -147,6 +154,14 @@ public sealed unsafe class JobObject : IDisposable
         var info = default(Native.JobObjectCpuRateControlInformation);
         Query(Native.JobObjectCpuRateControlInformationClass, &info, sizeof(Native.JobObjectCpuRateControlInformation));
         return (info.ControlFlags, info.Value);
+    }
+
+    /// <summary>The priority class limit in force, or <see langword="null"/> when the job sets none.</summary>
+    public uint? PriorityClassLimit()
+    {
+        var info = default(Native.JobObjectExtendedLimitInformation);
+        Query(Native.JobObjectExtendedLimitInformationClass, &info, sizeof(Native.JobObjectExtendedLimitInformation));
+        return (info.BasicLimitInformation.LimitFlags & Native.JobObjectLimitPriorityClass) != 0 ? info.BasicLimitInformation.PriorityClass : null;
     }
 
     /// <summary>The extended limits in force.</summary>

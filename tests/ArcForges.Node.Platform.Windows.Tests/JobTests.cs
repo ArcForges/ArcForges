@@ -41,6 +41,14 @@ public sealed class JobTests
             Assert.False(harness.Platform.RootJob.Contains(holder), "The holder runs outside the root job.");
         }
 
+        // 03 section 5.2 (amended for AF-SCHED-01): the attempt job enforces BELOW_NORMAL on its processes; the holder keeps its own class.
+        Assert.Equal(WindowsExecutionPlatform.AttemptPriorityClass, handle.Job.PriorityClassLimit());
+        using (var workload = Process.GetProcessById(root.Pid))
+        using (var holderProcess = Process.GetProcessById(handle.Holder!.ProcessId))
+        {
+            Assert.Equal(ProcessPriorityClass.BelowNormal, workload.PriorityClass);
+            Assert.NotEqual(ProcessPriorityClass.BelowNormal, holderProcess.PriorityClass);
+        }
         // The child job is nested in the root: the root's accounting includes it, and ending the root ends the child's processes (V-W02).
         Assert.True(harness.Platform.RootJob!.Accounting().ActiveProcesses >= 1);
         Assert.True(harness.Platform.RootJob.Terminate(AttemptRunner.TerminatedExitCode));

@@ -263,6 +263,9 @@ public static class NodeHost
         {
             Execution = execution,
         };
+
+        // The capability report's root_* facts follow the root limits the scheduler applies from the measured budgets (03 section 5.1).
+        execution.RootLimitsApplied = _ => node.Reevaluate();
         using var stopSignals = RegisterSignals(node);
         using var external = cancellationToken.Register(() => node.RequestStop("cancelled"));
         LocalRpcServer? server = null;

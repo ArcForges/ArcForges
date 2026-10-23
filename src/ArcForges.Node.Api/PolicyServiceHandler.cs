@@ -91,7 +91,7 @@ public sealed class PolicyServiceHandler : PolicyService.PolicyServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new PolicyServiceUpdatePolicyResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "UpdatePolicy")
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "UpdatePolicy")
             ?? (request.Document is null ? NodeErrors.InvalidArgument("document: required") : null)
             ?? (request.HasComment && request.Comment.Length > 500 ? NodeErrors.InvalidArgument("comment: <= 500 chars") : null)
             ?? (request.Meta.ExpectedRev is not { HasValue: true } ? NodeErrors.InvalidArgument("meta.expected_rev: required (the current policy revision)") : null);
@@ -110,7 +110,7 @@ public sealed class PolicyServiceHandler : PolicyService.PolicyServiceBase
 
         var expected = request.Meta.ExpectedRev.Value;
         var actor = _api.Actor(context);
-        var human = _api.OriginOf(context) == Origin.Human;
+        var human = InterimPermissions.Allowed(_api.OriginOf(context), GatedOperation.ChangeRetrySafety);
         var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "UpdatePolicy", PolicyServiceUpdatePolicyResponse.Parser,
             failure => new PolicyServiceUpdatePolicyResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
@@ -193,7 +193,7 @@ public sealed class PolicyServiceHandler : PolicyService.PolicyServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new PolicyServiceRestorePolicyRevisionResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.AgentNeedsApproval(context, "RestorePolicyRevision")
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "RestorePolicyRevision")
             ?? (request.Revision is not { HasValue: true } ? NodeErrors.InvalidArgument("revision: required") : null)
             ?? (request.HasComment && request.Comment.Length > 500 ? NodeErrors.InvalidArgument("comment: <= 500 chars") : null);
         if (refused is not null)
@@ -204,7 +204,7 @@ public sealed class PolicyServiceHandler : PolicyService.PolicyServiceBase
 
         long? expected = request.Meta.ExpectedRev is { HasValue: true } revision ? revision.Value : null;
         var actor = _api.Actor(context);
-        var human = _api.OriginOf(context) == Origin.Human;
+        var human = InterimPermissions.Allowed(_api.OriginOf(context), GatedOperation.ChangeRetrySafety);
         var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "RestorePolicyRevision", PolicyServiceRestorePolicyRevisionResponse.Parser,
             failure => new PolicyServiceRestorePolicyRevisionResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
