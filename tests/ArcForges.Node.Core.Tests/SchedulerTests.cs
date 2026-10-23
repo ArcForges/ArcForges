@@ -355,6 +355,19 @@ public sealed class SchedulerTests
         await OnLinuxAsync(PressureAsync);
     }
 
+    /// <summary>
+    /// The cause of a pause survives a node restart in the task's state_reason: a pressure freeze's reason starts with the pressure_frozen
+    /// token (recovery thaws it after 30 s at Normal), PauseTask's does not (it waits for ResumeTask).
+    /// </summary>
+    [Fact]
+    public void APressureFreezeIsKnownFromTheStateReasonAPauseTaskIsNot()
+    {
+        Assert.True(ExecutionSupervisor.IsPressureFrozen(ExecutionSupervisor.PressureFrozen + ": frozen at memory pressure (available; 1 of 2 bytes available)"));
+        Assert.False(ExecutionSupervisor.IsPressureFrozen("paused by PauseTask"));
+        Assert.False(ExecutionSupervisor.IsPressureFrozen("pressure_frozen_elsewhere"));
+        Assert.False(ExecutionSupervisor.IsPressureFrozen(null));
+    }
+
     // isolation=exclusive: like the Pressure test, it moves the node to Pressure through the policy thresholds and waits for the thaw.
     [Fact(Timeout = 300_000, DisableParallelization = true)]
     [Trait("env", "linux-real")]
