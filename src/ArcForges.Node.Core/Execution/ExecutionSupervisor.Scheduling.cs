@@ -122,7 +122,11 @@ public sealed partial class ExecutionSupervisor
     /// <summary>The policy changed: the settings are read again and admission runs.</summary>
     public void PolicyChanged()
     {
-        Interlocked.Exchange(ref _lastSettingsRead, long.MinValue / 2);
+        lock (_settingsLock)
+        {
+            Interlocked.Exchange(ref _lastSettingsRead, long.MinValue / 2);
+        }
+
         _ = Settings;
         _workPending = true;
         Kick();

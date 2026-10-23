@@ -175,6 +175,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private Thread? _loop;
     private Task _admissionLoop = Task.CompletedTask;
     private long _lastSettingsRead;
+    private readonly Lock _settingsLock = new();
     private int _launching;
     private readonly Lock _preemptGate = new();
     private readonly CriticalShedding _shedding = new();
@@ -249,14 +250,22 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         {
             if (_clock.GetElapsedTime(Interlocked.Read(ref _lastSettingsRead)) > TimeSpan.FromSeconds(10))
             {
-                Interlocked.Exchange(ref _lastSettingsRead, _clock.GetTimestamp());
-                try
+                // One reader at a time: a read that began before a policy commit can no longer overwrite the settings PolicyChanged read after
+                // it (which left the old settings in force for up to 10 s).
+                lock (_settingsLock)
                 {
-                    Volatile.Write(ref _settings, new ExecutionSettings(_store.Policies.Current().Document, Capacity.LogicalProcessors, Capacity.PhysicalMemoryBytes));
-                }
-                catch (Microsoft.Data.Sqlite.SqliteException exception)
-                {
-                    _log.Warning("execution.settings.read_failed", new LogField("errorType", exception.GetType().Name));
+                    if (_clock.GetElapsedTime(Interlocked.Read(ref _lastSettingsRead)) > TimeSpan.FromSeconds(10))
+                    {
+                        Interlocked.Exchange(ref _lastSettingsRead, _clock.GetTimestamp());
+                        try
+                        {
+                            Volatile.Write(ref _settings, new ExecutionSettings(_store.Policies.Current().Document, Capacity.LogicalProcessors, Capacity.PhysicalMemoryBytes));
+                        }
+                        catch (Microsoft.Data.Sqlite.SqliteException exception)
+                        {
+                            _log.Warning("execution.settings.read_failed", new LogField("errorType", exception.GetType().Name));
+                        }
+                    }
                 }
             }
 
