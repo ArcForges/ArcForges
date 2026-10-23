@@ -56,8 +56,20 @@ public sealed class ExecutionSettings
         ReserveMemory = (long)((resources.HasReserveMemFixedBytes ? (long)resources.ReserveMemFixedBytes : 2 * GiB)
             + ((resources.HasReserveMemFraction ? resources.ReserveMemFraction : 0.10) * CapacityMemory));
         var minManaged = resources.HasMinManagedCpuMillicores ? resources.MinManagedCpuMillicores : 1000;
+        MinManagedCpu = minManaged;
+        AlphaUp = resources.HasSmoothingAlphaUp && resources.SmoothingAlphaUp is >= 0.05 and <= 1 ? resources.SmoothingAlphaUp : 0.5;
+        AlphaDown = resources.HasSmoothingAlphaDown && resources.SmoothingAlphaDown is >= 0.01 and <= 1 ? resources.SmoothingAlphaDown : 0.1;
+        var pressure = resources.Pressure ?? new PressureThresholds();
+        Pressure = new PressureLimits(
+            Fraction(pressure.HasTightAvailableFraction, pressure.TightAvailableFraction, 0.10),
+            Fraction(pressure.HasPressureAvailableFraction, pressure.PressureAvailableFraction, 0.05),
+            Fraction(pressure.HasCriticalAvailableFraction, pressure.CriticalAvailableFraction, 0.02),
+            pressure.HasMemoryPsiSomeAvg10 ? pressure.MemoryPsiSomeAvg10 : 20,
+            !pressure.HasFreezeOnPressure || pressure.FreezeOnPressure,
+            !pressure.HasCancelOnCritical || pressure.CancelOnCritical);
 
-        // Interim budgets until AF-RES-01 measures unmanaged use (U = 0): B_cpu = max(min_managed, C - R), B_mem = max(0, C - R).
+        // The root limits stay at U = 0 until the root follows the measured budget (AF-SCHED-01): B_cpu = max(min_managed, C - R),
+        // B_mem = max(0, C - R). The measured budgets of 03 section 2 are the resource monitor's (ResourceMonitor).
         BudgetCpu = Math.Max(minManaged, CapacityCpu - ReserveCpu);
         ManagedMemory = Math.Max(256 * MiB, CapacityMemory - ReserveMemory);
         CommitFactor = resources.HasCommitFactor && resources.CommitFactor is >= 1.0 and <= 4.0 ? resources.CommitFactor : 1.5;
@@ -69,6 +81,8 @@ public sealed class ExecutionSettings
         MaxTmpBytes = storage.HasMaxAttemptTmpBytes ? (long)storage.MaxAttemptTmpBytes : 20 * GiB;
         MaxTmpEntries = storage.HasMaxAttemptTmpEntries ? (long)storage.MaxAttemptTmpEntries : 1_000_000;
         CriticalFreeBytes = storage.HasCriticalFreeBytes ? (long)storage.CriticalFreeBytes : 512 * MiB;
+        MinFreeBytes = storage.HasMinFreeBytes ? (long)storage.MinFreeBytes : GiB;
+        LowFreeCapBytes = storage.HasLowFreeCapBytes ? (long)storage.LowFreeCapBytes : 20 * GiB;
         DiskLimitAction = storage.HasDiskLimitAction && storage.DiskLimitAction == Contracts.Node.V1.DiskLimitAction.Notify ? "NOTIFY" : "TERMINATE";
         GuardTakeoverMs = storage.HasGuardTakeoverMs ? (int)Math.Clamp(storage.GuardTakeoverMs, 2000u, 60_000u) : 5000;
         SecretRetention = TimeSpan.FromHours(storage.HasSecretRetentionHours ? storage.SecretRetentionHours : 24);
@@ -80,6 +94,8 @@ public sealed class ExecutionSettings
         Pools = policy.Pools.Count > 0 ? [.. policy.Pools.Select(pool => pool.Name)] : [.. DefaultPolicy.BuiltInPools];
         AcceptAgentAssertions = policy.RetrySafety?.AcceptAgentAssertions ?? false;
     }
+
+    private static double Fraction(bool present, double value, double fallback) => present && value is > 0 and < 1 ? value : fallback;
 
     /// <summary><c>C_cpu</c> in millicores.</summary>
     public long CapacityCpu { get; }
@@ -93,8 +109,20 @@ public sealed class ExecutionSettings
     /// <summary><c>R_mem</c>.</summary>
     public long ReserveMemory { get; }
 
-    /// <summary>The interim <c>B_cpu</c>.</summary>
+    /// <summary><c>B_cpu</c> with no unmanaged load (the root's CPU cap until AF-SCHED-01).</summary>
     public long BudgetCpu { get; }
+
+    /// <summary><c>min_managed_cpu</c> (default 1,000 millicores).</summary>
+    public long MinManagedCpu { get; }
+
+    /// <summary><c>smoothing_alpha_up</c> (default 0.5).</summary>
+    public double AlphaUp { get; }
+
+    /// <summary><c>smoothing_alpha_down</c> (default 0.1).</summary>
+    public double AlphaDown { get; }
+
+    /// <summary>The pressure thresholds and actions of 03 section 7 (<c>resources.pressure</c>).</summary>
+    public PressureLimits Pressure { get; }
 
     /// <summary><c>C_mem - R_mem</c> (the managed share; the interim <c>B_mem</c>).</summary>
     public long ManagedMemory { get; }
@@ -119,6 +147,21 @@ public sealed class ExecutionSettings
 
     /// <summary><c>storage.critical_free_bytes</c>.</summary>
     public long CriticalFreeBytes { get; }
+
+    /// <summary><c>storage.min_free_bytes</c> (default 1 GiB).</summary>
+    public long MinFreeBytes { get; }
+
+    /// <summary><c>storage.low_free_cap_bytes</c> (default 20 GiB).</summary>
+    public long LowFreeCapBytes { get; }
+
+    /// <summary>
+    /// The disk pressure level of a volume (06 section 5): <c>CRITICAL</c> below <c>critical_free_bytes</c>, <c>LOW</c> below
+    /// <c>max(min_free_bytes, min(5% of the volume, low_free_cap_bytes))</c>.
+    /// </summary>
+    public DiskPressureLevel DiskLevel(long totalBytes, long freeBytes) =>
+        freeBytes < CriticalFreeBytes ? DiskPressureLevel.Critical
+        : freeBytes < Math.Max(MinFreeBytes, Math.Min(totalBytes / 20, LowFreeCapBytes)) ? DiskPressureLevel.Low
+        : DiskPressureLevel.Normal;
 
     /// <summary><c>TERMINATE</c> or <c>NOTIFY</c>.</summary>
     public string DiskLimitAction { get; }
@@ -167,6 +210,13 @@ public sealed class ExecutionSettings
         SwapAllowanceBytes = SwapAllowance,
     };
 
+    /// <summary>
+    /// The measured budgets of 03 section 2 for smoothed unmanaged use <paramref name="unmanagedCpu"/> and <paramref name="unmanagedMemory"/>:
+    /// <c>B_cpu = max(min_managed_cpu, C_cpu - R_cpu - U_cpu)</c> and <c>B_mem = max(0, C_mem - R_mem - U_mem)</c>.
+    /// </summary>
+    public (long Cpu, long Memory) Budgets(long unmanagedCpu, long unmanagedMemory) =>
+        (Math.Max(MinManagedCpu, CapacityCpu - ReserveCpu - Math.Max(0, unmanagedCpu)), Math.Max(0, CapacityMemory - ReserveMemory - Math.Max(0, unmanagedMemory)));
+
     /// <summary>The CPU weight of a priority (03 section 5.2).</summary>
     public static int Weight(Priority priority) => priority switch
     {
@@ -192,6 +242,15 @@ public sealed class ExecutionSettings
         return (1000, 512 * MiB, Math.Max(512 * MiB, Math.Min(MaxTaskMemory, ManagedMemory / 2)), EstimateSource.Default);
     }
 }
+
+/// <summary>The pressure thresholds and actions in force (03 section 7; policy.proto <c>PressureThresholds</c>).</summary>
+/// <param name="Tight">Tight below this fraction of <c>C_mem</c> available (default 0.10).</param>
+/// <param name="Pressure">Pressure below this fraction (default 0.05).</param>
+/// <param name="Critical">Critical below this fraction (default 0.02).</param>
+/// <param name="MemoryPsi">Pressure when Linux <c>memory some avg10</c> exceeds this (default 20).</param>
+/// <param name="FreezeOnPressure">Freeze pausable attempts at Pressure (default true).</param>
+/// <param name="CancelOnCritical">Stop preemptible attempts at Critical (default true).</param>
+public sealed record PressureLimits(double Tight, double Pressure, double Critical, double MemoryPsi, bool FreezeOnPressure, bool CancelOnCritical);
 
 /// <summary>Summaries, fingerprints and digests of commands (node-store.md <c>task</c>).</summary>
 public static class CommandText

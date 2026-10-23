@@ -59,6 +59,9 @@ public static partial class ProcFs
     private static readonly Lazy<long> s_bootTime = new(ReadBootTime);
     private static readonly Lazy<long> s_ticks = new(() => Math.Max(1, SysConf(2)));
 
+    /// <summary>Clock ticks per second (<c>sysconf(_SC_CLK_TCK)</c>), the unit of <c>/proc</c> times.</summary>
+    public static long TicksPerSecond => s_ticks.Value;
+
     /// <summary>The user ID of this process.</summary>
     public static uint UserId => GetUid();
 
@@ -124,6 +127,19 @@ public static partial class ProcFs
         var cpu = KeyValues(Path.Combine(directory, "cpu.stat"));
         var memory = KeyValues(Path.Combine(directory, "memory.events"));
         var pids = KeyValues(Path.Combine(directory, "pids.events"));
+        var (read, written) = IoBytes(directory);
+        return new CgroupAccounting(
+            Get(cpu, "user_usec") / 1000, Get(cpu, "system_usec") / 1000,
+            Number(Path.Combine(directory, "memory.peak")) ?? 0,
+            Number(Path.Combine(directory, "memory.current")) ?? 0,
+            Number(Path.Combine(directory, "memory.swap.peak")),
+            read, written, Procs(directory).Count,
+            Get(memory, "high"), Get(memory, "max"), Get(memory, "oom_kill"), Get(pids, "max"));
+    }
+
+    /// <summary>The bytes a cgroup read and wrote (<c>io.stat</c> <c>rbytes</c> and <c>wbytes</c> over every device).</summary>
+    public static (long Read, long Written) IoBytes(string directory)
+    {
         long read = 0, written = 0;
         foreach (var line in Lines(Path.Combine(directory, "io.stat")))
         {
@@ -144,13 +160,23 @@ public static partial class ProcFs
             }
         }
 
-        return new CgroupAccounting(
-            Get(cpu, "user_usec") / 1000, Get(cpu, "system_usec") / 1000,
-            Number(Path.Combine(directory, "memory.peak")) ?? 0,
-            Number(Path.Combine(directory, "memory.current")) ?? 0,
-            Number(Path.Combine(directory, "memory.swap.peak")),
-            read, written, Procs(directory).Count,
-            Get(memory, "high"), Get(memory, "max"), Get(memory, "oom_kill"), Get(pids, "max"));
+        return (read, written);
+    }
+
+    /// <summary>
+    /// A cgroup's resident memory without reclaimable page cache (03 section 3, <c>peak_observed</c>): <c>memory.current</c> minus
+    /// <c>inactive_file</c> of <c>memory.stat</c>, or null when the cgroup is gone. File pages the attempt wrote and has not touched since
+    /// sit on the inactive list (also under the multi-generational LRU), so they are left out; tmpfs pages are <c>shmem</c> and stay in.
+    /// </summary>
+    public static long? MemoryWithoutCache(string directory)
+    {
+        if (Number(Path.Combine(directory, "memory.current")) is not { } current)
+        {
+            return null;
+        }
+
+        var inactive = KeyValues(Path.Combine(directory, "memory.stat")).GetValueOrDefault("inactive_file");
+        return Math.Max(0, current - inactive);
     }
 
     /// <summary>A single number file (<c>memory.max</c> reads <c>max</c> as <see cref="long.MaxValue"/>), or null.</summary>

@@ -109,6 +109,26 @@ public static class Notifications
         return Unread(transaction);
     }
 
+    /// <summary>Adds an entry and journals it on topic NOTIFICATIONS.</summary>
+    /// <param name="context">The writer's command.</param>
+    /// <param name="kind"><c>task_failed</c>, <c>task_finished</c>, <c>approval_needed</c>, <c>finding</c>, <c>update</c> or <c>node</c>.</param>
+    /// <param name="severity">The severity.</param>
+    /// <param name="title">The title.</param>
+    /// <param name="body">The body.</param>
+    /// <param name="link">An <c>arcforges://</c> link to the subject.</param>
+    public static NodeNotification Add(CommandContext context, string kind, Severity severity, string title, string body, string? link = null)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var transaction = context.Transaction;
+        var id = StoreIds.NewUuid7(transaction.Clock);
+        transaction.Execute(
+            "INSERT INTO notification (notification_id, kind, severity, title, body, link, created_at, read_at) VALUES ($id, $kind, $severity, $title, $body, $link, $now, NULL);",
+            ("$id", id), ("$kind", kind), ("$severity", (int)severity), ("$title", title), ("$body", body), ("$link", link), ("$now", transaction.NowMicroseconds));
+        var item = Get(transaction, id)!;
+        context.Emit(EventTopic.Notifications, new NodeEvent { Notification = item });
+        return item;
+    }
+
     /// <summary>All entries (the snapshot of topic NOTIFICATIONS), newest first.</summary>
     public static List<NodeNotification> All(StoreReader reader)
     {

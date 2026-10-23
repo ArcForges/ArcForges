@@ -63,6 +63,9 @@ public static class CliApplication
         root.Subcommands.Add(RunCommand.Build(factory));
         root.Subcommands.Add(TaskCommands.Build(factory));
         root.Subcommands.Add(StatusCommands.Status(factory));
+        root.Subcommands.Add(ResourceCommands.Resources(factory));
+        root.Subcommands.Add(ResourceCommands.Processes(factory));
+        root.Subcommands.Add(ResourceCommands.Samples(factory));
         root.Subcommands.Add(NodeCommands.Build(factory, nodeRunner));
         root.Subcommands.Add(ConfigCommands.Build(factory));
         root.Subcommands.Add(EventCommands.Build(factory));

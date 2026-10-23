@@ -298,6 +298,37 @@ public interface IAttemptHandle : IDisposable
     void Refresh()
     {
     }
+
+    /// <summary>
+    /// What the container uses now (03 sections 1 and 3), sampled every second while the attempt runs. The default sums the members of
+    /// <see cref="Processes"/> in <paramref name="processes"/> (the process table, when the caller read one) for processor time and memory,
+    /// and takes I/O from <see cref="Accounting"/>; the Windows and Linux unit handles read their containers instead.
+    /// </summary>
+    AttemptUsage Usage(IReadOnlyDictionary<int, ProcessSample>? processes)
+    {
+        var accounting = Accounting();
+        var pids = Processes().Select(process => process.Pid).ToList();
+        long cpu = 0, memory = 0;
+        foreach (var pid in pids)
+        {
+            if (processes is not null && processes.TryGetValue(pid, out var process))
+            {
+                cpu += process.CpuTimeMs;
+                memory += process.MemoryBytes;
+            }
+        }
+
+        return new AttemptUsage(Math.Max(cpu, accounting.CpuUserMs + accounting.CpuKernelMs), memory, accounting.IoReadBytes, accounting.IoWriteBytes, pids);
+    }
+
+    /// <summary>True when <see cref="Usage"/> sums the container's memory from the process table (the caller then reads one every second).</summary>
+    bool UsageNeedsProcessTable => true;
+
+    /// <summary>
+    /// True once a process of the container was seen running a launcher into a virtual machine (<c>wsl.exe</c>; 03 section 9,
+    /// R-RES-002): the processes it starts in the VM are outside the container and are never presented as controlled.
+    /// </summary>
+    bool CrossesVmBoundary => false;
 }
 
 /// <summary>The machine's capacity as the platform sees it (03 section 2).</summary>

@@ -26,6 +26,27 @@ public sealed class JobMembers(JobObject job) : IDisposable
     private readonly List<(int Pid, ProcessLifetime Life)> _retired = [];
     private readonly Lock _gate = new();
     private bool _disposed;
+    private volatile string? _vmLauncher;
+
+    /// <summary>
+    /// The image of the first member seen running a launcher into the WSL VM (<see cref="VmProcesses.IsLauncher"/>), or
+    /// <see langword="null"/>: the attempt crosses the VM boundary (03 section 9). The image is read from two sources: from the member's
+    /// handle when it is recorded (its job message or the job's process list), which works while the process object exists, even after
+    /// the process exited, as long as any handle to it is open (its waiting parent holds one); and from the process table without
+    /// opening anything (<see cref="ObserveImage"/>, every second while the attempt runs). A launcher is missed only when its process
+    /// object was gone (it exited and every handle to it was closed) before the node handled its job message and before any table
+    /// listed it: a launcher shorter-lived than both that and the 1 s table interval, whose parent did not keep its handle.
+    /// </summary>
+    public string? VmLauncher => _vmLauncher;
+
+    /// <summary>Records the image of a running member read from the process table (no handle is opened).</summary>
+    public void ObserveImage(string image)
+    {
+        if (_vmLauncher is null && VmProcesses.IsLauncher(image))
+        {
+            _vmLauncher = image;
+        }
+    }
 
     /// <summary>Records a running member (from JOB_OBJECT_MSG_NEW_PROCESS or the job's process list).</summary>
     public void Remember(int pid)
@@ -50,6 +71,12 @@ public sealed class JobMembers(JobObject job) : IDisposable
                 return;
             }
 
+            // The job's own process: a launcher marks the crossing even when its lifetime cannot be recorded below.
+            if (_vmLauncher is null && ProcessInfo.ImageName(handle) is { } image && VmProcesses.IsLauncher(image))
+            {
+                _vmLauncher = image;
+            }
+
             var created = ProcessInfo.CreationFileTime(handle);
             if (created == 0 || (known is not null && known.Exited != 0 && created <= known.Exited))
             {
@@ -64,6 +91,7 @@ public sealed class JobMembers(JobObject job) : IDisposable
             }
 
             _members[pid] = new Member(created) { Handle = handle };
+
             if (!ProcessInfo.IsRunning(handle))
             {
                 Close(_members[pid]);

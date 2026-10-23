@@ -434,6 +434,16 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool PostMessage(nint window, uint message, nint wParam, nint lParam);
 
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetSystemTimes(out long idle, out long kernel, out long user);
+
+    [LibraryImport("ntdll.dll")]
+    public static partial int NtQuerySystemInformation(int informationClass, void* information, int length, out int returned);
+
+    [LibraryImport("ntdll.dll")]
+    public static partial int RtlNtStatusToDosError(int status);
+
     /// <summary>The calling thread's last Win32 error.</summary>
     public static int LastError => Marshal.GetLastPInvokeError();
 }

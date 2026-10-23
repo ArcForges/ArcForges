@@ -19,6 +19,7 @@ public sealed class RunningAttempt : IDisposable
     private readonly byte[] _record = new byte[OutputIndexRecord.Size];
     private readonly long[] _dropFrom = new long[2];
     private readonly long[] _lastDrop = new long[2];
+    private long _peakObserved;
 
     internal RunningAttempt(byte[] attemptId, byte[] taskId, string name, int number, AttemptFiles files)
     {
@@ -104,8 +105,8 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>When the ancestry scan for escaped processes last ran (monotonic).</summary>
     internal long LastEscapeScan { get; set; } = long.MinValue;
 
-    /// <summary>Escaped processes already recorded: (pid, creation ticks).</summary>
-    internal HashSet<(int Pid, long StartTicks)> KnownEscaped { get; } = [];
+    /// <summary>Escaped processes already recorded: (pid, creation ticks); the resource monitor reads them for the process labels.</summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartTicks), bool> KnownEscaped { get; } = new();
 
     /// <summary>Why the node stops the attempt.</summary>
     internal TerminationReason? StopReason { get; set; }
@@ -145,6 +146,51 @@ public sealed class RunningAttempt : IDisposable
 
     /// <summary>Serializes stdin writes.</summary>
     internal Lock StdinGate { get; } = new();
+
+    /// <summary>The task's priority (the pressure actions of 03 section 7 go from the lowest up).</summary>
+    public Priority Priority { get; internal set; } = Priority.Normal;
+
+    /// <summary>The working directory (its volume is watched, 03 section 1).</summary>
+    public string? WorkingDirectory { get; internal set; }
+
+    /// <summary><c>resources.preemptible</c>: the pressure response may stop the attempt (03 section 7).</summary>
+    public bool Preemptible { get; internal set; }
+
+    /// <summary>
+    /// <c>peak_observed</c> (03 section 3): the highest sampled resident use of the container without reclaimable page cache. It only
+    /// rises while the attempt runs.
+    /// </summary>
+    public long PeakObserved => Interlocked.Read(ref _peakObserved);
+
+    /// <summary>The last usage sample: processor time and when it was read (monotonic), for the CPU rate.</summary>
+    internal (long CpuTimeMs, long Timestamp)? LastUsage { get; set; }
+
+    /// <summary>The last usage sample of the container.</summary>
+    internal AttemptUsage? Usage { get; set; }
+
+    /// <summary>The CPU rate of the last sample, in millicores.</summary>
+    internal long CpuMillicores { get; set; }
+
+    /// <summary>The attempt was seen crossing into a virtual machine (03 section 9); logged once.</summary>
+    internal bool CrossingReported { get; set; }
+
+    /// <summary>Raises <see cref="PeakObserved"/> to <paramref name="memory"/> when it is higher; returns the peak.</summary>
+    internal long Observe(long memory)
+    {
+        var peak = Interlocked.Read(ref _peakObserved);
+        while (memory > peak)
+        {
+            var seen = Interlocked.CompareExchange(ref _peakObserved, memory, peak);
+            if (seen == peak)
+            {
+                return memory;
+            }
+
+            peak = seen;
+        }
+
+        return peak;
+    }
 
     /// <summary>Opens the output files for size reads and <c>index.bin</c> for appends, resuming after the complete records.</summary>
     internal void OpenTail()
