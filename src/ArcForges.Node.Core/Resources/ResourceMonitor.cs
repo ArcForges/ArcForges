@@ -86,6 +86,15 @@ public sealed record ResourceState
     /// <summary>Why the current raw level holds.</summary>
     public string PressureTrigger { get; init; } = string.Empty;
 
+    /// <summary>The raw level of this evaluation: the level whose condition holds now, before persistence.</summary>
+    public PressureLevel RawPressure { get; init; } = PressureLevel.Normal;
+
+    /// <summary>True when available memory is below the Critical threshold at this evaluation.</summary>
+    public bool MemoryCritical { get; init; }
+
+    /// <summary>The OOM kills newly observed machine-wide at this evaluation (Linux; 0 on Windows).</summary>
+    public long NewOomKills { get; init; }
+
     /// <summary>Linux pressure stall information.</summary>
     public PressureStall? Stall { get; init; }
 
@@ -182,6 +191,7 @@ public sealed class ResourceMonitor : IDisposable
     private long _housekeptAt;
     private long _windowPeakUsed;
     private long _windowPeakManaged;
+    private double _windowManagedCpuMs;
     private int _failures;
 
     /// <summary>Creates the monitor (not started).</summary>
@@ -366,7 +376,9 @@ public sealed class ResourceMonitor : IDisposable
             if (attempt.LastUsage is { } last)
             {
                 var elapsed = _clock.GetElapsedTime(last.Timestamp, now).TotalMilliseconds;
-                rate = elapsed > 0 ? Math.Max(0, (long)((usage.CpuTimeMs - last.CpuTimeMs) * 1000 / elapsed)) : 0;
+                var work = Math.Max(0, usage.CpuTimeMs - last.CpuTimeMs);
+                rate = elapsed > 0 ? (long)(work * 1000 / elapsed) : 0;
+                _windowManagedCpuMs += work;
             }
 
             attempt.LastUsage = (usage.CpuTimeMs, now);
@@ -449,6 +461,9 @@ public sealed class ResourceMonitor : IDisposable
             BudgetMemory = budgetMemory,
             Pressure = level,
             PressureTrigger = _pressure.Trigger,
+            RawPressure = _pressure.Raw,
+            MemoryCritical = _pressure.MemoryCritical,
+            NewOomKills = _pressure.NewOomKills,
             Stall = machine.Pressure,
             RunningAttempts = attempts.Count,
         };
@@ -469,7 +484,8 @@ public sealed class ResourceMonitor : IDisposable
             response.Respond(level, before, state);
         }
 
-        // The stored machine and managed samples (5 s): the CPU rate over the whole interval, the highest 1 s memory of it.
+        // The stored machine and managed samples (5 s): the mean CPU rate over the whole interval (the machine's from its busy and total
+        // time, the managed work's from the processor time its attempts used in it), and the highest 1 s memory of it.
         _windowPeakUsed = Math.Max(_windowPeakUsed, used);
         _windowPeakManaged = Math.Max(_windowPeakManaged, managedMemory);
         var persist = Due(_persistAt, now, ProcessInterval);
@@ -484,11 +500,14 @@ public sealed class ResourceMonitor : IDisposable
                 : (machine.IoReadBytes, machine.IoWriteBytes);
             rows.Add(new SampleRow(SampleScope.Machine, _nodeId, micros, 5000, windowCpu, machine.CpuBusyMs, used, _windowPeakUsed, _table.Count,
                 machineRead, machineWrite));
-            rows.Add(new SampleRow(SampleScope.Managed, _nodeId, micros, 5000, managedCpu, managedCpuTime, managedMemory, _windowPeakManaged, managedProcesses,
-                managedRead, managedWrite));
+            var windowMs = _clock.GetElapsedTime(_persistAt, now).TotalMilliseconds;
+            var managedWindowCpu = windowMs > 0 ? (long)Math.Round(_windowManagedCpuMs * 1000 / windowMs) : managedCpu;
+            rows.Add(new SampleRow(SampleScope.Managed, _nodeId, micros, 5000, managedWindowCpu, managedCpuTime, managedMemory, _windowPeakManaged,
+                managedProcesses, managedRead, managedWrite));
             _persistedMachine = machine;
             _windowPeakUsed = 0;
             _windowPeakManaged = 0;
+            _windowManagedCpuMs = 0;
         }
 
         lock (_gate)
@@ -546,9 +565,10 @@ public sealed class ResourceMonitor : IDisposable
 
         lock (_gate)
         {
-            if (Due(_tableAt, now, ProcessInterval))
+            if (Due(_previousTableAt, now, ProcessInterval))
             {
-                // The rate base for ListProcesses moves at most every 5 s, so a rate always spans a few seconds.
+                // The rate base for ListProcesses moves once it is 5 s old (whether the table refreshes every second or every 5 s), so a rate
+                // always spans one to a few seconds and never reaches back to a base taken long before.
                 _previousTable = _tableByPid;
                 _previousTableAt = _tableAt;
             }
@@ -736,7 +756,7 @@ public sealed class ResourceMonitor : IDisposable
                     $"{state.AvailableMemory / (1024 * 1024)} MiB of {state.CapacityMemory / (1024 * 1024)} MiB available ({state.PressureTrigger}).");
                 ExecutionFindings.Raise(context, FindingKind.MemoryPressure, severity, "node", _nodeId, title,
                     level == PressureLevel.Critical
-                        ? "Memory is critically low. Preemptible attempts are stopped from the lowest priority up until the level recovers; non-preemptible work is never stopped for it (03 section 7)."
+                        ? "Memory is critically low. Preemptible attempts are stopped one at a time from the lowest priority up, only while available memory stays below the Critical threshold (or once per observed OOM kill), each after the previous one has exited; non-preemptible work is never stopped for it (03 section 7)."
                         : "Memory is low. Admissions are restricted and the configured pressure actions apply (03 section 7).",
                     evidence);
                 Notifications.Add(context, "finding", severity, title, body);

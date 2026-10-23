@@ -204,7 +204,7 @@ internal static class ResourceCommands
     /// <summary><c>samples [--attempt id] [--scope machine|managed|attempt] [--range 1h] [--max-points n]</c>: <c>GetSamples</c>.</summary>
     public static Command Samples(Func<ParseResult, Cli> factory)
     {
-        var attempt = new Option<string?>("--attempt") { Description = "The attempt's samples (its full ID)", HelpName = "id" };
+        var attempt = new Option<string?>("--attempt") { Description = "The attempt's samples (its ID or a unique prefix of at least 6 characters)", HelpName = "id" };
         var scope = new Option<string?>("--scope") { Description = "machine, managed or attempt (default: attempt with --attempt, else machine)", HelpName = "s" };
         scope.AcceptOnlyFromAmong("machine", "managed", "attempt");
         var range = new Option<string?>("--range") { Description = "How far back (default: the attempt's lifetime, or 1h)", HelpName = "dur" };
@@ -221,14 +221,9 @@ internal static class ResourceCommands
                 "attempt" => SampleScope.Attempt,
                 _ => attemptText is null ? SampleScope.Machine : SampleScope.Attempt,
             };
-            if (attemptText is not null)
+            if (attemptText is not null && attemptText.Length < 6)
             {
-                if (!IdText.TryParse(attemptText, out var attemptId))
-                {
-                    return cli.Output.Usage($"--attempt: '{attemptText}' is not an attempt ID.");
-                }
-
-                request.AttemptId = new Id { Value = ByteString.CopyFrom(attemptId) };
+                return cli.Output.Usage($"--attempt: '{attemptText}' is not an attempt ID or an ID prefix of at least 6 characters.");
             }
 
             if (result.GetValue(range) is { } rangeText)
@@ -248,6 +243,17 @@ internal static class ResourceCommands
             }
 
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            if (attemptText is not null)
+            {
+                var (attemptId, exit) = await TaskText.ResolveAttemptAsync(cli, session, attemptText, cancellationToken).ConfigureAwait(false);
+                if (attemptId is null)
+                {
+                    return exit;
+                }
+
+                request.AttemptId = attemptId;
+            }
+
             var response = await cli.CallAsync("GetSamples", request.Meta, () => session.Channel.Resources.GetSamplesAsync(request,
                 deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken)).ConfigureAwait(false);
             if (response.Error is { } error)

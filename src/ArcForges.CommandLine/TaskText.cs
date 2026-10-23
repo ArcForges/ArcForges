@@ -148,6 +148,85 @@ internal static class TaskText
         }
     }
 
+    /// <summary>
+    /// Resolves a full attempt ID or a unique prefix of at least 6 characters (exit 2, 4 or 1 otherwise; cli.md section 1), against every
+    /// task's attempts: each task's current attempt, and the earlier attempts of the tasks that have more than one.
+    /// </summary>
+    public static async Task<(Id? Id, int Exit)> ResolveAttemptAsync(Cli cli, NodeSession session, string text, CancellationToken cancellationToken)
+    {
+        if (IdText.TryParse(text, out var full))
+        {
+            return (new Id { Value = ByteString.CopyFrom(full) }, ExitCodes.Success);
+        }
+
+        if (text.Length < 6 || !IdText.TryNormalizePrefix(text, out var prefix))
+        {
+            return (null, cli.Output.Usage($"'{text}' is not an attempt ID or an ID prefix of at least 6 characters."));
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var matches = new List<Id>();
+        void Match(Id? id)
+        {
+            if (id is not null && IdText.Format(id) is var formatted && formatted.StartsWith(prefix, StringComparison.Ordinal) && seen.Add(formatted))
+            {
+                matches.Add(id);
+            }
+        }
+
+        var page = new PageRequest { Limit = 500 };
+        for (var pages = 0; pages < 20; pages++)
+        {
+            var request = new TaskServiceListTasksRequest { Meta = Cli.Meta(), Page = page };
+            var response = await cli.CallAsync("ListTasks", request.Meta, () => session.Channel.Tasks.ListTasksAsync(request,
+                deadline: cli.Deadline(Unary), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return (null, cli.Output.Fail(error, request.Meta.CorrelationId));
+            }
+
+            foreach (var task in response.Value.Tasks)
+            {
+                Match(task.CurrentAttempt?.AttemptId);
+                if (task.AttemptCount <= 1)
+                {
+                    continue;
+                }
+
+                var list = new TaskServiceListAttemptsRequest { Meta = Cli.Meta(), TaskId = task.TaskId };
+                var attempts = await cli.CallAsync("ListAttempts", list.Meta, () => session.Channel.Tasks.ListAttemptsAsync(list,
+                    deadline: cli.Deadline(Unary), cancellationToken: cancellationToken)).ConfigureAwait(false);
+                if (attempts.Error is { } listError)
+                {
+                    return (null, cli.Output.Fail(listError, list.Meta.CorrelationId));
+                }
+
+                foreach (var attempt in attempts.Value.Attempts)
+                {
+                    Match(attempt.AttemptId);
+                }
+            }
+
+            if (!response.Value.Page.HasMore)
+            {
+                break;
+            }
+
+            page = new PageRequest { Limit = 500, Cursor = response.Value.Page.NextCursor };
+        }
+
+        switch (matches.Count)
+        {
+            case 1:
+                return (matches[0], ExitCodes.Success);
+            case 0:
+                cli.Output.Error.WriteLine($"error: no attempt matches '{text}' (STATE/not_found)");
+                return (null, ExitCodes.NotFound);
+            default:
+                return (null, cli.Output.Usage($"'{text}' matches {matches.Count} attempts; give more characters."));
+        }
+    }
+
     /// <summary>Writes output chunks byte-exactly to the CLI's own stdout and stderr (cli.md section 2, <c>run</c> attached).</summary>
     public sealed class Mirror : IDisposable
     {

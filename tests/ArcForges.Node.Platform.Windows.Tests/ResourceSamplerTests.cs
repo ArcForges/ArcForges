@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using ArcForges.Node.Platform.Windows;
 
@@ -7,12 +8,14 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 
 /// <summary>
 /// The Windows samplers of 03 section 1 against independent sources (env=windows-real; R-RES-001: memory within 2%, CPU within 5
-/// percentage points): the process table of <c>NtQuerySystemInformation</c> against the Toolhelp snapshot (parents and images) and
-/// <c>System.Diagnostics.Process</c> (start time, processor time, working set), and the machine CPU of a busy thread.
+/// percentage points): every field the process table of <c>NtQuerySystemInformation</c> reads at an undocumented offset against a
+/// documented source (the Toolhelp snapshot for parents and images, <c>System.Diagnostics.Process</c> for the start and processor
+/// times, <c>GetProcessMemoryInfo</c> for the private working set and <c>GetProcessIoCounters</c> for the transfer counts), and the
+/// machine CPU of a busy thread.
 /// </summary>
 [Trait("env", "windows-real")]
 [SupportedOSPlatform("windows")]
-public sealed class ResourceSamplerTests
+public sealed partial class ResourceSamplerTests
 {
     [Fact]
     public void MachineMemoryAndCommitAreRead()
@@ -55,7 +58,15 @@ public sealed class ResourceSamplerTests
         var sampler = new WindowsResourceSampler();
         var held = GC.AllocateUninitializedArray<byte>(64 << 20);
         Array.Fill(held, (byte)1);
+
+        // Some I/O of this process, so the transfer counts are not trivially zero; the documented counters are read before and after the table.
+        var file = Path.Combine(Path.GetTempPath(), $"arcforges-sampler-{Environment.ProcessId}-{Guid.NewGuid():N}");
+        File.WriteAllBytes(file, new byte[4 << 20]);
+        _ = File.ReadAllBytes(file);
+        File.Delete(file);
+        var (ioBefore, privateBefore) = (Io(), PrivateWorkingSet());
         var table = sampler.Processes();
+        var (ioAfter, privateAfter) = (Io(), PrivateWorkingSet());
         var toolhelp = ProcessInfo.Snapshot();
         using var self = Process.GetCurrentProcess();
         var entry = Assert.Single(table, process => process.Pid == Environment.ProcessId);
@@ -69,8 +80,13 @@ public sealed class ResourceSamplerTests
         // The private working set holds the touched array, and is part of the whole working set.
         Assert.True(entry.MemoryBytes >= 64 << 20, $"private working set {entry.MemoryBytes}");
         Assert.True(entry.MemoryBytes <= self.WorkingSet64 + (16 << 20), $"private working set {entry.MemoryBytes}, working set {self.WorkingSet64}");
-        Assert.NotNull(entry.IoReadBytes);
+        Assert.InRange(entry.MemoryBytes, Math.Min(privateBefore, privateAfter) - (16 << 20), Math.Max(privateBefore, privateAfter) + (16 << 20));
         GC.KeepAlive(held);
+
+        // The transfer counts lie between the documented counters read just before and just after the table.
+        Assert.True(ioBefore.WriteTransferCount >= 4 << 20 && ioBefore.ReadTransferCount >= 4 << 20, "the test's own 4 MiB write and read");
+        Assert.InRange((ulong)entry.IoReadBytes!.Value, ioBefore.ReadTransferCount, ioAfter.ReadTransferCount);
+        Assert.InRange((ulong)entry.IoWriteBytes!.Value, ioBefore.WriteTransferCount, ioAfter.WriteTransferCount);
 
         // Every process Toolhelp lists (but for the idle process, and those that started or exited between the two reads) is in the table.
         var ids = table.Select(process => process.Pid).ToHashSet();
@@ -83,5 +99,59 @@ public sealed class ResourceSamplerTests
         {
             TestContext.Current.TestOutputHelper?.WriteLine($"VM worker {worker.Image} ({worker.Pid}): private working set {worker.MemoryBytes}, CPU {worker.CpuTimeMs} ms");
         }
+    }
+
+    private static IoCounters Io()
+    {
+        Assert.True(GetProcessIoCounters(GetCurrentProcess(), out var counters), $"GetProcessIoCounters: {Marshal.GetLastPInvokeError()}");
+        return counters;
+    }
+
+    private static long PrivateWorkingSet()
+    {
+        var counters = new ProcessMemoryCountersEx2 { Size = (uint)Marshal.SizeOf<ProcessMemoryCountersEx2>() };
+        Assert.True(K32GetProcessMemoryInfo(GetCurrentProcess(), ref counters, counters.Size), $"GetProcessMemoryInfo: {Marshal.GetLastPInvokeError()}");
+        return (long)counters.PrivateWorkingSetSize;
+    }
+
+    [LibraryImport("kernel32.dll")]
+    private static partial nint GetCurrentProcess();
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetProcessIoCounters(nint process, out IoCounters counters);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool K32GetProcessMemoryInfo(nint process, ref ProcessMemoryCountersEx2 counters, uint size);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    /// <summary>PROCESS_MEMORY_COUNTERS_EX2 (Windows 10 1809 and later), whose PrivateWorkingSetSize is the table's figure.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessMemoryCountersEx2
+    {
+        public uint Size;
+        public uint PageFaultCount;
+        public nuint PeakWorkingSetSize;
+        public nuint WorkingSetSize;
+        public nuint QuotaPeakPagedPoolUsage;
+        public nuint QuotaPagedPoolUsage;
+        public nuint QuotaPeakNonPagedPoolUsage;
+        public nuint QuotaNonPagedPoolUsage;
+        public nuint PagefileUsage;
+        public nuint PeakPagefileUsage;
+        public nuint PrivateUsage;
+        public nuint PrivateWorkingSetSize;
+        public ulong SharedCommitUsage;
     }
 }

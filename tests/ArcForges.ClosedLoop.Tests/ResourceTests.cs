@@ -25,6 +25,7 @@ public sealed partial class ResourceTests
 {
     private const long MiB = 1024L * 1024;
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(90);
+    private static readonly string[] SystemdRunPaths = ["/usr/bin/systemd-run", "/bin/systemd-run"];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -82,6 +83,16 @@ public sealed partial class ResourceTests
         Assert.InRange(busy.Managed.ProcessCount, 1u, 4u);
 
         var processes = await ProcessesAsync(channel, new ProcessFilter { TopN = 500 });
+
+        // Ordered by the CPU rate, then by the memory figure each view shows (the detailed one, not the table's).
+        for (var index = 1; index < processes.Count; index++)
+        {
+            var (first, second) = (processes[index - 1].Usage, processes[index].Usage);
+            var (firstCpu, secondCpu) = (first.HasCpuMillicores ? first.CpuMillicores : 0, second.HasCpuMillicores ? second.CpuMillicores : 0);
+            Assert.True(firstCpu > secondCpu || (firstCpu == secondCpu && first.MemBytes >= second.MemBytes),
+                $"process {index} ({processes[index].Process.ImageName}: {secondCpu} mc, {second.MemBytes} B) is out of order after {processes[index - 1].Process.ImageName} ({firstCpu} mc, {first.MemBytes} B)");
+        }
+
         var managed = processes.Where(process => process.Label == ProcessLabel.Managed).ToList();
         Assert.NotEmpty(managed);
         Assert.All(managed, process =>
@@ -112,8 +123,154 @@ public sealed partial class ResourceTests
         Assert.True(samples.Samples.Count >= 2, $"{samples.Samples.Count} attempt samples");
         var cli = await node.CliAsync("samples", "--attempt", IdText.Format(attempt), "--json");
         Assert.True(cli.ExitCode == 0, cli.ToString());
+
+        // A unique prefix names the attempt too (cli.md section 1: at least 6 characters); a shorter one is a usage error.
+        var prefixed = await node.CliAsync("samples", "--attempt", IdText.Format(attempt)[..12], "--json");
+        Assert.True(prefixed.ExitCode == 0, prefixed.ToString());
+        Assert.Equal(cli.Json().GetProperty("resolutionMs").GetRawText(), prefixed.Json().GetProperty("resolutionMs").GetRawText());
+        Assert.Equal(2, (await node.CliAsync("samples", "--attempt", IdText.Format(attempt)[..5])).ExitCode);
         unmanaged.Kill();
         await CancelAsync(channel, task);
+    }
+
+    // ------------------------------------------------------------------------------------------------- escaped processes (Linux)
+
+    /// <summary>
+    /// R-RES-002 and R-RES-012 end to end on Linux: the attempt's shell starts a child that leaves the attempt's unit for a scope of its
+    /// own (<c>systemd-run --user --scope</c>: the child's parent is the attempt's shell, its cgroup is outside the unit, the Linux shape of
+    /// an escape). The ancestry scan finds it, and <c>ListProcesses</c> labels it ESCAPED with its task and attempt (with the task filter
+    /// too), never MANAGED; cancelling the task terminates it (04 section 6 step 4). On Windows a node attempt has no such shape: its jobs
+    /// allow no breakaway and every child inherits its parent's job, so the platform test (EscapedProcessTests) makes the escape under a
+    /// root that is not yet assigned, which only the launcher itself could do.
+    /// </summary>
+    [Fact(Timeout = 300_000)]
+    [Trait("env", "linux-real")]
+    public async Task AnEscapedProcessIsListedEscapedWithItsTaskOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
+        var systemdRun = SystemdRunPaths.FirstOrDefault(File.Exists);
+        Assert.SkipWhen(systemdRun is null, "systemd-run is not installed.");
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        await using var channel = await ChannelAsync(node);
+        var task = await SubmitAsync(channel, ["/bin/sh", "-c", "\"$1\" --user --scope --quiet --collect -- sleep 300 & sleep 300", "sh", systemdRun!]);
+        var attempt = await RunningAttemptAsync(channel, task);
+        ProcessView? escaped = null;
+        try
+        {
+            await TestNode.WaitAsync(async () =>
+            {
+                escaped = (await ProcessesAsync(channel, new ProcessFilter { TopN = 500 })).FirstOrDefault(process => process.Label == ProcessLabel.Escaped);
+                return escaped is not null;
+            }, Bound, "an ESCAPED process");
+            Assert.Equal(task, escaped!.TaskId);
+            Assert.Equal(attempt, escaped.AttemptId);
+            Assert.Equal("sleep", escaped.Executable);
+            Assert.False(escaped.CrossesVmBoundary);
+
+            // The task filter and the label filter show it; it is never among the controlled (MANAGED) processes.
+            var ofTask = await ProcessesAsync(channel, new ProcessFilter { TaskId = task });
+            Assert.Contains(ofTask, process => process.Process.Pid == escaped.Process.Pid && process.Label == ProcessLabel.Escaped);
+            Assert.Contains(ofTask, process => process.Label == ProcessLabel.Managed);
+            var byLabel = await ProcessesAsync(channel, new ProcessFilter { Labels = { ProcessLabel.Escaped } });
+            Assert.Contains(byLabel, process => process.Process.Pid == escaped.Process.Pid);
+            Assert.DoesNotContain(await ProcessesAsync(channel, new ProcessFilter { Labels = { ProcessLabel.Managed } }), process => process.Process.Pid == escaped.Process.Pid);
+            Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.escaped"));
+
+            // The stop sequence terminates it (same user).
+            await CancelAsync(channel, task);
+            var pid = escaped.Process.Pid;
+            await TestNode.WaitAsync(() => !Directory.Exists($"/proc/{pid}") || File.ReadAllText($"/proc/{pid}/stat").Contains(") Z ", StringComparison.Ordinal),
+                Bound, "the escaped process to be terminated");
+        }
+        finally
+        {
+            if (escaped is not null && Directory.Exists($"/proc/{escaped.Process.Pid}"))
+            {
+                try
+                {
+                    using var leftover = Process.GetProcessById((int)escaped.Process.Pid);
+                    if (leftover.ProcessName == "sleep")
+                    {
+                        leftover.Kill();
+                    }
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------- process rates
+
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("env", "linux-real")]
+    [Trait("isolation", "exclusive")]
+    public async Task AProcessRateFollowsItsRecentCpuWhileAnAttemptRunsOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
+        await RecentRatesAsync();
+    }
+
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("env", "windows-real")]
+    [Trait("isolation", "exclusive")]
+    public async Task AProcessRateFollowsItsRecentCpuWhileAnAttemptRunsOnWindows()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job platform test.");
+        await RecentRatesAsync();
+    }
+
+    /// <summary>
+    /// isolation=exclusive (CPU rates): a process that existed before the attempt started (this test's own process) idles for 20 s while
+    /// the attempt runs, then spins two threads. Its <c>ListProcesses</c> rate must be that of the last few seconds (about two cores), not
+    /// an average reaching back to a base taken when the attempt started: on Windows the monitor reads the table every second while an
+    /// attempt runs, and the rate base must still move every 5 s.
+    /// </summary>
+    private static async Task RecentRatesAsync()
+    {
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        await using var channel = await ChannelAsync(node);
+        var task = await SubmitAsync(channel, [TestNode.TestLoad, "mem-ramp", "--target-mb", "16", "--hold-ms", "300000"]);
+        await RunningAttemptAsync(channel, task);
+        await Task.Delay(TimeSpan.FromSeconds(20), Ct);
+
+        using var spin = new CancellationTokenSource();
+        void Spin()
+        {
+            while (!spin.IsCancellationRequested)
+            {
+                Thread.SpinWait(1_000);
+            }
+        }
+
+        var threads = Enumerable.Range(0, 2).Select(_ => new Thread(Spin) { IsBackground = true }).ToList();
+        threads.ForEach(thread => thread.Start());
+        var rates = new List<uint>();
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(8), Ct);
+            for (var query = 0; query < 4; query++)
+            {
+                var self = (await ProcessesAsync(channel, new ProcessFilter { TopN = 500 })).Single(process => process.Process.Pid == (uint)Environment.ProcessId);
+                rates.Add(self.Usage.HasCpuMillicores ? self.Usage.CpuMillicores : 0);
+                await Task.Delay(600, Ct);
+            }
+        }
+        finally
+        {
+            await spin.CancelAsync();
+            threads.ForEach(thread => thread.Join());
+        }
+
+        TestContext.Current.TestOutputHelper?.WriteLine($"this process's rates while two threads spun: {string.Join(", ", rates)} millicores");
+        await CancelAsync(channel, task);
+        Assert.All(rates, rate => Assert.True(rate >= 1_500, $"a rate of {rate} millicores while two threads spun for 8 s ({string.Join(", ", rates)})"));
     }
 
     // ------------------------------------------------------------------------------------------------- the VM boundary (Windows)
@@ -272,8 +429,11 @@ public sealed partial class ResourceTests
     /// isolation=exclusive (memory and timing): the node's pressure thresholds are set relative to the memory available when the test
     /// starts (policy <c>resources.pressure</c>), so that a synthetic unmanaged allocator of about 2 GiB (<c>arcforges-testload
     /// mem-ramp</c>, started by the test outside every container) crosses Critical without starving the machine. From the moment the test
-    /// itself reads available memory below the Critical threshold, the node must stop the preemptible BACKGROUND attempt within 1 s of
-    /// sampling plus 5 s of persistence (03 section 5.4), journal it and notify; a non-preemptible attempt keeps running.
+    /// itself reads available memory below the Critical threshold, the node must stop one of the three preemptible BACKGROUND attempts
+    /// within 1 s of sampling plus 5 s of persistence (03 section 5.4), journal it and notify; a non-preemptible attempt keeps running.
+    /// The test ends the allocator as soon as the node logs the first preemption: memory has recovered before the victim has finalized,
+    /// so the node must stop no other attempt, neither then nor during the 5 s exit persistence of the Critical level (only as many as
+    /// needed; CriticalShedding).
     /// </summary>
     private static async Task PressureResponseAsync()
     {
@@ -291,12 +451,22 @@ public sealed partial class ResourceTests
         });
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
-        var preemptible = await SubmitAsync(channel, [TestNode.TestLoad, "mem-ramp", "--target-mb", "32", "--hold-ms", "300000"],
-            priority: Priority.Background, preemptible: true);
+        var preemptibles = new List<Id>();
+        for (var index = 0; index < 3; index++)
+        {
+            preemptibles.Add(await SubmitAsync(channel, [TestNode.TestLoad, "mem-ramp", "--target-mb", "32", "--hold-ms", "300000"],
+                priority: Priority.Background, preemptible: true));
+        }
+
         var protectedTask = await SubmitAsync(channel, [TestNode.TestLoad, "mem-ramp", "--target-mb", "32", "--hold-ms", "300000"]);
-        var preemptibleAttempt = await RunningAttemptAsync(channel, preemptible);
+        var attempts = new List<Id>();
+        foreach (var task in preemptibles)
+        {
+            attempts.Add(await RunningAttemptAsync(channel, task));
+        }
+
         await RunningAttemptAsync(channel, protectedTask);
-        await SnapshotAsync(channel, snapshot => snapshot.Pressure == PressureLevel.Normal && snapshot.RunningAttempts == 2);
+        await SnapshotAsync(channel, snapshot => snapshot.Pressure == PressureLevel.Normal && snapshot.RunningAttempts == 4);
 
         // The unmanaged allocator: 2 GiB in 64 MiB steps, held. The test records when available memory first falls below Critical.
         var allocator = node.Start(TestNode.TestLoad, ["mem-ramp", "--target-mb", (Allocation / MiB).ToString(CultureInfo.InvariantCulture), "--step-mb", "64",
@@ -317,8 +487,13 @@ public sealed partial class ResourceTests
             }
         }
 
-        await TestNode.WaitAsync(async () => await TaskStateAsync(channel, preemptible) is TaskState.Failed or TaskState.Cancelled, Bound, "the preemption");
-        var preempted = TestNode.LogEvents(node.NodeLog, "execution.preempted").Single();
+        // The first preemption, read from the node log as soon as it is written; the allocator ends at once, so memory recovers before the
+        // victim has finalized and before the node judges again.
+        await TestNode.WaitAsync(() => TestNode.LogEvents(node.NodeLog, "execution.preempted").Count > 0, Bound, "the preemption");
+        allocator.Kill();
+        await allocator.WaitForExitAsync(Ct);
+        var preempted = TestNode.LogEvents(node.NodeLog, "execution.preempted")[0];
+        var victimName = preempted.GetProperty("fields").GetProperty("attempt").GetString();
         var acted = DateTimeOffset.Parse(preempted.GetProperty("at").GetString()!, CultureInfo.InvariantCulture);
         var reaction = acted - crossed.Value;
         var changes = TestNode.LogEvents(node.NodeLog, "resources.pressure");
@@ -348,17 +523,39 @@ public sealed partial class ResourceTests
         Assert.True(reaction >= TimeSpan.FromSeconds(4), $"the node acted {reaction.TotalMilliseconds:0} ms after the crossing, before 5 s of persistence");
         Assert.Contains("Critical", levels);
 
-        var record = await AttemptAsync(channel, preemptibleAttempt);
+        var victim = attempts.FindIndex(attempt => IdText.Format(attempt) == victimName);
+        Assert.True(victim >= 0, $"the preempted attempt {victimName} is not one of the preemptible ones");
+        await TestNode.WaitAsync(async () => await TaskStateAsync(channel, preemptibles[victim]) is TaskState.Failed or TaskState.Cancelled, Bound, "the victim to end");
+        var record = await AttemptAsync(channel, attempts[victim]);
         Assert.Equal(TerminationReason.Preempted, record.Result.TerminationReason);
         Assert.Contains("critical memory pressure", record.Result.Detail, StringComparison.Ordinal);
+
+        // Past the exit persistence of the level (5 s) with a margin: the other two preemptible attempts and the protected one still run,
+        // and the node stopped exactly one.
+        await TestNode.WaitAsync(async () => (await SnapshotAsync(channel, _ => true)).Pressure != PressureLevel.Critical, Bound, "the level to leave Critical");
+        await Task.Delay(TimeSpan.FromSeconds(3), Ct);
+        Assert.Single(TestNode.LogEvents(node.NodeLog, "execution.preempted"));
+        for (var index = 0; index < preemptibles.Count; index++)
+        {
+            if (index != victim)
+            {
+                Assert.Equal(TaskState.Running, await TaskStateAsync(channel, preemptibles[index]));
+            }
+        }
+
         Assert.Equal(TaskState.Running, await TaskStateAsync(channel, protectedTask));
         var notifications = await channel.Node.ListNotificationsAsync(new NodeServiceListNotificationsRequest { Meta = new RequestMeta() },
             deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
         Assert.Contains(notifications.Value.Notifications, item => item.Title == "Critical memory pressure");
 
-        allocator.Kill();
-        await allocator.WaitForExitAsync(Ct);
         await CancelAsync(channel, protectedTask);
+        for (var index = 0; index < preemptibles.Count; index++)
+        {
+            if (index != victim)
+            {
+                await CancelAsync(channel, preemptibles[index]);
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------------------------- helpers

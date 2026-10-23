@@ -77,6 +77,12 @@ public sealed class PressureEvaluator
     /// <summary>Why the raw level holds (the conditions that are true), for the journal and the findings.</summary>
     public string Trigger { get; private set; } = "available memory above every threshold";
 
+    /// <summary>True when available memory is below the Critical threshold at the last evaluation (the raw memory condition alone).</summary>
+    public bool MemoryCritical { get; private set; }
+
+    /// <summary>The OOM kills newly observed at the last evaluation (the rise of the machine-wide count since the evaluation before).</summary>
+    public long NewOomKills { get; private set; }
+
     /// <summary>Evaluates one sample at <paramref name="now"/> (monotonic) and returns the level in force.</summary>
     public PressureLevel Evaluate(TimeSpan now, PressureInputs inputs, PressureLimits limits)
     {
@@ -85,12 +91,14 @@ public sealed class PressureEvaluator
         var capacity = (double)Math.Max(1, inputs.CapacityBytes);
         var available = inputs.AvailableBytes / capacity;
 
-        if (_oomKills is { } previousKills && inputs.OomKills > previousKills)
+        NewOomKills = _oomKills is { } previousKills && inputs.OomKills > previousKills ? inputs.OomKills - previousKills : 0;
+        if (NewOomKills > 0)
         {
             _oomUntil = now + OomHold;
         }
 
         _oomKills = inputs.OomKills;
+        MemoryCritical = available < limits.Critical;
         _cpu.Enqueue((now, inputs.UnmanagedCpu));
         while (_cpu.Count > 0 && now - _cpu.Peek().At > CpuRiseWindow)
         {
@@ -100,10 +108,18 @@ public sealed class PressureEvaluator
         var rise = inputs.UnmanagedCpu - _cpu.Min(item => item.Cpu);
         var reasons = new List<string>();
         var raw = PressureLevel.Normal;
-        if (available < limits.Critical || now < _oomUntil)
+        if (MemoryCritical || now < _oomUntil)
         {
             raw = PressureLevel.Critical;
-            reasons.Add(now < _oomUntil ? "an OOM kill was observed" : Below(available, limits.Critical));
+            if (MemoryCritical)
+            {
+                reasons.Add(Below(available, limits.Critical));
+            }
+
+            if (now < _oomUntil)
+            {
+                reasons.Add("an OOM kill was observed");
+            }
         }
         else if (available < limits.Pressure || inputs.MemoryPsi > limits.MemoryPsi)
         {

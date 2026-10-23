@@ -161,6 +161,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     private long _lastSettingsRead;
     private int _launching;
     private readonly Lock _preemptGate = new();
+    private readonly CriticalShedding _shedding = new();
+    private RunningAttempt? _lastVictim;
     private bool _onlyProtectedReported;
 
     /// <summary>Creates the supervisor.</summary>
@@ -471,15 +473,19 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     // ---------------------------------------------------------------------------------------------------------------- pressure
 
     /// <summary>
-    /// The pressure response of 03 sections 5.4 and 7 (R-RES-009, R-RES-014), called after every evaluation: at Critical (and with
-    /// <c>pressure.cancel_on_critical</c>) one preemptible attempt is stopped per evaluation, from the lowest priority up and the most
-    /// recently started first, without the graceful phase (<c>PREEMPTED</c>), until the level recovers. Non-preemptible attempts are never
-    /// stopped for pressure; when only they remain while available memory is below the Critical threshold, a critical
-    /// <c>MEMORY_PRESSURE</c> finding leaves the decision to the user. Tight (admission) and the Pressure-level freeze or requeue join with
-    /// the scheduler (AF-SCHED-01) through <see cref="IPressureResponse"/>.
+    /// The pressure response of 03 sections 5.4 and 7 (R-RES-009, R-RES-014), called on the monitor's thread after every evaluation: at
+    /// Critical (and with <c>pressure.cancel_on_critical</c>) preemptible attempts are stopped one at a time, from the lowest priority up and
+    /// the most recently started first, without the graceful phase (<c>PREEMPTED</c>), only as many as needed (<see cref="CriticalShedding"/>):
+    /// a stop is due only while available memory is below the Critical threshold at that evaluation, or once per newly observed OOM kill,
+    /// and never before the previous victim has finalized and one more sample was taken. Non-preemptible attempts are never stopped for
+    /// pressure; when only they remain while available memory is below the Critical threshold, a critical <c>MEMORY_PRESSURE</c> finding
+    /// leaves the decision to the user. Tight (admission) and the Pressure-level freeze or requeue join with the scheduler (AF-SCHED-01)
+    /// through <see cref="IPressureResponse"/>.
     /// </summary>
     void IPressureResponse.Respond(PressureLevel level, PressureLevel previous, ResourceState state)
     {
+        var victimRunning = _lastVictim is { } last && _running.TryGetValue(last.Name, out var current) && ReferenceEquals(current, last);
+        var due = _shedding.ShouldStop(level, state.RawPressure, state.MemoryCritical, state.NewOomKills, victimRunning);
         if (level != PressureLevel.Critical)
         {
             _onlyProtectedReported = false;
@@ -487,7 +493,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         }
 
         var settings = Settings;
-        if (!settings.Pressure.CancelOnCritical || _stop.IsCancellationRequested)
+        if (!due || !settings.Pressure.CancelOnCritical || _stop.IsCancellationRequested)
         {
             return;
         }
@@ -504,12 +510,16 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
         if (victim is not null)
         {
-            Preempt(victim, state);
+            if (Preempt(victim, state))
+            {
+                _lastVictim = victim;
+                _shedding.Stopped();
+            }
+
             return;
         }
 
-        if (!_onlyProtectedReported && _running.Values.Any(attempt => !attempt.Finalizing)
-            && state.AvailableMemory < settings.Pressure.Critical * state.CapacityMemory)
+        if (!_onlyProtectedReported && _running.Values.Any(attempt => !attempt.Finalizing) && state.MemoryCritical)
         {
             _onlyProtectedReported = true;
             _ = RecordAsync(context =>
@@ -526,8 +536,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         }
     }
 
-    /// <summary>Stops a preemptible attempt at Critical pressure: STOPPING is recorded with the trigger, then the container is stopped at once.</summary>
-    private void Preempt(RunningAttempt attempt, ResourceState state)
+    /// <summary>
+    /// Stops a preemptible attempt at Critical pressure: STOPPING is recorded with the trigger, then the container is stopped at once. False
+    /// when the attempt was already being stopped for another reason.
+    /// </summary>
+    private bool Preempt(RunningAttempt attempt, ResourceState state)
     {
         var detail = string.Create(CultureInfo.InvariantCulture,
             $"preempted at critical memory pressure ({state.PressureTrigger}; {state.AvailableMemory} of {state.CapacityMemory} bytes available); stopped without the graceful phase");
@@ -535,7 +548,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         {
             if (attempt.StopReason is not null)
             {
-                return;
+                return false;
             }
 
             attempt.StopDetail = detail;
@@ -558,6 +571,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             return 0;
         });
         Stop(attempt.Name, TerminationReason.Preempted, null, graceful: false);
+        return true;
     }
 
     private async Task RecordAsync(Func<CommandContext, int> command)

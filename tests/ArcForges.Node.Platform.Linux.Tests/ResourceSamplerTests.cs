@@ -60,6 +60,34 @@ public sealed class ResourceSamplerTests
     }
 
     [Fact]
+    public void AMachineFileLargerThanTheBufferIsReadWhole()
+    {
+        // /proc/diskstats of a machine with many block devices outgrows the sampler's initial 16 KiB buffer, which then grows.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux sampler.");
+        var path = Path.Combine(Path.GetTempPath(), $"arcforges-readwhole-{Environment.ProcessId}-{Guid.NewGuid():N}");
+        try
+        {
+            var lines = string.Concat(Enumerable.Range(0, 2_000).Select(index => $"   8  {index,6} sdx{index} 1 2 3 4 5 6 7 8 9 10\n")) + "oom_kill 42\n";
+            File.WriteAllText(path, lines);
+            var buffer = new byte[16 * 1024];
+            var length = LinuxResourceSampler.ReadWhole(path, ref buffer);
+            Assert.Equal(new FileInfo(path).Length, length);
+            Assert.True(buffer.Length > 16 * 1024, $"buffer {buffer.Length}");
+            Assert.EndsWith("oom_kill 42\n", System.Text.Encoding.ASCII.GetString(buffer, 0, length), StringComparison.Ordinal);
+
+            // A real machine file read through the same path is complete (its last line ends it).
+            var vmstat = new byte[64];
+            var vmstatLength = LinuxResourceSampler.ReadWhole("/proc/vmstat", ref vmstat);
+            Assert.True(vmstatLength > 64 && vmstat[vmstatLength - 1] == (byte)'\n', $"/proc/vmstat read {vmstatLength} bytes");
+            Assert.Contains("oom_kill ", System.Text.Encoding.ASCII.GetString(vmstat, 0, vmstatLength), StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void ThisProcessIsInTheTableWithItsIdentityTimesAndMemory()
     {
         Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux sampler.");

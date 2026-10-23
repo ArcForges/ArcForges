@@ -209,15 +209,18 @@ public static class ResourceViews
             return ([], null);
         }
 
+        // Detailed before the order is taken, so the order follows the memory figure each view shows (on Linux the private resident
+        // memory of /proc/<pid>/status, not the table's resident set).
         var labels = filter.Labels.ToHashSet();
         var processes = monitor.Processes()
             .Where(process => labels.Count == 0 || labels.Contains(process.Label))
             .Where(process => filter.TaskId is null || (process.Owner is { } owner && owner.TaskId.AsSpan().SequenceEqual(filter.TaskId.Value.Span)))
+            .Select(process => process with { Process = monitor.Detail(process.Process) })
             .OrderByDescending(process => process.CpuMillicores ?? 0)
             .ThenByDescending(process => process.Process.MemoryBytes)
             .Take(filter.HasTopN ? (int)filter.TopN : DefaultTopN)
             .ToList();
-        return ([.. processes.Select(process => View(process with { Process = monitor.Detail(process.Process) }))], null);
+        return ([.. processes.Select(View)], null);
     }
 
     /// <summary>A classified process as the contract's view.</summary>

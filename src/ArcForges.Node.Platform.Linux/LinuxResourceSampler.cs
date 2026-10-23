@@ -20,10 +20,13 @@ public sealed class LinuxResourceSampler : IResourceSampler
     /// <summary>How long pressure and disk counters are reused (03 section 1: pressure every 5 s).</summary>
     public static readonly TimeSpan SlowInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>The most a machine file buffer grows to (<c>/proc/diskstats</c> of a machine with many block devices is the largest).</summary>
+    internal const int MaxBuffer = 4 * 1024 * 1024;
+
     private static readonly long PageSize = Environment.SystemPageSize;
     private readonly List<byte[]> _disks = [];
     private readonly Lock _gate = new();
-    private readonly byte[] _machine = new byte[16 * 1024];
+    private byte[] _machine = new byte[16 * 1024];
     private long _slowAt = long.MinValue;
     private PressureStall? _pressure;
     private (long Read, long Written) _io;
@@ -54,11 +57,9 @@ public sealed class LinuxResourceSampler : IResourceSampler
     {
         lock (_gate)
         {
-            var buffer = _machine.AsSpan();
-
             // The first line of /proc/stat: cpu user nice system idle iowait irq softirq steal (guest time is already part of user).
             long busy = 0, total = 0;
-            ReadOnlySpan<byte> stat = buffer[..Math.Max(0, ReadFile("/proc/stat", buffer[..512]))];
+            ReadOnlySpan<byte> stat = _machine.AsSpan(0, Math.Max(0, ReadFile("/proc/stat", _machine.AsSpan(0, 512))));
             if (stat.StartsWith("cpu "u8))
             {
                 var line = stat[4..];
@@ -72,19 +73,23 @@ public sealed class LinuxResourceSampler : IResourceSampler
                 }
             }
 
-            var meminfo = buffer[..Math.Max(0, ReadFile("/proc/meminfo", buffer))];
+            // ReadWhole may replace the buffer, so each span is taken after its read.
+            var length = ReadWhole("/proc/meminfo", ref _machine);
+            var meminfo = _machine.AsSpan(0, Math.Max(0, length));
             var memTotal = Kib(meminfo, "MemTotal:"u8);
             var available = Kib(meminfo, "MemAvailable:"u8);
             var committed = Kib(meminfo, "Committed_AS:"u8);
             var limit = Kib(meminfo, "CommitLimit:"u8);
             var swap = Math.Max(0, Kib(meminfo, "SwapTotal:"u8) - Kib(meminfo, "SwapFree:"u8));
-            var oom = Value(buffer[..Math.Max(0, ReadFile("/proc/vmstat", buffer))], "oom_kill "u8);
+            length = ReadWhole("/proc/vmstat", ref _machine);
+            var oom = Value(_machine.AsSpan(0, Math.Max(0, length)), "oom_kill "u8);
             var now = Environment.TickCount64;
             if (_slowAt == long.MinValue || now - _slowAt >= (long)SlowInterval.TotalMilliseconds)
             {
                 _slowAt = now;
-                _pressure = ReadPressure(buffer);
-                _io = DiskBytes(buffer);
+                _pressure = ReadPressure(_machine);
+                length = ReadWhole("/proc/diskstats", ref _machine);
+                _io = DiskBytes(_machine.AsSpan(0, Math.Max(0, length)));
             }
 
             return new MachineSample
@@ -129,7 +134,8 @@ public sealed class LinuxResourceSampler : IResourceSampler
         var status = buffer[..Math.Max(0, ReadFile(directory + "/status", buffer))];
         long? resident = status.IsEmpty ? null : Kib(status, "RssAnon:"u8) + Kib(status, "RssShmem:"u8);
 
-        // /proc/<pid>/io and the exe link are readable only for the node's own processes (ptrace access); others stay unobserved, never zero.
+        // /proc/<pid>/io and the exe link need ptrace read access: readable for the processes of the node's own user that are dumpable
+        // (as its own and its attempts' processes are), not for other users' or non-dumpable ones, which stay unobserved, never zero.
         var length = ReadFile(directory + "/io", buffer);
         long? read = null, written = null;
         if (length > 0)
@@ -251,10 +257,9 @@ public sealed class LinuxResourceSampler : IResourceSampler
         return at >= 0 && Utf8Parser.TryParse(text[(at + key.Length)..], out double value, out _) ? value : 0;
     }
 
-    private (long Read, long Written) DiskBytes(Span<byte> buffer)
+    private (long Read, long Written) DiskBytes(ReadOnlySpan<byte> text)
     {
         long read = 0, written = 0;
-        ReadOnlySpan<byte> text = buffer[..Math.Max(0, ReadFile("/proc/diskstats", buffer))];
         Span<long> numbers = stackalloc long[10];
         while (!text.IsEmpty)
         {
@@ -300,6 +305,24 @@ public sealed class LinuxResourceSampler : IResourceSampler
         }
 
         return (read, written);
+    }
+
+    /// <summary>
+    /// Reads a whole file into <paramref name="buffer"/>, which is replaced by one twice as large (up to <see cref="MaxBuffer"/>) while the
+    /// file fills it, so a machine file larger than the buffer is never cut short; returns the bytes read, or -1 when it cannot be read.
+    /// </summary>
+    internal static int ReadWhole(string path, ref byte[] buffer)
+    {
+        while (true)
+        {
+            var length = ReadFile(path, buffer);
+            if (length < buffer.Length || buffer.Length >= MaxBuffer)
+            {
+                return length;
+            }
+
+            buffer = new byte[Math.Min(MaxBuffer, buffer.Length * 2)];
+        }
     }
 
     /// <summary>Reads a file into <paramref name="buffer"/>; returns the bytes read, or -1 when it cannot be read.</summary>

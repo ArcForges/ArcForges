@@ -142,6 +142,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
             if (processes is not null && processes.TryGetValue(pid, out var process))
             {
                 memory += process.MemoryBytes;
+                _members.ObserveImage(process.Image);
             }
         }
 

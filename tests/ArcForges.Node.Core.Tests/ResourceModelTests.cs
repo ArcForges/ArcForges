@@ -233,6 +233,92 @@ public sealed class ResourceModelTests
         Assert.Equal(PressureLevel.Normal, cpu.Level);
     }
 
+    /// <summary>
+    /// A scripted episode through the evaluator and the shedding rule together, the way the supervisor uses them: one evaluation per second,
+    /// <paramref name="candidates"/> preemptible attempts, and a stopped victim that finalizes <paramref name="finalizeTicks"/> evaluations
+    /// after its stop. <paramref name="available"/> gives the available fraction at a second given the stops so far (memory that a stop
+    /// frees); <paramref name="oomKills"/> the machine-wide OOM kill count. Returns the seconds at which an attempt was stopped, comma-separated.
+    /// </summary>
+    private static string Shed(Func<int, int, double> available, Func<int, long>? oomKills = null, int finalizeTicks = 1, int candidates = 3,
+        int seconds = 40)
+    {
+        var limits = Settings(16, 32 * GiB).Pressure;
+        var capacity = 32 * GiB;
+        var evaluator = new PressureEvaluator();
+        var shedding = new CriticalShedding();
+        var stops = new List<int>();
+        var finalizesAt = int.MinValue;
+        for (var second = 0; second <= seconds; second++)
+        {
+            var level = evaluator.Evaluate(TimeSpan.FromSeconds(second),
+                new PressureInputs((long)(available(second, stops.Count) * capacity), capacity, 16_000, 0, null, oomKills?.Invoke(second) ?? 0), limits);
+            if (shedding.ShouldStop(level, evaluator.Raw, evaluator.MemoryCritical, evaluator.NewOomKills, victimRunning: second < finalizesAt)
+                && stops.Count < candidates)
+            {
+                stops.Add(second);
+                shedding.Stopped();
+                finalizesAt = second + finalizeTicks;
+            }
+        }
+
+        return string.Join(", ", stops);
+    }
+
+    [Fact]
+    public void AShortDipShedsOnlyTheAttemptsNeeded()
+    {
+        // Available memory falls below 2% at 1 s and recovers when the first attempt is stopped: the level enters Critical at 6 s and leaves
+        // it 5 s after the recovery, yet exactly one of the three attempts is stopped, and none during the exit persistence.
+        Assert.Equal("6", Shed((second, stopped) => second >= 1 && stopped == 0 ? 0.01 : 0.5));
+
+        // Memory recovers only after the second stop: two are stopped, the third keeps running.
+        Assert.Equal("6, 8", Shed((second, stopped) => second >= 1 && stopped < 2 ? 0.01 : 0.5));
+
+        // Memory never recovers: all three are stopped, one at a time, each after the previous victim finalized and one more sample.
+        Assert.Equal("6, 8, 10", Shed((second, _) => second >= 1 ? 0.01 : 0.5));
+
+        // A victim that takes 4 s to finalize: no other is stopped meanwhile, and the next one only a sample after its exit.
+        Assert.Equal("6, 11, 16", Shed((second, _) => second >= 1 ? 0.01 : 0.5, finalizeTicks: 4));
+
+        // Pressure (3%) is never a reason to stop anything; nor is a Critical dip that never persisted.
+        Assert.Equal(string.Empty, Shed((second, _) => second >= 1 ? 0.03 : 0.5));
+        Assert.Equal(string.Empty, Shed((second, _) => second is >= 1 and <= 4 ? 0.01 : 0.5));
+    }
+
+    [Fact]
+    public void AnOomKillStopsAtMostOneAttempt()
+    {
+        // One OOM kill at 3 s with memory above every threshold: the 10 s hold keeps the level Critical from 8 s to 18 s, and exactly one of
+        // the three attempts is stopped, never one per second of the hold.
+        Assert.Equal("8", Shed((_, _) => 0.5, second => second >= 3 ? 1 : 0));
+
+        // Two kills seen at once answer with at most two stops; a second kill later in the hold with one more.
+        Assert.Equal("8, 10", Shed((_, _) => 0.5, second => second >= 3 ? 2 : 0));
+        Assert.Equal("8, 10", Shed((_, _) => 0.5, second => second >= 9 ? 2 : second >= 3 ? 1 : 0));
+
+        // A kill answered while memory was critical too is not answered again once memory recovered.
+        Assert.Equal("6", Shed((second, stopped) => second >= 1 && stopped == 0 ? 0.01 : 0.5, second => second >= 2 ? 1 : 0));
+
+        // The rule's own state: the kill is unanswered until the stop, and the stop waits for its victim.
+        var shedding = new CriticalShedding();
+        Assert.False(shedding.ShouldStop(PressureLevel.Normal, PressureLevel.Critical, memoryCritical: false, newOomKills: 1, victimRunning: false));
+        Assert.Equal(1L, shedding.UnansweredOomKills);
+        Assert.True(shedding.ShouldStop(PressureLevel.Critical, PressureLevel.Critical, false, 0, false));
+        shedding.Stopped();
+        Assert.Equal(0L, shedding.UnansweredOomKills);
+        Assert.True(shedding.AwaitingVictim);
+        Assert.False(shedding.ShouldStop(PressureLevel.Critical, PressureLevel.Critical, memoryCritical: true, 0, victimRunning: true));
+        Assert.False(shedding.ShouldStop(PressureLevel.Critical, PressureLevel.Critical, memoryCritical: true, 0, victimRunning: false));
+        Assert.False(shedding.AwaitingVictim);
+        Assert.True(shedding.ShouldStop(PressureLevel.Critical, PressureLevel.Critical, memoryCritical: true, 0, victimRunning: false));
+
+        // Once the raw condition clears, an unanswered kill is forgotten.
+        var forgotten = new CriticalShedding();
+        forgotten.ShouldStop(PressureLevel.Normal, PressureLevel.Critical, false, 1, false);
+        forgotten.ShouldStop(PressureLevel.Normal, PressureLevel.Normal, false, 0, false);
+        Assert.Equal(0L, forgotten.UnansweredOomKills);
+    }
+
     [Fact]
     public void ThePolicyThresholdsApply()
     {

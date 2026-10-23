@@ -49,7 +49,13 @@ public sealed unsafe class WindowsResourceSampler : IResourceSampler
     private const int SystemProcessInformation = 5;
     private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
 
-    // SYSTEM_PROCESS_INFORMATION (x64 and arm64 layout; winternl.h documents the fields up to the I/O counters).
+    // SYSTEM_PROCESS_INFORMATION, 64-bit layout (x64 and arm64). The SDK's winternl.h names only NextEntryOffset, NumberOfThreads,
+    // ImageName, BasePriority, UniqueProcessId and the memory counters: CreateTime, UserTime, KernelTime and WorkingSetPrivateSize lie in
+    // its Reserved1[48], InheritedFromUniqueProcessId is its Reserved2, and the I/O transfer counts lie in its Reserved7[6]. These offsets
+    // are therefore undocumented, though unchanged since Windows Vista and relied on by every process tool. The windows-real cross-check
+    // (ResourceSamplerTests.TheTableMatchesToolhelpAndTheProcessApi) compares each of them with a documented source on every run (the
+    // parent and image with Toolhelp, the times with GetProcessTimes, the private working set with GetProcessMemoryInfo and the transfer
+    // counts with GetProcessIoCounters), so a layout change fails the suite instead of producing wrong figures.
     private const int NextEntryOffset = 0x00;
     private const int WorkingSetPrivateSize = 0x08;
     private const int CreateTime = 0x20;
@@ -65,6 +71,9 @@ public sealed unsafe class WindowsResourceSampler : IResourceSampler
     private readonly Lock _gate = new();
     // Pinned: the image names in the table point into the buffer itself.
     private byte[] _buffer = GC.AllocateUninitializedArray<byte>(1 << 20, pinned: true);
+
+    /// <summary>Creates the sampler (a 64-bit process only: the table is read with the 64-bit layout's offsets).</summary>
+    public WindowsResourceSampler() => RequireSixtyFourBit();
 
     /// <inheritdoc />
     public string Name => "windows";
@@ -139,6 +148,7 @@ public sealed unsafe class WindowsResourceSampler : IResourceSampler
     /// <summary>Parses a <c>SystemProcessInformation</c> buffer (the idle process, ID 0, is left out).</summary>
     internal static List<ProcessSample> Parse(ReadOnlySpan<byte> buffer)
     {
+        RequireSixtyFourBit();
         var processes = new List<ProcessSample>(512);
         var offset = 0;
         while (offset + WriteTransferCount + 8 <= buffer.Length)
@@ -174,4 +184,13 @@ public sealed unsafe class WindowsResourceSampler : IResourceSampler
     }
 
     private static long Read64(ReadOnlySpan<byte> entry, int offset) => MemoryMarshal.Read<long>(entry[offset..]);
+
+    /// <summary>The offsets above are those of the 64-bit layout; a 32-bit process would read every field from the wrong place.</summary>
+    private static void RequireSixtyFourBit()
+    {
+        if (!Environment.Is64BitProcess)
+        {
+            throw new PlatformNotSupportedException("The Windows resource sampler reads the 64-bit SYSTEM_PROCESS_INFORMATION layout; run a 64-bit node.");
+        }
+    }
 }

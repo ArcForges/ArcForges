@@ -188,7 +188,8 @@ public sealed class Benchmarks
     /// <summary>
     /// Idle CPU while sampling (15 section 1: at most 0.5% of one core, a 10-minute average, LAN and cloud off; AF-RES-01): the node's own
     /// processor time over <c>ARCFORGES_IDLE_SECONDS</c> (default 600) after a 30 s warm-up, with the resource monitor sampling the machine
-    /// every second and the process table every 5 s. The machine samples the node stored over the window prove that it sampled.
+    /// every second, taking its stored machine sample every 5 s, and reading the process table every 30 s (the idle interval; every 5 s
+    /// while attempts run). The machine samples the node stored over the window prove that it sampled.
     /// </summary>
     [Fact(Timeout = 1_500_000)]
     public async Task IdleCpuWhileSampling()
