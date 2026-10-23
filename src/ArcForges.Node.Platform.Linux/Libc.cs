@@ -80,6 +80,10 @@ internal static unsafe partial class Libc
     [LibraryImport(Library, EntryPoint = "close", SetLastError = true)]
     public static partial int Close(int fd);
 
+    /// <summary><c>dup(2)</c>: a second descriptor for the same open file (a pidfd passed in a D-Bus message).</summary>
+    [LibraryImport(Library, EntryPoint = "dup", SetLastError = true)]
+    public static partial int Dup(int fd);
+
     [LibraryImport(Library, EntryPoint = "getrlimit", SetLastError = true)]
     public static partial int GetRLimit(int resource, out RLimit limit);
 

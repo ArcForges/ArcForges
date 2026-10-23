@@ -7,16 +7,18 @@ namespace ArcForges.Node.Core.Security;
 /// <summary>What <see cref="VersionIntegrity.Check"/> found in a version directory.</summary>
 /// <param name="Fact">The capability fact <c>version_integrity</c>: <c>verified</c>, <c>mismatch: &lt;n&gt; files</c> or <c>not checked: ...</c>.</param>
 /// <param name="Missing">Listed files that are not in the directory (relative paths, <c>/</c> separators).</param>
-/// <param name="Changed">Listed files whose SHA-256 differs (or that could not be read, or whose entry is not a valid relative path).</param>
+/// <param name="Changed">Listed files whose SHA-256 differs (or that could not be read).</param>
 /// <param name="Unlisted">Files in the directory the manifest does not list.</param>
+/// <param name="Links">Symbolic links and other reparse points in the directory: never followed, never changed, each a mismatch.</param>
+/// <param name="Invalid">Manifest entries that are not a plain relative path inside the directory (absolute, <c>..</c>, empty segments): never read.</param>
 /// <param name="MadeReadOnly">Files this check made read-only (they were writable).</param>
 /// <param name="NotReadOnly">Files that could not be made read-only.</param>
 /// <param name="Problem">Why the manifest itself could not be used, or <see langword="null"/>.</param>
 public sealed record VersionIntegrityReport(string Fact, IReadOnlyList<string> Missing, IReadOnlyList<string> Changed, IReadOnlyList<string> Unlisted,
-    int MadeReadOnly, IReadOnlyList<string> NotReadOnly, string? Problem)
+    IReadOnlyList<string> Links, IReadOnlyList<string> Invalid, int MadeReadOnly, IReadOnlyList<string> NotReadOnly, string? Problem)
 {
-    /// <summary>The files that do not match the manifest (with an unusable manifest every file is unlisted, and at least one counts).</summary>
-    public int Mismatches => Math.Max(Missing.Count + Changed.Count + Unlisted.Count, Problem is null ? 0 : 1);
+    /// <summary>The entries that do not match the manifest (with an unusable manifest every file is unlisted, and at least one counts).</summary>
+    public int Mismatches => Math.Max(Missing.Count + Changed.Count + Unlisted.Count + Links.Count + Invalid.Count, Problem is null ? 0 : 1);
 
     /// <summary>True when a manifest was present (the directory was checked).</summary>
     public bool Checked => !string.Equals(Fact, VersionIntegrity.NotChecked, StringComparison.Ordinal);
@@ -59,7 +61,9 @@ public static class VersionIntegrity
 
     /// <summary>
     /// Makes the files of <paramref name="directory"/> read-only and verifies them against its manifest. Without a manifest nothing is
-    /// changed and the report says <see cref="NotChecked"/>.
+    /// changed and the report says <see cref="NotChecked"/>. The walk never follows a link: a symbolic link or other reparse point inside the
+    /// directory is a mismatch and neither it nor its target is changed or read; a manifest entry that is not a plain relative path inside
+    /// the directory is a mismatch and is never read; only the regular files the walk reached are made read-only and hashed.
     /// </summary>
     public static VersionIntegrityReport Check(string directory, CancellationToken cancellationToken = default)
     {
@@ -67,23 +71,24 @@ public static class VersionIntegrity
         var manifestPath = Path.Combine(directory, ManifestName);
         if (!File.Exists(manifestPath))
         {
-            return new VersionIntegrityReport(NotChecked, [], [], [], 0, [], null);
+            return new VersionIntegrityReport(NotChecked, [], [], [], [], [], 0, [], null);
         }
 
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        var onDisk = Directory.EnumerateFiles(directory, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0, IgnoreInaccessible = true })
-            .Select(path => Path.GetRelativePath(directory, path).Replace('\\', '/'))
-            .Where(path => !comparer.Equals(path, ManifestName))
-            .Order(StringComparer.Ordinal)
-            .ToList();
+        var files = new Dictionary<string, string>(comparer);
+        var links = new List<string>();
+        Walk(directory, directory, files, links, cancellationToken);
+        var manifestIsLink = links.Contains(ManifestName, comparer);
+        files.Remove(ManifestName);
+        var onDisk = files.Keys.Order(StringComparer.Ordinal).ToList();
 
-        // 1. Every file read-only (the manifest too).
+        // 1. Every regular file read-only (the manifest too); links are never touched.
         var madeReadOnly = 0;
         var notReadOnly = new List<string>();
-        foreach (var relative in onDisk.Append(ManifestName))
+        foreach (var relative in manifestIsLink ? onDisk : onDisk.Append(ManifestName))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            switch (MakeReadOnly(Path.Combine(directory, relative)))
+            switch (MakeReadOnly(Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar))))
             {
                 case true:
                     madeReadOnly++;
@@ -94,35 +99,96 @@ public static class VersionIntegrity
             }
         }
 
-        // 2. The digests.
-        var problem = ReadManifest(manifestPath, comparer, out var listed);
+        // 2. The digests: only regular files the walk reached are read.
+        Dictionary<string, string> listed;
+        var problem = manifestIsLink
+            ? Fail("digests.json is a link; it is not followed", comparer, out listed)
+            : ReadManifest(manifestPath, comparer, out listed);
         var missing = new List<string>();
         var changed = new List<string>();
+        var invalid = new List<string>();
         foreach (var (relative, digest) in listed)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ValidRelative(relative))
+            if (!Inside(directory, relative))
             {
-                changed.Add(relative);
-                continue;
+                invalid.Add(relative);
             }
-
-            var path = Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(path))
+            else if (files.TryGetValue(relative, out var path))
             {
+                if (!string.Equals(Sha256(path), digest, StringComparison.OrdinalIgnoreCase))
+                {
+                    changed.Add(relative);
+                }
+            }
+            else if (!links.Contains(relative, comparer))
+            {
+                // A listed path under a link, or absent: never read through the link (the link itself is reported).
                 missing.Add(relative);
-                continue;
-            }
-
-            if (!string.Equals(Sha256(path), digest, StringComparison.OrdinalIgnoreCase))
-            {
-                changed.Add(relative);
             }
         }
 
         var unlisted = onDisk.Where(path => !listed.ContainsKey(path)).ToList();
-        var mismatches = Math.Max(missing.Count + changed.Count + unlisted.Count, problem is null ? 0 : 1);
-        return new VersionIntegrityReport(FactOf(mismatches), missing, changed, unlisted, madeReadOnly, notReadOnly, problem);
+        var report = new VersionIntegrityReport(string.Empty, missing, changed, unlisted, links, invalid, madeReadOnly, notReadOnly, problem);
+        return report with { Fact = FactOf(report.Mismatches) };
+    }
+
+    /// <summary>True when <paramref name="info"/> is a symbolic link, a junction or another reparse point (never followed).</summary>
+    public static bool IsLink(FileSystemInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+        return info.LinkTarget is not null || (info.Attributes & FileAttributes.ReparsePoint) != 0;
+    }
+
+    private static void Walk(string root, string directory, Dictionary<string, string> files, List<string> links, CancellationToken cancellationToken)
+    {
+        IEnumerable<FileSystemInfo> entries;
+        try
+        {
+            entries = new DirectoryInfo(directory).EnumerateFileSystemInfos("*", new EnumerationOptions { RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = true });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relative = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
+            if (IsLink(entry))
+            {
+                links.Add(relative);
+            }
+            else if (entry is DirectoryInfo)
+            {
+                Walk(root, entry.FullName, files, links, cancellationToken);
+            }
+            else
+            {
+                files[relative] = entry.FullName;
+            }
+        }
+    }
+
+    private static string Fail(string problem, StringComparer comparer, out Dictionary<string, string> listed)
+    {
+        listed = new Dictionary<string, string>(comparer);
+        return problem;
+    }
+
+    /// <summary>True when a manifest entry is a plain relative path (no root, no <c>..</c>, <c>.</c> or empty segment) that stays inside the directory.</summary>
+    private static bool Inside(string directory, string relative)
+    {
+        if (relative.Length == 0 || Path.IsPathRooted(relative) || relative.Contains('\\', StringComparison.Ordinal) || relative.Contains(':', StringComparison.Ordinal)
+            || !relative.Split('/').All(segment => segment is { Length: > 0 } and not "." and not ".."))
+        {
+            return false;
+        }
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        return full.StartsWith(root, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -133,6 +199,12 @@ public static class VersionIntegrity
     {
         try
         {
+            if (IsLink(new FileInfo(path)))
+            {
+                // Never through a link: File.SetUnixFileMode and File.SetAttributes would change its target.
+                return null;
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 var attributes = File.GetAttributes(path);
@@ -171,6 +243,11 @@ public static class VersionIntegrity
     {
         try
         {
+            if (IsLink(new FileInfo(path)))
+            {
+                return string.Empty;
+            }
+
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
             return Convert.ToHexStringLower(SHA256.HashData(stream));
         }
@@ -212,7 +289,4 @@ public static class VersionIntegrity
         }
     }
 
-    private static bool ValidRelative(string relative) =>
-        relative.Length > 0 && !Path.IsPathRooted(relative) && !relative.Contains('\\', StringComparison.Ordinal)
-        && relative.Split('/').All(segment => segment is { Length: > 0 } and not "." and not "..");
 }

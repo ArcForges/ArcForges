@@ -141,7 +141,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         var caller = _api.CallerOf(context);
         var id = Bytes(request.ApprovalId);
         refused ??= await _api.DenyUnlessAllowedAsync(caller, new GateRequest(PermissionMatrix.ApprovalDecide, "ApprovalService.DecideApproval",
-            "decide approval " + IdText.Format(id), "approval", id)).ConfigureAwait(false);
+            "decide approval " + IdText.Format(id), "approval", id), request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;

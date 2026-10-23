@@ -93,6 +93,7 @@ public sealed class ExecutionSettings
         SecretNames = new SecretNameMatcher(policy.Privacy?.SecretNamePatterns.Count > 0 ? policy.Privacy.SecretNamePatterns : DefaultPolicy.SecretNamePatterns);
         Pools = policy.Pools.Count > 0 ? [.. policy.Pools.Select(pool => pool.Name)] : [.. DefaultPolicy.BuiltInPools];
         AcceptAgentAssertions = policy.RetrySafety?.AcceptAgentAssertions ?? false;
+        AgentCommandPatterns = policy.Agents is { AllowedCommandPatterns.Count: > 0 } agentPolicy ? Compile(agentPolicy.AllowedCommandPatterns) : null;
         RetrySafetyRules = policy.RetrySafety is { } safety ? [.. safety.Rules] : [];
         OvercommitCpu = resources.HasOvercommitCpu && resources.OvercommitCpu is >= 1.0 and <= 4.0 ? resources.OvercommitCpu : 1.5;
         StarvationBound = TimeSpan.FromMilliseconds(resources.HasStarvationBoundMs && resources.StarvationBoundMs >= 60_000 ? resources.StarvationBoundMs : 10 * 60 * 1000);
@@ -200,6 +201,58 @@ public sealed class ExecutionSettings
 
     /// <summary><c>retry_safety.accept_agent_assertions</c>.</summary>
     public bool AcceptAgentAssertions { get; }
+
+    /// <summary>
+    /// <c>agents.allowed_command_patterns</c> (11 section 1: "Submit task (own)", AGENT A subject to these patterns, default all), compiled as
+    /// whole-string matches; <see langword="null"/> allows every command (the default <c>[".*"]</c>, or an empty list).
+    /// </summary>
+    public IReadOnlyList<System.Text.RegularExpressions.Regex>? AgentCommandPatterns { get; }
+
+    /// <summary>
+    /// True when an AGENT may submit <paramref name="commandLine"/> (the argument vector joined by spaces, or the shell script): some
+    /// pattern matches the whole of it. The patterns are an argument-vector filter, a guardrail (11 section 1; T-27).
+    /// </summary>
+    public bool AgentCommandAllowed(string commandLine)
+    {
+        ArgumentNullException.ThrowIfNull(commandLine);
+        return AgentCommandPatterns is not { } patterns || patterns.Any(pattern =>
+        {
+            try
+            {
+                return pattern.IsMatch(commandLine);
+            }
+            catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+            {
+                return false;
+            }
+        });
+    }
+
+    private static List<System.Text.RegularExpressions.Regex>? Compile(IEnumerable<string> patterns)
+    {
+        var compiled = new List<System.Text.RegularExpressions.Regex>();
+        foreach (var pattern in patterns)
+        {
+            if (pattern is ".*" or "^.*$")
+            {
+                return null;
+            }
+
+            try
+            {
+                // Policy validation admits only the RE2-compatible subset (PolicyRules); Singleline lets ".*" span a script's lines.
+                compiled.Add(new System.Text.RegularExpressions.Regex("^(?:" + pattern + ")$",
+                    System.Text.RegularExpressions.RegexOptions.NonBacktracking | System.Text.RegularExpressions.RegexOptions.CultureInvariant
+                    | System.Text.RegularExpressions.RegexOptions.Singleline, TimeSpan.FromMilliseconds(250)));
+            }
+            catch (ArgumentException)
+            {
+                // A pattern the validation would have refused matches nothing.
+            }
+        }
+
+        return compiled;
+    }
 
     /// <summary><c>retry_safety.rules</c> (HUMAN-edited; AD-0006 section 4).</summary>
     public IReadOnlyList<RetrySafetyRule> RetrySafetyRules { get; }

@@ -31,6 +31,7 @@ public sealed class PermissionTests
         { PermissionMatrix.TaskReadOutput, A, A, A, "read_output_tail" },
         { PermissionMatrix.TaskCancelOwn, A, A, A, "cancel_task" },
         { PermissionMatrix.TaskCancelOthers, A, P, P, "cancel_task" },
+        { PermissionMatrix.TaskRetry, A, A, A, null },
         { PermissionMatrix.TaskSetPriority, A, A, P, "set_priority" },
         { PermissionMatrix.PoolPause, A, A, P, "pause_queue" },
         { PermissionMatrix.ParallelismChange, A, P, P, "set_parallelism" },
@@ -363,6 +364,12 @@ public sealed class PermissionTests
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.TaskPurge + " TaskService.PurgeTaskRecord" && entry.Decision == A
             && entry.Outcome.StartsWith("failed (State/not_found)", StringComparison.Ordinal));
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.ProcessAdopt + " ResourceService.AdoptProcess" && entry.Decision == D);
+
+        // Review round 1: the allowed executions of privileged actions are audited too (RenameNode by SCRIPT, MarkNotificationsRead by HUMAN).
+        Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NodeRename + " NodeService.RenameNode" && entry.Decision == A
+            && entry.Actor.Origin == Origin.Script && entry.Outcome == "done: rename the node to 'script's'");
+        Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NotificationsMarkRead + " NodeService.MarkNotificationsRead" && entry.Decision == A
+            && entry.Actor.Origin == Origin.Human && entry.Outcome == "done: mark notifications read up to a time");
 
         // StopNode by a HUMAN runs, audited in its own transaction.
         Assert.Null((await human.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error);

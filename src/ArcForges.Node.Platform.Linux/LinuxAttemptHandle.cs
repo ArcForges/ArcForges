@@ -550,12 +550,13 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
                 if (root is not null)
                 {
                     Remember(root.Pid);
-                    if (_platform.Hardening is not null && ProcFs.StartOf(root.Pid) is not null)
+                    if (_platform.Hardening is not null)
                     {
-                        // AD-0007 section 8: the hardening is read back from the running unit; one that did not apply is reported as such.
+                        // AD-0007 section 8: the hardening is read back from the running unit; one that did not apply is reported as such, and
+                        // one whose root ended before the read is "not verified", never "applied".
                         var (readOnly, inaccessible) = _platform.HardenedPaths;
-                        _platform.HardeningReadBack(Files.AttemptName, LinuxExecutionPlatform.HardeningApplied(root.Pid, readOnly, inaccessible)
-                            || ProcFs.StartOf(root.Pid) is null);
+                        _platform.HardeningReadBack(Files.AttemptName,
+                            ProcFs.Stat(root.Pid) is { } stat ? LinuxExecutionPlatform.HardeningReadBackOf(root.Pid, stat.StartTicks, readOnly, inaccessible) : null);
                     }
                 }
             }

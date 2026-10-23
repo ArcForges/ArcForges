@@ -19,7 +19,20 @@ namespace ArcForges.Node.Core.Execution;
 /// <param name="Container">The container.</param>
 public sealed record AdoptedTask(byte[] TaskId, byte[] AttemptId, IAdoptedContainer Container);
 
-/// <summary>What <see cref="Adoptions.Adopt"/> recorded.</summary>
+/// <summary>
+/// A process the platform placed in an adoption container (<see cref="Adoptions.Prepare"/>, outside the store writer), not yet recorded
+/// (<see cref="Adoptions.Record"/>).
+/// </summary>
+/// <param name="TaskId">The ADOPTED task to record.</param>
+/// <param name="AttemptId">Its ADOPTED attempt.</param>
+/// <param name="Pid">The process.</param>
+/// <param name="Start">Its start time.</param>
+/// <param name="Title">The title, or <see langword="null"/>.</param>
+/// <param name="Pool">The pool.</param>
+/// <param name="Result">What the platform did.</param>
+public sealed record PreparedAdoption(byte[] TaskId, byte[] AttemptId, int Pid, DateTimeOffset Start, string? Title, string Pool, AdoptionResult Result);
+
+/// <summary>What <see cref="Adoptions.Record"/> recorded.</summary>
 /// <param name="TaskId">The new ADOPTED task.</param>
 /// <param name="AdoptedChildren">Children placed individually.</param>
 /// <param name="FailedChildren">Children that could not be placed.</param>
@@ -66,13 +79,13 @@ public sealed class Adoptions : IDisposable
     public IReadOnlyCollection<AdoptedTask> Tracked => [.. _tracked.Values];
 
     /// <summary>
-    /// Adopts the process (in the writer's command, so a replayed command ID never adopts twice) and records its ADOPTED task and attempt.
+    /// Places the process in an adoption container through the platform, outside the store writer (review round 1: a D-Bus call and a job wait
+    /// of up to 10 s never hold the single writer). The caller records the result with <see cref="Record"/> in a command, or releases it with
+    /// <see cref="Release"/> when it is not recorded.
     /// </summary>
     /// <exception cref="AdoptionRefusedException">The platform refused (not found, another user, already managed, or the OS refused).</exception>
-    public AdoptionOutcome Adopt(CommandContext context, int pid, DateTimeOffset start, string? title, string pool, ActorRef owner)
+    public PreparedAdoption Prepare(int pid, DateTimeOffset start, string? title, string pool)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(owner);
         var platform = _execution.Platform ?? throw new AdoptionRefusedException("no execution platform could be started on this node (see the node log)");
         if (_execution.RunningAttempts.Any(attempt => attempt.Handle?.Usage(null).Pids.Contains(pid) == true)
             || _tracked.Values.Any(adopted => adopted.Container.Processes().Contains(pid)))
@@ -80,11 +93,28 @@ public sealed class Adoptions : IDisposable
             throw new AdoptionRefusedException("the process is already managed by this node") { AlreadyManaged = true };
         }
 
-        var transaction = context.Transaction;
-        var taskId = StoreIds.NewUuid7(transaction.Clock);
-        var attemptId = StoreIds.NewUuid7(transaction.Clock);
+        var taskId = StoreIds.NewUuid7(_store.Clock);
+        var attemptId = StoreIds.NewUuid7(_store.Clock);
+        var result = platform.Adopt(new AdoptionRequest(_execution.NodeName, IdText.Format(attemptId), pid, start));
+        return new PreparedAdoption(taskId, attemptId, pid, start, title, pool, result);
+    }
+
+    /// <summary>Releases a prepared adoption that was not recorded (the container's handle; its processes keep running).</summary>
+    public static void Release(PreparedAdoption prepared)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        prepared.Result.Container.Dispose();
+    }
+
+    /// <summary>Records a prepared adoption's ADOPTED task and attempt (in the writer's command) and starts tracking its container.</summary>
+    public AdoptionOutcome Record(CommandContext context, PreparedAdoption prepared, ActorRef owner)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(prepared);
+        ArgumentNullException.ThrowIfNull(owner);
+        var (taskId, attemptId, pid, start, title, pool, result) = prepared;
         var name = IdText.Format(attemptId);
-        var result = platform.Adopt(new AdoptionRequest(_execution.NodeName, name, pid, start));
+        var transaction = context.Transaction;
         try
         {
             var image = result.Image;
@@ -263,23 +293,37 @@ public sealed class Adoptions : IDisposable
                     continue;
                 }
 
-                if (processes.Count > 0 || !_tracked.TryRemove(name, out _))
+                if (processes.Count > 0)
                 {
                     continue;
                 }
 
-                var cancelled = _cancelled.TryRemove(name, out _);
-                adopted.Container.Dispose();
-                FinishAsync(adopted.TaskId, adopted.AttemptId, cancelled ? TaskState.Cancelled : TaskState.Lost,
-                    cancelled ? TerminationReason.Cancelled : TerminationReason.Lost,
-                    cancelled
-                        ? "the adopted processes were terminated on request"
-                        : NoExitStatus).GetAwaiter().GetResult();
+                // Review round 1: the entry stays tracked until its end is recorded, so a failed record is retried at the next poll instead of
+                // leaving the task RUNNING until a restart records it with another reason.
+                var cancelled = _cancelled.ContainsKey(name);
+                try
+                {
+                    FinishAsync(adopted.TaskId, adopted.AttemptId, cancelled ? TaskState.Cancelled : TaskState.Lost,
+                        cancelled ? TerminationReason.Cancelled : TerminationReason.Lost,
+                        cancelled ? "the adopted processes were terminated on request" : NoExitStatus).GetAwaiter().GetResult();
+                }
+                catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
+                {
+                    _log.Warning("execution.adopted.record_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name));
+                    continue;
+                }
+
+                if (_tracked.TryRemove(name, out _))
+                {
+                    _cancelled.TryRemove(name, out _);
+                    adopted.Container.Dispose();
+                }
             }
         }
-        catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            _log.Warning("execution.adopted.record_failed", new LogField("errorType", exception.GetType().Name));
+            // A timer callback must never throw: anything unexpected is logged and the next poll runs.
+            _log.Warning("execution.adopted.poll_failed", new LogField("errorType", exception.GetType().Name));
         }
         finally
         {

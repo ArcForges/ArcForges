@@ -41,7 +41,9 @@ public sealed class ClientSessions
 
     /// <summary>
     /// The origin of a client whose hello passed validation (its process is the connection's peer). A kind that claims more than SCRIPT is
-    /// honoured only when the peer's executable verifies it; a kind that claims AGENT is honoured as it is, since it never widens anything.
+    /// honoured only when the peer's executable verifies it. A kind that claims AGENT is honoured as it is: in the default matrix AGENT is
+    /// never wider than SCRIPT except for <c>parallelism.lower_own_session</c> (AGENT A, SCRIPT P), which no request can use until connections
+    /// carry sessions (AF-AI-01); a policy override can change that, and the AGENT cells are the guardrail the user set.
     /// </summary>
     public Origin AssignOrigin(ClientHello hello, LocalRpcPeer peer, ClientImages images)
     {

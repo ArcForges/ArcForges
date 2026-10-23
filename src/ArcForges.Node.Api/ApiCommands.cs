@@ -45,6 +45,12 @@ public sealed record GateRequest(string Operation, string Method, string Summary
 {
     /// <summary>Details for the approver.</summary>
     public IReadOnlyList<KeyValue> Details { get; init; } = [];
+
+    /// <summary>True when an AGENT caller's ALLOW is an APPROVAL for this target (the matrix's per-target rule, for example task.retry).</summary>
+    public bool AgentApproval { get; init; }
+
+    /// <summary>Why <see cref="AgentApproval"/> applies (shown as the decision's source).</summary>
+    public string AgentApprovalReason { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -95,10 +101,16 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     /// The permission gate (11 section 1) of a call that needs no approval capture (a refusal of an APPROVAL cell would raise one, so such
     /// operations go through <see cref="GateAsync"/>): <see langword="null"/> when allowed; a denial is audited.
     /// </summary>
-    public async Task<ArcError?> DenyUnlessAllowedAsync(Caller caller, GateRequest gate)
+    public async Task<ArcError?> DenyUnlessAllowedAsync(Caller caller, GateRequest gate, IMessage? request = null, RequestMeta? meta = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(gate);
+        if (request is not null && meta is not null && Recorded(gate.Method, request, meta))
+        {
+            // Review round 1: a command that already ran answers with its recorded outcome, whatever the matrix says now.
+            return null;
+        }
+
         var verdict = Decide(caller, gate.Operation);
         return verdict.Decision == PermissionDecision.Allow ? null : await DeniedAsync(caller, gate, verdict).ConfigureAwait(false);
     }
@@ -116,7 +128,20 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         ArgumentNullException.ThrowIfNull(gate);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(meta);
+        if (Recorded(gate.Method, request, meta))
+        {
+            // Review round 1: the gate runs after dedup. A command that already ran (within the 24-hour window, or after its approval) answers
+            // with its recorded outcome and raises no new approval, whatever the matrix says now.
+            return null;
+        }
+
         var verdict = Decide(caller, gate.Operation);
+        if (verdict.Decision == PermissionDecision.Allow && gate.AgentApproval && caller.Origin == Origin.Agent && !caller.Approved)
+        {
+            // A row whose AGENT cell is ALLOW except for some targets (task.retry: a SIDE_EFFECTING or UNKNOWN task needs approval).
+            verdict = verdict with { Decision = PermissionDecision.Approval, Source = verdict.Source + "; " + gate.AgentApprovalReason };
+        }
+
         if (verdict.Decision == PermissionDecision.Allow || (verdict.Decision == PermissionDecision.Approval && caller.Approved))
         {
             return null;
@@ -190,10 +215,18 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         var digest = PayloadDigest.Compute(request);
         try
         {
+            // Review round 1: an approval recorded under this command ID answers only the same method and request; another request reusing the
+            // ID is CONFLICT/command_id_reused, as for any reused command ID.
+            if (!caller.Approved && node.Store.Read(reader => Approvals.ByCommand(reader, meta.CommandId.Value.Span)) is { } earlier
+                && !SameRequest(earlier, method, digest))
+            {
+                return (fail(StoreErrors.CommandIdReused()), false);
+            }
+
             var outcome = await node.Processor.ExecuteIdempotentAsync(meta.CommandId.Value.Memory, service + "/" + method, digest, caller.Origin, command =>
             {
-                if (!caller.Approved && Approvals.ByCommand(command.Transaction, meta.CommandId.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome: { } stored }
-                    && stored.Length > 0)
+                if (!caller.Approved && Approvals.ByCommand(command.Transaction, meta.CommandId.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome: { Length: > 0 } stored } approved
+                    && SameRequest(approved, method, digest))
                 {
                     return stored;
                 }
@@ -220,6 +253,46 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             return (fail(NodeErrors.Internal(node.Clock.GetUtcNow())), false);
         }
     }
+
+    /// <summary>
+    /// True when the command <paramref name="meta"/> names already ran for this same method and request: its outcome is in
+    /// <c>command_dedup</c> (24-hour window), or an approval executed it (any time). The gate lets such a retry through so that the
+    /// idempotent command answers with the recorded outcome.
+    /// </summary>
+    public bool Recorded(string method, IMessage request, RequestMeta meta)
+    {
+        ArgumentNullException.ThrowIfNull(method);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(meta);
+        if (meta.CommandId is not { } id || id.Value.Length != 16)
+        {
+            return false;
+        }
+
+        var name = method[(method.LastIndexOf('.') + 1)..];
+        var digest = PayloadDigest.Compute(request);
+        var now = StoreTime.ToMicroseconds(node.Clock.GetUtcNow());
+        return node.Store.Read(reader =>
+        {
+            using (var command = reader.CreateCommand("SELECT method, payload_digest, outcome, expires_at FROM command_dedup WHERE command_id = $id;"))
+            {
+                command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
+                using var row = command.ExecuteReader();
+                if (row.Read() && row.GetInt64(3) > now && !row.IsDBNull(2) && row.GetString(0) == service + "/" + name
+                    && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest))
+                {
+                    return true;
+                }
+            }
+
+            return Approvals.ByCommand(reader, id.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome.Length: > 0 } approval
+                && SameRequest(approval, name, digest);
+        });
+    }
+
+    /// <summary>True when an approval captured this method (<c>&lt;Service&gt;.&lt;Method&gt;</c>) and this request digest.</summary>
+    private static bool SameRequest(StoredApproval approval, string method, ReadOnlySpan<byte> digest) =>
+        approval.View.Operation.EndsWith("." + method, StringComparison.Ordinal) && approval.RequestDigest.AsSpan().SequenceEqual(digest);
 
     /// <summary>Writes an audit entry for an action outside an idempotent command (for example a refused one).</summary>
     public async Task AuditAsync(Caller caller, GateRequest gate, PermissionDecision decision, string outcome)

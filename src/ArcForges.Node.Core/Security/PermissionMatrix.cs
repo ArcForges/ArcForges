@@ -59,6 +59,11 @@ public static class PermissionMatrix
     /// <summary>Cancel, pause, resume or re-prioritise another owner's task.</summary>
     public const string TaskCancelOthers = "task.cancel_others";
 
+    /// <summary>
+    /// Retry a task (tasks.proto <c>RetryTask</c>: own: HUMAN=A SCRIPT=A AGENT=A, an AGENT's retry of a SIDE_EFFECTING or UNKNOWN task P).
+    /// </summary>
+    public const string TaskRetry = "task.retry";
+
     /// <summary>Change a task's priority (<c>SetTaskPriority</c>).</summary>
     public const string TaskSetPriority = "task.set_priority";
 
@@ -130,6 +135,7 @@ public static class PermissionMatrix
         new(TaskReadOutput, "Read an output tail", A, A, A, "read_output_tail", RiskClass.Low, D, false, RiskClass.Low),
         new(TaskCancelOwn, "Cancel own task", A, A, A, "cancel_task", RiskClass.Medium, A, false, RiskClass.Medium),
         new(TaskCancelOthers, "Cancel others' tasks", A, P, P, "cancel_task", RiskClass.Medium, D, false, RiskClass.Medium),
+        new(TaskRetry, "Retry a task (AGENT: approval for a SIDE_EFFECTING or UNKNOWN task)", A, A, A, null, RiskClass.Unspecified, D, false, RiskClass.Medium),
         new(TaskSetPriority, "Change a task's priority", A, A, P, "set_priority", RiskClass.Medium, D, false, RiskClass.Medium),
         new(TaskPause, "Pause a running task", A, A, P, null, RiskClass.Unspecified, D, false, RiskClass.Medium),
         new(TaskPurge, "Purge a task record", A, D, D, null, RiskClass.Unspecified, D, false, RiskClass.High),

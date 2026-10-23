@@ -64,6 +64,10 @@ public sealed class AdoptionTests
             Assert.True(stale.NotFound);
             var result = platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], pid, start));
             container = result.Container;
+
+            // Review round 1 (TOCTOU): systemd 253 and later get the process as a pidfd (PIDFDs), never as a reusable ID.
+            var version = SystemdTestEnvironment.ManagerVersion();
+            Assert.True(version < 253 || platform.ScopesByPidfd == true, $"systemd {version}: the adoption scope was started by ID");
             Assert.StartsWith(LinuxExecutionPlatform.AdoptionPrefix, container.ContainerName, StringComparison.Ordinal);
             Assert.EndsWith(".scope", container.ContainerName, StringComparison.Ordinal);
             Assert.True((result.AdoptedChildren, result.FailedChildren) == (1, 0), string.Join("; ", result.ChildResults));
@@ -176,6 +180,20 @@ public sealed class AdoptionTests
 
             // The read-back distinguishes: this test process has no such mounts; an attempt read back without it makes the report "not applied".
             Assert.False(LinuxExecutionPlatform.HardeningApplied(Environment.ProcessId, install, [store]));
+
+            // Review round 1: a root that ended before its mount namespace was read is "not verified", never counted as applied.
+            int endedPid;
+            using (var ended = Process.Start(new ProcessStartInfo("/bin/true"))!)
+            {
+                endedPid = ended.Id;
+                ended.WaitForExit();
+            }
+
+            Assert.Null(LinuxExecutionPlatform.HardeningReadBackOf(endedPid, 1, install, [store]));
+            var beforeEnded = platform.HardeningReport;
+            platform.HardeningReadBack("a-ended", applied: null);
+            Assert.Contains("not verified for 1 attempt unit(s): the attempt ended before read-back (last a-ended)", platform.HardeningReport, StringComparison.Ordinal);
+            Assert.Equal(beforeEnded.StartsWith("applied", StringComparison.Ordinal), platform.HardeningReport.StartsWith("applied", StringComparison.Ordinal));
             platform.HardeningReadBack("a-test", applied: false);
             Assert.StartsWith("not applied to every attempt", platform.HardeningReport, StringComparison.Ordinal);
             Assert.DoesNotContain("applied (read back", platform.HardeningReport, StringComparison.Ordinal);

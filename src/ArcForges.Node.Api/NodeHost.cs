@@ -315,7 +315,7 @@ public static class NodeHost
                 Opened = session => execution.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
                 Closed = session => execution.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
             };
-            server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(options.TestMode));
+            server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(ClientImages.TestHookApplies(options.TestMode, endpoint.Address, configPath, dataRoot)));
             try
             {
                 await server.StartAsync(node.Stopping).ConfigureAwait(false);
@@ -597,7 +597,8 @@ public static class NodeHost
         }
 
         node.Log.Warning("node.version_integrity.mismatch", new LogField("directory", directory), new LogField("missing", report.Missing.Count),
-            new LogField("changed", report.Changed.Count), new LogField("unlisted", report.Unlisted.Count), new LogField("manifest", report.Problem ?? "ok"));
+            new LogField("changed", report.Changed.Count), new LogField("unlisted", report.Unlisted.Count), new LogField("links", report.Links.Count),
+            new LogField("invalid", report.Invalid.Count), new LogField("manifest", report.Problem ?? "ok"));
         static string Paths(IReadOnlyList<string> paths) => paths.Count == 0 ? "-" : NodeLog.OneLine(string.Join(", ", paths.Take(50))) + (paths.Count > 50 ? $" (+{paths.Count - 50} more)" : string.Empty);
         try
         {
@@ -605,10 +606,10 @@ public static class NodeHost
             {
                 ExecutionFindings.Raise(context, FindingKind.EnforcementDegraded, Severity.Error, "node", node.NodeId.Span,
                     "The installed version's files do not match their digests",
-                    $"{report.Mismatches} files in the version directory {directory} are missing, changed or not listed in its digests.json (AD-0007 section 8). "
+                    $"{report.Mismatches} entries in the version directory {directory} are missing, changed, links, invalid or not listed in its digests.json (AD-0007 section 8). "
                     + "The files may have been modified after installation; reinstall or repair this version.",
                     [("directory", directory), ("missing", Paths(report.Missing)), ("changed", Paths(report.Changed)), ("unlisted", Paths(report.Unlisted)),
-                     ("manifest", report.Problem ?? "ok")]);
+                     ("links", Paths(report.Links)), ("invalid", Paths(report.Invalid)), ("manifest", report.Problem ?? "ok")]);
                 return 0;
             }).ConfigureAwait(false);
         }

@@ -232,15 +232,22 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         var job = JobObject.Create(name);
         try
         {
+            var inRoot = false;
             try
             {
                 // V-W01: root first, then the adoption job, which nests it under the root.
                 root.Assign(process);
+                inRoot = true;
                 job.Assign(process);
             }
             catch (Win32Exception exception)
             {
-                throw new AdoptionRefusedException($"the operating system refused to place the process in a job ({exception.Message})", exception);
+                // Windows offers no way to take a process out of a job: a process the root job accepted but the adoption job refused stays in
+                // the root job, under its limits, without being adopted. That outcome is reported as it is, and the API audits it (review
+                // round 1). It cannot happen where every process is already in a job (L-30): such a process is refused above.
+                throw new AdoptionRefusedException(inRoot
+                    ? $"the process is now in this node's root job, which it cannot leave, but the adoption job refused it ({exception.Message}): it is not adopted"
+                    : $"the operating system refused to place the process in a job ({exception.Message})", exception);
             }
 
             var image = ProcessInfo.ImageName(process) ?? request.Pid.ToString(CultureInfo.InvariantCulture);

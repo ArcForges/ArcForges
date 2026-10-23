@@ -162,17 +162,19 @@ public sealed class QueuePolicyServiceTests
             return paused ?? (await channel.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = Tasks.Meta(), Pool = "background" }, cancellationToken: Ct)).Error;
         }
 
-        async Task<ArcError?> PriorityAsync(NodeChannel channel) => (await channel.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
+        var missing = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) };
+        async Task<ArcError?> PriorityAsync(NodeChannel channel, Id? task = null) => (await channel.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
         {
             Meta = Tasks.Meta(),
-            TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
+            TaskId = task ?? missing,
             Priority = Priority.Low,
         }, cancellationToken: Ct)).Error;
-        // PauseTask: HUMAN A, SCRIPT A, AGENT P; ResumeTask: A for all three (api-catalogue). A missing task is not_found once allowed.
-        async Task<ArcError?> PauseTaskAsync(NodeChannel channel) => (await channel.Tasks.PauseTaskAsync(new TaskServicePauseTaskRequest
+        // PauseTask: HUMAN A, SCRIPT A, AGENT P; ResumeTask: A for all three (api-catalogue). A missing (or ended) task is not_found (or its
+        // state) without an approval: the action would change nothing (review round 1).
+        async Task<ArcError?> PauseTaskAsync(NodeChannel channel, Id? task = null) => (await channel.Tasks.PauseTaskAsync(new TaskServicePauseTaskRequest
         {
             Meta = Tasks.Meta(),
-            TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
+            TaskId = task ?? missing,
         }, cancellationToken: Ct)).Error;
         async Task<ArcError?> ResumeTaskAsync(NodeChannel channel) => (await channel.Tasks.ResumeTaskAsync(new TaskServiceResumeTaskRequest
         {
@@ -196,13 +198,16 @@ public sealed class QueuePolicyServiceTests
         Assert.Equal("not_found", (await PauseTaskAsync(script))?.Code);
         Assert.Equal("not_found", (await ResumeTaskAsync(script))?.Code);
 
-        // AGENT: everything here is P, except ResumeTask (A).
+        // AGENT: everything here is P, except ResumeTask (A); a task action on a queued task (all pools paused, so it waits).
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        var queued = await Tasks.SubmitAsync(script, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
         Approval(await CreatePoolAsync(agent, "agent-pool"));
         Approval(await ParallelismAsync(agent));
         Approval((await Sched.ChangePolicyAsync(agent, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
         Approval(await PauseAsync(agent));
-        Approval(await PriorityAsync(agent));
-        Approval(await PauseTaskAsync(agent));
+        Approval(await PriorityAsync(agent, queued));
+        Approval(await PauseTaskAsync(agent, queued));
+        Assert.Equal("not_found", (await PriorityAsync(agent))?.Code);
         Assert.Equal("not_found", (await ResumeTaskAsync(agent))?.Code);
 
         // Nothing changed; reads are allowed for every origin; the approvals wait, pending, for a HUMAN.
@@ -219,6 +224,8 @@ public sealed class QueuePolicyServiceTests
         Assert.Equal("not_found", (await PriorityAsync(human))?.Code);
         Assert.Equal("not_found", (await PauseTaskAsync(human))?.Code);
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => (policy.RetrySafety ??= new RetrySafetyPolicy()).AcceptAgentAssertions = true)).Error);
+        Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = queued }, cancellationToken: Ct)).Error);
+        await Tasks.WaitAsync(human, queued);
     }
 
     /// <summary>

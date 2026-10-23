@@ -244,9 +244,22 @@ public static class Approvals
 
         transaction.Execute("UPDATE approval SET outcome = $outcome WHERE approval_id = $id;", ("$outcome", response), ("$id", id.ToArray()));
         var executed = Transition(context, id, error is null ? ApprovalState.Executed : ApprovalState.Failed, null, null);
-        AuditLog.Append(transaction, current.View.Requester, matrixOperation + " " + current.View.Operation, "approval", id, PermissionDecision.Allow, id,
-            error is null ? "executed after approval" : $"failed after approval: {error.Category}/{error.Code}");
+        AuditLog.Append(transaction, current.View.Requester, (RequestedOperation(transaction, id) ?? matrixOperation) + " " + current.View.Operation, "approval", id,
+            PermissionDecision.Allow, id, error is null ? "executed after approval" : $"failed after approval: {error.Category}/{error.Code}");
         return executed;
+    }
+
+    /// <summary>
+    /// The matrix operation the approval was raised for, as its request was audited (for example <c>process.terminate</c> for a cancel of an
+    /// ADOPTED task, while the executor of <c>CancelTask</c> is registered under <c>task.cancel_others</c>), or <see langword="null"/>.
+    /// </summary>
+    public static string? RequestedOperation(StoreReader reader, ReadOnlySpan<byte> id)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        using var command = reader.CreateCommand("SELECT operation FROM audit_log WHERE approval_id = $id AND decision = $decision ORDER BY seq LIMIT 1;");
+        command.Parameters.AddWithValue("$id", id.ToArray());
+        command.Parameters.AddWithValue("$decision", (int)PermissionDecision.Approval);
+        return command.ExecuteScalar() is string operation && operation.Split(' ', 2)[0] is { Length: > 0 } matrix ? matrix : null;
     }
 
     /// <summary>Approvals that were APPROVED but never recorded as executed (the node stopped in between): executed again at startup.</summary>

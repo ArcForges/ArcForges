@@ -5,6 +5,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
@@ -205,35 +206,55 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             return response;
         }
 
+        // Review round 1: the platform's adoption (D-Bus and a job wait, or job assignment) runs outside the store writer, then the result is
+        // recorded in the command. A command that already ran replays its outcome without adopting again.
+        PreparedAdoption? prepared = null;
+        if (!_api.Recorded(gate.Method, request, request.Meta))
+        {
+            try
+            {
+                prepared = await Task.Run(() => execution!.Adoptions.Prepare(pid, start, request.HasTitle ? request.Title : null, pool)).ConfigureAwait(false);
+            }
+            catch (AdoptionRefusedException refusal)
+            {
+                var error = refusal.NotFound ? NodeErrors.ProcessNotFound(refusal.Message)
+                    : refusal.AlreadyManaged ? NodeErrors.AlreadyExists("process", pid.ToString(CultureInfo.InvariantCulture))
+                    : NodeErrors.AdoptNotPermitted(refusal.Message);
+                await _api.AuditAsync(caller, gate, PermissionDecision.Allow, $"failed ({error.Category}/{error.Code}): {gate.Summary}: {refusal.Message}").ConfigureAwait(false);
+                response.Error = error;
+                return response;
+            }
+        }
+
+        var recorded = false;
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "AdoptProcess", ResourceServiceAdoptProcessResponse.Parser,
             failure => new ResourceServiceAdoptProcessResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
-                try
+                if (prepared is null)
                 {
-                    var outcome = execution!.Adoptions.Adopt(command, pid, start, request.HasTitle ? request.Title : null, pool, caller.Actor);
-                    return new ResourceServiceAdoptProcessResponse
-                    {
-                        Meta = ApiCommands.Meta(request.Meta),
-                        Value = new ResourceServiceAdoptProcessValue
-                        {
-                            Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
-                            TaskId = new Id { Value = ByteString.CopyFrom(outcome.TaskId) },
-                            AdoptedChildren = (uint)outcome.AdoptedChildren,
-                            FailedChildren = (uint)outcome.FailedChildren,
-                        },
-                    };
+                    // The recorded outcome expired between the check and the command: nothing was adopted for this request now.
+                    return new ResourceServiceAdoptProcessResponse { Meta = ApiCommands.Meta(request.Meta), Error = NodeErrors.Internal(_node.Clock.GetUtcNow()) };
                 }
-                catch (AdoptionRefusedException refusal)
+
+                var outcome = execution!.Adoptions.Record(command, prepared, caller.Actor);
+                recorded = true;
+                return new ResourceServiceAdoptProcessResponse
                 {
-                    return new ResourceServiceAdoptProcessResponse
+                    Meta = ApiCommands.Meta(request.Meta),
+                    Value = new ResourceServiceAdoptProcessValue
                     {
-                        Meta = ApiCommands.Meta(request.Meta),
-                        Error = refusal.NotFound ? NodeErrors.ProcessNotFound(refusal.Message)
-                            : refusal.AlreadyManaged ? NodeErrors.AlreadyExists("process", pid.ToString(CultureInfo.InvariantCulture))
-                            : NodeErrors.AdoptNotPermitted(refusal.Message),
-                    };
-                }
+                        Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
+                        TaskId = new Id { Value = ByteString.CopyFrom(outcome.TaskId) },
+                        AdoptedChildren = (uint)outcome.AdoptedChildren,
+                        FailedChildren = (uint)outcome.FailedChildren,
+                    },
+                };
             }, gate).ConfigureAwait(false);
+        if (prepared is not null && !recorded)
+        {
+            Adoptions.Release(prepared);
+        }
+
         return result;
     }
 

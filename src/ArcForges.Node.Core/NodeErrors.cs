@@ -89,6 +89,10 @@ public static class NodeErrors
     public static ArcError EnforcementUnavailable(string capability) =>
         Create(ErrorCategory.Resource, "enforcement_unavailable", RetryMode.Never, new StateFailure { Reason = capability });
 
+    /// <summary><c>AUTHORIZATION/command_pattern_denied</c> (errors.md): the command is outside the agent's allowed patterns; <c>state.reason</c> = the policy path.</summary>
+    public static ArcError CommandPatternDenied(string policyPath) =>
+        Create(ErrorCategory.Authorization, "command_pattern_denied", RetryMode.Never, new StateFailure { Reason = policyPath });
+
     /// <summary><c>EXECUTION/adopt_not_permitted</c>: the OS refused to place the process under management; <c>state.reason</c> says why.</summary>
     public static ArcError AdoptNotPermitted(string reason) =>
         Create(ErrorCategory.Execution, "adopt_not_permitted", RetryMode.Never, new StateFailure { Reason = reason });

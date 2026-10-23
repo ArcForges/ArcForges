@@ -110,6 +110,8 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     private string _hardeningReport = "not applied: the platform has not started";
     private int _hardeningMisses;
     private string? _hardeningMissed;
+    private int _hardeningUnverified;
+    private string? _hardeningUnverifiedLast;
 
     /// <summary>Creates the platform.</summary>
     public LinuxExecutionPlatform(LinuxPlatformOptions? options = null)
@@ -353,9 +355,14 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         {
             const string Scope = "; GUARDRAIL hardening of ArcForges' own files against accidental writes, never workload isolation (AD-0007 section 8)";
             var misses = Volatile.Read(ref _hardeningMisses);
+            var unverified = Volatile.Read(ref _hardeningUnverified);
+            var notVerified = unverified > 0
+                ? string.Create(CultureInfo.InvariantCulture,
+                    $"; not verified for {unverified} attempt unit(s): the attempt ended before read-back (last {_hardeningUnverifiedLast})")
+                : string.Empty;
             return misses > 0
-                ? string.Create(CultureInfo.InvariantCulture, $"not applied to every attempt: {misses} attempt unit(s) read back without it (last {_hardeningMissed})") + Scope
-                : _hardeningReport + Scope;
+                ? string.Create(CultureInfo.InvariantCulture, $"not applied to every attempt: {misses} attempt unit(s) read back without it (last {_hardeningMissed})") + notVerified + Scope
+                : _hardeningReport + notVerified + Scope;
         }
     }
 
@@ -366,10 +373,18 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     internal (string ReadOnly, IReadOnlyList<string> Inaccessible) HardenedPaths =>
         (Path.GetDirectoryName(_helper) ?? "/", [.. _options.ProtectedPaths.Where(Directory.Exists)]);
 
-    /// <summary>Records an attempt unit's read-back (after its start): a unit that did not carry the hardening makes the report "not applied".</summary>
-    internal void HardeningReadBack(string attemptName, bool applied)
+    /// <summary>
+    /// Records an attempt unit's read-back (after its start): a unit that did not carry the hardening makes the report "not applied"; one whose
+    /// root ended before its mount namespace could be read (<see langword="null"/>) is reported "not verified", never counted as applied.
+    /// </summary>
+    internal void HardeningReadBack(string attemptName, bool? applied)
     {
-        if (!applied)
+        if (applied is null)
+        {
+            _hardeningUnverifiedLast = attemptName;
+            Interlocked.Increment(ref _hardeningUnverified);
+        }
+        else if (applied == false)
         {
             _hardeningMissed = attemptName;
             Interlocked.Increment(ref _hardeningMisses);
@@ -377,13 +392,32 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     }
 
     /// <summary>
+    /// The read-back of one process (<paramref name="pid"/>, started at <paramref name="startTicks"/>): true or false as
+    /// <see cref="HardeningApplied"/> reads it, or <see langword="null"/> when the process ended (or its ID was taken) before or while its
+    /// mount namespace was read, so nothing was verified.
+    /// </summary>
+    internal static bool? HardeningReadBackOf(int pid, long startTicks, string readOnly, IReadOnlyList<string> inaccessible)
+    {
+        if (ProcFs.Stat(pid) is not { } before || before.StartTicks != startTicks)
+        {
+            return null;
+        }
+
+        var applied = HardeningApplied(pid, readOnly, inaccessible, out var readable);
+        return !readable || ProcFs.Stat(pid) is not { } after || after.StartTicks != startTicks ? null : applied;
+    }
+
+    /// <summary>
     /// True when the mount namespace of <paramref name="pid"/> shows the hardening: <paramref name="readOnly"/> mounted read-only, and every
     /// path of <paramref name="inaccessible"/> over-mounted (systemd mounts an inaccessible node there). False when it does not, or when the
     /// process cannot be read.
     /// </summary>
-    internal static bool HardeningApplied(int pid, string readOnly, IReadOnlyList<string> inaccessible)
+    internal static bool HardeningApplied(int pid, string readOnly, IReadOnlyList<string> inaccessible) => HardeningApplied(pid, readOnly, inaccessible, out _);
+
+    private static bool HardeningApplied(int pid, string readOnly, IReadOnlyList<string> inaccessible, out bool readable)
     {
         string[] lines;
+        readable = false;
         try
         {
             lines = File.ReadAllLines(Path.Combine("/proc", pid.ToString(CultureInfo.InvariantCulture), "mountinfo"));
@@ -392,6 +426,8 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         {
             return false;
         }
+
+        readable = lines.Length > 0;
 
         var mounts = new List<(string Point, string[] Options)>();
         foreach (var line in lines)
@@ -505,7 +541,11 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
 
         var pid = request.Pid;
-        if (ProcFs.StartOf(pid) is not { } start || (start.Start - request.Start).Duration() > IdentityTolerance)
+
+        // Review round 1 (TOCTOU): the process is named by a pidfd from here on. Its identity is checked after the descriptor was opened, so
+        // the checked process is the one the descriptor names, and the user manager is given the descriptor (PIDFDs), never the reusable ID.
+        using var identity = OpenPidfd(pid);
+        if (identity is null || ProcFs.StartOf(pid) is not { } start || (start.Start - request.Start).Duration() > IdentityTolerance)
         {
             throw new AdoptionRefusedException($"no process {pid.ToString(CultureInfo.InvariantCulture)} started at that time") { NotFound = true };
         }
@@ -523,15 +563,15 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         // The children that exist now (descendants by parent ID, each created no earlier than its parent), adopted one by one afterwards.
         var table = ProcFs.AllProcesses().Select(candidate => (Pid: candidate, Stat: ProcFs.Stat(candidate))).Where(entry => entry.Stat is { State: not ('Z' or 'X') })
             .ToDictionary(entry => entry.Pid, entry => (Parent: entry.Stat!.Value.ParentPid, Start: entry.Stat.Value.StartTicks));
-        var children = new List<int>();
+        var children = new List<(int Pid, long Start)>();
         var frontier = new Queue<(int Pid, long Start)>([(pid, start.Ticks)]);
         while (frontier.TryDequeue(out var parent) && children.Count < 4096)
         {
             foreach (var (child, (owner, created)) in table.Where(entry => entry.Value.Parent == parent.Pid && entry.Value.Start >= parent.Start && entry.Key != pid))
             {
-                if (!children.Contains(child))
+                if (!children.Exists(known => known.Pid == child))
                 {
-                    children.Add(child);
+                    children.Add((child, created));
                     frontier.Enqueue((child, created));
                 }
             }
@@ -541,20 +581,19 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         var manager = Manager;
         try
         {
-            var job = manager.StartTransientUnit(name, [
-                new("Description", "ArcForges adopted process " + pid.ToString(CultureInfo.InvariantCulture)),
-                new("Slice", Slice),
-                new("PIDs", (uint[])[(uint)pid]),
-
-                // AttachProcessesToUnit (the children, one by one) is available only on delegated units.
-                new("Delegate", true),
-                new("CPUAccounting", true),
-                new("MemoryAccounting", true),
-                new("TasksAccounting", true),
-            ]);
+            var job = StartScope(manager, name, "ArcForges adopted process " + pid.ToString(CultureInfo.InvariantCulture), Slice, pid, identity, delegated: true);
             if (manager.WaitJob(job, TimeSpan.FromSeconds(10)) is not "done" || manager.ScopeControlGroup(name) is not { Length: > 0 } controlGroup)
             {
                 throw new AdoptionRefusedException("the user manager did not start the adoption scope with the process");
+            }
+
+            if (!Alive(identity))
+            {
+                // The process ended while it was being adopted. Where only its ID could be passed, another process may have taken the ID and been
+                // moved: it is released into a scope of its own that the user manager abandons (never terminated), and the adoption is refused.
+                var released = ProcFs.CgroupOf(pid) == controlGroup ? "; " + ReleaseStranger(manager, pid) : string.Empty;
+                StopQuietly(manager, name);
+                throw new AdoptionRefusedException($"process {pid.ToString(CultureInfo.InvariantCulture)} ended while it was being adopted{released}") { NotFound = true };
             }
 
             if (ProcFs.CgroupOf(pid) != controlGroup)
@@ -567,9 +606,20 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             var directory = ProcFs.CgroupDirectory(controlGroup);
             var results = new List<string>();
             var adopted = 0;
-            foreach (var child in children)
+            foreach (var (child, created) in children)
             {
                 var image = ProcFs.Image(child);
+                var label = child.ToString(CultureInfo.InvariantCulture);
+
+                // AttachProcessesToUnit takes IDs only: the child is held by a pidfd, its start checked through it, and after the move a child that
+                // ended in between (its ID possibly taken by another process, which is released again) is reported as not adopted.
+                using var held = OpenPidfd(child);
+                if (held is null || ProcFs.Stat(child) is not { } stat || stat.StartTicks != created)
+                {
+                    results.Add($"{image} ({label}): not adopted (it ended before the move)");
+                    continue;
+                }
+
                 try
                 {
                     if (ProcFs.CgroupOf(child) != controlGroup)
@@ -577,12 +627,19 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
                         manager.AttachProcessesToUnit(name, [(uint)child]);
                     }
 
+                    if (!Alive(held))
+                    {
+                        var released = ProcFs.CgroupOf(child) == controlGroup ? "; " + ReleaseStranger(manager, child) : string.Empty;
+                        results.Add($"{image} ({label}): not adopted (it ended during the move{released})");
+                        continue;
+                    }
+
                     adopted++;
-                    results.Add($"{image} ({child.ToString(CultureInfo.InvariantCulture)}): adopted");
+                    results.Add($"{image} ({label}): adopted");
                 }
                 catch (DBusErrorReplyException exception)
                 {
-                    results.Add($"{image} ({child.ToString(CultureInfo.InvariantCulture)}): not adopted ({OneLine(exception.Message)})");
+                    results.Add($"{image} ({label}): not adopted ({OneLine(exception.Message)})");
                 }
             }
 
@@ -590,8 +647,98 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
         catch (DBusErrorReplyException exception)
         {
-            // V-L01: the user manager moves only processes inside its own subtree (login-session scopes and other trees are refused).
+            // L-29: the user manager moves any same-user process (through the system manager when it lies outside its subtree); what it still
+            // refuses is reported as it answered.
             throw new AdoptionRefusedException($"the user manager refused to move the process ({exception.ErrorName}: {OneLine(exception.Message)})", exception);
+        }
+    }
+
+    /// <summary>How the last adoption scope named its process: by pidfd (<c>PIDFDs</c>), by ID (<c>PIDs</c>, then checked), or not yet.</summary>
+    internal bool? ScopesByPidfd { get; private set; }
+
+    /// <summary>A pidfd for <paramref name="pid"/> (closed on dispose), or <see langword="null"/> when the process does not exist.</summary>
+    private static SafeFileHandle? OpenPidfd(int pid)
+    {
+        var descriptor = Libc.PidfdOpen(pid);
+        return descriptor < 0 ? null : new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
+    }
+
+    /// <summary>True while the process a pidfd names has not ended (signal 0 through the descriptor).</summary>
+    private static bool Alive(SafeFileHandle pidfd) => Libc.PidfdSendSignal((int)pidfd.DangerousGetHandle(), 0) == 0;
+
+    /// <summary>
+    /// Starts a scope with the process named by <paramref name="pidfd"/> (<c>PIDFDs</c>, systemd 253 and later); a user manager that does not
+    /// know the property gets the ID (<c>PIDs</c>), and the caller checks the pidfd afterwards.
+    /// </summary>
+    private string StartScope(SystemdManager manager, string name, string description, string? slice, int pid, SafeFileHandle pidfd, bool delegated)
+    {
+        List<UnitProperty> properties = [new("Description", description)];
+        if (slice is not null)
+        {
+            properties.Add(new("Slice", slice));
+        }
+
+        if (delegated)
+        {
+            // AttachProcessesToUnit (the children, one by one) is available only on delegated units.
+            properties.Add(new("Delegate", true));
+            properties.Add(new("CPUAccounting", true));
+            properties.Add(new("MemoryAccounting", true));
+            properties.Add(new("TasksAccounting", true));
+        }
+
+        // The message carries its own duplicate of the descriptor.
+        using var passed = OpenPidfdDuplicate(pidfd);
+        try
+        {
+            if (passed is not null)
+            {
+                var job = manager.StartTransientUnit(name, [.. properties, new("PIDFDs", (SafeHandle[])[passed])]);
+                ScopesByPidfd = true;
+                return job;
+            }
+        }
+        catch (DBusErrorReplyException exception) when (exception.ErrorName is "org.freedesktop.DBus.Error.InvalidArgs" or "org.freedesktop.DBus.Error.PropertyReadOnly"
+            && exception.Message.Contains("PIDFDs", StringComparison.Ordinal))
+        {
+            // A user manager before systemd 253: the ID is passed, and the caller checks the pidfd afterwards.
+        }
+
+        ScopesByPidfd = false;
+        return manager.StartTransientUnit(name, [.. properties, new("PIDs", (uint[])[(uint)pid])]);
+    }
+
+    private static SafeFileHandle? OpenPidfdDuplicate(SafeFileHandle pidfd)
+    {
+        var duplicate = Libc.Dup((int)pidfd.DangerousGetHandle());
+        return duplicate < 0 ? null : new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
+    }
+
+    /// <summary>
+    /// A process that took the ID of one being adopted and was moved instead (only possible where the ID had to be passed): it is moved into a
+    /// scope of its own, which the user manager then abandons, so it keeps running and is never part of the adoption or its termination.
+    /// </summary>
+    private string ReleaseStranger(SystemdManager manager, int pid)
+    {
+        using var stranger = OpenPidfd(pid);
+        if (stranger is null)
+        {
+            return "no other process took its ID";
+        }
+
+        var name = "arcforges-released-" + Guid.NewGuid().ToString("N")[..12] + ".scope";
+        try
+        {
+            if (manager.WaitJob(StartScope(manager, name, "A process released from an ArcForges adoption", slice: null, pid, stranger, delegated: false), TimeSpan.FromSeconds(10)) is "done")
+            {
+                manager.AbandonScope(name);
+            }
+
+            return $"the process that took its ID was released into {name}";
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
+        {
+            return $"the process that took its ID could not be released ({OneLine(exception.Message)})";
         }
     }
 

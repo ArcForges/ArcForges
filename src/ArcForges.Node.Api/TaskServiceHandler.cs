@@ -56,6 +56,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             TaskServicePauseTaskRequest.Parser, (request, caller) => PauseTask(request, caller, CancellationToken.None));
         executors.Register<TaskServiceResumeTaskRequest, TaskServiceResumeTaskResponse>("TaskService.ResumeTask", PermissionMatrix.TaskCancelOthers,
             TaskServiceResumeTaskRequest.Parser, (request, caller) => ResumeTask(request, caller, CancellationToken.None));
+        executors.Register<TaskServiceRetryTaskRequest, TaskServiceRetryTaskResponse>("TaskService.RetryTask", PermissionMatrix.TaskRetry,
+            TaskServiceRetryTaskRequest.Parser, RetryTask);
     }
 
     private ExecutionSupervisor Execution => _node.Execution ?? throw new InvalidOperationException("The node has no execution supervisor.");
@@ -119,6 +121,15 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
                 return (ArcError?)null;
             });
+        }
+
+        if (refused is null && origin == Origin.Agent && !settings.AgentCommandAllowed(CommandLine(spec.Command)))
+        {
+            // 11 section 1, "Submit task (own)": AGENT A subject to agents.allowed_command_patterns (default all); a guardrail over the argv.
+            refused = NodeErrors.CommandPatternDenied("agents.allowed_command_patterns");
+            await _api.AuditAsync(_api.CallerOf(context), new GateRequest(PermissionMatrix.TaskSubmit, "TaskService.SubmitTask",
+                "submit " + CommandText.Summary(spec.Command, settings.SecretNames), "task"), PermissionDecision.Deny,
+                "denied: the command matches no agents.allowed_command_patterns").ConfigureAwait(false);
         }
 
         if (refused is not null)
@@ -632,7 +643,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             refused = NodeErrors.InvalidArgument("grace_ms: 0..300 s");
         }
 
-        var gate = refused is null ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : null;
+        // Review round 1: cancelling a task that already ended (or does not exist) changes nothing and is answered without an approval.
+        var gate = refused is null && !Settled(request.TaskId) ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : null;
         if (refused is null && gate is not null)
         {
             refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -676,10 +688,17 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     /// <inheritdoc />
-    public override async Task<TaskServiceRetryTaskResponse> RetryTask(TaskServiceRetryTaskRequest request, ServerCallContext context)
+    public override Task<TaskServiceRetryTaskResponse> RetryTask(TaskServiceRetryTaskRequest request, ServerCallContext context) =>
+        RetryTask(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary>
+    /// <c>RetryTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester): <c>task.retry</c>, ALLOW for every
+    /// origin except an AGENT's retry of a SIDE_EFFECTING or UNKNOWN task, which needs an approval (tasks.proto).
+    /// </summary>
+    internal async Task<TaskServiceRetryTaskResponse> RetryTask(TaskServiceRetryTaskRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
         if (refused is null && request.HasReason && request.Reason.Length > 500)
@@ -698,6 +717,19 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             }
         }
 
+        GateRequest? gate = null;
+        if (refused is null)
+        {
+            var row = _node.Store.Read(reader => TaskRecords.GetRow(reader, request.TaskId.Value.Span));
+            gate = new GateRequest(PermissionMatrix.TaskRetry, "TaskService.RetryTask",
+                "retry task " + IdText.Format(request.TaskId) + (row is null ? string.Empty : " (" + row.SideEffect.ToString().ToUpperInvariant() + ")"), "task", Bytes(request.TaskId))
+            {
+                AgentApproval = row is { SideEffect: SideEffectClass.SideEffecting or SideEffectClass.Unknown },
+                AgentApprovalReason = "an AGENT's retry of a SIDE_EFFECTING or UNKNOWN task needs approval (tasks.proto RetryTask)",
+            };
+            refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        }
+
         if (refused is not null)
         {
             response.Error = refused;
@@ -705,14 +737,14 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         var id = request.TaskId.Value.ToByteArray();
-        var (result, replayed) = await Idempotent(request, request.Meta, context, "RetryTask", TaskServiceRetryTaskResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "RetryTask", TaskServiceRetryTaskResponse.Parser,
             failure => new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
             var (value, error) = Execution.Retry(command, id, request.Meta.CommandId, request.OverrideDemand);
             return error is not null
                 ? new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Error = error }
                 : new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Value = value };
-        }).ConfigureAwait(false);
+        }, gate).ConfigureAwait(false);
         if (!replayed && result.OutcomeCase == TaskServiceRetryTaskResponse.OutcomeOneofCase.Value)
         {
             Execution.Kick();
@@ -757,10 +789,14 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             + (request.HasPool ? " (pool " + request.Pool + ")" : string.Empty);
         var gate = new GateRequest(PermissionMatrix.TaskSetPriority, "TaskService.SetTaskPriority", summary + " " + IdText.Format(request.TaskId), "task",
             Bytes(request.TaskId));
-        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
-        if (refused is null && TaskGate(request.TaskId!, "TaskService.SetTaskPriority", summary) is { } others)
+        var settled = refused is null && Settled(request.TaskId);
+        if (!settled)
         {
-            refused = await _api.GateAsync(caller, others, request, request.Meta).ConfigureAwait(false);
+            refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+            if (refused is null && TaskGate(request.TaskId!, "TaskService.SetTaskPriority", summary) is { } others)
+            {
+                refused = await _api.GateAsync(caller, others, request, request.Meta).ConfigureAwait(false);
+            }
         }
 
         if (refused is not null)
@@ -781,7 +817,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         Meta = Meta(request.Meta),
                         Value = new TaskServiceSetTaskPriorityValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, Queue = queue },
                     };
-            }, gate).ConfigureAwait(false);
+            }, settled ? null : gate).ConfigureAwait(false);
         if (!replayed && result.OutcomeCase == TaskServiceSetTaskPriorityResponse.OutcomeOneofCase.Value)
         {
             Execution.Kick();
@@ -796,6 +832,13 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     /// another owner's task (<c>task.cancel_others</c>: HUMAN A, SCRIPT and AGENT P); an ADOPTED task is a process the user placed under
     /// management, so ending it is terminating a process (<c>process.terminate</c>: HUMAN A, SCRIPT and AGENT P).
     /// </summary>
+    /// <summary>
+    /// True when the task does not exist or already ended: an action on it changes nothing (the execution answers with the state or the
+    /// error), so no approval is raised for it (review round 1).
+    /// </summary>
+    private bool Settled(Id taskId) =>
+        _node.Store.Read(reader => TaskRecords.GetRow(reader, taskId.Value.Span)) is not { Purged: false } row || row.Terminal;
+
     private GateRequest? TaskGate(Id taskId, string method, string summary)
     {
         var id = taskId.Value.ToByteArray();
@@ -824,10 +867,14 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var response = new TaskServicePauseTaskResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
         var gate = new GateRequest(PermissionMatrix.TaskPause, "TaskService.PauseTask", "pause task " + IdText.Format(request.TaskId), "task", Bytes(request.TaskId));
-        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
-        if (refused is null && TaskGate(request.TaskId!, "TaskService.PauseTask", "pause task") is { } others)
+        var settled = refused is null && Settled(request.TaskId);
+        if (!settled)
         {
-            refused = await _api.GateAsync(caller, others, request, request.Meta).ConfigureAwait(false);
+            refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+            if (refused is null && TaskGate(request.TaskId!, "TaskService.PauseTask", "pause task") is { } others)
+            {
+                refused = await _api.GateAsync(caller, others, request, request.Meta).ConfigureAwait(false);
+            }
         }
 
         if (refused is not null)
@@ -846,7 +893,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     {
                         Meta = Meta(request.Meta),
                         Value = new TaskServicePauseTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Paused },
-                    }, gate).ConfigureAwait(false);
+                    }, settled ? null : gate).ConfigureAwait(false);
         await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), cancellationToken)).ConfigureAwait(false);
         return result;
     }
@@ -862,7 +909,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
-        var gate = refused is null ? TaskGate(request.TaskId, "TaskService.ResumeTask", "resume task") : null;
+        var gate = refused is null && !Settled(request.TaskId) ? TaskGate(request.TaskId, "TaskService.ResumeTask", "resume task") : null;
         if (gate is not null)
         {
             refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -927,7 +974,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             Bytes(request.TaskId));
 
         // tasks.proto: HUMAN=A SCRIPT=D AGENT=D.
-        refused ??= await _api.DenyUnlessAllowedAsync(caller, gate).ConfigureAwait(false);
+        refused ??= await _api.DenyUnlessAllowedAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
 
         if (refused is not null)
         {

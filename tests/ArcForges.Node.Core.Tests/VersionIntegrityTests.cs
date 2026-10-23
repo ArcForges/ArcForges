@@ -95,6 +95,89 @@ public sealed class VersionIntegrityTests
     }
 
     /// <summary>
+    /// Review round 1, finding 1: a manifest entry that leaves the directory (<c>../victim.txt</c>, an absolute path) is an explicit mismatch
+    /// and is never read; the file outside keeps its permissions.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void AManifestEntryOutsideTheDirectoryIsAMismatchAndIsNeverRead()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "victim.txt");
+        File.WriteAllText(victim, "outside");
+        var directory = CreateVersion(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["../" + Path.GetFileName(outside) + "/victim.txt"] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("outside"))),
+            [victim.Replace('\\', '/')] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("outside"))),
+        });
+        try
+        {
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(2, report.Invalid.Count);
+            Assert.Empty(report.Changed);
+            Assert.Empty(report.Missing);
+            Assert.Equal("mismatch: 2 files", report.Fact);
+            Assert.False(VersionIntegrity.IsReadOnly(victim), "A file outside the version directory is never changed.");
+        }
+        finally
+        {
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Review round 1, finding 1: a symbolic link inside the version directory, to a file and to a directory outside it, is a mismatch;
+    /// neither link is followed, so the targets keep their permissions and are never hashed (a listed path under the directory link is
+    /// missing, not read through it).
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void ALinkToAnOutsideFileIsAMismatchAndItsTargetIsNeverChanged()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "victim.txt");
+        File.WriteAllText(victim, "outside");
+        var directory = CreateVersion(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["linked/victim.txt"] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("outside"))),
+        });
+        try
+        {
+            try
+            {
+                File.CreateSymbolicLink(Path.Combine(directory, "evil-link"), victim);
+                Directory.CreateSymbolicLink(Path.Combine(directory, "linked"), outside);
+            }
+            catch (Exception exception) when (OperatingSystem.IsWindows() && exception is IOException or UnauthorizedAccessException)
+            {
+                Assert.Skip($"Windows refused to create a symbolic link for this user ({exception.GetType().Name}: {exception.Message}).");
+            }
+
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(["evil-link", "linked"], report.Links.Order(StringComparer.Ordinal));
+            Assert.Equal(["linked/victim.txt"], report.Missing);
+            Assert.Empty(report.Changed);
+            Assert.Equal("mismatch: 3 files", report.Fact);
+            Assert.False(VersionIntegrity.IsReadOnly(victim), "The link's target is never changed.");
+            Assert.Equal("outside", File.ReadAllText(victim));
+        }
+        finally
+        {
+            foreach (var link in new[] { Path.Combine(directory, "evil-link"), Path.Combine(directory, "linked") })
+            {
+                if (new FileInfo(link).LinkTarget is not null)
+                {
+                    File.Delete(link);
+                }
+            }
+
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// At node level: the check runs after the node is ready. A tampered version directory raises ENFORCEMENT_DEGRADED with the paths and
     /// reports <c>mismatch: 2 files</c>; an intact one reports <c>verified</c> and raises nothing; a node without a manifest (the test
     /// build output) reports <c>not checked: no digest manifest</c>. The files are read-only after startup.
@@ -169,7 +252,7 @@ public sealed class VersionIntegrityTests
     }
 
     /// <summary>A version directory of four files (one in a subdirectory) and its <c>digests.json</c> in the packaging step's format.</summary>
-    internal static string CreateVersion()
+    internal static string CreateVersion(IReadOnlyDictionary<string, string>? extraEntries = null)
     {
         var directory = Directory.CreateTempSubdirectory("arcforges-version-").FullName;
         Directory.CreateDirectory(Path.Combine(directory, "lib"));
@@ -188,6 +271,11 @@ public sealed class VersionIntegrityTests
         foreach (var relative in files.Keys)
         {
             manifest[relative] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(files[relative])));
+        }
+
+        foreach (var (relative, digest) in extraEntries ?? new Dictionary<string, string>())
+        {
+            manifest[relative] = digest;
         }
 
         using var stream = File.Create(Path.Combine(directory, VersionIntegrity.ManifestName));
@@ -213,7 +301,7 @@ public sealed class VersionIntegrityTests
             return;
         }
 
-        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Where(path => new FileInfo(path).LinkTarget is null))
         {
             if (OperatingSystem.IsWindows())
             {

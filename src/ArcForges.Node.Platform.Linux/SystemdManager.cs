@@ -366,6 +366,9 @@ public sealed class SystemdManager : IDisposable
     /// <summary><c>FreezeUnit(name)</c>: returns once the unit's cgroup is frozen.</summary>
     public void FreezeUnit(string name) => Call(Message("FreezeUnit", "s", name));
 
+    /// <summary><c>AbandonScope(name)</c>: the user manager stops managing the scope; its processes keep running, untouched.</summary>
+    public void AbandonScope(string name) => Call(Message("AbandonScope", "s", name));
+
     /// <summary><c>ThawUnit(name)</c>.</summary>
     public void ThawUnit(string name) => Call(Message("ThawUnit", "s", name));
 
@@ -614,6 +617,11 @@ public sealed class SystemdManager : IDisposable
                     break;
                 case SafeHandle handle:
                     writer.WriteVariantHandle(handle);
+                    break;
+                case SafeHandle[] handles:
+                    // PIDFDs (systemd 253 and later): processes named by pidfd, never by a reusable ID.
+                    writer.WriteSignature("ah");
+                    writer.WriteArray(handles);
                     break;
                 case IReadOnlyList<ExecCommand> commands:
                     // ExecStartEx, ExecStopEx, ExecStopPostEx: a(sasas) with flags; the plain names take a(sasb).

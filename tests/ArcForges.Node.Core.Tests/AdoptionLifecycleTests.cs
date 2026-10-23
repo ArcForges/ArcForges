@@ -132,7 +132,8 @@ public sealed class AdoptionLifecycleTests
         Assert.NotNull(identity);
         var adopted = await human.Resources.AdoptProcessAsync(new ResourceServiceAdoptProcessRequest { Meta = Tasks.Meta(), Process = identity, Title = "adopted by a test" },
             deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: Ct);
-        if (OperatingSystem.IsWindows() && adopted.Error?.Code == "adopt_not_permitted")
+        if (OperatingSystem.IsWindows() && adopted.Error?.Code == "adopt_not_permitted"
+            && adopted.Error.Details?.State?.Reason?.Contains("already in a job", StringComparison.Ordinal) == true)
         {
             // 04 section 10 refuses a process in any job; on some machines every process of the session is in one (WMI-created ones too).
             Kill(pid);

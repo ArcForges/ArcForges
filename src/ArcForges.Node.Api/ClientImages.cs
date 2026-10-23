@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using ArcForges.Client;
 using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Api;
@@ -34,7 +35,29 @@ public sealed class ClientImages
         _desktop = [.. desktop.Where(path => path.Length > 0).Select(Path.GetFullPath)];
     }
 
-    /// <summary>The node's own executable and the Desktop beside it, plus the test hook's executables in test mode.</summary>
+    /// <summary>
+    /// True when the test hook may apply (review round 1): test mode, and the node runs on an isolated test instance, so that the endpoint,
+    /// the configuration file and the data root are all overridden to values other than the user's real ones. On the real data root or
+    /// endpoint the hook is ignored even in test mode.
+    /// </summary>
+    public static bool TestHookApplies(bool testMode, string endpointAddress, string configPath, string dataRoot)
+    {
+        ArgumentNullException.ThrowIfNull(endpointAddress);
+        ArgumentNullException.ThrowIfNull(configPath);
+        ArgumentNullException.ThrowIfNull(dataRoot);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        static string Full(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var defaultRoot = NodeLocations.DefaultDataRoot();
+        return testMode
+            && !string.Equals(endpointAddress, NodeLocations.Endpoint(testMode: false, defaultRoot).Address, comparison)
+            && !string.Equals(Full(configPath), Full(NodeLocations.ConfigFile(testMode: false)), comparison)
+            && !string.Equals(Full(dataRoot), Full(defaultRoot), comparison);
+    }
+
+    /// <summary>
+    /// The node's own executable and the Desktop beside it, plus the test hook's executables when <paramref name="testMode"/> is set (the host
+    /// sets it only where <see cref="TestHookApplies"/>).
+    /// </summary>
     public static ClientImages ForNode(bool testMode)
     {
         var self = Environment.ProcessPath;
