@@ -17,6 +17,7 @@ public static class NodeApiServer
     private const string Node = "arcforges.node.v1.NodeService";
     private const string Events = "arcforges.node.v1.NodeEventService";
     private const string Tasks = "arcforges.node.v1.TaskService";
+    private const string Resources = "arcforges.node.v1.ResourceService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -33,6 +34,7 @@ public static class NodeApiServer
         builder.AddService(new NodeServiceHandler(node, sessions));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         builder.AddService(new TaskServiceHandler(node, sessions));
+        builder.AddService(new ResourceServiceHandler(node));
         builder.AuthorizeConnections(connection =>
         {
             // Reached only by same-user peers that LocalRpc identified (other users, exited and unresolvable peers are dropped
@@ -73,6 +75,17 @@ public static class NodeApiServer
             });
         }
 
+        // ResourceService deadlines (resources.proto): snapshot and process list 5 s, samples 10 s; WatchResources streams with 15 s heartbeats.
+        foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("GetResourceSnapshot", 5), ("ListProcesses", 5), ("GetSamples", 10)])
+        {
+            builder.RegisterMethod(Resources, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(seconds), TimeSpan.FromSeconds(30)));
+        }
+
+        builder.RegisterStream(Resources, "WatchResources", new LocalRpcStreamProfile
+        {
+            HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
+            MaxBufferedMessages = streamBuffer,
+        });
         builder.RegisterStream(Events, "Subscribe", new LocalRpcStreamProfile
         {
             HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,

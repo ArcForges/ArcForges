@@ -247,6 +247,24 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
+    public bool UsageNeedsProcessTable => false;
+
+    /// <inheritdoc />
+    public AttemptUsage Usage(IReadOnlyDictionary<int, ProcessSample>? processes)
+    {
+        // The unit's cgroup (03 section 1): cpu.stat, memory.current less inactive_file (03 section 3), io.stat and cgroup.procs.
+        var directory = Resolve();
+        if (directory is null || ProcFs.MemoryWithoutCache(directory) is not { } memory)
+        {
+            return new AttemptUsage(0, 0, 0, 0, []);
+        }
+
+        var cpu = ProcFs.KeyValues(Path.Combine(directory, "cpu.stat")).GetValueOrDefault("usage_usec") / 1000;
+        var (read, written) = ProcFs.IoBytes(directory);
+        return new AttemptUsage(cpu, memory, read, written, ProcFs.Procs(directory));
+    }
+
+    /// <inheritdoc />
     public void Terminate() => FreezeAndKill();
 
     /// <inheritdoc />

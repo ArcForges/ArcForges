@@ -253,6 +253,7 @@ public static class NodeHost
             Faults = faults,
             Heartbeat = heartbeat,
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
+            Sampler = CreateSampler(),
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
@@ -476,6 +477,17 @@ public static class NodeHost
         catch (OperationCanceledException)
         {
         }
+    }
+
+    /// <summary>The observation sources of 03 section 1 (independent of enforcement: an observe-only node still observes).</summary>
+    private static IResourceSampler? CreateSampler()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new ArcForges.Node.Platform.Windows.WindowsResourceSampler();
+        }
+
+        return OperatingSystem.IsLinux() ? new ArcForges.Node.Platform.Linux.LinuxResourceSampler() : null;
     }
 
     private static IExecutionPlatform? StartPlatform(NodeHostOptions options, NodeStore store, NodeLog log)

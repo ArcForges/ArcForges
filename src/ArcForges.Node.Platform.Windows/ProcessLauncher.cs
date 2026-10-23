@@ -339,16 +339,16 @@ public static unsafe class ProcessInfo
     public static string ImageName(int processId)
     {
         using var handle = Open(processId);
-        if (handle is null)
-        {
-            return processId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
+        return handle is null ? processId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : ImageName(handle) ?? processId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
 
+    /// <summary>The image file name (no directory) of an open process, or <see langword="null"/>.</summary>
+    public static string? ImageName(SafeHandle process)
+    {
         var buffer = stackalloc char[1024];
         var size = 1024;
-        return Native.QueryFullProcessImageName(handle, 0, buffer, ref size)
-            ? Path.GetFileName(new string(buffer, 0, size))
-            : processId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return Native.QueryFullProcessImageName(process, 0, buffer, ref size) ? Path.GetFileName(new string(buffer, 0, size)) : null;
     }
 
     /// <summary>Every process with its parent ID and image (a Toolhelp snapshot).</summary>

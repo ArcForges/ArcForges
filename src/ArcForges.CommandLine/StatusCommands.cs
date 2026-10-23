@@ -14,7 +14,8 @@ internal static class StatusCommands
 
     /// <summary>
     /// <c>status</c>: connects (starting the node when it is absent, except in CI jobs and sandboxes), then <c>Hello</c> and
-    /// <c>GetNodeInfo</c>. The resource summary of <c>GetResourceSnapshot</c> joins with the resource monitor's task.
+    /// <c>GetNodeInfo</c>; the human form adds the budget and pressure of <c>GetResourceSnapshot</c> (the JSON form, whose round trip
+    /// 15 section 1 measures, stays one call).
     /// </summary>
     public static Command Status(Func<ParseResult, Cli> factory)
     {
@@ -69,7 +70,24 @@ internal static class StatusCommands
                 return ExitCodes.Success;
             }
 
-            cli.Output.KeyValues(NodeRows(cli.Output, node, session.Hello.AssignedOrigin));
+            var rows = NodeRows(cli.Output, node, session.Hello.AssignedOrigin);
+            try
+            {
+                var resourceMeta = Cli.Meta();
+                var resources = await cli.CallAsync("GetResourceSnapshot", resourceMeta, () => session.Channel.Resources.GetResourceSnapshotAsync(
+                    new ResourceServiceGetResourceSnapshotRequest { Meta = resourceMeta }, deadline: cli.Deadline(Unary), cancellationToken: cancellationToken))
+                    .ConfigureAwait(false);
+                if (resources.Value?.Snapshot is { HasBudgetCpuMillicores: true } snapshot)
+                {
+                    rows.AddRange(ResourceCommands.Rows(snapshot).Where(row => row.Key is "budget" or "pressure"));
+                }
+            }
+            catch (Grpc.Core.RpcException exception) when (exception.StatusCode == Grpc.Core.StatusCode.Unimplemented)
+            {
+                // A node from before the resource monitor: the status shows the node alone.
+            }
+
+            cli.Output.KeyValues(rows);
             foreach (var warning in session.Hello.Warnings)
             {
                 cli.Output.Note(warning);

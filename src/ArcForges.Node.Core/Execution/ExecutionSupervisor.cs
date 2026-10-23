@@ -7,6 +7,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Policy;
@@ -55,6 +56,9 @@ public sealed class ExecutionOptions
 
     /// <summary>The heartbeat writer.</summary>
     public required NodeHeartbeatWriter Heartbeat { get; init; }
+
+    /// <summary>The platform's observation sources (03 section 1), or <see langword="null"/> for a node that observes nothing.</summary>
+    public IResourceSampler? Sampler { get; init; }
 }
 
 /// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
@@ -111,7 +115,7 @@ public readonly record struct CallerKey(int ProcessId, long StartTicks);
 /// limits, the cancellation sequence, exit detection and the node heartbeat), finalization from the durable exit records, recovery
 /// after a node restart or a machine reboot (LOST), and <c>cancel_when_caller_gone</c>.
 /// </summary>
-public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDisposable
+public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDisposable, IPressureResponse
 {
     /// <summary>The tailer interval (04 section 4).</summary>
     public static readonly TimeSpan TailInterval = TimeSpan.FromMilliseconds(100);
@@ -156,6 +160,8 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     private Task _admissionLoop = Task.CompletedTask;
     private long _lastSettingsRead;
     private int _launching;
+    private readonly Lock _preemptGate = new();
+    private bool _onlyProtectedReported;
 
     /// <summary>Creates the supervisor.</summary>
     public ExecutionSupervisor(ExecutionOptions options)
@@ -179,6 +185,12 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         _settings = new ExecutionSettings(_store.Policies.Current().Document, capacity.LogicalProcessors, capacity.PhysicalMemoryBytes);
         _lastSettingsRead = _clock.GetTimestamp();
         _tailerMonitor = Heartbeat.AddMonitor("output-tailer", TimeSpan.FromSeconds(5));
+        if (options.Sampler is { } sampler)
+        {
+            Resources = new ResourceMonitor(sampler, this, _store, _processor, _log, _clock);
+            Resources.AddResponse(this);
+        }
+
         if (_faults.Take("hang-probe-after") is { } probeHang)
         {
             Heartbeat.AddProbe(new FaultProbe(probeHang, _clock));
@@ -202,6 +214,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
     /// <summary>The heartbeat writer.</summary>
     public NodeHeartbeatWriter Heartbeat { get; }
+
+    /// <summary>The resource monitor (03 sections 1, 2 and 7), or <see langword="null"/> without a sampler.</summary>
+    public ResourceMonitor? Resources { get; }
 
     /// <summary>The settings in force (re-read from the policy every 10 s).</summary>
     public ExecutionSettings Settings
@@ -227,6 +242,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
     /// <summary>Attempts the supervisor runs now.</summary>
     public int RunningCount => _running.Count;
+
+    /// <summary>The attempts the supervisor runs now.</summary>
+    public IEnumerable<RunningAttempt> RunningAttempts => _running.Values;
 
     /// <summary>The running attempt with <paramref name="attemptName"/>, or <see langword="null"/>.</summary>
     public RunningAttempt? Running(string attemptName) => _running.TryGetValue(attemptName, out var attempt) ? attempt : null;
@@ -285,6 +303,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 TimeoutMs = task?.Spec.HasTimeoutMs == true ? task.Spec.TimeoutMs : null,
                 CpuLimitMs = task?.Spec.HasCpuTimeLimitMs == true ? task.Spec.CpuTimeLimitMs : null,
                 StopSignal = task?.Spec.Resources is { HasStopSignal: true } stopResources ? stopResources.StopSignal : null,
+                Priority = task?.Priority ?? Priority.Normal,
+                Preemptible = task?.Spec.Resources?.Preemptible == true,
+                WorkingDirectory = task?.Spec.WorkingDirectory,
             };
             if (task?.Spec.Resources is { HasCancelGraceMs: true } resources)
             {
@@ -380,6 +401,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         _loop = new Thread(EnforcementLoop) { IsBackground = true, Name = "arcforges-enforcement" };
         _loop.Start();
         _admissionLoop = Task.Run(AdmissionLoopAsync);
+        Resources?.Start();
         Kick();
     }
 
@@ -392,6 +414,11 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
     /// </summary>
     public async Task StopAsync()
     {
+        if (Resources is { } resources)
+        {
+            await resources.StopAsync().ConfigureAwait(false);
+        }
+
         await _stop.CancelAsync().ConfigureAwait(false);
         _loopWake.Pulse();
         _loop?.Join(TimeSpan.FromSeconds(2));
@@ -437,7 +464,113 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             await StopAsync().ConfigureAwait(false);
         }
 
+        Resources?.Dispose();
         _stop.Dispose();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------- pressure
+
+    /// <summary>
+    /// The pressure response of 03 sections 5.4 and 7 (R-RES-009, R-RES-014), called after every evaluation: at Critical (and with
+    /// <c>pressure.cancel_on_critical</c>) one preemptible attempt is stopped per evaluation, from the lowest priority up and the most
+    /// recently started first, without the graceful phase (<c>PREEMPTED</c>), until the level recovers. Non-preemptible attempts are never
+    /// stopped for pressure; when only they remain while available memory is below the Critical threshold, a critical
+    /// <c>MEMORY_PRESSURE</c> finding leaves the decision to the user. Tight (admission) and the Pressure-level freeze or requeue join with
+    /// the scheduler (AF-SCHED-01) through <see cref="IPressureResponse"/>.
+    /// </summary>
+    void IPressureResponse.Respond(PressureLevel level, PressureLevel previous, ResourceState state)
+    {
+        if (level != PressureLevel.Critical)
+        {
+            _onlyProtectedReported = false;
+            return;
+        }
+
+        var settings = Settings;
+        if (!settings.Pressure.CancelOnCritical || _stop.IsCancellationRequested)
+        {
+            return;
+        }
+
+        RunningAttempt? victim;
+        lock (_preemptGate)
+        {
+            victim = _running.Values
+                .Where(attempt => attempt.Preemptible && attempt.Handle is not null && !attempt.Finalizing && attempt.StopReason is null)
+                .OrderByDescending(attempt => attempt.Priority == Priority.Unspecified ? (int)Priority.Normal : (int)attempt.Priority)
+                .ThenByDescending(attempt => attempt.StartedTimestamp ?? long.MaxValue)
+                .FirstOrDefault();
+        }
+
+        if (victim is not null)
+        {
+            Preempt(victim, state);
+            return;
+        }
+
+        if (!_onlyProtectedReported && _running.Values.Any(attempt => !attempt.Finalizing)
+            && state.AvailableMemory < settings.Pressure.Critical * state.CapacityMemory)
+        {
+            _onlyProtectedReported = true;
+            _ = RecordAsync(context =>
+            {
+                ExecutionFindings.Raise(context, FindingKind.MemoryPressure, Severity.Error, "node", _store.Metadata.NodeId.Span,
+                    "Critical memory pressure with only non-preemptible work",
+                    "Available memory is below the Critical threshold and every running attempt is non-preemptible, so the node stops none of them; "
+                    + "the decision is yours (03 section 5.4). The operating system's own limits still apply.",
+                    [("available_bytes", state.AvailableMemory.ToString(CultureInfo.InvariantCulture)),
+                        ("capacity_bytes", state.CapacityMemory.ToString(CultureInfo.InvariantCulture)), ("trigger", state.PressureTrigger),
+                        ("running_attempts", _running.Count.ToString(CultureInfo.InvariantCulture))]);
+                return 0;
+            });
+        }
+    }
+
+    /// <summary>Stops a preemptible attempt at Critical pressure: STOPPING is recorded with the trigger, then the container is stopped at once.</summary>
+    private void Preempt(RunningAttempt attempt, ResourceState state)
+    {
+        var detail = string.Create(CultureInfo.InvariantCulture,
+            $"preempted at critical memory pressure ({state.PressureTrigger}; {state.AvailableMemory} of {state.CapacityMemory} bytes available); stopped without the graceful phase");
+        lock (attempt)
+        {
+            if (attempt.StopReason is not null)
+            {
+                return;
+            }
+
+            attempt.StopDetail = detail;
+        }
+
+        _log.Warning("execution.preempted", new LogField("attempt", attempt.Name), new LogField("priority", attempt.Priority),
+            new LogField("trigger", state.PressureTrigger), new LogField("availableBytes", state.AvailableMemory));
+        _ = RecordAsync(context =>
+        {
+            var transaction = context.Transaction;
+            var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
+            if (transaction.Execute("UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);", ("$id", attempt.AttemptId)) == 1
+                && previous is not null)
+            {
+                EmitAttempt(context, attempt.AttemptId, previous.State);
+            }
+
+            transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(detail)), ("$id", attempt.TaskId));
+            EmitTask(context, attempt.TaskId, null);
+            return 0;
+        });
+        Stop(attempt.Name, TerminationReason.Preempted, null, graceful: false);
+    }
+
+    private async Task RecordAsync(Func<CommandContext, int> command)
+    {
+        try
+        {
+            await _processor.ExecuteAsync(command).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException or ObjectDisposedException
+            or InvalidOperationException)
+        {
+            _log.Warning("execution.pressure.record_failed", new LogField("errorType", exception.GetType().Name));
+        }
     }
 
     // --------------------------------------------------------------------------------------------------------------------- submit
@@ -640,7 +773,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
             if (!graceful || attempt.Handle.Root is null)
             {
-                if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit)
+                if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit or TerminationReason.Preempted)
                 {
                     var how = attempt.Handle.StopAtLimit();
                     _log.Info("execution.limit_stop", new LogField("attempt", attemptName), new LogField("reason", reason),
@@ -1168,7 +1301,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
             return;
         }
 
-        var found = escaped.Where(process => attempt.KnownEscaped.Add((process.Pid, process.StartTime.UtcTicks))).ToList();
+        var found = escaped.Where(process => attempt.KnownEscaped.TryAdd((process.Pid, process.StartTime.UtcTicks), true)).ToList();
         if (found.Count == 0)
         {
             return;
@@ -1330,6 +1463,9 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                 TimeoutMs = spec.HasTimeoutMs ? spec.TimeoutMs : null,
                 CpuLimitMs = spec.HasCpuTimeLimitMs ? spec.CpuTimeLimitMs : null,
                 StopSignal = spec.Resources is { HasStopSignal: true } stopResources ? stopResources.StopSignal : null,
+                Priority = admitted.Row.Priority,
+                Preemptible = spec.Resources?.Preemptible == true,
+                WorkingDirectory = spec.WorkingDirectory,
             };
             if (spec.Resources is { HasCancelGraceMs: true } resources)
             {

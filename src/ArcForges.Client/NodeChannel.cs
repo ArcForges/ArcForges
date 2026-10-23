@@ -6,7 +6,8 @@ namespace ArcForges.Client;
 
 /// <summary>
 /// The LocalRpc client channel to one node endpoint (architecture 12 section 1 <c>NodeChannel</c>): one HTTP/2 connection over
-/// the verified pipe or socket, with the generated <see cref="NodeService"/>, <see cref="NodeEventService"/> and <see cref="TaskService"/> clients. It
+/// the verified pipe or socket, with the generated <see cref="NodeService"/>, <see cref="NodeEventService"/>, <see cref="TaskService"/> and
+/// <see cref="ResourceService"/> clients. It
 /// records how its last connection attempt ended, so a failed call can be classified (not running, busy, refused).
 /// </summary>
 public sealed class NodeChannel : IAsyncDisposable
@@ -22,6 +23,7 @@ public sealed class NodeChannel : IAsyncDisposable
         Node = new NodeService.NodeServiceClient(_channel.CallInvoker);
         Events = new NodeEventService.NodeEventServiceClient(_channel.CallInvoker);
         Tasks = new TaskService.TaskServiceClient(_channel.CallInvoker);
+        Resources = new ResourceService.ResourceServiceClient(_channel.CallInvoker);
     }
 
     /// <summary>The endpoint.</summary>
@@ -35,6 +37,9 @@ public sealed class NodeChannel : IAsyncDisposable
 
     /// <summary>The generated TaskService client.</summary>
     public TaskService.TaskServiceClient Tasks { get; }
+
+    /// <summary>The generated ResourceService client.</summary>
+    public ResourceService.ResourceServiceClient Resources { get; }
 
     /// <summary>True once an operating-system connection to the endpoint was opened.</summary>
     public bool EverConnected => Volatile.Read(ref _connected) != 0;

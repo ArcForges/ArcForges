@@ -26,6 +26,14 @@ public sealed class JobMembers(JobObject job) : IDisposable
     private readonly List<(int Pid, ProcessLifetime Life)> _retired = [];
     private readonly Lock _gate = new();
     private bool _disposed;
+    private volatile string? _vmLauncher;
+
+    /// <summary>
+    /// The image of the first member seen running a launcher into the WSL VM (<see cref="VmProcesses.IsLauncher"/>), or
+    /// <see langword="null"/>: the attempt crosses the VM boundary (03 section 9). The image is read when the member is recorded, so a
+    /// short-lived <c>wsl.exe</c> is seen through its job message even when no sample ever lists it.
+    /// </summary>
+    public string? VmLauncher => _vmLauncher;
 
     /// <summary>Records a running member (from JOB_OBJECT_MSG_NEW_PROCESS or the job's process list).</summary>
     public void Remember(int pid)
@@ -64,6 +72,11 @@ public sealed class JobMembers(JobObject job) : IDisposable
             }
 
             _members[pid] = new Member(created) { Handle = handle };
+            if (_vmLauncher is null && ProcessInfo.ImageName(handle) is { } image && VmProcesses.IsLauncher(image))
+            {
+                _vmLauncher = image;
+            }
+
             if (!ProcessInfo.IsRunning(handle))
             {
                 Close(_members[pid]);

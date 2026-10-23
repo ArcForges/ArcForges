@@ -129,6 +129,29 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
+    public AttemptUsage Usage(IReadOnlyDictionary<int, ProcessSample>? processes)
+    {
+        // The job's accounting covers its exited processes (V-W03); memory is the sum of the members' private working sets (03 section 3),
+        // which leave the file cache out by construction.
+        var accounting = _job.Accounting();
+        var pids = _job.ProcessIds();
+        long memory = 0;
+        foreach (var pid in pids)
+        {
+            _members.Remember(pid);
+            if (processes is not null && processes.TryGetValue(pid, out var process))
+            {
+                memory += process.MemoryBytes;
+            }
+        }
+
+        return new AttemptUsage((long)(accounting.UserTime + accounting.KernelTime).TotalMilliseconds, memory, accounting.ReadBytes, accounting.WriteBytes, pids);
+    }
+
+    /// <inheritdoc />
+    public bool CrossesVmBoundary => _members.VmLauncher is not null;
+
+    /// <inheritdoc />
     public void Terminate() => _job.Terminate(AttemptRunner.TerminatedExitCode);
 
     /// <inheritdoc />

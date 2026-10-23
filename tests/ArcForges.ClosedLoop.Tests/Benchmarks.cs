@@ -7,7 +7,8 @@ namespace ArcForges.ClosedLoop.Tests;
 /// <summary>
 /// Workstation benchmarks of 15-performance-targets section 1 (category=perf; never run by default): the CLI cold start
 /// (<c>arcforges --version</c>, p50 at most 40 ms and p95 at most 80 ms) and the status round trip (<c>arcforges status --json</c> with
-/// the node running, p50 at most 60 ms), each 50 runs after one warm-up, measured by <c>arcforges-bench startup</c>. Targets apply to
+/// the node running, p50 at most 60 ms), each 50 runs after one warm-up, measured by <c>arcforges-bench startup</c>, and the idle CPU while
+/// the node samples resources (at most 0.5% of one core). Targets apply to
 /// Release Native AOT builds: set ARCFORGES_HOST_PATH to the published binary. Results are written to ARCFORGES_BENCH_OUTPUT (a
 /// directory) when it is set.
 /// </summary>
@@ -182,6 +183,55 @@ public sealed class Benchmarks
 
         Assert.True(p95 <= 250, $"admission latency p95 {p95:0.0} ms (p50 {p50:0.0} ms) exceeds 250 ms");
         Assert.True(guardPrivate <= GuardTargetBytes, $"the guard uses {guardPrivate} private bytes (target {GuardTargetBytes / 1_000_000} MB)");
+    }
+
+    /// <summary>
+    /// Idle CPU while sampling (15 section 1: at most 0.5% of one core, a 10-minute average, LAN and cloud off; AF-RES-01): the node's own
+    /// processor time over <c>ARCFORGES_IDLE_SECONDS</c> (default 600) after a 30 s warm-up, with the resource monitor sampling the machine
+    /// every second and the process table every 5 s. The machine samples the node stored over the window prove that it sampled.
+    /// </summary>
+    [Fact(Timeout = 1_500_000)]
+    public async Task IdleCpuWhileSampling()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireNativeHost();
+        var seconds = int.TryParse(Environment.GetEnvironmentVariable("ARCFORGES_IDLE_SECONDS"), System.Globalization.CultureInfo.InvariantCulture, out var configured)
+            ? configured
+            : 600;
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        using var process = Process.GetProcessById(node.NodePid());
+        await Task.Delay(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        process.Refresh();
+        var before = process.TotalProcessorTime;
+        var watch = Stopwatch.StartNew();
+        await Task.Delay(TimeSpan.FromSeconds(seconds), TestContext.Current.CancellationToken);
+        process.Refresh();
+        var cpu = process.TotalProcessorTime - before;
+        var elapsed = watch.Elapsed;
+        var percent = cpu.TotalMilliseconds / elapsed.TotalMilliseconds * 100;
+        var samples = (await node.CliAsync("samples", "--scope", "machine", "--range", (seconds + 60).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s",
+            "--max-points", "10000", "--json")).Json();
+        var stored = samples.TryGetProperty("samples", out var list) ? list.GetArrayLength() : 0;
+        var result = new System.Text.Json.Nodes.JsonObject
+        {
+            ["name"] = "idle-cpu",
+            ["seconds"] = Math.Round(elapsed.TotalSeconds, 1),
+            ["cpuMs"] = Math.Round(cpu.TotalMilliseconds, 1),
+            ["percentOfOneCore"] = Math.Round(percent, 3),
+            ["machineSamples"] = stored,
+            ["host"] = TestNode.Host,
+        };
+        TestContext.Current.TestOutputHelper?.WriteLine(result.ToJsonString());
+        if (Environment.GetEnvironmentVariable("ARCFORGES_BENCH_OUTPUT") is { Length: > 0 } directory)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "idle-cpu-" + (OperatingSystem.IsWindows() ? "windows" : "linux") + ".json"),
+                result.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        Assert.True(stored >= (seconds / 5) - 2, $"the node stored {stored} machine samples in {seconds} s");
+        Assert.True(percent <= 0.5, $"the idle node used {percent:0.000}% of one core ({cpu.TotalMilliseconds:0} ms in {elapsed.TotalSeconds:0} s)");
     }
 
     /// <summary>
