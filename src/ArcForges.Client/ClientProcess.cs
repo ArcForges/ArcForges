@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -73,6 +74,40 @@ public static class ClientProcess
             Pid = (uint)process.Id,
             StartTime = ProtoTime.ToInstant(new DateTimeOffset(process.StartTime.ToUniversalTime())),
         };
+    }
+
+    /// <summary>
+    /// The identity (pid and start time) of another process on this machine, as the node reads it (for <c>AdoptProcess</c> and
+    /// <c>TerminateProcess</c>, which never act on a process ID alone), or <see langword="null"/> when it does not exist. Linux: the start
+    /// time of <c>/proc/&lt;pid&gt;/stat</c> after the boot time of <c>/proc/stat</c> in the kernel's user clock ticks (USER_HZ, 100 on every
+    /// supported architecture), as the node computes it; Windows: the process's creation time.
+    /// </summary>
+    public static ProcessIdentity? Identity(int pid)
+    {
+        try
+        {
+            DateTimeOffset start;
+            if (OperatingSystem.IsLinux())
+            {
+                var stat = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/stat");
+                var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+                var boot = File.ReadLines("/proc/stat").First(line => line.StartsWith("btime ", StringComparison.Ordinal));
+                start = DateTimeOffset.FromUnixTimeMilliseconds((long.Parse(boot.AsSpan(6), NumberStyles.None, CultureInfo.InvariantCulture) * 1000)
+                    + (long.Parse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture) * 1000 / 100));
+            }
+            else
+            {
+                using var process = Process.GetProcessById(pid);
+                start = new DateTimeOffset(process.StartTime.ToUniversalTime());
+            }
+
+            return new ProcessIdentity { Pid = (uint)pid, StartTime = ProtoTime.ToInstant(start) };
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException
+            or FormatException or IndexOutOfRangeException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>The client hello of this process.</summary>

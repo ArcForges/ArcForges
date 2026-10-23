@@ -90,6 +90,9 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>A snapshot of the API server's counters (set by the API layer).</summary>
     public Func<IReadOnlyList<HealthMetric>>? ServerMetrics { get; set; }
 
+    /// <summary>Executes the approvals a node stop left APPROVED (set by the API layer; run once the execution supervisor runs).</summary>
+    public Func<Task>? ResumeApprovals { get; set; }
+
     /// <summary>Counts one API call.</summary>
     public void CountCall() => Interlocked.Increment(ref _rpcCalls);
 

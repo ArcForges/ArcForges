@@ -52,7 +52,11 @@ public sealed class NodeServiceTests
         Assert.Equal(Origin.Script, (await Hello(channel, hello => hello.InteractiveTerminal = false)).Value.AssignedOrigin);
         Assert.Equal(Origin.Script, (await Hello(channel, hello => { hello.InteractiveTerminal = true; hello.CiMarkers.Add("CI"); })).Value.AssignedOrigin);
         Assert.Equal(Origin.Agent, (await Hello(channel, hello => hello.ClientKind = ClientKind.McpAdapter)).Value.AssignedOrigin);
-        Assert.Equal(Origin.Human, (await Hello(channel, hello => hello.ClientKind = ClientKind.Desktop)).Value.AssignedOrigin);
+
+        // 11 section 1 (AF-SEC-01): the client kind is verified against the peer. This process runs the node's own executable, so its CLI
+        // kind verifies (the interactive CLI above is HUMAN), but it is not arcforges-desktop: declaring DESKTOP no longer makes it HUMAN.
+        Assert.Equal(Origin.Script, (await Hello(channel, hello => hello.ClientKind = ClientKind.Desktop)).Value.AssignedOrigin);
+        Assert.Equal(Origin.Script, (await Hello(channel, hello => { hello.ClientKind = ClientKind.Desktop; hello.InteractiveTerminal = true; })).Value.AssignedOrigin);
 
         // R-API-007: another major is refused with a typed error; a newer minor is accepted with a warning.
         var major = await Hello(channel, hello => hello.ContractMajor = 2);
@@ -125,9 +129,19 @@ public sealed class NodeServiceTests
         Assert.Equal(node.DataRoot, current.Value.Settings.DataRoot);
         Assert.Equal(node.ConfigPath, current.Value.Settings.ConfigPath);
 
+        // node.proto: UpdateNodeSettings is HUMAN A, SCRIPT P, AGENT D (11 section 1).
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
+        var asScript = await script.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = InProcessNode.Command(), LogLevel = LogLevel.Debug },
+            deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+        Assert.Equal(("approval_required", "approval"), (asScript.Error.Code, asScript.Error.Details.State.Resource.Kind));
+        var asAgent = await agent.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = InProcessNode.Command(), LogLevel = LogLevel.Debug },
+            deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+        Assert.Equal("permission_denied", asAgent.Error.Code);
+
         var meta = InProcessNode.Command();
         meta.ExpectedRev = new Revision { Value = 0 };
-        var updated = await script.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = meta, LogLevel = LogLevel.Debug },
+        var updated = await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = meta, LogLevel = LogLevel.Debug },
             deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
         Assert.Equal(1, updated.Value.Settings.Revision.Value);
         Assert.False(updated.Value.RestartRequired);
@@ -136,7 +150,7 @@ public sealed class NodeServiceTests
 
         var stale = InProcessNode.Command();
         stale.ExpectedRev = new Revision { Value = 0 };
-        var conflict = await script.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = stale, LogLevel = LogLevel.Error },
+        var conflict = await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = stale, LogLevel = LogLevel.Error },
             deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
         Assert.Equal("revision_conflict", conflict.Error.Code);
         Assert.Equal(1, conflict.Error.Details.Revision.Actual.Value);
@@ -145,7 +159,6 @@ public sealed class NodeServiceTests
         var denied = await script.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = InProcessNode.Command(), TelemetryOptIn = true },
             deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
         Assert.Equal(("permission_denied", ErrorCategory.Authorization), (denied.Error.Code, denied.Error.Category));
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
         var allowed = await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = InProcessNode.Command(), TelemetryOptIn = true },
             deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
         Assert.True(allowed.Value.Settings.TelemetryOptIn);

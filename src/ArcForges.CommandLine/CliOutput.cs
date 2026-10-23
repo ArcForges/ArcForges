@@ -223,6 +223,14 @@ public sealed class CliOutput
         {
             var category = error.Category.ToString().ToUpperInvariant();
             var id = IdText.Format(correlation ?? error.CorrelationId);
+            if (error.Code == "approval_required" && error.Details?.State?.Resource?.Id is { } approval)
+            {
+                // cli.md section 5: the approval is pending; exit 6.
+                var text = IdText.Format(approval);
+                _error.WriteLine($"Waiting for approval {text} (approve in ArcForges Desktop or with 'arcforges approvals approve {text}')");
+                return ExitCodes.For(error);
+            }
+
             _error.WriteLine($"error: {Messages.For(error)} ({category}/{error.Code}" + (id.Length > 0 ? $", correlation {id})" : ")"));
         }
 

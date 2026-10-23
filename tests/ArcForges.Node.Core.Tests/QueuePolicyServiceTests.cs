@@ -8,9 +8,9 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>
 /// <c>QueueService</c> pools and parallelism and <c>PolicyService</c> (queue.proto, policy.proto) through the real client against an
 /// in-process node: every pool and parallelism change is a policy revision; built-in pools cannot be deleted; a document with an ERROR issue
-/// is refused with its issues; <c>expected_rev</c> is required and checked; revisions are listed and restored; an AGENT caller is refused
-/// the operations that need an approval (approvals arrive with AF-SEC-01), and <c>retry_safety</c> changes only from a HUMAN. No processes
-/// run, so the tests need no execution platform.
+/// is refused with its issues; <c>expected_rev</c> is required and checked; revisions are listed and restored; the permission matrix decides
+/// per origin (11 section 1): an approval-required cell raises an approval and fails with <c>approval_required</c>, and <c>retry_safety</c>
+/// changes only from a HUMAN. No processes run, so the tests need no execution platform.
 /// </summary>
 public sealed class QueuePolicyServiceTests
 {
@@ -132,12 +132,13 @@ public sealed class QueuePolicyServiceTests
     }
 
     /// <summary>
-    /// The interim gate per origin (11 section 1, until AF-SEC-01): HUMAN may do everything; SCRIPT may change a task's priority and pause or
-    /// resume a pool, while parallelism, policy and pool changes need an approval and are refused; AGENT is refused all of them. A refusal
-    /// of a <c>P</c> cell says that approvals arrive with AF-SEC-01, and nothing changes.
+    /// The default matrix per origin (11 section 1; AF-SEC-01 replaced AF-SCHED-01's interim gate): HUMAN may do everything; SCRIPT may change
+    /// a task's priority and pause or resume a pool, while parallelism, policy and pool changes need an approval; AGENT needs an approval for
+    /// all of them. Each approval-required call raises a PENDING approval, fails with <c>AUTHORIZATION/approval_required</c> carrying its ID,
+    /// and changes nothing until a HUMAN approves.
     /// </summary>
     [Fact(Timeout = 120_000)]
-    public async Task TheInterimGateFollowsTheDefaultMatrixPerOrigin()
+    public async Task TheMatrixFollowsTheDefaultsPerOrigin()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
@@ -178,10 +179,12 @@ public sealed class QueuePolicyServiceTests
             Meta = Tasks.Meta(),
             TaskId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) },
         }, cancellationToken: Ct)).Error;
+        var raised = new HashSet<string>(StringComparer.Ordinal);
         void Approval(ArcError? error)
         {
-            Assert.Equal("permission_denied", error?.Code);
-            Assert.Contains("AF-SEC-01", error!.ToString(), StringComparison.Ordinal);
+            Assert.Equal(("approval_required", ErrorCategory.Authorization, RetryMode.Reconcile), (error?.Code, error?.Category, error?.Retry.Mode));
+            Assert.Equal("approval", error!.Details.State.Resource.Kind);
+            Assert.True(raised.Add(IdText.Format(error.Details.State.Resource.Id)), "every new command raises its own approval");
         }
 
         // SCRIPT: priority and pool pausing are A; parallelism, policy and pools are P.
@@ -202,8 +205,11 @@ public sealed class QueuePolicyServiceTests
         Approval(await PauseTaskAsync(agent));
         Assert.Equal("not_found", (await ResumeTaskAsync(agent))?.Code);
 
-        // Nothing changed; reads are allowed for every origin.
+        // Nothing changed; reads are allowed for every origin; the approvals wait, pending, for a HUMAN.
         Assert.Equal(revision, (await agent.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Revision.Revision.Value);
+        var pending = (await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta(), States = { ApprovalState.Pending } },
+            cancellationToken: Ct)).Value.Approvals;
+        Assert.Equal(raised.Order(StringComparer.Ordinal), pending.Select(approval => IdText.Format(approval.ApprovalId)).Order(StringComparer.Ordinal));
         Assert.Null((await script.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error);
 
         // HUMAN: all A, retry_safety included.
@@ -216,12 +222,13 @@ public sealed class QueuePolicyServiceTests
     }
 
     /// <summary>
-    /// Cancelling, pausing or re-prioritising another owner's task (11 section 1: HUMAN A, SCRIPT and AGENT P): a task an agent session owns
-    /// is refused to a SCRIPT caller (approvals arrive with AF-SEC-01) and cancelled by a HUMAN; the SCRIPT caller's own task is its own. The
-    /// tasks wait in a paused pool, so no process runs.
+    /// Cancelling or re-prioritising another owner's task (11 section 1: HUMAN A, SCRIPT and AGENT P): a task an agent session owns is another
+    /// owner's to a SCRIPT caller, so its cancel raises an approval; once a HUMAN approves, the captured request runs under its original command
+    /// ID, and the SCRIPT caller's retry with that command ID receives the executed outcome (the task CANCELLED). The SCRIPT caller's own task
+    /// is its own. The tasks wait in a paused pool, so no process runs.
     /// </summary>
     [Fact(Timeout = 120_000)]
-    public async Task AnotherOwnersTaskIsCancelledOnlyByAHumanUntilApprovalsExist()
+    public async Task AnotherOwnersTaskIsCancelledOnceAHumanApproves()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
@@ -234,10 +241,11 @@ public sealed class QueuePolicyServiceTests
         var others = await Sched.SubmitAsSessionAsync(node, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"), session);
         var own = await Tasks.SubmitAsync(script, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
 
-        var refused = (await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others }, cancellationToken: Ct)).Error;
-        Assert.Equal("permission_denied", refused?.Code);
-        Assert.Contains("AF-SEC-01", refused!.ToString(), StringComparison.Ordinal);
-        Assert.Equal("permission_denied", (await script.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
+        var cancel = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others };
+        var refused = (await script.Tasks.CancelTaskAsync(cancel, cancellationToken: Ct)).Error;
+        Assert.Equal("approval_required", refused?.Code);
+        var approvalId = refused!.Details.State.Resource.Id;
+        Assert.Equal("approval_required", (await script.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
         {
             Meta = Tasks.Meta(),
             TaskId = others,
@@ -245,17 +253,38 @@ public sealed class QueuePolicyServiceTests
         }, cancellationToken: Ct)).Error?.Code);
         Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(human, others)).State);
 
-        // A SCRIPT caller re-prioritises and cancels its own task; a HUMAN cancels the session's.
+        // The same command again finds the same approval; the requester cannot decide it.
+        Assert.Equal(approvalId, (await script.Tasks.CancelTaskAsync(cancel, cancellationToken: Ct)).Error.Details.State.Resource.Id);
+        Assert.Equal("permission_denied", (await script.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+        {
+            Meta = Tasks.Meta(),
+            ApprovalId = approvalId,
+            Decision = ApprovalDecisionKind.Approve,
+        }, cancellationToken: Ct)).Error?.Code);
+
+        var decided = await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+        {
+            Meta = Tasks.Meta(),
+            ApprovalId = approvalId,
+            Decision = ApprovalDecisionKind.Approve,
+            Comment = "fine",
+        }, cancellationToken: Ct);
+        Assert.Null(decided.Error);
+        Assert.Equal((ApprovalState.Executed, "TaskService.CancelTask", Origin.Human), (decided.Value.Approval.State, decided.Value.Approval.Operation,
+            decided.Value.Approval.DecidedBy.Origin));
+        Assert.Equal(cancel.Meta.CommandId, decided.Value.Approval.CommandId);
+        Assert.Equal(TaskState.Cancelled, (await Tasks.GetAsync(human, others)).State);
+
+        // The retry with the original command ID receives the executed outcome.
+        var retried = await script.Tasks.CancelTaskAsync(cancel, cancellationToken: Ct);
+        Assert.Null(retried.Error);
+        Assert.Equal((TaskState.Cancelled, EffectCertainty.Happened), (retried.Value.State, retried.Value.Receipt.Effect));
+        Assert.Equal(cancel.Meta.CommandId, retried.Value.Receipt.CommandId);
+
+        // A SCRIPT caller re-prioritises and cancels its own task without an approval.
         var moved = await script.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest { Meta = Tasks.Meta(), TaskId = own, Priority = Priority.Low }, cancellationToken: Ct);
         Assert.Null(moved.Error);
         Assert.Equal(Priority.Low, (await Tasks.GetAsync(script, own)).EffectivePriority);
         Assert.Equal(TaskState.Cancelled, (await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = own }, cancellationToken: Ct)).Value.State);
-        Assert.Equal(TaskState.Cancelled, (await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others }, cancellationToken: Ct)).Value.State);
-        Assert.Equal("invalid_state", (await human.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
-        {
-            Meta = Tasks.Meta(),
-            TaskId = others,
-            Priority = Priority.High,
-        }, cancellationToken: Ct)).Error?.Code);
     }
 }

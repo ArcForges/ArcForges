@@ -7,6 +7,7 @@ using ArcForges.Node.Core;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 
@@ -300,7 +301,7 @@ public static class NodeHost
                 Opened = session => execution.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
                 Closed = session => execution.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
             };
-            server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer);
+            server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(options.TestMode));
             try
             {
                 await server.StartAsync(node.Stopping).ConfigureAwait(false);
@@ -344,6 +345,22 @@ public static class NodeHost
             await node.TransitionAsync(enforced ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded,
                 enforced ? "ready" : NodeCapabilities.DegradedReason).ConfigureAwait(false);
             execution.Start();
+            if (node.ResumeApprovals is { } resume)
+            {
+                // 11 section 1: an approval the previous run approved but did not execute runs now, under its original command ID.
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await resume().ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException)
+                    {
+                        log.Warning("node.approvals.resume_failed", new LogField("errorType", exception.GetType().Name));
+                    }
+                }, CancellationToken.None);
+            }
+
             notifier.Notify("READY=1\nSTATUS=ArcForges node " + node.Lifecycle.State.ToString().ToLowerInvariant());
             ready?.Set();
             options.Ready?.Invoke(node);
@@ -465,8 +482,10 @@ public static class NodeHost
             {
                 try
                 {
+                    // Approvals past their TTL expire; decided approvals (90 days) and audit entries (1 year) are pruned (node-store.md).
                     var removed = await node.Processor.ExecuteAsync(context =>
-                        EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)).ConfigureAwait(false);
+                        EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
+                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
 
                     // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.
@@ -542,6 +561,10 @@ public static class NodeHost
             Slice = options.LinuxSlice ?? LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.Slice) ?? ArcForges.Node.Platform.Linux.LinuxExecutionPlatform.DefaultSlice,
             ManagerAddress = options.SystemdAddress ?? LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.ManagerAddress),
             DelegatedControllers = options.LinuxControllers ?? controllers?.Split(' ', StringSplitOptions.RemoveEmptyEntries),
+
+            // AD-0007 section 8: attempt units must not reach the node store or the data root's secret stores (where the hardening applies).
+            ProtectedPaths = [Path.GetDirectoryName(store.DatabasePath)!, Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(store.DatabasePath)!)!, "run", "secrets"),
+                Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(store.DatabasePath)!)!, "run", "test-secrets")],
         });
         var settings = new ExecutionSettings(store.Policies.Current().Document, platform.Capacity.LogicalProcessors, platform.Capacity.PhysicalMemoryBytes);
         var limits = settings.RootLimits();

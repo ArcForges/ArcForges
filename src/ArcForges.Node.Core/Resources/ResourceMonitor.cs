@@ -635,11 +635,28 @@ public sealed class ResourceMonitor : IDisposable
             }
         }
 
+        var adopted = new Dictionary<int, ProcessOwner>();
+        foreach (var adoption in _execution.Adoptions.Tracked)
+        {
+            try
+            {
+                foreach (var pid in adoption.Container.Processes())
+                {
+                    adopted[pid] = new ProcessOwner(adoption.AttemptId, adoption.TaskId, false);
+                }
+            }
+            catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or ObjectDisposedException)
+            {
+                _log.Debug("resources.adopted.read_failed", new LogField("errorType", exception.GetType().Name));
+            }
+        }
+
         return new ProcessContext
         {
             NodePid = Environment.ProcessId,
             NodeImage = _nodeImage,
             Managed = managed,
+            Adopted = adopted,
             Escaped = escaped,
             IsVmWorker = _sampler.IsVmWorker,
         };

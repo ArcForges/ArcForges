@@ -24,6 +24,15 @@ namespace ArcForges.Node.Platform.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsExecutionPlatform : IExecutionPlatform
 {
+    /// <summary>The ending of every resource guarantee's reason (03 sections 5 and 8; 11 section 1: T-22, T-23).</summary>
+    public const string SameUserQualifier = "; same-user code can change or end ArcForges' containers (T-22), and work launched outside the recorded ancestry never joins them (T-23)";
+
+    /// <summary>The exit code of a process <see cref="TerminateProcess"/> ends.</summary>
+    public const uint TerminatedExitCode = 0xC000013A;
+
+    /// <summary>How far a process's creation time may differ from the one named (FILETIME, 100 ns): 20 ms.</summary>
+    private const long IdentityToleranceFileTime = 200_000;
+
     private const uint SignalTimeoutMs = 5_000;
     private readonly ConcurrentDictionary<nuint, WindowsAttemptHandle> _attempts = new();
     private readonly SafeKernelHandle _port;
@@ -123,9 +132,12 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             Pause = PauseSupport.Unsupported,
             PauseReason = "Windows has no supported job-wide freeze (AD-0005 Windows section 8)",
             KillTree = enforced ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort,
-            KillTreeReason = enforced ? "TerminateJobObject ends every process of the attempt's job; jobs allow no breakaway" : why,
-            Adopt = AdoptSupport.Unsupported,
-            AdoptReason = "process adoption is not part of this build",
+            KillTreeReason = enforced ? "TerminateJobObject ends every process of the attempt's job; jobs allow no breakaway" + SameUserQualifier : why,
+            Adopt = enforced ? AdoptSupport.Limited : AdoptSupport.Unsupported,
+            AdoptReason = enforced
+                ? "a same-user process outside any job joins the root job and then its own adoption job (V-W01); a process already in a job is refused, its "
+                    + "exit status is not captured, and its adoption job is not re-opened after a node restart"
+                : why,
             RestartSurvival = enforced,
             RestartSurvivalReason = enforced ? "each attempt's holder keeps its jobs openable by name across node restarts (L-14)" : why,
         };
@@ -149,6 +161,170 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
 
     /// <inheritdoc />
     public PreparedCommand Prepare(CommandRequest request) => WindowsCommands.Prepare(request);
+
+    /// <inheritdoc />
+    public AdoptionResult Adopt(AdoptionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var root = _root is not null && _selfTest is null ? _root : throw new AdoptionRefusedException(_selfTest ?? "the root job has not been created");
+        using var process = OpenForAdoption(request.Pid, request.Start.ToFileTime())
+            ?? throw new AdoptionRefusedException($"no process {request.Pid.ToString(CultureInfo.InvariantCulture)} started at that time") { NotFound = true };
+        if (!EscapedProcesses.IsSameUser(process))
+        {
+            throw new AdoptionRefusedException("the process runs as another user (adoption is same-user only, R-RES-013)");
+        }
+
+        if (root.Contains(process))
+        {
+            throw new AdoptionRefusedException("the process is already in a job of this node") { AlreadyManaged = true };
+        }
+
+        // 04 section 10: joining a foreign job would attach the ArcForges hierarchy to it.
+        if (Native.IsProcessInJob(process, 0, out var inJob) && inJob)
+        {
+            throw new AdoptionRefusedException("the process is already in a job (IsProcessInJob); joining it would attach the ArcForges jobs to a foreign job");
+        }
+
+        var name = JobName(request.NodeName, request.AttemptName);
+        var job = JobObject.Create(name);
+        try
+        {
+            try
+            {
+                // V-W01: root first, then the adoption job, which nests it under the root.
+                root.Assign(process);
+                job.Assign(process);
+            }
+            catch (Win32Exception exception)
+            {
+                throw new AdoptionRefusedException($"the operating system refused to place the process in a job ({exception.Message})", exception);
+            }
+
+            var image = ProcessInfo.ImageName(process) ?? request.Pid.ToString(CultureInfo.InvariantCulture);
+            var (adopted, failed, results) = AdoptChildren(root, job, request.Pid, ProcessInfo.CreationFileTime(process));
+            return new AdoptionResult(new WindowsAdoptedJob(job), image, adopted, failed, results);
+        }
+        catch
+        {
+            job.Dispose();
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public IAdoptedContainer? ReopenAdopted(string containerName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
+        return JobObject.Open(containerName) is { } job ? new WindowsAdoptedJob(job) : null;
+    }
+
+    /// <inheritdoc />
+    public ProcessTermination TerminateProcess(int pid, DateTimeOffset start)
+    {
+        using var process = ProcessInfo.Open(pid, terminate: true);
+        if (process is null)
+        {
+            return ProcessInfo.Open(pid) is { } readable && Matches(readable, start.ToFileTime()) ? Disposed(readable, ProcessTermination.Failed) : ProcessTermination.Gone;
+        }
+
+        if (!Matches(process, start.ToFileTime()) || !ProcessInfo.IsRunning(process))
+        {
+            return ProcessTermination.Gone;
+        }
+
+        if (!EscapedProcesses.IsSameUser(process))
+        {
+            return ProcessTermination.OtherUser;
+        }
+
+        return Native.TerminateProcess(process, TerminatedExitCode) ? ProcessTermination.Terminated
+            : ProcessInfo.IsRunning(process) ? ProcessTermination.Failed : ProcessTermination.Gone;
+    }
+
+    private static ProcessTermination Disposed(SafeKernelHandle handle, ProcessTermination result)
+    {
+        handle.Dispose();
+        return result;
+    }
+
+    private static bool Matches(SafeKernelHandle process, long creationFileTime) =>
+        ProcessInfo.CreationFileTime(process) is var created and > 0 && Math.Abs(created - creationFileTime) <= IdentityToleranceFileTime;
+
+    /// <summary>Opens a process with the rights a job assignment needs, when it is still the one created at <paramref name="creationFileTime"/>.</summary>
+    private static SafeKernelHandle? OpenForAdoption(int pid, long creationFileTime)
+    {
+        var handle = Native.OpenProcess(Native.ProcessQueryLimitedInformation | Native.Synchronize | Native.ProcessTerminate | Native.ProcessSetQuota, inherit: false, pid);
+        if (handle.IsInvalid)
+        {
+            handle.Dispose();
+            return null;
+        }
+
+        if (!Matches(handle, creationFileTime) || !ProcessInfo.IsRunning(handle))
+        {
+            handle.Dispose();
+            return null;
+        }
+
+        return handle;
+    }
+
+    /// <summary>
+    /// 04 section 10 step 3: the children of the adopted process that exist now (descendants by parent ID, each created within its parent's
+    /// lifetime) join the root job and the adoption job one by one, best effort, each result recorded. Later children follow the job.
+    /// </summary>
+    private static (int Adopted, int Failed, List<string> Results) AdoptChildren(JobObject root, JobObject job, int pid, long created)
+    {
+        var table = ProcessInfo.Snapshot();
+        var results = new List<string>();
+        var adopted = 0;
+        var failed = 0;
+        var frontier = new Queue<(int Pid, long Created)>([(pid, created)]);
+        var seen = new HashSet<int> { pid };
+        while (frontier.TryDequeue(out var parent) && seen.Count < 4096)
+        {
+            foreach (var child in table.Where(entry => entry.ParentPid == parent.Pid && !seen.Contains(entry.Pid)))
+            {
+                using var process = Native.OpenProcess(Native.ProcessQueryLimitedInformation | Native.Synchronize | Native.ProcessTerminate | Native.ProcessSetQuota,
+                    inherit: false, child.Pid);
+                var childCreated = process.IsInvalid ? 0 : ProcessInfo.CreationFileTime(process);
+                if (process.IsInvalid || childCreated < parent.Created)
+                {
+                    // Gone, or created before its parent: its parent ID belongs to another process.
+                    continue;
+                }
+
+                seen.Add(child.Pid);
+                frontier.Enqueue((child.Pid, childCreated));
+                if (job.Contains(process))
+                {
+                    adopted++;
+                    results.Add($"{child.Image} ({child.Pid.ToString(CultureInfo.InvariantCulture)}): adopted (it followed its parent)");
+                    continue;
+                }
+
+                try
+                {
+                    if (Native.IsProcessInJob(process, 0, out var inJob) && inJob)
+                    {
+                        throw new Win32Exception(5, "the process is already in a job");
+                    }
+
+                    root.Assign(process);
+                    job.Assign(process);
+                    adopted++;
+                    results.Add($"{child.Image} ({child.Pid.ToString(CultureInfo.InvariantCulture)}): adopted");
+                }
+                catch (Win32Exception exception)
+                {
+                    failed++;
+                    results.Add($"{child.Image} ({child.Pid.ToString(CultureInfo.InvariantCulture)}): not adopted ({exception.Message})");
+                }
+            }
+        }
+
+        return (adopted, failed, results);
+    }
 
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);

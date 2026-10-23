@@ -54,6 +54,7 @@ internal static unsafe partial class Native
     public const uint JobObjectAllAccess = 0x1F001F;
     public const uint ProcessQueryLimitedInformation = 0x1000;
     public const uint ProcessTerminate = 0x0001;
+    public const uint ProcessSetQuota = 0x0100;
     public const uint Synchronize = 0x00100000;
     public const uint EventModifyState = 0x0002;
     public const uint DuplicateSameAccess = 0x00000002;

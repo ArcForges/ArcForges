@@ -14,11 +14,14 @@ namespace ArcForges.Node.Api;
 public sealed record ClientSession(LocalRpcPeer Peer, ClientKind Kind, Origin Origin);
 
 /// <summary>
-/// The interim permission model until AF-SEC-01 (Plan): every connection is a same-user peer (the LocalRpc service mode refuses
-/// other users and unidentifiable peers before HTTP/2), and the origin is assigned at <c>NodeService.Hello</c> from the client kind
-/// and the reported terminal (11 section 1: HUMAN for the Desktop and an interactive CLI, SCRIPT for a CLI without a terminal or in a
-/// CI job, AGENT for the MCP adapter and hooks) and recorded with every mutation (<c>command_dedup.origin</c>). The permission matrix,
-/// agent ancestry and approvals are AF-SEC-01's; origins are guardrails, not a security boundary.
+/// The connections' sessions and their origins (11 section 1). Every connection is a same-user peer (the LocalRpc service mode refuses other
+/// users and unidentifiable peers before HTTP/2), and its origin is assigned at <c>NodeService.Hello</c> from the client kind verified against
+/// the peer's executable (<see cref="ClientImages"/>), the reported terminal and CI markers, and the agent roots (<see cref="AgentRoots"/>):
+/// HUMAN for a verified Desktop and a verified interactive CLI outside every agent root; AGENT for the MCP adapter and hooks, and a CLI under an
+/// agent root; SCRIPT otherwise (a CLI without a terminal or in a CI job, and any kind the peer does not verify). The origin is recorded with
+/// every mutation (<c>command_dedup.origin</c>) and decides the permission matrix. Origins are guardrails, not a security boundary: the
+/// documented bypasses of 11 section 1 apply (a same-user process can allocate a terminal, leave an agent's ancestry, or run the product's
+/// own executables). REMOTE and PEER origins come from the relay and LAN layers (AF-CLD-05, AF-LAN-01), never from a local hello.
 /// </summary>
 public sealed class ClientSessions
 {
@@ -33,14 +36,24 @@ public sealed class ClientSessions
     /// <summary>Called when a connection that said hello closed.</summary>
     public Action<ClientSession>? Closed { get; init; }
 
-    /// <summary>The interim origin of a client.</summary>
-    public static Origin AssignOrigin(ClientHello hello)
+    /// <summary>The registered agent roots (08 section 3: registered by sessions, AF-AI-01); a CLI under one is AGENT.</summary>
+    public AgentRoots Agents { get; } = new();
+
+    /// <summary>
+    /// The origin of a client whose hello passed validation (its process is the connection's peer). A kind that claims more than SCRIPT is
+    /// honoured only when the peer's executable verifies it; a kind that claims AGENT is honoured as it is, since it never widens anything.
+    /// </summary>
+    public Origin AssignOrigin(ClientHello hello, LocalRpcPeer peer, ClientImages images)
     {
         ArgumentNullException.ThrowIfNull(hello);
+        ArgumentNullException.ThrowIfNull(peer);
+        ArgumentNullException.ThrowIfNull(images);
+        var verified = images.Verifies(hello.ClientKind, peer.ExecutablePath);
         return hello.ClientKind switch
         {
-            ClientKind.Desktop => Origin.Human,
-            ClientKind.Cli => hello.InteractiveTerminal && hello.CiMarkers.Count == 0 ? Origin.Human : Origin.Script,
+            ClientKind.Desktop => verified ? Origin.Human : Origin.Script,
+            ClientKind.Cli when Agents.Contains(peer.ProcessId) => Origin.Agent,
+            ClientKind.Cli => verified && hello.InteractiveTerminal && hello.CiMarkers.Count == 0 ? Origin.Human : Origin.Script,
             ClientKind.McpAdapter or ClientKind.Hook => Origin.Agent,
             _ => Origin.Script,
         };

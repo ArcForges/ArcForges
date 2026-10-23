@@ -54,6 +54,10 @@ internal sealed class TestNode : IAsyncDisposable
         // A stray tier opt-in in the test process must never reach a test node (16-testing-strategy section 1, guard item 1).
         Environment[OsSecretStoreGuard.OptInVariable] = null;
 
+        // The --test-mode hook of 11 section 1's client-kind verification: this test process may present the Desktop kind, so a test acts as
+        // the HUMAN approver (HumanChannelAsync); its CLI processes stay SCRIPT callers (no terminal).
+        Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = System.Environment.ProcessPath;
+
         if (!OperatingSystem.IsWindows())
         {
             Environment["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + Path.Combine(root, "no-session-bus");
@@ -99,11 +103,57 @@ internal sealed class TestNode : IAsyncDisposable
         return string.Join("\n", variables.Select(pair => $"Environment=\"{pair.Key}={pair.Value}\""));
     }
 
+    /// <summary>
+    /// A connection of this test process presenting the Desktop kind, which the test node verifies (<c>ARCFORGES_TEST_CLIENT_IMAGES</c>), so its
+    /// origin is HUMAN: the approver of approval round trips (11 section 1).
+    /// </summary>
+    public async Task<NodeChannel> HumanChannelAsync()
+    {
+        var channel = NodeChannel.Create(OperatingSystem.IsWindows() ? ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(Endpoint)
+            : ArcForges.LocalRpc.LocalRpcEndpoint.UnixDomainSocket(Endpoint));
+        var hello = ClientProcess.Hello(ArcForges.Contracts.Node.V1.ClientKind.Desktop);
+        hello.CiMarkers.Clear();
+        var answer = await channel.Node.HelloAsync(new ArcForges.Contracts.Node.V1.NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow.AddSeconds(10));
+        Assert.True(answer.Value?.AssignedOrigin == ArcForges.Contracts.Node.V1.Origin.Human, $"the test channel is not HUMAN: {answer}");
+        return channel;
+    }
+
+    /// <summary>Approves the first PENDING approval as a HUMAN once one appears (bounded), and returns it after its execution.</summary>
+    public static async Task<ArcForges.Contracts.Node.V1.Approval> ApproveNextAsync(NodeChannel human, TimeSpan bound)
+    {
+        ArgumentNullException.ThrowIfNull(human);
+        ArcForges.Contracts.Node.V1.Approval? pending = null;
+        await WaitAsync(async () =>
+        {
+            var list = await human.Approvals.ListApprovalsAsync(new ArcForges.Contracts.Node.V1.ApprovalServiceListApprovalsRequest
+            {
+                Meta = new ArcForges.Contracts.Foundation.V1.RequestMeta { CorrelationId = CommandIds.New() },
+                States = { ArcForges.Contracts.Node.V1.ApprovalState.Pending },
+            }, deadline: DateTime.UtcNow.AddSeconds(10));
+            pending = list.Value?.Approvals.FirstOrDefault();
+            return pending is not null;
+        }, bound, "a pending approval");
+        var decided = await human.Approvals.DecideApprovalAsync(new ArcForges.Contracts.Node.V1.ApprovalServiceDecideApprovalRequest
+        {
+            Meta = new ArcForges.Contracts.Foundation.V1.RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
+            ApprovalId = pending!.ApprovalId,
+            Decision = ArcForges.Contracts.Node.V1.ApprovalDecisionKind.Approve,
+        }, deadline: DateTime.UtcNow.AddSeconds(20));
+        Assert.True(decided.Error is null, $"DecideApproval: {decided.Error}");
+        return decided.Value.Approval;
+    }
+
     /// <summary>The <c>arcforges</c> binary under test: <c>ARCFORGES_HOST_PATH</c> or the JIT build next to the tests.</summary>
     public static string Host { get; } = Binary("ARCFORGES_HOST_PATH", "arcforges");
 
     /// <summary>The <c>arcforges-testload</c> workload: <c>ARCFORGES_TESTLOAD_PATH</c> or the build next to the tests.</summary>
     public static string TestLoad { get; } = Binary("ARCFORGES_TESTLOAD_PATH", "arcforges-testload");
+
+    /// <summary>
+    /// A disk-backed parent for nodes whose attempts write files that must not land on tmpfs: the directory above the test binaries, because
+    /// the binaries' own directory is the node's installation, which the Linux unit hardening makes read-only for attempts (AD-0007 section 8).
+    /// </summary>
+    public static string DiskParent { get; } = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory))!;
 
     public string Root { get; }
 

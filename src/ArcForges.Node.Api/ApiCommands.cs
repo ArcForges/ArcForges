@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Scheduling;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Grpc.Core;
@@ -10,9 +12,46 @@ using Grpc.Core;
 namespace ArcForges.Node.Api;
 
 /// <summary>
-/// The shared plumbing of the queue and policy services: response metas, the stopping check, the interim permission gate of the default
-/// matrix (<see cref="InterimPermissions"/>: <c>P</c> is refused for every origin until approvals arrive with AF-SEC-01) and idempotent
-/// commands by <c>meta.command_id</c>.
+/// Who calls a method: the connection's session (its origin assigned at the hello), or, when an approved request executes, the requester
+/// the approval captured. <see cref="ApprovalId"/> is set only for the latter, and then an APPROVAL cell of the matrix lets the call through.
+/// </summary>
+/// <param name="Origin">The origin.</param>
+/// <param name="Kind">The client kind.</param>
+/// <param name="Session">The connection's session, or <see langword="null"/> (no hello, or an approved request executing).</param>
+/// <param name="ApprovalId">The approval under which the request executes, or <see langword="null"/>.</param>
+public sealed record Caller(Origin Origin, ClientKind Kind, ClientSession? Session, byte[]? ApprovalId = null)
+{
+    /// <summary>The caller as an <see cref="ActorRef"/> (task owners, policy revisions, the audit log).</summary>
+    public ActorRef Actor => new() { Origin = Origin, ClientKind = Kind };
+
+    /// <summary>True while an approved request executes.</summary>
+    public bool Approved => ApprovalId is not null;
+
+    /// <summary>The caller of an approval's request.</summary>
+    public static Caller OfApproval(ActorRef requester, byte[] approvalId)
+    {
+        ArgumentNullException.ThrowIfNull(requester);
+        return new Caller(requester.Origin, requester.ClientKind, null, approvalId);
+    }
+}
+
+/// <summary>What a gated call asks the approver, and what the audit log records.</summary>
+/// <param name="Operation">The matrix operation (<see cref="PermissionMatrix"/>).</param>
+/// <param name="Method">The method as <c>&lt;Service&gt;.&lt;Method&gt;</c>.</param>
+/// <param name="Summary">A one-line summary.</param>
+/// <param name="TargetKind">The kind of the object acted on, if any.</param>
+/// <param name="TargetId">The object's ID, if any.</param>
+public sealed record GateRequest(string Operation, string Method, string Summary, string? TargetKind = null, byte[]? TargetId = null)
+{
+    /// <summary>Details for the approver.</summary>
+    public IReadOnlyList<KeyValue> Details { get; init; } = [];
+}
+
+/// <summary>
+/// The shared plumbing of the node's services: response metas, the stopping check, the permission gate of 11 section 1 (the default matrix
+/// with the policy's <c>permissions</c> overrides; an APPROVAL cell raises an approval and fails with <c>AUTHORIZATION/approval_required</c>
+/// carrying its ID), the audit of privileged actions, and idempotent commands by <c>meta.command_id</c>, which also replay the outcome of a
+/// request that executed after its approval.
 /// </summary>
 internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, string service)
 {
@@ -38,28 +77,137 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     /// <summary>The caller's origin.</summary>
     public Origin OriginOf(ServerCallContext context) => sessions.OriginOf(context);
 
-    /// <summary>The interim permission gate (<see cref="InterimPermissions"/>) for the caller's origin.</summary>
-    public ArcError? Permit(ServerCallContext context, GatedOperation operation, string method) =>
-        InterimPermissions.Check(sessions.OriginOf(context), operation, method);
-
-    /// <summary>The caller as a policy revision's actor.</summary>
-    public ActorRef Actor(ServerCallContext context) => new()
+    /// <summary>The caller of a connection's call.</summary>
+    public Caller CallerOf(ServerCallContext context)
     {
-        Origin = sessions.OriginOf(context),
-        ClientKind = sessions.SessionOf(context)?.Kind ?? ClientKind.Unspecified,
-    };
+        var session = sessions.SessionOf(context);
+        return new Caller(session?.Origin ?? Origin.Script, session?.Kind ?? ClientKind.Unspecified, session);
+    }
 
-    /// <summary>Runs <paramref name="execute"/> once per command ID (24 h); a replay returns the recorded response.</summary>
-    public async Task<(TResponse Response, bool Replayed)> IdempotentAsync<TResponse>(IMessage request, RequestMeta meta, ServerCallContext context, string method,
-        MessageParser<TResponse> parser, Func<ArcError, TResponse> fail, Func<CommandContext, TResponse> execute)
-        where TResponse : class, IMessage<TResponse>
+    /// <summary>The matrix decision for <paramref name="caller"/> on <paramref name="operation"/> under the current policy.</summary>
+    public PermissionVerdict Decide(Caller caller, string operation) =>
+        PermissionMatrix.Decide(caller.Origin, operation, node.Store.Read(PolicyRules.Current).Document.Permissions);
+
+    /// <summary>True when the matrix allows <paramref name="operation"/> to <paramref name="caller"/> without an approval.</summary>
+    public bool Allowed(Caller caller, string operation) => Decide(caller, operation).Decision == PermissionDecision.Allow;
+
+    /// <summary>
+    /// The permission gate (11 section 1) of a call that needs no approval capture (a refusal of an APPROVAL cell would raise one, so such
+    /// operations go through <see cref="GateAsync"/>): <see langword="null"/> when allowed; a denial is audited.
+    /// </summary>
+    public async Task<ArcError?> DenyUnlessAllowedAsync(Caller caller, GateRequest gate)
     {
-        var digest = PayloadDigest.Compute(request);
-        var origin = sessions.OriginOf(context);
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(gate);
+        var verdict = Decide(caller, gate.Operation);
+        return verdict.Decision == PermissionDecision.Allow ? null : await DeniedAsync(caller, gate, verdict).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The permission gate (11 section 1): <see langword="null"/> when the call may run. A DENY cell is <c>AUTHORIZATION/permission_denied</c>
+    /// (audited). An APPROVAL cell raises an approval that captures <paramref name="request"/> under its <c>meta.command_id</c> and fails
+    /// with <c>AUTHORIZATION/approval_required</c> carrying the approval ID; a retry with the same command ID finds the same approval: still
+    /// pending, <c>approval_required</c> again; executed or failed, the call passes so that the idempotent command replays the executed outcome;
+    /// denied or withdrawn, <c>permission_denied</c>; expired, <c>STATE/expired</c>. A request executing under its approval passes.
+    /// </summary>
+    public async Task<ArcError?> GateAsync(Caller caller, GateRequest gate, IMessage request, RequestMeta meta)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(gate);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(meta);
+        var verdict = Decide(caller, gate.Operation);
+        if (verdict.Decision == PermissionDecision.Allow || (verdict.Decision == PermissionDecision.Approval && caller.Approved))
+        {
+            return null;
+        }
+
+        if (verdict.Decision != PermissionDecision.Approval)
+        {
+            return await DeniedAsync(caller, gate, verdict).ConfigureAwait(false);
+        }
+
+        var capture = new ApprovalCapture
+        {
+            Operation = gate.Method,
+            MatrixOperation = gate.Operation,
+            Summary = gate.Summary,
+            Details = gate.Details,
+            Risk = PermissionMatrix.Find(gate.Operation)!.Risk,
+            Requester = caller.Actor,
+            CommandId = meta.CommandId.Value.ToByteArray(),
+            Request = request.ToByteArray(),
+            RequestDigest = PayloadDigest.Compute(request),
+            TargetKind = gate.TargetKind,
+            TargetId = gate.TargetId,
+        };
         try
         {
-            var outcome = await node.Processor.ExecuteIdempotentAsync(meta.CommandId.Value.Memory, service + "/" + method, digest, origin,
-                command => execute(command).ToByteArray()).ConfigureAwait(false);
+            return await node.Processor.ExecuteAsync(context =>
+            {
+                Approvals.Expire(context);
+                var policy = PolicyRules.Current(context.Transaction).Document.Approvals;
+                var ttl = policy is { HasDefaultTtlMs: true, DefaultTtlMs: > 0 } ? TimeSpan.FromMilliseconds(policy.DefaultTtlMs) : Approvals.DefaultTtl;
+                var (approval, created, error) = Approvals.Raise(context, capture, ttl);
+                if (error is not null)
+                {
+                    return error;
+                }
+
+                if (created && policy?.NotifyDesktop != false)
+                {
+                    Notifications.Add(context, "approval_needed", Severity.Warning, "Approval needed",
+                        $"{PermissionMatrix.Name(caller.Origin)} asks: {approval!.View.Summary}", "arcforges://approvals/" + IdText.Format(approval.View.ApprovalId));
+                }
+
+                var id = IdText.Format(approval!.View.ApprovalId);
+                return approval.State switch
+                {
+                    ApprovalState.Pending or ApprovalState.Approved => Approvals.Required(approval.View),
+                    ApprovalState.Executed or ApprovalState.Failed => null,
+                    ApprovalState.Expired => StateExpired(id),
+                    ApprovalState.Denied => NodeErrors.PermissionDenied($"{gate.Method}: approval {id} was denied"),
+                    _ => NodeErrors.PermissionDenied($"{gate.Method}: approval {id} was withdrawn"),
+                };
+            }, CommitDurability.Full).ConfigureAwait(false);
+        }
+        catch (CommandQueueFullException)
+        {
+            return NodeErrors.Overloaded(node.Clock.GetUtcNow());
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="execute"/> once per command ID (24 h); a replay returns the recorded response. A request that already executed
+    /// after its approval returns the approval's stored outcome instead of executing again (also after the 24-hour window). With
+    /// <paramref name="audit"/>, the action is written to the audit log in its own transaction, with its outcome.
+    /// </summary>
+    public async Task<(TResponse Response, bool Replayed)> IdempotentAsync<TResponse>(IMessage request, RequestMeta meta, Caller caller, string method,
+        MessageParser<TResponse> parser, Func<ArcError, TResponse> fail, Func<CommandContext, TResponse> execute, GateRequest? audit = null)
+        where TResponse : class, IMessage<TResponse>
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        var digest = PayloadDigest.Compute(request);
+        try
+        {
+            var outcome = await node.Processor.ExecuteIdempotentAsync(meta.CommandId.Value.Memory, service + "/" + method, digest, caller.Origin, command =>
+            {
+                if (!caller.Approved && Approvals.ByCommand(command.Transaction, meta.CommandId.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome: { } stored }
+                    && stored.Length > 0)
+                {
+                    return stored;
+                }
+
+                var response = execute(command);
+                if (audit is not null)
+                {
+                    var error = Approvals.OutcomeError(response.ToByteArray());
+                    AuditLog.Append(command.Transaction, caller.Actor, audit.Operation + " " + audit.Method, audit.TargetKind, audit.TargetId ?? [],
+                        PermissionDecision.Allow, caller.ApprovalId ?? [], error is null ? "done: " + audit.Summary : $"failed ({error.Category}/{error.Code}): {audit.Summary}");
+                }
+
+                return response.ToByteArray();
+            }).ConfigureAwait(false);
             return outcome.Error is { } failure ? (fail(failure), false) : (parser.ParseFrom(outcome.Outcome), outcome.Replayed);
         }
         catch (CommandQueueFullException)
@@ -71,5 +219,42 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             node.Log.Error("api.command.failed", exception);
             return (fail(NodeErrors.Internal(node.Clock.GetUtcNow())), false);
         }
+    }
+
+    /// <summary>Writes an audit entry for an action outside an idempotent command (for example a refused one).</summary>
+    public async Task AuditAsync(Caller caller, GateRequest gate, PermissionDecision decision, string outcome)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(gate);
+        try
+        {
+            await node.Processor.ExecuteAsync(context =>
+            {
+                AuditLog.Append(context.Transaction, caller.Actor, gate.Operation + " " + gate.Method, gate.TargetKind, gate.TargetId ?? [], decision,
+                    caller.ApprovalId ?? [], outcome);
+                return 0;
+            }).ConfigureAwait(false);
+        }
+        catch (CommandQueueFullException)
+        {
+            node.Log.Warning("api.audit.dropped", new LogField("operation", gate.Operation));
+        }
+    }
+
+    /// <summary><c>STATE/expired</c> (errors.md: a flow, offer, pairing or approval expired).</summary>
+    public static ArcError StateExpired(string approvalId) => new()
+    {
+        Code = "expired",
+        Category = ErrorCategory.State,
+        MessageKey = "error.state.expired",
+        Retry = new RetryAdvice { Mode = RetryMode.Never },
+        Effect = EffectCertainty.DidNotHappen,
+        Details = new ErrorDetails { State = new StateFailure { State = "EXPIRED", Reason = "approval " + approvalId + " expired" } },
+    };
+
+    private async Task<ArcError> DeniedAsync(Caller caller, GateRequest gate, PermissionVerdict verdict)
+    {
+        await AuditAsync(caller, gate, verdict.Decision, "denied: " + gate.Summary).ConfigureAwait(false);
+        return NodeErrors.PermissionDenied($"{gate.Method}: {gate.Operation} is denied for {PermissionMatrix.Name(caller.Origin)} callers ({verdict.Source})");
     }
 }

@@ -18,29 +18,37 @@ public static class NodeApiServer
     private const string Events = "arcforges.node.v1.NodeEventService";
     private const string Tasks = "arcforges.node.v1.TaskService";
     private const string Resources = "arcforges.node.v1.ResourceService";
+    private const string Approvals = "arcforges.node.v1.ApprovalService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
     /// <param name="node">The running node.</param>
     /// <param name="sessions">The client sessions.</param>
     /// <param name="streamBuffer">The per-subscriber buffer (default 2,048, 02 section 1).</param>
-    public static LocalRpcServer Build(LocalRpcEndpoint endpoint, NodeRuntime node, ClientSessions sessions, int streamBuffer = 2048)
+    /// <param name="images">The executables that verify each client kind (default: the node's own, <see cref="ClientImages.ForNode"/>).</param>
+    public static LocalRpcServer Build(LocalRpcEndpoint endpoint, NodeRuntime node, ClientSessions sessions, int streamBuffer = 2048, ClientImages? images = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(sessions);
         var builder = LocalRpcServer.CreateBuilder(endpoint);
         builder.Options = new LocalRpcServerOptions { Mode = LocalRpcServerMode.Service };
-        builder.AddService(new NodeServiceHandler(node, sessions));
+
+        // Each approval-gated service registers how its captured requests execute once a HUMAN approved them (11 section 1).
+        var executors = new ApprovalExecutors();
+        var approvals = new ApprovalServiceHandler(node, sessions, executors);
+        builder.AddService(new NodeServiceHandler(node, sessions, executors, images ?? ClientImages.ForNode(testMode: false)));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
-        builder.AddService(new TaskServiceHandler(node, sessions));
-        builder.AddService(new ResourceServiceHandler(node));
-        builder.AddService(new QueueServiceHandler(node, sessions));
-        builder.AddService(new PolicyServiceHandler(node, sessions));
+        builder.AddService(new TaskServiceHandler(node, sessions, executors));
+        builder.AddService(new ResourceServiceHandler(node, sessions, executors));
+        builder.AddService(new QueueServiceHandler(node, sessions, executors));
+        builder.AddService(new PolicyServiceHandler(node, sessions, executors));
+        builder.AddService(approvals);
+        node.ResumeApprovals = approvals.ResumeAsync;
         builder.AuthorizeConnections(connection =>
         {
             // Reached only by same-user peers that LocalRpc identified (other users, exited and unresolvable peers are dropped
-            // before this decision). The interim model admits every same-user peer (AF-SEC-01 adds the permission matrix).
+            // before this decision). Every same-user peer is admitted; its hello assigns the origin the permission matrix decides by.
             node.Log.Debug("api.connection", new LogField("sequence", connection.Sequence), new LogField("pid", connection.Peer?.ProcessId ?? 0));
             return connection.Peer is not null;
         });
@@ -77,10 +85,18 @@ public static class NodeApiServer
             });
         }
 
-        // ResourceService deadlines (resources.proto): snapshot and process list 5 s, samples 10 s; WatchResources streams with 15 s heartbeats.
-        foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("GetResourceSnapshot", 5), ("ListProcesses", 5), ("GetSamples", 10)])
+        // ResourceService deadlines (resources.proto): snapshot and process list 5 s, samples 10 s, adoption and termination 10 s; WatchResources
+        // streams with 15 s heartbeats.
+        foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("GetResourceSnapshot", 5), ("ListProcesses", 5), ("GetSamples", 10), ("AdoptProcess", 10),
+            ("TerminateProcess", 10)])
         {
             builder.RegisterMethod(Resources, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(seconds), TimeSpan.FromSeconds(30)));
+        }
+
+        // ApprovalService deadlines (approvals.proto): list, get and withdraw 5 s; a decision 10 s (it runs the approved request).
+        foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("ListApprovals", 5), ("GetApproval", 5), ("DecideApproval", 10), ("CancelApproval", 5)])
+        {
+            builder.RegisterMethod(Approvals, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(seconds), TimeSpan.FromSeconds(30)));
         }
 
         builder.RegisterStream(Resources, "WatchResources", new LocalRpcStreamProfile

@@ -205,6 +205,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _tailerMonitor = Heartbeat.AddMonitor("output-tailer", TimeSpan.FromSeconds(5));
         Tools = options.Tools;
         PlatformCalls = new SerialWork(_log);
+        Adoptions = new Adoptions(this, _store, _processor, _log);
         if (options.Sampler is { } sampler)
         {
             Resources = new ResourceMonitor(sampler, this, _store, _processor, _log, _clock);
@@ -237,6 +238,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     /// <summary>The resource monitor (03 sections 1, 2 and 7), or <see langword="null"/> without a sampler.</summary>
     public ResourceMonitor? Resources { get; }
+
+    /// <summary>The adopted processes (04 section 10).</summary>
+    public Adoptions Adoptions { get; }
 
     /// <summary>The settings in force (re-read from the policy every 10 s).</summary>
     public ExecutionSettings Settings
@@ -403,6 +407,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         AcknowledgeRecordedAttempts(live);
+        await Adoptions.RecoverAsync(report.BootChanged).ConfigureAwait(false);
         Heartbeat.RecoveryDone = true;
     }
 
@@ -450,6 +455,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _loop.Start();
         _admissionLoop = Task.Run(AdmissionLoopAsync);
         Resources?.Start();
+        Adoptions.Start();
         Kick();
     }
 
@@ -518,6 +524,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         Resources?.Dispose();
+        Adoptions.Dispose();
         _stop.Dispose();
     }
 
@@ -748,6 +755,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return (row.State, null, null);
         }
 
+        if (row.Spec.Kind == TaskKind.Adopted)
+        {
+            // 04 section 10: cancelling an adopted task terminates its adoption container.
+            return (Adoptions.Cancel(context, taskId, reason) ?? row.State, null, null);
+        }
+
         if (row.State is TaskState.Queued or TaskState.WaitingDependency or TaskState.RetryWait or TaskState.Placing)
         {
             transaction.Execute(
@@ -959,6 +972,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         if (row.State is not (TaskState.Failed or TaskState.Cancelled or TaskState.Lost))
         {
             return (null, NodeErrors.InvalidState(row.State.ToString().ToUpperInvariant(), "only FAILED, CANCELLED or LOST tasks can be retried"));
+        }
+
+        if (row.Spec.Kind == TaskKind.Adopted)
+        {
+            // 04 section 10: an adopted process was started outside ArcForges; there is nothing to run again.
+            return (null, NodeErrors.InvalidState("ADOPTED", "an adopted task cannot be retried"));
         }
 
         var unseal = _secrets.Unseal(transaction, taskId);

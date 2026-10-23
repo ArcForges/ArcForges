@@ -8,6 +8,7 @@ using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Scheduling;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -32,12 +33,29 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private readonly NodeRuntime _node;
     private readonly ClientSessions _sessions;
+    private readonly ApiCommands _api;
 
     /// <summary>Creates the service over the running node.</summary>
     public TaskServiceHandler(NodeRuntime node, ClientSessions sessions)
+        : this(node, sessions, new ApprovalExecutors())
     {
+    }
+
+    /// <summary>Creates the service and registers how its approval-gated requests execute once approved.</summary>
+    internal TaskServiceHandler(NodeRuntime node, ClientSessions sessions, ApprovalExecutors executors)
+    {
+        ArgumentNullException.ThrowIfNull(executors);
         _node = node ?? throw new ArgumentNullException(nameof(node));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        _api = new ApiCommands(node, sessions, ServiceName);
+        executors.Register<TaskServiceCancelTaskRequest, TaskServiceCancelTaskResponse>("TaskService.CancelTask", PermissionMatrix.TaskCancelOthers,
+            TaskServiceCancelTaskRequest.Parser, CancelTask);
+        executors.Register<TaskServiceSetTaskPriorityRequest, TaskServiceSetTaskPriorityResponse>("TaskService.SetTaskPriority", PermissionMatrix.TaskSetPriority,
+            TaskServiceSetTaskPriorityRequest.Parser, SetTaskPriority);
+        executors.Register<TaskServicePauseTaskRequest, TaskServicePauseTaskResponse>("TaskService.PauseTask", PermissionMatrix.TaskPause,
+            TaskServicePauseTaskRequest.Parser, (request, caller) => PauseTask(request, caller, CancellationToken.None));
+        executors.Register<TaskServiceResumeTaskRequest, TaskServiceResumeTaskResponse>("TaskService.ResumeTask", PermissionMatrix.TaskCancelOthers,
+            TaskServiceResumeTaskRequest.Parser, (request, caller) => ResumeTask(request, caller, CancellationToken.None));
     }
 
     private ExecutionSupervisor Execution => _node.Execution ?? throw new InvalidOperationException("The node has no execution supervisor.");
@@ -594,10 +612,14 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     /// <inheritdoc />
-    public override async Task<TaskServiceCancelTaskResponse> CancelTask(TaskServiceCancelTaskRequest request, ServerCallContext context)
+    public override Task<TaskServiceCancelTaskResponse> CancelTask(TaskServiceCancelTaskRequest request, ServerCallContext context) =>
+        CancelTask(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>CancelTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<TaskServiceCancelTaskResponse> CancelTask(TaskServiceCancelTaskRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceCancelTaskResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
         if (refused is null && request.HasReason && request.Reason.Length > 500)
@@ -610,7 +632,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             refused = NodeErrors.InvalidArgument("grace_ms: 0..300 s");
         }
 
-        refused ??= OthersTask(context, request.TaskId, "CancelTask");
+        var gate = refused is null ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : null;
+        if (refused is null && gate is not null)
+        {
+            refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        }
+
         if (refused is not null)
         {
             response.Error = refused;
@@ -620,7 +647,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var id = request.TaskId.Value.ToByteArray();
         var reason = request.HasReason && request.Reason.Length > 0 ? request.Reason : "cancelled";
         string? stopAttempt = null;
-        var (result, replayed) = await Idempotent(request, request.Meta, context, "CancelTask", TaskServiceCancelTaskResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "CancelTask", TaskServiceCancelTaskResponse.Parser,
             failure => new TaskServiceCancelTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
             var (state, error, attempt) = Execution.Cancel(command, id, reason);
@@ -632,7 +659,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     Meta = Meta(request.Meta),
                     Value = new TaskServiceCancelTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = state },
                 };
-        }).ConfigureAwait(false);
+        }, gate).ConfigureAwait(false);
         if (!replayed && stopAttempt is not null)
         {
             Execution.Stop(stopAttempt, TerminationReason.Cancelled, request.HasGraceMs ? TimeSpan.FromMilliseconds(request.GraceMs) : null);
@@ -641,7 +668,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         if (!replayed && result.OutcomeCase == TaskServiceCancelTaskResponse.OutcomeOneofCase.Value)
         {
             Execution.Kick();
-            _node.Log.Info("api.task.cancel", new LogField("task", IdText.Format(id)), new LogField("origin", _sessions.OriginOf(context)),
+            _node.Log.Info("api.task.cancel", new LogField("task", IdText.Format(id)), new LogField("origin", caller.Origin),
                 new LogField("running", stopAttempt is not null));
         }
 
@@ -695,14 +722,17 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     /// <inheritdoc />
-    public override async Task<TaskServiceSetTaskPriorityResponse> SetTaskPriority(TaskServiceSetTaskPriorityRequest request, ServerCallContext context)
+    public override Task<TaskServiceSetTaskPriorityResponse> SetTaskPriority(TaskServiceSetTaskPriorityRequest request, ServerCallContext context) =>
+        SetTaskPriority(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>SetTaskPriority</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<TaskServiceSetTaskPriorityResponse> SetTaskPriority(TaskServiceSetTaskPriorityRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta) };
-        var origin = _sessions.OriginOf(context);
-        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")
-            ?? InterimPermissions.Check(origin, GatedOperation.ChangeTaskPriority, "SetTaskPriority");
+        var origin = caller.Origin;
+        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
         if (refused is null && !request.HasPriority && !request.HasPool)
         {
             refused = NodeErrors.InvalidArgument("priority or pool: at least one");
@@ -723,7 +753,16 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             refused = NodeErrors.InvalidArgument("pool: an existing pool");
         }
 
-        refused ??= OthersTask(context, request.TaskId, "SetTaskPriority");
+        var summary = "change the priority of task" + (request.HasPriority ? " to " + request.Priority.ToString().ToUpperInvariant() : string.Empty)
+            + (request.HasPool ? " (pool " + request.Pool + ")" : string.Empty);
+        var gate = new GateRequest(PermissionMatrix.TaskSetPriority, "TaskService.SetTaskPriority", summary + " " + IdText.Format(request.TaskId), "task",
+            Bytes(request.TaskId));
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        if (refused is null && TaskGate(request.TaskId!, "TaskService.SetTaskPriority", summary) is { } others)
+        {
+            refused = await _api.GateAsync(caller, others, request, request.Meta).ConfigureAwait(false);
+        }
+
         if (refused is not null)
         {
             response.Error = refused;
@@ -731,7 +770,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         var id = request.TaskId.Value.ToByteArray();
-        var (result, replayed) = await Idempotent(request, request.Meta, context, "SetTaskPriority", TaskServiceSetTaskPriorityResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "SetTaskPriority", TaskServiceSetTaskPriorityResponse.Parser,
             failure => new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta), Error = failure }, command =>
             {
                 var (queue, error) = Execution.SetPriority(command, id, request.HasPriority ? request.Priority : null, request.HasPool ? request.Pool : null);
@@ -742,7 +781,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         Meta = Meta(request.Meta),
                         Value = new TaskServiceSetTaskPriorityValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, Queue = queue },
                     };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         if (!replayed && result.OutcomeCase == TaskServiceSetTaskPriorityResponse.OutcomeOneofCase.Value)
         {
             Execution.Kick();
@@ -752,23 +791,46 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     /// <summary>
-    /// The interim gate for acting on another owner's task (11 section 1: cancel others' tasks, HUMAN A, SCRIPT and AGENT P): a task an agent
-    /// session owns belongs to that session, and until connections carry sessions (AF-AI-01) no SCRIPT or AGENT caller is that session.
+    /// The matrix operation of acting on a task that is not simply the caller's own (11 section 1), or <see langword="null"/>: a task an agent
+    /// session owns belongs to that session, and until connections carry sessions (AF-AI-01) no SCRIPT or AGENT caller is that session, so it is
+    /// another owner's task (<c>task.cancel_others</c>: HUMAN A, SCRIPT and AGENT P); an ADOPTED task is a process the user placed under
+    /// management, so ending it is terminating a process (<c>process.terminate</c>: HUMAN A, SCRIPT and AGENT P).
     /// </summary>
-    private ArcError? OthersTask(ServerCallContext context, Id taskId, string method)
+    private GateRequest? TaskGate(Id taskId, string method, string summary)
     {
         var id = taskId.Value.ToByteArray();
-        var sessionOwned = _node.Store.Read(reader => reader.Scalar("SELECT owner_session_id FROM task WHERE task_id = $id;", ("$id", id))) is byte[] { Length: > 0 };
-        return sessionOwned ? InterimPermissions.Check(_sessions.OriginOf(context), GatedOperation.CancelOthersTask, method) : null;
+        var (owned, kind) = _node.Store.Read(reader =>
+        {
+            using var command = reader.CreateCommand("SELECT owner_session_id, kind FROM task WHERE task_id = $id;");
+            command.Parameters.AddWithValue("$id", id);
+            using var rows = command.ExecuteReader();
+            return rows.Read() ? (!rows.IsDBNull(0), (TaskKind)rows.GetInt32(1)) : (false, TaskKind.Unspecified);
+        });
+        var text = summary + " " + IdText.Format(id);
+        return kind == TaskKind.Adopted && method == "TaskService.CancelTask"
+            ? new GateRequest(PermissionMatrix.ProcessTerminate, method, text + " (an adopted process: ending it terminates the process)", "task", id)
+            : owned ? new GateRequest(PermissionMatrix.TaskCancelOthers, method, text + " (owned by an agent session)", "task", id) : null;
     }
+
     /// <inheritdoc />
-    public override async Task<TaskServicePauseTaskResponse> PauseTask(TaskServicePauseTaskRequest request, ServerCallContext context)
+    public override Task<TaskServicePauseTaskResponse> PauseTask(TaskServicePauseTaskRequest request, ServerCallContext context) =>
+        PauseTask(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))), context.CancellationToken);
+
+    /// <summary><c>PauseTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<TaskServicePauseTaskResponse> PauseTask(TaskServicePauseTaskRequest request, Caller caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServicePauseTaskResponse { Meta = Meta(request.Meta) };
-        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")
-            ?? InterimPermissions.Check(_sessions.OriginOf(context), GatedOperation.PauseTask, "PauseTask") ?? OthersTask(context, request.TaskId, "PauseTask")) is { } refused)
+        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
+        var gate = new GateRequest(PermissionMatrix.TaskPause, "TaskService.PauseTask", "pause task " + IdText.Format(request.TaskId), "task", Bytes(request.TaskId));
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        if (refused is null && TaskGate(request.TaskId!, "TaskService.PauseTask", "pause task") is { } others)
+        {
+            refused = await _api.GateAsync(caller, others, request, request.Meta).ConfigureAwait(false);
+        }
+
+        if (refused is not null)
         {
             response.Error = refused;
             return response;
@@ -776,7 +838,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var id = request.TaskId.Value.ToByteArray();
         var done = Task.CompletedTask;
-        var (result, _) = await Idempotent(request, request.Meta, context, "PauseTask", TaskServicePauseTaskResponse.Parser,
+        var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "PauseTask", TaskServicePauseTaskResponse.Parser,
             failure => new TaskServicePauseTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
                 Execution.PauseTask(command.Transaction, id, out done) is { } error
                     ? new TaskServicePauseTaskResponse { Meta = Meta(request.Meta), Error = error }
@@ -784,18 +846,29 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     {
                         Meta = Meta(request.Meta),
                         Value = new TaskServicePauseTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Paused },
-                    }).ConfigureAwait(false);
-        await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), context.CancellationToken)).ConfigureAwait(false);
+                    }, gate).ConfigureAwait(false);
+        await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), cancellationToken)).ConfigureAwait(false);
         return result;
     }
 
     /// <inheritdoc />
-    public override async Task<TaskServiceResumeTaskResponse> ResumeTask(TaskServiceResumeTaskRequest request, ServerCallContext context)
+    public override Task<TaskServiceResumeTaskResponse> ResumeTask(TaskServiceResumeTaskRequest request, ServerCallContext context) =>
+        ResumeTask(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))), context.CancellationToken);
+
+    /// <summary><c>ResumeTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<TaskServiceResumeTaskResponse> ResumeTask(TaskServiceResumeTaskRequest request, Caller caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta) };
-        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id") ?? OthersTask(context, request.TaskId, "ResumeTask")) is { } refused)
+        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
+        var gate = refused is null ? TaskGate(request.TaskId, "TaskService.ResumeTask", "resume task") : null;
+        if (gate is not null)
+        {
+            refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        }
+
+        if (refused is not null)
         {
             response.Error = refused;
             return response;
@@ -803,7 +876,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var id = request.TaskId.Value.ToByteArray();
         var done = Task.CompletedTask;
-        var (result, _) = await Idempotent(request, request.Meta, context, "ResumeTask", TaskServiceResumeTaskResponse.Parser,
+        var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "ResumeTask", TaskServiceResumeTaskResponse.Parser,
             failure => new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
                 Execution.ResumeTask(command.Transaction, id, out done) is { } error
                     ? new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta), Error = error }
@@ -811,8 +884,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     {
                         Meta = Meta(request.Meta),
                         Value = new TaskServiceResumeTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Running },
-                    }).ConfigureAwait(false);
-        await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), context.CancellationToken)).ConfigureAwait(false);
+                    }, gate).ConfigureAwait(false);
+        await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), cancellationToken)).ConfigureAwait(false);
         return result;
     }
 
@@ -849,11 +922,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         ArgumentNullException.ThrowIfNull(context);
         var response = new TaskServicePurgeTaskRecordResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
-        if (refused is null && _sessions.OriginOf(context) != Origin.Human)
-        {
-            // tasks.proto: HUMAN=A SCRIPT=D AGENT=D.
-            refused = NodeErrors.PermissionDenied("PurgeTaskRecord (HUMAN only)");
-        }
+        var caller = _api.CallerOf(context);
+        var gate = new GateRequest(PermissionMatrix.TaskPurge, "TaskService.PurgeTaskRecord", "purge the record of task " + IdText.Format(request.TaskId), "task",
+            Bytes(request.TaskId));
+
+        // tasks.proto: HUMAN=A SCRIPT=D AGENT=D.
+        refused ??= await _api.DenyUnlessAllowedAsync(caller, gate).ConfigureAwait(false);
 
         if (refused is not null)
         {
@@ -863,7 +937,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var id = request.TaskId.Value.ToByteArray();
         List<string> directories = [];
-        var (result, replayed) = await Idempotent(request, request.Meta, context, "PurgeTaskRecord", TaskServicePurgeTaskRecordResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "PurgeTaskRecord", TaskServicePurgeTaskRecordResponse.Parser,
             failure => new TaskServicePurgeTaskRecordResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
             var (paths, error) = Execution.Purge(command, id);
@@ -875,7 +949,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     Meta = Meta(request.Meta),
                     Value = new TaskServicePurgeTaskRecordValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened } },
                 };
-        }).ConfigureAwait(false);
+        }, gate).ConfigureAwait(false);
         if (!replayed)
         {
             foreach (var directory in directories)
@@ -1158,6 +1232,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             await Task.Delay(2, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>The bytes of an optional ID (audit targets, before validation decided).</summary>
+    private static byte[]? Bytes(Id? id) => id?.Value.ToByteArray();
 
     private static ResponseMeta Meta(RequestMeta? request)
     {
