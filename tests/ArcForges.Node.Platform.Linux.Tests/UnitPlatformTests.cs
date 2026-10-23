@@ -53,13 +53,15 @@ public sealed class UnitPlatformTests
         var unit = handle.CgroupDirectory!;
         Assert.EndsWith("/" + harness.Slice + "/" + handle.Unit, unit, StringComparison.Ordinal);
 
-        // L-13 from the node's platform: per-unit CPUWeight, MemoryHigh, MemoryMax, MemorySwapMax, TasksMax and OOMPolicy=kill.
+        // L-13 from the node's platform: per-unit CPUWeight, MemoryHigh, MemoryMax, MemorySwapMax, TasksMax and OOMPolicy=stop, which never
+        // sets memory.oom.group (L-27: a group kill can reach the user manager's spawn child and so the user manager).
         Assert.Equal("400", LinuxHarness.Read(unit, "cpu.weight"));
         Assert.Equal((48L << 20).ToString(CultureInfo.InvariantCulture), LinuxHarness.Read(unit, "memory.high"));
         Assert.Equal((64L << 20).ToString(CultureInfo.InvariantCulture), LinuxHarness.Read(unit, "memory.max"));
         Assert.Equal("0", LinuxHarness.Read(unit, "memory.swap.max"));
         Assert.Equal("64", LinuxHarness.Read(unit, "pids.max"));
-        Assert.Equal("1", LinuxHarness.Read(unit, "memory.oom.group"));
+        Assert.Equal("0", LinuxHarness.Read(unit, "memory.oom.group"));
+        Assert.Equal("stop", SystemdTestEnvironment.Property(handle.Unit, "OOMPolicy"));
 
         // The slice carries the root limits (03 section 5.1): CPUQuota, MemoryHigh, MemoryMax, MemorySwapMax and TasksMax.
         var slice = Path.GetDirectoryName(unit)!;
@@ -523,9 +525,13 @@ public sealed class UnitPlatformTests
     public void AnOomKillIsRecordedFromTheFailedUnit()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        // When OOMPolicy=kill ends a unit, systemd may skip ExecStopPost (seen when the kill races the unit's stop) or run it: either the
-        // failed unit, kept by CollectMode=inactive, is recorded from its properties, or exit-record records it; the result is the same.
+        // When OOMPolicy=stop ends a unit, exit-record records it, or, if the kill races the unit's stop and ExecStopPost is skipped,
+        // the failed unit, kept by CollectMode=inactive, is recorded from its properties; the result is the same. The user manager
+        // survives the kill: with OOMPolicy=kill, the group kill once killed it through its spawn child (L-27).
         RequireUnits();
+        var manager = UnitControl.ManagerPid(UnitControl.ManagerCgroup());
+        var managerStart = ProcFs.StartOf(manager)?.Start;
+        Assert.True(manager > 0 && managerStart is not null, "The user manager's PID is unknown.");
         using var harness = LinuxHarness.Start();
         var handle = (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c", "head -c 400M /dev/zero | tail > /dev/null"],
             new ContainerLimits { MemoryMaxBytes = 64L << 20, SwapMaxBytes = 0 });
@@ -536,6 +542,8 @@ public sealed class UnitPlatformTests
         Assert.True(exit.OomKills >= 1, $"{exit.OomKills} OOM kills recorded.");
         Assert.InRange(exit.MemPeakBytes, 1, 64L << 20);
         Assert.Equal(0, exit.SwapPeakBytes);
+        Assert.Equal(managerStart, ProcFs.StartOf(manager)?.Start);
+        Assert.Equal(manager, UnitControl.ManagerPid(UnitControl.ManagerCgroup()));
 
         // Once the node recorded it, the failed unit is unloaded.
         handle.Acknowledge();
