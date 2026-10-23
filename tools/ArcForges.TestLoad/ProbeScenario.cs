@@ -50,6 +50,13 @@ internal static partial class ProbeScenario
             if (start > now)
             {
                 Wait(timer, start - now, frequency);
+
+                // Thread.Sleep truncates to whole milliseconds (and a timer may fire a little early): the work starts at the period's
+                // scheduled start, never before it, so an early wake never hides latency.
+                while (Stopwatch.GetTimestamp() < start)
+                {
+                    Thread.SpinWait(20);
+                }
             }
 
             state = (long)CpuScenario.Spin((ulong)state, iterations);
