@@ -39,7 +39,8 @@ public sealed record LimitStop(bool Frozen, int Killed, DateTimeOffset? FrozenAt
 /// thawed (seen on systemd 257), so the thaw never waits on the manager. <c>KillUnit("all", SIGKILL)</c> is not used: it also kills the
 /// unit's later control processes, so <c>ExecStopPost</c> would not write the exit record.</item>
 /// <item>Observation: <c>PropertiesChanged</c> of the unit and a state read every 2 s. A failed unit without <c>exit.json</c> (an OOM
-/// kill that races the unit's stop can skip <c>ExecStopPost</c>) is recorded from the unit's own properties and reset.</item>
+/// kill while <c>ExecStopPost</c> runs sends the unit to its final SIGKILL, which ends <c>exit-record</c> too) is recorded from the
+/// unit's own properties and reset.</item>
 /// </list>
 /// </summary>
 [SupportedOSPlatform("linux")]

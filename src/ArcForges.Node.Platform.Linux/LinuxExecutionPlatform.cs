@@ -509,7 +509,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             new("LimitNOFILESoft", nofileSoft),
             new("KillMode", "control-group"),
             new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + StopRecordMarginMs) * 1000),
-            // Failed units stay loaded (an OOM kill that races the unit's stop can leave no exit record), so the node records them from the unit.
+            // Failed units stay loaded (an OOM kill while ExecStopPost runs ends exit-record too), so the node records them from the unit.
             new("CollectMode", "inactive"),
             new("IgnoreSIGPIPE", false),
             new("CPUAccounting", true),
