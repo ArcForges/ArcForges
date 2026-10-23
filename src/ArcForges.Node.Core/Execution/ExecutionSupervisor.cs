@@ -501,11 +501,14 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
         RunningAttempt? victim;
         lock (_preemptGate)
         {
-            victim = _running.Values
-                .Where(attempt => attempt.Preemptible && attempt.Handle is not null && !attempt.Finalizing && attempt.StopReason is null)
-                .OrderByDescending(attempt => attempt.Priority == Priority.Unspecified ? (int)Priority.Normal : (int)attempt.Priority)
-                .ThenByDescending(attempt => attempt.StartedTimestamp ?? long.MaxValue)
-                .FirstOrDefault();
+            var candidates = _running.Values.ToList();
+            var chosen = CriticalShedding.Victim(candidates.Select(attempt =>
+            {
+                var eligible = attempt.Preemptible && attempt.Handle is not null && !attempt.Finalizing && attempt.StopReason is null;
+                return new ShedCandidate(attempt.Name, attempt.Priority, attempt.StartedTimestamp, attempt.Preemptible, attempt.Handle is not null,
+                    attempt.Finalizing, attempt.StopReason is not null, eligible && OomKilled(attempt.Handle!));
+            }));
+            victim = chosen is null ? null : candidates.First(attempt => attempt.Name == chosen.Name);
         }
 
         if (victim is not null)
@@ -533,6 +536,23 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
                         ("running_attempts", _running.Count.ToString(CultureInfo.InvariantCulture))]);
                 return 0;
             });
+        }
+    }
+
+    /// <summary>
+    /// True when the attempt's own container recorded an OOM kill (Linux <c>memory.events oom_kill</c> > 0); an unreadable container
+    /// counts as not OOM-killed.
+    /// </summary>
+    private static bool OomKilled(IAttemptHandle handle)
+    {
+        try
+        {
+            return handle.Accounting().LimitViolations.Contains("oom_kill");
+        }
+        catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or ObjectDisposedException
+            or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 

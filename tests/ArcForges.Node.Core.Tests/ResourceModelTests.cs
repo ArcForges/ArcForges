@@ -320,6 +320,42 @@ public sealed class ResourceModelTests
     }
 
     [Fact]
+    public void TheVictimIsTheLowestPriorityMostRecentPreemptibleAttemptThatIsNotAlreadyEnding()
+    {
+        ShedCandidate Candidate(string name, Priority priority, long? started, bool preemptible = true, bool hasHandle = true, bool finalizing = false,
+            bool stopping = false, bool oomKilled = false) => new(name, priority, started, preemptible, hasHandle, finalizing, stopping, oomKilled);
+
+        List<ShedCandidate> running =
+        [
+            Candidate("normal", Priority.Normal, 10),
+            Candidate("background-old", Priority.Background, 20),
+            Candidate("background-new", Priority.Background, 30),
+            Candidate("unspecified", Priority.Unspecified, 40),
+            Candidate("protected", Priority.Background, 50, preemptible: false),
+        ];
+
+        // The lowest priority first, the most recently started first within it; non-preemptible attempts are never chosen.
+        Assert.Equal("background-new", CriticalShedding.Victim(running)!.Name);
+
+        // The lowest-priority candidate is OOM-killed by its own limit (OOMPolicy=stop: still ending): it is skipped and the next one is
+        // chosen exactly as if it had already ended.
+        running[2] = running[2] with { OomKilled = true };
+        Assert.Equal("background-old", CriticalShedding.Victim(running)!.Name);
+        Assert.Equal("background-old", CriticalShedding.Victim(running.Where(candidate => candidate.Name != "background-new"))!.Name);
+
+        // Not launched, finalizing or already stopping are skipped too; unspecified counts as NORMAL, and an unknown start as the most recent.
+        running[1] = running[1] with { Stopping = true };
+        Assert.Equal("unspecified", CriticalShedding.Victim(running)!.Name);
+        running[3] = running[3] with { Finalizing = true };
+        running.Add(Candidate("normal-starting", Priority.Normal, null));
+        Assert.Equal("normal-starting", CriticalShedding.Victim(running)!.Name);
+        running[^1] = running[^1] with { HasHandle = false };
+        Assert.Equal("normal", CriticalShedding.Victim(running)!.Name);
+        running[0] = running[0] with { OomKilled = true };
+        Assert.Null(CriticalShedding.Victim(running));
+    }
+
+    [Fact]
     public void ThePolicyThresholdsApply()
     {
         var limits = Settings(16, 32 * GiB, resources => resources.Pressure = new PressureThresholds

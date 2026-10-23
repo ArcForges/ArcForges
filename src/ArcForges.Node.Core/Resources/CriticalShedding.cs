@@ -3,6 +3,18 @@ using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Core.Resources;
 
+/// <summary>A running attempt as the Critical victim choice reads it (<see cref="CriticalShedding.Victim"/>).</summary>
+/// <param name="Name">The attempt's name.</param>
+/// <param name="Priority">Its priority (unspecified counts as NORMAL).</param>
+/// <param name="StartedTimestamp">When it started (monotonic), or <see langword="null"/> while unknown (counted as the most recent).</param>
+/// <param name="Preemptible">It may be stopped for pressure.</param>
+/// <param name="HasHandle">Its container exists (launched).</param>
+/// <param name="Finalizing">Its result is being recorded.</param>
+/// <param name="Stopping">It is already being stopped for another reason.</param>
+/// <param name="OomKilled">Its own container has recorded an OOM kill (Linux <c>memory.events oom_kill</c>): it is already ending.</param>
+public sealed record ShedCandidate(string Name, Priority Priority, long? StartedTimestamp, bool Preemptible, bool HasHandle, bool Finalizing,
+    bool Stopping, bool OomKilled);
+
 /// <summary>
 /// How many preemptible attempts the Critical level stops (03 sections 5.4 and 7; R-RES-009). The level itself (its 5 s persistence, its
 /// journal, finding and notification, and the 10 s OOM hold) is the <see cref="PressureEvaluator"/>'s; this rule only decides, at each
@@ -49,6 +61,23 @@ public sealed class CriticalShedding
         }
 
         return level == PressureLevel.Critical && (memoryCritical || _unansweredOomKills > 0);
+    }
+
+    /// <summary>
+    /// The attempt to stop: among the preemptible attempts that are launched, not finalizing and not already stopping, the lowest priority
+    /// first, the most recently started first within a priority. An attempt whose own container already recorded an OOM kill is skipped:
+    /// with <c>OOMPolicy=stop</c> its unit is still ending through its end steps, and stopping it would record PREEMPTED instead of
+    /// OOM_KILLED and spend the kill's stop on an attempt that is ending anyway, so the next one is chosen as if it had ended at once.
+    /// <see langword="null"/> when none is eligible.
+    /// </summary>
+    public static ShedCandidate? Victim(IEnumerable<ShedCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        return candidates
+            .Where(candidate => candidate.Preemptible && candidate.HasHandle && !candidate.Finalizing && !candidate.Stopping && !candidate.OomKilled)
+            .OrderByDescending(candidate => candidate.Priority == Priority.Unspecified ? (int)Priority.Normal : (int)candidate.Priority)
+            .ThenByDescending(candidate => candidate.StartedTimestamp ?? long.MaxValue)
+            .FirstOrDefault();
     }
 
     /// <summary>Records that one attempt was stopped: it answers one unanswered OOM kill, and no other stop is due until it finalized.</summary>
