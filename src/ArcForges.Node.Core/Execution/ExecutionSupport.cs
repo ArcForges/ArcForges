@@ -93,6 +93,20 @@ public sealed class ExecutionSettings
         SecretNames = new SecretNameMatcher(policy.Privacy?.SecretNamePatterns.Count > 0 ? policy.Privacy.SecretNamePatterns : DefaultPolicy.SecretNamePatterns);
         Pools = policy.Pools.Count > 0 ? [.. policy.Pools.Select(pool => pool.Name)] : [.. DefaultPolicy.BuiltInPools];
         AcceptAgentAssertions = policy.RetrySafety?.AcceptAgentAssertions ?? false;
+        RetrySafetyRules = policy.RetrySafety is { } safety ? [.. safety.Rules] : [];
+        OvercommitCpu = resources.HasOvercommitCpu && resources.OvercommitCpu is >= 1.0 and <= 4.0 ? resources.OvercommitCpu : 1.5;
+        StarvationBound = TimeSpan.FromMilliseconds(resources.HasStarvationBoundMs && resources.StarvationBoundMs >= 60_000 ? resources.StarvationBoundMs : 10 * 60 * 1000);
+        LargeTaskBypass = TimeSpan.FromMilliseconds(resources.HasLargeTaskBypassMs && resources.LargeTaskBypassMs >= 10_000 ? resources.LargeTaskBypassMs : 2 * 60 * 1000);
+        ReservationMax = TimeSpan.FromMilliseconds(resources.HasLargeTaskReservationMaxMs && resources.LargeTaskReservationMaxMs >= 60_000
+            ? resources.LargeTaskReservationMaxMs : 30 * 60 * 1000);
+        var routing = policy.Routing ?? new RoutingPolicy();
+        LightCpu = routing.HasLightCpuMillicores && routing.LightCpuMillicores > 0 ? routing.LightCpuMillicores : 250;
+        LightMemory = routing.HasLightMemBytes && routing.LightMemBytes > 0 ? (long)routing.LightMemBytes : 128 * MiB;
+        PoolPolicies = policy.Pools.Count > 0
+            ? [.. policy.Pools]
+            : [.. DefaultPolicy.BuiltInPools.Select(pool => new PoolPolicy { Name = pool, Weight = 1, MaxParallelMode = ParallelismMode.Auto, BuiltIn = true })];
+        ParallelismRules = [.. policy.Parallelism];
+        MaxRunningPerSession = policy.Agents is { HasMaxRunningPerSession: true } agents ? (int)agents.MaxRunningPerSession : 0;
     }
 
     private static double Fraction(bool present, double value, double fallback) => present && value is > 0 and < 1 ? value : fallback;
@@ -187,6 +201,49 @@ public sealed class ExecutionSettings
     /// <summary><c>retry_safety.accept_agent_assertions</c>.</summary>
     public bool AcceptAgentAssertions { get; }
 
+    /// <summary><c>retry_safety.rules</c> (HUMAN-edited; AD-0006 section 4).</summary>
+    public IReadOnlyList<RetrySafetyRule> RetrySafetyRules { get; }
+
+    /// <summary><c>overcommit_cpu</c> (default 1.5).</summary>
+    public double OvercommitCpu { get; }
+
+    /// <summary><c>starvation_bound</c> (default 10 min): aging raises a waiting task one class per bound.</summary>
+    public TimeSpan StarvationBound { get; }
+
+    /// <summary><c>large_task_bypass</c> (default 2 min).</summary>
+    public TimeSpan LargeTaskBypass { get; }
+
+    /// <summary><c>large_task_reservation_max</c> (default 30 min).</summary>
+    public TimeSpan ReservationMax { get; }
+
+    /// <summary><c>routing.light_cpu_millicores</c> (default 250).</summary>
+    public long LightCpu { get; }
+
+    /// <summary><c>routing.light_mem_bytes</c> (default 128 MiB).</summary>
+    public long LightMemory { get; }
+
+    /// <summary>The pools of the policy (the built-in pools when it lists none).</summary>
+    public IReadOnlyList<PoolPolicy> PoolPolicies { get; }
+
+    /// <summary>The parallelism rules (R-EXE-013).</summary>
+    public IReadOnlyList<ParallelismRule> ParallelismRules { get; }
+
+    /// <summary><c>agents.max_running_per_session</c> (0 = no extra cap).</summary>
+    public int MaxRunningPerSession { get; }
+
+    /// <summary><c>max_share_mem = C_mem - R_mem</c> (03 section 4: the most managed work may ever use).</summary>
+    public long MaxShareMemory => CapacityMemory - ReserveMemory;
+
+    /// <summary>
+    /// The effective <c>max_parallel</c> of a mode (03 section 4): AUTO is <c>max(1, floor(B_cpu / 1000))</c>, FIXED its number, DISABLED 1.
+    /// </summary>
+    public static int MaxParallel(ParallelismMode mode, uint fixedLimit, long budgetCpu) => mode switch
+    {
+        ParallelismMode.Fixed => (int)Math.Clamp(fixedLimit, 1u, 256u),
+        ParallelismMode.Disabled => 1,
+        _ => (int)Math.Max(1, budgetCpu / 1000),
+    };
+
     /// <summary><c>resources.swap_allowance_bytes</c> (default 0): Linux <c>MemorySwapMax</c> of the slice and of each attempt (03 section 5.4).</summary>
     public long SwapAllowance { get; }
 
@@ -201,10 +258,17 @@ public sealed class ExecutionSettings
     /// notification limit at <c>B_mem</c>; Linux <c>CPUQuota</c> from the same rate, <c>MemoryHigh = B_mem</c>, the hard bound
     /// <c>MemoryMax = C_mem - R_mem</c> and <c>MemorySwapMax = swap_allowance</c>.
     /// </summary>
-    public ArcForges.Node.Platform.RootLimits RootLimits() => new(
-        (int)Math.Clamp(Math.Round((double)BudgetCpu / CapacityCpu * 10_000), 100, 10_000),
+    public ArcForges.Node.Platform.RootLimits RootLimits() => RootLimits(BudgetCpu, ManagedMemory);
+
+    /// <summary>
+    /// The root limits for the measured budgets (03 section 5.1): the CPU rate from <paramref name="budgetCpu"/> and the soft memory limit at
+    /// <paramref name="budgetMemory"/>; the commit limit and the hard bound stay at the managed share <c>C_mem - R_mem</c>, which deliberately
+    /// ignores unmanaged use (03 section 5.4).
+    /// </summary>
+    public ArcForges.Node.Platform.RootLimits RootLimits(long budgetCpu, long budgetMemory) => new(
+        (int)Math.Clamp(Math.Round((double)budgetCpu / CapacityCpu * 10_000), 100, 10_000),
         (long)(CommitFactor * ManagedMemory),
-        ManagedMemory)
+        Math.Max(MiB, budgetMemory))
     {
         HardMemoryBytes = ManagedMemory,
         SwapAllowanceBytes = SwapAllowance,
@@ -226,6 +290,22 @@ public sealed class ExecutionSettings
         Priority.Background => 1,
         _ => 5,
     };
+
+    /// <summary>
+    /// An attempt's request (03 section 3): the hint, clamped to the policy maximums (<c>max_task_memory</c>), or the generic default
+    /// (<c>LIGHT</c> for a light routed command), with its ceiling. A hint without a ceiling gets <c>min(max_task_memory, max(2 x
+    /// mem_expected, mem_expected + 1 GiB))</c>; the <c>LIGHT</c> and <c>DEFAULT</c> guesses get the unknown-command ceiling
+    /// <c>min(max_task_memory, max_share_mem / 2)</c>, which does not derive from the guess.
+    /// </summary>
+    public (long Cpu, long Expected, long Ceiling, EstimateSource Source) Request(ResourceDemand? hint, bool light)
+    {
+        if (light && hint is not { } && LightCpu > 0)
+        {
+            return (LightCpu, LightMemory, Math.Max(LightMemory, Math.Min(MaxTaskMemory, ManagedMemory / 2)), EstimateSource.Light);
+        }
+
+        return Request(hint);
+    }
 
     /// <summary>An attempt's request (03 section 3: the hint, or the generic default), with its ceiling.</summary>
     public (long Cpu, long Expected, long Ceiling, EstimateSource Source) Request(ResourceDemand? hint)

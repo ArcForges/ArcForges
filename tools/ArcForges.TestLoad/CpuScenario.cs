@@ -61,7 +61,11 @@ internal static class CpuScenario
         };
     }
 
-    /// <summary>The per-thread work chain.</summary>
+    /// <summary>
+    /// The per-thread work chain, compiled fully optimized from its first call, so that under the JIT the probe's calibration and its
+    /// periods run the same code.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     public static ulong Spin(ulong state, long iterations)
     {
         for (var i = 0L; i < iterations; i++)

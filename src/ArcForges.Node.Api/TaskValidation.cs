@@ -10,8 +10,8 @@ namespace ArcForges.Node.Api;
 /// <summary>
 /// The <c>validate:</c> rules of <c>TaskSpec</c> (architecture 04 section 1; tasks.proto), run in the API layer before a command is
 /// accepted: a violation is <c>ERROR_CATEGORY_VALIDATION</c> with <c>code</c> naming the field and <c>effect=DID_NOT_HAPPEN</c>. Fields
-/// whose behaviour belongs to later tasks are refused rather than ignored: task dependencies, exclusive and shared keys (AF-SCHED-01),
-/// remote placement (LAN tasks), workspaces (AF-WS-01) and sessions (AF-AI-01).
+/// whose behaviour belongs to later tasks are refused rather than ignored: remote placement (LAN tasks), workspace IDs (AF-WS-01) and
+/// sessions (AF-AI-01). Dependencies that name an unknown task are refused by the handler, which reads the store (<c>invalid_dependency</c>).
 /// </summary>
 internal static class TaskValidation
 {
@@ -231,14 +231,84 @@ internal static class TaskValidation
             return NodeErrors.InvalidArgument("readiness, stop_with_session, detach: SERVICE only");
         }
 
-        if (spec.DependsOn.Count > 0)
+        if (spec.DependsOn.Count > 64)
         {
-            return NodeErrors.InvalidArgument("depends_on: task dependencies are not available in this build (AF-SCHED-01)");
+            return NodeErrors.InvalidArgument("depends_on: <= 64 dependencies");
         }
 
-        if (spec.Concurrency is { } concurrency && (concurrency.ExclusiveKeys.Count > 0 || concurrency.SharedKeys.Count > 0 || concurrency.HasAccess))
+        var dependencies = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < spec.DependsOn.Count; index++)
         {
-            return NodeErrors.InvalidArgument("concurrency: exclusive and shared keys are not available in this build (AF-SCHED-01)");
+            var dependency = spec.DependsOn[index];
+            if (dependency.TaskId is not { Value.Length: 16 } dependencyId)
+            {
+                return NodeErrors.InvalidDependency([], $"depends_on[{index}].task_id: required");
+            }
+
+            if (dependency.HasCondition && (dependency.Condition == DependencyCondition.Unspecified || !Enum.IsDefined(dependency.Condition)))
+            {
+                return NodeErrors.InvalidArgument($"depends_on[{index}].condition: SUCCEEDED, FINISHED or READY");
+            }
+
+            if (!dependencies.Add(Convert.ToHexString(dependencyId.Value.Span)))
+            {
+                return NodeErrors.InvalidDependency(dependencyId.Value.Span, $"depends_on[{index}]: the task is listed twice");
+            }
+        }
+
+        if (spec.Concurrency is { } concurrency)
+        {
+            if (concurrency.HasAccess && !Enum.IsDefined(concurrency.Access))
+            {
+                return NodeErrors.InvalidArgument("concurrency.access: SHARED or EXCLUSIVE");
+            }
+
+            if (ArcForges.Node.Core.Scheduling.KeyHolders.FromSpec(concurrency.ExclusiveKeys, concurrency.SharedKeys).Error is { } keyError)
+            {
+                return NodeErrors.InvalidArgument(keyError);
+            }
+        }
+
+        if (spec.Readiness is { } readiness)
+        {
+            switch (readiness.ConditionCase)
+            {
+                case ReadinessCondition.ConditionOneofCase.OutputRegex:
+                    if (readiness.OutputRegex.Length is 0 or > 1024)
+                    {
+                        return NodeErrors.InvalidArgument("readiness.output_regex: 1..1024 chars");
+                    }
+
+                    try
+                    {
+                        _ = ArcForges.Node.Core.Scheduling.ServiceReadiness.Compile(readiness.OutputRegex);
+                    }
+                    catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
+                    {
+                        return NodeErrors.InvalidArgument("readiness.output_regex: an RE2-compatible pattern (" + NodeLog.OneLine(exception.Message) + ")");
+                    }
+
+                    break;
+                case ReadinessCondition.ConditionOneofCase.TcpListenPort:
+                    if (readiness.TcpListenPort is < 1 or > 65_535)
+                    {
+                        return NodeErrors.InvalidArgument("readiness.tcp_listen_port: 1..65535");
+                    }
+
+                    break;
+                case ReadinessCondition.ConditionOneofCase.FileExists:
+                    if (!Path.IsPathFullyQualified(readiness.FileExists))
+                    {
+                        return NodeErrors.InvalidArgument("readiness.file_exists: absolute path");
+                    }
+
+                    break;
+            }
+
+            if (readiness.HasReadinessTimeoutMs && readiness.ReadinessTimeoutMs is < 1_000 or > 3_600_000)
+            {
+                return NodeErrors.InvalidArgument("readiness.readiness_timeout_ms: 1 s..1 h");
+            }
         }
 
         if (spec.Placement is { } placement)

@@ -312,6 +312,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public PreparedCommand Prepare(CommandRequest request) => LinuxCommands.Prepare(request);
 
+    /// <summary>True when attempt units can be frozen (<c>cgroup.freeze</c>) and the self-test passed (03 section 8 <c>pause</c>).</summary>
+    internal bool Freezer => _freezer && _selfTest is null && _manager is not null;
+
+    /// <inheritdoc />
+    public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
+
     /// <inheritdoc />
     public string ContainerName(string nodeName, string attemptName) => _manager is null ? "pgid:" + attemptName : UnitName(attemptName);
 

@@ -358,6 +358,7 @@ public sealed class ResourceMonitor : IDisposable
         }
 
         long managedCpu = 0, managedMemory = 0, managedCpuTime = 0, managedPeak = 0, managedProcesses = 0, managedRead = 0, managedWrite = 0;
+        var managedCpuUnknown = false;
         var rows = new List<SampleRow>(attempts.Count + 2);
         foreach (var attempt in attempts)
         {
@@ -379,6 +380,22 @@ public sealed class ResourceMonitor : IDisposable
                 var work = Math.Max(0, usage.CpuTimeMs - last.CpuTimeMs);
                 rate = elapsed > 0 ? (long)(work * 1000 / elapsed) : 0;
                 _windowManagedCpuMs += work;
+            }
+            else if (_lastSelfCpuMs >= 0 && attempt.StartedTimestamp is { } started && started > _lastSelfAt)
+            {
+                // An attempt that started since the previous sample: its CPU so far ran in this window, which the machine's total counts;
+                // a rate of 0 would count it as unmanaged and drop B_cpu (and the root's CPU cap that follows it) for the smoother's decay.
+                var elapsed = _clock.GetElapsedTime(_lastSelfAt, now).TotalMilliseconds;
+                var work = Math.Max(0, usage.CpuTimeMs);
+                rate = elapsed > 0 ? (long)(work * 1000 / elapsed) : 0;
+                _windowManagedCpuMs += work;
+            }
+            else if (_lastSelfCpuMs >= 0)
+            {
+                // An attempt adopted since the previous sample (recovered after a node restart): its container's CPU at that sample is
+                // unknown, so its share of this window is too; U_cpu keeps its previous value for this window instead of counting the
+                // attempt's CPU as unmanaged.
+                managedCpuUnknown = true;
             }
 
             attempt.LastUsage = (usage.CpuTimeMs, now);
@@ -424,7 +441,7 @@ public sealed class ResourceMonitor : IDisposable
 
         var used = Math.Max(0, capacityMemory - machine.AvailableMemoryBytes);
         var unmanagedMemory = (long)_unmanagedMemory.Update(Math.Max(0, used - managedMemory - _nodeMemory), settings.AlphaUp, settings.AlphaDown);
-        var unmanagedCpu = _lastMachine is null
+        var unmanagedCpu = _lastMachine is null || managedCpuUnknown
             ? (long)(_unmanagedCpu.Value ?? 0)
             : (long)_unmanagedCpu.Update(Math.Max(0, totalCpu - managedCpu - nodeCpu), settings.AlphaUp, settings.AlphaDown);
         _lastMachine = machine;

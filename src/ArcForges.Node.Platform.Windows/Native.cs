@@ -71,8 +71,12 @@ internal static unsafe partial class Native
 
     public const uint JobObjectLimitJobTime = 0x00000004;
     public const uint JobObjectLimitActiveProcess = 0x00000008;
+    public const uint JobObjectLimitPriorityClass = 0x00000020;
     public const uint JobObjectLimitJobMemory = 0x00000200;
     public const uint JobObjectLimitKillOnJobClose = 0x00002000;
+
+    public const uint BelowNormalPriorityClass = 0x00004000;
+    public const uint NormalPriorityClass = 0x00000020;
 
     public const uint CpuRateControlEnable = 0x1;
     public const uint CpuRateControlWeightBased = 0x2;

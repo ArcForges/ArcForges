@@ -58,6 +58,33 @@ public static class NodeErrors
     /// <summary><c>STATE/pause_unsupported</c>.</summary>
     public static ArcError PauseUnsupported() => Create(ErrorCategory.State, "pause_unsupported", RetryMode.Never, null);
 
+    /// <summary><c>VALIDATION/invalid_dependency</c>: <c>state.resource</c> names the dependency (when it has an ID) and <c>state.reason</c> the rule.</summary>
+    public static ArcError InvalidDependency(ReadOnlySpan<byte> taskId, string reason)
+    {
+        var state = new StateFailure { Reason = reason };
+        if (taskId.Length == 16)
+        {
+            state.Resource = new AggregateRef { Kind = "task", Id = new Id { Value = ByteString.CopyFrom(taskId) } };
+        }
+
+        return Create(ErrorCategory.Validation, "invalid_dependency", RetryMode.Never, state);
+    }
+
+    /// <summary><c>VALIDATION/invalid_policy</c>: the document's ERROR issues, as <c>path: message</c> in <c>state.reason</c>.</summary>
+    public static ArcError InvalidPolicy(IEnumerable<string> issues) =>
+        Create(ErrorCategory.Validation, "invalid_policy", RetryMode.Never, new StateFailure { Reason = string.Join("; ", issues) });
+
+    /// <summary><c>CONFLICT/already_exists</c>: <c>state.resource</c> names the object (kind and name in <c>state.state</c>).</summary>
+    public static ArcError AlreadyExists(string kind, string name) =>
+        Create(ErrorCategory.Conflict, "already_exists", RetryMode.Never, new StateFailure { Resource = new AggregateRef { Kind = kind }, State = name });
+
+    /// <summary><c>STATE/not_found</c> for an object named by text (a pool): <c>state.resource</c> has the kind, <c>state.state</c> the name.</summary>
+    public static ArcError NotFound(string kind, string name) =>
+        Create(ErrorCategory.State, "not_found", RetryMode.Never, new StateFailure { Resource = new AggregateRef { Kind = kind }, State = name });
+
+    /// <summary><c>STATE/in_use</c>: retry <c>AFTER_TIME</c>; <c>state.reason</c> names the holder.</summary>
+    public static ArcError InUse(string holder) => Create(ErrorCategory.State, "in_use", RetryMode.AfterTime, new StateFailure { Reason = holder });
+
     /// <summary><c>RESOURCE/enforcement_unavailable</c>: <c>state.reason</c> names the capability.</summary>
     public static ArcError EnforcementUnavailable(string capability) =>
         Create(ErrorCategory.Resource, "enforcement_unavailable", RetryMode.Never, new StateFailure { Reason = capability });

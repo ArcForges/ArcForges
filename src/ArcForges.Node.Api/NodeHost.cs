@@ -75,6 +75,9 @@ public sealed record NodeHostOptions
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
+    /// <summary>The tool-level concurrency hook of the adapters (03 section 5.3; synthetic adapters in tests).</summary>
+    public ArcForges.Node.Core.Scheduling.IToolConcurrency? ToolConcurrency { get; init; }
+
     /// <summary>Linux: the root slice (component tests give each node its own; default <c>arcforges.slice</c>, or the test hook in test mode).</summary>
     public string? LinuxSlice { get; init; }
 
@@ -250,6 +253,7 @@ public static class NodeHost
             Secrets = new TaskSecrets(store, keys),
             KeysReady = keyLoad,
             Steps = options.LaunchSteps,
+            Tools = options.ToolConcurrency,
             Faults = faults,
             Heartbeat = heartbeat,
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
@@ -259,6 +263,9 @@ public static class NodeHost
         {
             Execution = execution,
         };
+
+        // The capability report's root_* facts follow the root limits the scheduler applies from the measured budgets (03 section 5.1).
+        execution.RootLimitsApplied = _ => node.Reevaluate();
         using var stopSignals = RegisterSignals(node);
         using var external = cancellationToken.Register(() => node.RequestStop("cancelled"));
         LocalRpcServer? server = null;

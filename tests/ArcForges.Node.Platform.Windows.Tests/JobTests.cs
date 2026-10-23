@@ -41,6 +41,14 @@ public sealed class JobTests
             Assert.False(harness.Platform.RootJob.Contains(holder), "The holder runs outside the root job.");
         }
 
+        // 03 section 5.2 (amended for AF-SCHED-01): the attempt job enforces BELOW_NORMAL on its processes; the holder keeps its own class.
+        Assert.Equal(WindowsExecutionPlatform.AttemptPriorityClass, handle.Job.PriorityClassLimit());
+        using (var workload = Process.GetProcessById(root.Pid))
+        using (var holderProcess = Process.GetProcessById(handle.Holder!.ProcessId))
+        {
+            Assert.Equal(ProcessPriorityClass.BelowNormal, workload.PriorityClass);
+            Assert.NotEqual(ProcessPriorityClass.BelowNormal, holderProcess.PriorityClass);
+        }
         // The child job is nested in the root: the root's accounting includes it, and ending the root ends the child's processes (V-W02).
         Assert.True(harness.Platform.RootJob!.Accounting().ActiveProcesses >= 1);
         Assert.True(harness.Platform.RootJob.Terminate(AttemptRunner.TerminatedExitCode));
@@ -138,12 +146,18 @@ public sealed class JobTests
         using var harness = PlatformHarness.Start(new RootLimits(10_000, RootLimit, RootLimit));
         // Each attempt alone fits its own 512 MiB limit; together they exceed the root's 384 MiB, so only the root can refuse (the heap
         // limit is lifted as in AnAttemptNeverCommitsBeyondItsCommitLimit, or the runtime would stop each workload at 384 MiB itself).
-        var first = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--hold-ms", "4000"],
+        // The first attempt holds its 300 MiB until the second one has ended (a release file), and the second starts only once the first
+        // committed its ramp: both are committed together whatever the start delay of a below-normal process under load.
+        var release = Path.Combine(harness.Root, "release.flag");
+        using var sampler = new CommitSampler(harness.Platform.RootJob!);
+        var first = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--hold-ms", "60000", "--until-file", release],
             new ContainerLimits { CommitLimitBytes = 512L << 20 }, environment: LiftedHeapLimit);
+        PlatformHarness.WaitFor(() => harness.Platform.RootJob!.Accounting().PeakJobMemory >= 280L << 20, Bound, "the first attempt's ramp");
         var second = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--step-ms", "50", "--hold-ms", "4000"],
             new ContainerLimits { CommitLimitBytes = 512L << 20 }, environment: LiftedHeapLimit);
-        using var sampler = new CommitSampler(harness.Platform.RootJob!);
-        var exits = new[] { harness.WaitExit(first, Bound), harness.WaitExit(second, Bound) };
+        var secondExit = harness.WaitExit(second, Bound);
+        File.WriteAllText(release, "release");
+        var exits = new[] { harness.WaitExit(first, Bound), secondExit };
         var rootPeak = harness.Platform.RootJob!.Accounting().PeakJobMemory;
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"exits {exits[0].ExitStatus}/{exits[1].ExitStatus}; root commit sampled max {sampler.Max}, peak {rootPeak} of {RootLimit} ({sampler.Samples} samples)");

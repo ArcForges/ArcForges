@@ -241,7 +241,7 @@ public sealed class TaskServiceTests
         Assert.Equal("unsupported_shell", (await Tasks.SubmitRawAsync(channel, shell)).Error.Code);
         var dependency = Tasks.Argv(node.Root, Tasks.Cmd);
         dependency.DependsOn.Add(new Dependency { TaskId = CommandIds.New() });
-        Assert.Equal("invalid_argument", (await Tasks.SubmitRawAsync(channel, dependency)).Error.Code);
+        Assert.Equal("invalid_dependency", (await Tasks.SubmitRawAsync(channel, dependency)).Error.Code);
         var tooLong = Tasks.Argv(node.Root, Tasks.Cmd, "/c", new string('x', 40_000));
         Assert.Equal("invalid_argument", (await Tasks.SubmitRawAsync(channel, tooLong)).Error.Code);
         var interactive = Tasks.Argv(node.Root, Tasks.Cmd);

@@ -293,11 +293,22 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         }
     }
 
-    /// <summary><c>FreezeUnit</c> (pause; R-EXE-011).</summary>
+    /// <summary><c>FreezeUnit</c> (pause; R-EXE-011): returns once the unit is frozen.</summary>
     public void Freeze() => _platform.Manager.FreezeUnit(Unit);
 
     /// <summary><c>ThawUnit</c>.</summary>
     public void Thaw() => _platform.Manager.ThawUnit(Unit);
+
+    /// <inheritdoc />
+    public bool CanPause => _platform.Freezer;
+
+    /// <inheritdoc />
+    public void SetCpuWeight(int weight) =>
+        _platform.Manager.SetUnitProperties(Unit, runtime: true, [new UnitProperty("CPUWeight", (ulong)LinuxExecutionPlatform.CpuWeight(weight))]);
+
+    /// <inheritdoc />
+    public void SetMemoryHigh(long bytes) =>
+        _platform.Manager.SetUnitProperties(Unit, runtime: true, [new UnitProperty("MemoryHigh", (ulong)Math.Max(1024 * 1024, bytes))]);
 
     /// <inheritdoc />
     public IReadOnlyList<EscapedProcess> ScanEscaped()

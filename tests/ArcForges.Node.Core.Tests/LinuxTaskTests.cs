@@ -148,26 +148,31 @@ public sealed class LinuxTaskTests
     [Fact(Timeout = 240_000)]
     public async Task NoAttemptOrTheSliceExceedsItsMemoryMaxAndNothingSwapsInTheMemRampScenario()
     {
-        // R-RES-014, 15 section 4: the slice's MemoryMax = C_mem - R_mem is a hard bound for managed work alone, attempts are stopped at
-        // their own MemoryMax, and MemorySwapMax = swap_allowance (0) keeps managed work out of swap, under saturating managed load.
+        // R-RES-014, 15 section 4: attempts are stopped at their own MemoryMax, the slice's MemoryMax = C_mem - R_mem bounds managed work,
+        // and MemorySwapMax = swap_allowance (0) keeps managed work out of swap, in the mem-ramp scenario. The managed share is set to the
+        // machine's current use plus 2 GiB, so admission (AF-SCHED-01: the accounted memory never exceeds B_mem = C - R - U) admits the
+        // three attempts at once; that the slice's MemoryMax bounds attempts together is proven at the platform level
+        // (UnitPlatformTests.TheSliceMemoryMaxBoundsAllAttemptsTogether), since admission keeps the declared demand within B_mem.
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
-        const long Managed = 768L << 20;
         var physical = ArcForges.Node.Platform.Linux.ProcFs.PhysicalMemory();
+        var available = File.ReadAllLines("/proc/meminfo").Where(line => line.StartsWith("MemAvailable:", StringComparison.Ordinal))
+            .Select(line => long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture) * 1024).Single();
+        var managed = physical - available + (2L << 30);
         await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy =>
         {
-            policy.Resources.ReserveMemFixedBytes = (ulong)(physical - Managed);
+            policy.Resources.ReserveMemFixedBytes = (ulong)(physical - managed);
             policy.Resources.ReserveMemFraction = 0;
         })).StartAsync();
         await using var channel = await node.ChannelAsync();
         var slice = "/sys/fs/cgroup" + SystemdTestEnvironment.RequiredProperty(node.Slice, "ControlGroup");
         var sliceMax = long.Parse(File.ReadAllText(Path.Combine(slice, "memory.max")), CultureInfo.InvariantCulture);
-        Assert.Equal(Managed - (Managed % Environment.SystemPageSize), sliceMax);
+        Assert.Equal(managed - (managed % Environment.SystemPageSize), sliceMax);
         Assert.Equal("0", File.ReadAllText(Path.Combine(slice, "memory.swap.max")).Trim());
 
-        // Three attempts expecting 400 MiB (MemoryHigh 500 MiB) with 512 MiB ceilings, ramping to 600 MiB each: 1.8 GiB of demand on a
-        // 768 MiB slice (the interim admission does not count memory yet, AF-SCHED-01). The .NET workload's own heap limit (75% of its
-        // cgroup's) is lifted to 3 GiB (hex without 0x, the form both the JIT runtime and Native AOT accept), so the kernel bounds stop it.
+        // Three attempts expecting 400 MiB (MemoryHigh 500 MiB) with 512 MiB ceilings, ramping to 600 MiB each: each is stopped at its own
+        // bound. The .NET workload's own heap limit (75% of its cgroup's) is lifted to 3 GiB (hex without 0x, the form both the JIT runtime
+        // and Native AOT accept), so the kernel bounds stop it.
         var ids = new List<Id>();
         for (var index = 0; index < 3; index++)
         {

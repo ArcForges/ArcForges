@@ -65,6 +65,9 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     /// <summary>The root job (after <see cref="Start"/>).</summary>
     public JobObject? RootJob => _root;
 
+    /// <summary>The priority class every attempt's job enforces on its processes: <c>BELOW_NORMAL_PRIORITY_CLASS</c> (03 section 5.2, amended).</summary>
+    public const uint AttemptPriorityClass = Native.BelowNormalPriorityClass;
+
     /// <summary>The name of an attempt's child job.</summary>
     public static string JobName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
 
@@ -148,6 +151,9 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     public PreparedCommand Prepare(CommandRequest request) => WindowsCommands.Prepare(request);
 
     /// <inheritdoc />
+    public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
+
+    /// <inheritdoc />
     public IAttemptHandle Launch(AttemptLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);
@@ -168,7 +174,11 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         Stream? stdinWriter = null;
         try
         {
-            job.SetLimits(launch.Limits.CommitLimitBytes, launch.Limits.ActiveProcessLimit, killOnClose: launch.KillWithNode);
+            // Every attempt runs below normal priority, enforced by its job (03 section 5.2 as amended for AF-SCHED-01): the root's hard cap
+            // bounds managed CPU over each rate-control interval, but within one, normal-priority managed threads would contend with the
+            // user's own interactive work for the reserved headroom; below normal they always yield to it. The order among managed tasks
+            // stays the jobs' CPU weights.
+            job.SetLimits(launch.Limits.CommitLimitBytes, launch.Limits.ActiveProcessLimit, killOnClose: launch.KillWithNode, priorityClass: AttemptPriorityClass);
             if (launch.Limits.CommitLimitBytes > 0)
             {
                 job.SetMemoryNotification(launch.Limits.CommitNotificationBytes > 0 ? launch.Limits.CommitNotificationBytes : launch.Limits.CommitLimitBytes);

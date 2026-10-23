@@ -31,15 +31,17 @@ public sealed class TaskControlTests
         await using var channel = await node.ChannelAsync();
         var marker = Path.Combine(node.Root, "timeout.txt");
         var timed = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--child", "same", "--marker", marker);
-        timed.TimeoutMs = 2_000;
+        // 5 s: the attempt runs below normal priority (03 section 5.2, amended), so under the parallel suites' load its child may take a few
+        // seconds to start; the timeout must fire after both processes are up for both to receive the break.
+        timed.TimeoutMs = 5_000;
         var watch = Stopwatch.StartNew();
         var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, timed));
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(3, task.CurrentAttempt.Result.ExitCode);
-        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 2 s timeout and the stop take a
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 5 s timeout and the stop take a
         // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"The timeout took {watch.Elapsed}.");
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"The timeout took {watch.Elapsed}.");
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
 
         var cpu = Tasks.Argv(node.Root, Tasks.TestLoad, "cpu", "--threads", "2", "--iterations", "20000000000");
@@ -58,7 +60,10 @@ public sealed class TaskControlTests
         await using var channel = await node.ChannelAsync();
         var marker = Path.Combine(node.Root, "ignore.txt");
         var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--on-break", "ignore", "--child", "same", "--marker", marker);
-        spec.Resources = new ResourceSpec { CancelGraceMs = 1_000 };
+        // The grace must outlast the start of each process's break handler: the attempt runs below normal priority (03 section 5.2, amended),
+        // and under the parallel suites' normal-priority load its handler thread can wait seconds for a processor (Windows' starvation boost
+        // runs a ready thread within about 4 s), so the forced phase waits 10 s; the assertions are unchanged.
+        spec.Resources = new ResourceSpec { CancelGraceMs = 10_000 };
         var taskId = await Tasks.SubmitAsync(channel, spec);
         await Tasks.RunningAsync(channel, taskId);
         await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "ready") == 2, Tasks.Bound, "the tree");
@@ -66,6 +71,7 @@ public sealed class TaskControlTests
 
         var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Reason = "test" }, cancellationToken: Ct);
         Assert.Equal(TaskState.Running, cancel.Value.State);
+        await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "break") == 2, TimeSpan.FromSeconds(10), "both processes to record the break");
         var task = await Tasks.WaitAsync(channel, taskId);
         Assert.Equal(TaskState.Cancelled, task.State);
         Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
@@ -79,7 +85,7 @@ public sealed class TaskControlTests
     }
 
     [Fact(Timeout = 180_000)]
-    public async Task TheInterimAdmissionRunsTasksInFifoOrderWithinTheGlobalLimit()
+    public async Task TasksOfOneOwnerAndClassRunInSubmissionOrderWithinTheGlobalLimit()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
@@ -96,7 +102,7 @@ public sealed class TaskControlTests
         if (queued.State == TaskState.Queued)
         {
             Assert.Equal("global_limit", queued.Queue.BlockingReason);
-            Assert.InRange(queued.Queue.Position, 1u, 3u);
+            Assert.InRange(queued.Queue.Position, 1u, 4u);
         }
 
         foreach (var id in ids)
@@ -107,7 +113,15 @@ public sealed class TaskControlTests
         var starts = markers.Select(marker => Tasks.Marker(marker).Single(line => line.Event == "ready").At).ToList();
         Assert.True(starts[2] >= Math.Min(starts[0], starts[1]) + 1_000, "The third task waited for a running one to finish.");
         Assert.True(starts[3] >= Math.Min(starts[0], starts[1]) + 1_000, "The fourth task waited for a running one to finish.");
-        Assert.True(starts[2] <= starts[3] + 200, "Queued tasks start in submission order.");
+        // The order is the node's: its start records (admission starts them in order), not the processes' markers, which a below-normal
+        // process under the parallel suites' load writes late.
+        var started = new List<long>();
+        foreach (var id in ids)
+        {
+            started.Add(Sched.Ms((await Tasks.GetAsync(channel, id)).StartedAt));
+        }
+
+        Assert.True(started[2] <= started[3], "Queued tasks start in submission order.");
     }
 
     [Fact(Timeout = 120_000)]
@@ -181,23 +195,26 @@ public sealed class TaskControlTests
         Assert.Contains(finding.Evidence, item => item.Name == "detected_by" && item.Value == "NODE");
     }
 
+    /// <summary>
+    /// The attempt's commit limit in the mem-ramp scenario, through the node. The root's commit limit is <c>commit_factor x (C_mem - R_mem)</c>
+    /// (03 section 5.1), checked here; that it bounds all attempts together is proven with real jobs by the platform test
+    /// <c>JobTests.TheRootCommitLimitBoundsAllAttemptsTogether</c>: since admission (AF-SCHED-01) counts against <c>B_mem = C_mem - R_mem -
+    /// U_mem</c>, a node whose managed share is shrunk below the machine's unmanaged use admits nothing (<c>exceeds_budget</c>), so a node-level
+    /// scenario can no longer push two admitted attempts into a small root.
+    /// </summary>
     [Fact(Timeout = 180_000)]
-    public async Task NoAttemptOrRootExceedsItsCommitLimitInTheMemRampScenario()
+    public async Task NoAttemptExceedsItsCommitLimitInTheMemRampScenario()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows commit limits.");
-        const long Managed = 400L << 20;
-        var physical = ProcessInfo.PhysicalMemory();
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy =>
-        {
-            // C_mem - R_mem = 400 MiB: the root commit limit is 1.5 x 400 MiB = 600 MiB (03 section 5.1).
-            policy.Resources.ReserveMemFixedBytes = (ulong)(physical - Managed);
-            policy.Resources.ReserveMemFraction = 0;
-        })).StartAsync();
+        await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
         var nodeName = IdText.Format(node.Runtime.NodeId.Span);
         using var root = JobObject.Open(WindowsExecutionPlatform.JobName(nodeName, "root"))!;
-        Assert.Equal(Managed * 3 / 2, root.Limits().JobMemoryLimit);
+        var settings = node.Runtime.Execution!.Settings;
+        // The job rounds its limit down to a page.
+        var rootLimit = (long)(settings.CommitFactor * settings.ManagedMemory);
+        Assert.InRange(root.Limits().JobMemoryLimit, rootLimit - 4095, rootLimit);
 
         // One attempt with a 128 MiB ceiling: its commit limit is 192 MiB, its notification limit 128 MiB. The workload's heap limit is
         // lifted (hex without 0x, read by the JIT runtime and Native AOT): inside a job the .NET GC would otherwise refuse at 75% of the
@@ -216,29 +233,7 @@ public sealed class TaskControlTests
         // The job refused: its peak (which counts the refused request) reached the commit limit, within one 16 MiB step.
         Assert.InRange((long)finished.CurrentAttempt.Usage.MemPeakBytes, (192L - 16) << 20, (192L + 16) << 20);
         attemptMax.Stop();
-
-        // Two attempts whose ceilings together exceed the root: the root's commit limit holds for both.
-        var rootMax = Sample(root);
-        var ids = new List<Id>();
-        for (var index = 0; index < 2; index++)
-        {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "380", "--step-mb", "20", "--step-ms", "30", "--hold-ms", "3000");
-            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
-            spec.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 64L << 20, MemCeilingBytes = 300L << 20 } };
-            ids.Add(await Tasks.SubmitAsync(channel, spec));
-        }
-
-        var results = new List<ManagedTask>();
-        foreach (var id in ids)
-        {
-            results.Add(await Tasks.WaitAsync(channel, id));
-        }
-
-        rootMax.Stop();
-        TestContext.Current.TestOutputHelper?.WriteLine($"root committed at most {rootMax.Max} of {Managed * 3 / 2}; attempt at most {attemptMax.Max} of {192L << 20}");
-        Assert.True(rootMax.Max <= Managed * 3 / 2, $"The root committed {rootMax.Max}.");
-        Assert.True(root.Accounting().PeakJobMemory >= (Managed * 3 / 2) - (20L << 20), $"The root's peak {root.Accounting().PeakJobMemory} never reached its limit: the root did not refuse.");
-        Assert.Contains(results, task => task.State == TaskState.Failed);
+        TestContext.Current.TestOutputHelper?.WriteLine($"attempt committed at most {attemptMax.Max} of {192L << 20}");
     }
 
     [Fact(Timeout = 120_000)]
@@ -280,6 +275,39 @@ public sealed class TaskControlTests
         }
     }
 
+    /// <summary>
+    /// 03 section 5.2 (amended for AF-SCHED-01): every process of an attempt runs below normal priority, enforced by its job
+    /// (<c>JOB_OBJECT_LIMIT_PRIORITY_CLASS</c>), so managed work always yields to the user's own normal-priority work. The attempt's shell
+    /// and a child it starts are BELOW_NORMAL, and the shell cannot raise itself to NORMAL or HIGH.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task AnAttemptsProcessesRunBelowNormalAndCannotRaiseThemselves()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var channel = await node.ChannelAsync();
+        var script = string.Join("; ",
+            "$p = [Diagnostics.Process]::GetCurrentProcess()",
+            "'before=' + $p.PriorityClass",
+            "try { $p.PriorityClass = 'High' } catch { 'high-refused' }",
+            "$p.Refresh(); 'after-high=' + $p.PriorityClass",
+            "try { $p.PriorityClass = 'Normal' } catch { 'normal-refused' }",
+            "$p.Refresh(); 'after-normal=' + $p.PriorityClass",
+            "$c = [Diagnostics.Process]::Start('cmd.exe', '/d /c ping -n 3 127.0.0.1 >nul')",
+            "'child=' + $c.PriorityClass",
+            "$c.WaitForExit()");
+        var spec = Tasks.Argv(node.Root, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+            "-NoProfile", "-NonInteractive", "-Command", script);
+        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
+        var output = System.Text.Encoding.UTF8.GetString(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout));
+        TestContext.Current.TestOutputHelper?.WriteLine(output);
+        Assert.Equal(TaskState.Succeeded, task.State);
+        Assert.Contains("before=BelowNormal", output, StringComparison.Ordinal);
+        Assert.Contains("after-high=BelowNormal", output, StringComparison.Ordinal);
+        Assert.Contains("after-normal=BelowNormal", output, StringComparison.Ordinal);
+        Assert.Contains("child=BelowNormal", output, StringComparison.Ordinal);
+    }
     [Fact(Timeout = 120_000)]
     public async Task AKillWithNodeTaskEndsWithTheNode()
     {

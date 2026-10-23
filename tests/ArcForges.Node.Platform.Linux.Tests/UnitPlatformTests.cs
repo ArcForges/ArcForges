@@ -550,6 +550,56 @@ public sealed class UnitPlatformTests
         LinuxHarness.WaitFor(() => SystemdTestEnvironment.Property(handle.Unit, "LoadState") is "not-found" or "", Bound, "the failed unit to be reset");
     }
 
+    /// <summary>
+    /// R-RES-014 and 15 section 4 at the platform: the slice's MemoryMax bounds managed work alone, and attempts under it stop at their own
+    /// MemoryMax; MemorySwapMax 0 keeps them out of swap. Three units each demanding 600 MiB (a pipe into <c>tail</c>, which buffers it) under
+    /// 512 MiB unit limits press a 768 MiB slice. The node-level scenario keeps the attempt bounds; since admission (AF-SCHED-01) keeps the
+    /// declared demand within <c>B_mem</c>, saturating the slice is proven here, without admission.
+    /// </summary>
+    [Fact(Timeout = 180_000)]
+    public void TheSliceMemoryMaxBoundsAllAttemptsTogether()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireUnits();
+        const long SliceMax = 768L << 20;
+        using var harness = LinuxHarness.Start(new RootLimits(5_000, 16L << 30, SliceMax) { HardMemoryBytes = SliceMax, SwapAllowanceBytes = 0 });
+        var handles = Enumerable.Range(0, 3).Select(_ => (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c", "head -c 600M /dev/zero | tail > /dev/null; sleep 2"],
+            new ContainerLimits { MemoryHighBytes = 500L << 20, MemoryMaxBytes = 512L << 20, SwapMaxBytes = 0 })).ToList();
+        var slice = Path.Combine("/sys/fs/cgroup" + SystemdTestEnvironment.RequiredProperty(harness.Slice, "ControlGroup"));
+        long sampled = 0;
+        var ended = new Dictionary<LinuxAttemptHandle, ExitRecord>();
+        var watch = Stopwatch.StartNew();
+        while (ended.Count < handles.Count)
+        {
+            sampled = Math.Max(sampled, long.Parse(LinuxHarness.Read(slice, "memory.current"), CultureInfo.InvariantCulture));
+            foreach (var handle in handles.Where(handle => !ended.ContainsKey(handle)))
+            {
+                handle.Refresh();
+                if (handle.TryReadExit() is { } exit)
+                {
+                    ended[handle] = exit;
+                }
+            }
+
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(120), "The units did not end.");
+            Thread.Sleep(20);
+        }
+
+        var exits = ended.Values.ToList();
+
+        var peak = long.Parse(LinuxHarness.Read(slice, "memory.peak"), CultureInfo.InvariantCulture);
+        TestContext.Current.TestOutputHelper?.WriteLine($"slice max {SliceMax}, peak {peak}, sampled {sampled}; "
+            + string.Join("; ", exits.Select(exit => $"{exit.ServiceResult} peak {exit.MemPeakBytes} oom {exit.OomKills}")));
+        Assert.True(peak <= SliceMax, $"The slice peaked at {peak} above its MemoryMax {SliceMax}.");
+        Assert.Equal("0", LinuxHarness.Read(slice, "memory.swap.peak"));
+        Assert.All(exits, exit => Assert.InRange(exit.MemPeakBytes, 1, 512L << 20));
+        Assert.All(exits, exit => Assert.Equal(0, exit.SwapPeakBytes));
+        Assert.Contains(exits, exit => exit.OomKills >= 1);
+        foreach (var handle in handles)
+        {
+            handle.Acknowledge();
+        }
+    }
     [Fact(Timeout = 120_000)]
     public async Task ARestartedPlatformReopensARunningUnitAndAFinishedOneLeavesItsRecord()
     {

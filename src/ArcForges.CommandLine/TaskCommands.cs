@@ -9,10 +9,10 @@ using ArcForges.Contracts.Node.V1;
 namespace ArcForges.CommandLine;
 
 /// <summary>
-/// <c>arcforges tasks ...</c> (experience/cli.md C-01): list, show, wait, attach, logs, cancel, retry, pin, unpin, purge and attempts.
+/// <c>arcforges tasks ...</c> (experience/cli.md C-01): list, show, wait, attach, logs, cancel, retry, priority, pause, resume, pin, unpin, purge and attempts.
 /// IDs accept the full base32 ID or a unique prefix of at least 6 characters. <c>tasks wait</c> prints the output of a finished task
 /// (default the last 4 KiB) and exits with its exit code, or 9 when the target was not reached before <c>--timeout</c> (the global
-/// option is the wait's timeout here). <c>priority</c>, <c>pause</c>, <c>resume</c> and <c>timeline</c> belong to later tasks.
+/// option is the wait's timeout here). <c>timeline</c> belongs to a later task.
 /// </summary>
 internal static class TaskCommands
 {
@@ -26,6 +26,9 @@ internal static class TaskCommands
         tasks.Subcommands.Add(Logs(factory));
         tasks.Subcommands.Add(Cancel(factory));
         tasks.Subcommands.Add(Retry(factory));
+        tasks.Subcommands.Add(SetPriority(factory));
+        tasks.Subcommands.Add(Pause(factory, pause: true));
+        tasks.Subcommands.Add(Pause(factory, pause: false));
         tasks.Subcommands.Add(Pin(factory, pinned: true));
         tasks.Subcommands.Add(Pin(factory, pinned: false));
         tasks.Subcommands.Add(Purge(factory));
@@ -439,10 +442,144 @@ internal static class TaskCommands
         return command;
     }
 
+    private static Command SetPriority(Func<ParseResult, Cli> factory)
+    {
+        var id = new Argument<string>("id") { Description = "The task ID or a unique prefix (at least 6 characters)" };
+        var priority = new Argument<string?>("class") { Description = "interactive, high, normal, low or background", Arity = ArgumentArity.ZeroOrOne };
+        priority.AcceptOnlyFromAmong("interactive", "high", "normal", "low", "background");
+        var pool = new Option<string?>("--pool") { Description = "Move the waiting task to this pool", HelpName = "p" };
+        var command = new Command("priority", "Change a task's priority class (a running one's CPU weight too), or a waiting task's pool") { id, priority, pool };
+        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
+        {
+            var className = result.GetValue(priority);
+            var poolName = result.GetValue(pool);
+            if (className is null && poolName is null)
+            {
+                throw new UsageException("give a class, --pool, or both.");
+            }
+
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
+            if (taskId is null)
+            {
+                return exit;
+            }
+
+            var request = new TaskServiceSetTaskPriorityRequest { Meta = Cli.Meta(), TaskId = taskId };
+            if (className is not null)
+            {
+                request.Priority = Enum.Parse<Priority>(className, ignoreCase: true);
+            }
+
+            if (poolName is not null)
+            {
+                request.Pool = poolName;
+            }
+
+            var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
+            var response = await cli.MutateAsync("SetTaskPriority", request.Meta.CommandId, action, r => session.Channel.Tasks.SetTaskPriorityAsync(r,
+                deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return cli.Output.Fail(error, null);
+            }
+
+            if (cli.Output.Json)
+            {
+                cli.Output.Document(response.Value);
+            }
+            else
+            {
+                // A running or paused task has no queue position: it shows its new class and its container's CPU weight (03 section 5.2).
+                var task = await session.Channel.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = Cli.Meta(), TaskId = taskId },
+                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (task.Value?.Task is { State: TaskState.Running or TaskState.Paused } running)
+                {
+                    cli.Output.Line(string.Create(CultureInfo.InvariantCulture,
+                        $"{IdText.Format(taskId)} {TaskText.Word(running.State)}: class {running.EffectivePriority.ToString().ToUpperInvariant()}, CPU weight {CpuWeight(running.EffectivePriority)}"));
+                }
+                else
+                {
+                    cli.Output.Line($"{IdText.Format(taskId)} queued at position {response.Value.Queue?.Position ?? 0}");
+                }
+            }
+
+            return ExitCodes.Success;
+        });
+        return command;
+    }
+    /// <summary>The CPU weight of a priority class (03 section 5.2: 9, 7, 5, 3, 1; a Linux unit's CPUWeight is derived from it).</summary>
+    private static int CpuWeight(Priority priority) => priority switch
+    {
+        Priority.Interactive => 9,
+        Priority.High => 7,
+        Priority.Low => 3,
+        Priority.Background => 1,
+        _ => 5,
+    };
+    private static Command Pause(Func<ParseResult, Cli> factory, bool pause)
+    {
+        var id = new Argument<string>("id") { Description = "The task ID or a unique prefix (at least 6 characters)" };
+        var command = new Command(pause ? "pause" : "resume", pause ? "Freeze a running pausable task (Linux)" : "Thaw a paused task") { id };
+        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
+        {
+            if (pause && OperatingSystem.IsWindows())
+            {
+                cli.Output.Error.WriteLine("error: pause is not supported on Windows (STATE/pause_unsupported)");
+                return ExitCodes.Failed;
+            }
+
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
+            if (taskId is null)
+            {
+                return exit;
+            }
+
+            ArcError? error;
+            TaskState state;
+            Google.Protobuf.IMessage? value;
+            if (pause)
+            {
+                var request = new TaskServicePauseTaskRequest { Meta = Cli.Meta(), TaskId = taskId };
+                var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
+                var response = await cli.MutateAsync("PauseTask", request.Meta.CommandId, action, r => session.Channel.Tasks.PauseTaskAsync(r,
+                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+                (error, state, value) = (response.Error, response.Value?.State ?? TaskState.Unspecified, response.Value);
+            }
+            else
+            {
+                var request = new TaskServiceResumeTaskRequest { Meta = Cli.Meta(), TaskId = taskId };
+                var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
+                var response = await cli.MutateAsync("ResumeTask", request.Meta.CommandId, action, r => session.Channel.Tasks.ResumeTaskAsync(r,
+                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+                (error, state, value) = (response.Error, response.Value?.State ?? TaskState.Unspecified, response.Value);
+            }
+
+            if (error is not null)
+            {
+                return cli.Output.Fail(error, null);
+            }
+
+            if (cli.Output.Json)
+            {
+                cli.Output.Document(value!);
+            }
+            else
+            {
+                cli.Output.Line($"{IdText.Format(taskId)} {TaskText.Word(state)}");
+            }
+
+            return ExitCodes.Success;
+        });
+        return command;
+    }
+
     private static Command Retry(Func<ParseResult, Cli> factory)
     {
         var id = new Argument<string>("id") { Description = "The task ID or a unique prefix (at least 6 characters)" };
-        var command = new Command("retry", "Start a new attempt of a failed, cancelled or lost task") { id };
+        var mem = new Option<string?>("--mem") { Description = "A larger memory grant for the new attempt (for example 4GiB)", HelpName = "size" };
+        var command = new Command("retry", "Start a new attempt of a failed, cancelled or lost task") { id, mem };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
@@ -453,6 +590,11 @@ internal static class TaskCommands
             }
 
             var request = new TaskServiceRetryTaskRequest { Meta = Cli.Meta(), TaskId = taskId };
+            if (result.GetValue(mem) is { } size)
+            {
+                var bytes = RunCommand.Size(size, "--mem");
+                request.OverrideDemand = new ResourceDemand { MemExpectedBytes = bytes, MemCeilingBytes = bytes };
+            }
             var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
             var response = await cli.MutateAsync("RetryTask", request.Meta.CommandId, action, r => session.Channel.Tasks.RetryTaskAsync(r,
                 deadline: cli.Deadline(TaskText.Unary), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
