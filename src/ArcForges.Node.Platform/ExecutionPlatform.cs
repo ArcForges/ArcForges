@@ -340,6 +340,14 @@ public interface IAttemptHandle : IDisposable
     void SetMemoryHigh(long bytes)
     {
     }
+
+    /// <summary>
+    /// Changes the container's CPU weight to a priority weight (1-9; 03 section 5.2: Windows job weight, Linux <c>CPUWeight</c>) for
+    /// <c>SetTaskPriority</c> on a running attempt. A container with a hard CPU cap keeps its cap. A platform without weights ignores it.
+    /// </summary>
+    void SetCpuWeight(int weight)
+    {
+    }
     /// <summary>
     /// True once a process of the container was seen running a launcher into a virtual machine (<c>wsl.exe</c>; 03 section 9,
     /// R-RES-002): the processes it starts in the VM are outside the container and are never presented as controlled.

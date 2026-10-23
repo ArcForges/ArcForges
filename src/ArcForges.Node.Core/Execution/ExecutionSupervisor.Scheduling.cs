@@ -1386,9 +1386,10 @@ public sealed partial class ExecutionSupervisor
     }
 
     /// <summary>
-    /// <c>SetTaskPriority</c> (03 section 4): a waiting task (QUEUED, WAITING_DEPENDENCY, RETRY_WAIT) takes the new class and, when given, the
-    /// new pool; its aging restarts from the new class. A started task is refused (<c>STATE/invalid_state</c>): its attempt keeps the CPU weight
-    /// it was launched with.
+    /// <c>SetTaskPriority</c> (api-catalogue: "change priority or pool of a queued task, or priority (CPU weight) of a running one"): a
+    /// waiting task (QUEUED, WAITING_DEPENDENCY, RETRY_WAIT) takes the new class and, when given, the new pool, and its aging restarts from
+    /// the new class; a RUNNING or PAUSED task takes the new class and its attempt's container the class's CPU weight (03 section 5.2; a pool
+    /// change is refused for it). A finished task is <c>STATE/invalid_state</c>.
     /// </summary>
     public (QueueInfo? Queue, ArcError? Error) SetPriority(CommandContext context, ReadOnlySpan<byte> taskId, Priority? priority, string? pool)
     {
@@ -1400,10 +1401,35 @@ public sealed partial class ExecutionSupervisor
             return (null, NodeErrors.NotFound("task", taskId));
         }
 
+        if (row.State is TaskState.Running or TaskState.Paused)
+        {
+            if (pool is not null)
+            {
+                return (null, NodeErrors.InvalidArgument("pool: queued tasks only"));
+            }
+
+            var running = priority ?? row.Priority;
+            var weight = ExecutionSettings.Weight(running);
+            transaction.Execute("UPDATE task SET priority = $priority, effective_priority = $priority, rev = rev + 1 WHERE task_id = $id;",
+                ("$priority", (int)running), ("$id", taskId.ToArray()));
+            if (row.CurrentAttemptId is { } attemptId)
+            {
+                transaction.Execute("UPDATE attempt SET cpu_weight = $weight, rev = rev + 1 WHERE attempt_id = $id;", ("$weight", weight), ("$id", attemptId));
+                var name = IdText.Format(attemptId);
+                if (_running.TryGetValue(name, out var attempt) && attempt.Handle is { } handle)
+                {
+                    attempt.Priority = running;
+                    PlatformCalls.Post("cpu-weight " + name, () => handle.SetCpuWeight(weight));
+                }
+            }
+
+            EmitTask(context, taskId, row.State);
+            return (new QueueInfo(), null);
+        }
+
         if (row.State is not (TaskState.Queued or TaskState.WaitingDependency or TaskState.RetryWait or TaskState.Placing))
         {
-            return (null, NodeErrors.InvalidState(row.State.ToString().ToUpperInvariant(),
-                "only a waiting task's priority or pool changes; a started attempt keeps the class it was launched with"));
+            return (null, NodeErrors.InvalidState(row.State.ToString().ToUpperInvariant(), "a finished task's priority does not change"));
         }
 
         var newPriority = priority ?? row.Priority;

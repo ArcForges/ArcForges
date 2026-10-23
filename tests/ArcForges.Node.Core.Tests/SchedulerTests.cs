@@ -293,6 +293,21 @@ public sealed class SchedulerTests
         await OnLinuxAsync(QueueStartAsync);
     }
 
+    [Fact(Timeout = 120_000)]
+    [Trait("env", "windows-real")]
+    public async Task ARunningTasksPriorityChangesItsContainersCpuWeightOnWindows()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await OnWindowsAsync(RunningPriorityAsync);
+    }
+
+    [Fact(Timeout = 120_000)]
+    [Trait("env", "linux-real")]
+    public async Task ARunningTasksPriorityChangesItsContainersCpuWeightOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await OnLinuxAsync(RunningPriorityAsync);
+    }
     // ---------------------------------------------------------------------------------------------------------- pause, pressure
 
     [Fact(Timeout = 180_000)]
@@ -1160,6 +1175,40 @@ public sealed class SchedulerTests
         Assert.All(latencies, latency => Assert.InRange(latency, -50, 500));
     }
 
+    /// <summary>
+    /// <c>SetTaskPriority</c> on a running task (api-catalogue): the task takes the new class and its attempt's container the class's CPU
+    /// weight (03 section 5.2: LOW is weight 3, Linux <c>CPUWeight</c> 50); a pool change is refused for a running task.
+    /// </summary>
+    private static async Task RunningPriorityAsync()
+    {
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
+        var taskId = await Tasks.SubmitAsync(channel, Sched.Hold(node, M(node, "running"), 60_000));
+        var attempt = await Tasks.RunningAsync(channel, taskId);
+        var changed = await channel.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest { Meta = Tasks.Meta(), TaskId = taskId, Priority = Priority.Low },
+            cancellationToken: Ct);
+        Assert.True(changed.Error is null, $"SetTaskPriority: {changed.Error?.Code}");
+        Assert.Equal(Priority.Low, (await Tasks.GetAsync(channel, taskId)).EffectivePriority);
+        await node.Runtime.Execution!.PlatformCalls.DrainAsync(TimeSpan.FromSeconds(10));
+        if (OperatingSystem.IsWindows())
+        {
+            using var job = ArcForges.Node.Platform.Windows.JobObject.Open(
+                ArcForges.Node.Platform.Windows.WindowsExecutionPlatform.JobName(IdText.Format(node.Runtime.NodeId.Span), IdText.Format(attempt.AttemptId)))!;
+            Assert.Equal(3u, job.CpuRateControl().Value);
+        }
+        else
+        {
+            Assert.Equal("50", ArcForges.Tests.SystemdTestEnvironment.Property(ArcForges.Tests.SystemdTestEnvironment.AttemptUnit(IdText.Format(attempt.AttemptId)), "CPUWeight"));
+        }
+
+        Assert.Equal("invalid_argument", (await channel.Tasks.SetTaskPriorityAsync(new TaskServiceSetTaskPriorityRequest
+        {
+            Meta = Tasks.Meta(),
+            TaskId = taskId,
+            Pool = "background",
+        }, cancellationToken: Ct)).Error?.Code);
+        await Sched.CancelAsync(channel, taskId);
+    }
     /// <summary>R-EXE-011 on Linux: PauseTask freezes a pausable task's unit (PAUSED, its timeout clock stopped), ResumeTask thaws it, and a paused task can be cancelled.</summary>
     private static async Task PauseAsync()
     {

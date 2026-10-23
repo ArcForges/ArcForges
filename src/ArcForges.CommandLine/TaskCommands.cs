@@ -448,7 +448,7 @@ internal static class TaskCommands
         var priority = new Argument<string?>("class") { Description = "interactive, high, normal, low or background", Arity = ArgumentArity.ZeroOrOne };
         priority.AcceptOnlyFromAmong("interactive", "high", "normal", "low", "background");
         var pool = new Option<string?>("--pool") { Description = "Move the waiting task to this pool", HelpName = "p" };
-        var command = new Command("priority", "Change a waiting task's priority class or pool") { id, priority, pool };
+        var command = new Command("priority", "Change a task's priority class (a running one's CPU weight too), or a waiting task's pool") { id, priority, pool };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             var className = result.GetValue(priority);

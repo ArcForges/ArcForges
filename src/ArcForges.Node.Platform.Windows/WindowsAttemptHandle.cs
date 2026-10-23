@@ -48,6 +48,16 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     public JobObject Job => _job;
 
     /// <inheritdoc />
+    public void SetCpuWeight(int weight)
+    {
+        // A job has a weight or a hard cap, never both (V-W04): an attempt launched with a cap keeps it.
+        if ((_job.CpuRateControl().Flags & Native.CpuRateControlHardCap) == 0)
+        {
+            _job.SetCpuWeight(weight);
+        }
+    }
+
+    /// <inheritdoc />
     public string ContainerName => _job.Name ?? string.Empty;
 
     /// <inheritdoc />
