@@ -294,8 +294,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.KillTreeReason = failed
                 ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager" + SameUserQualifier;
             report.Adopt = failed is null ? AdoptSupport.Limited : AdoptSupport.Unsupported;
-            report.AdoptReason = failed ?? "a same-user process and its children move into a transient scope in the node's slice through the user manager, which refuses "
-                + "what it cannot move (V-L01); a process of another user is refused; the moved process's earlier memory charges stay behind";
+            report.AdoptReason = failed ?? "a same-user process and its children move into a transient scope in the node's slice through the user manager, which "
+                + "moves any same-user process there, outside its own subtree too, through the system manager's AttachProcessesToUnit (systemd 257, L-29); "
+                + "a process of another user is refused before systemd is asked; the moved process's earlier memory charges stay behind";
             report.RestartSurvival = failed is null;
             report.RestartSurvivalReason = failed ?? "attempts are transient units of the user manager, never children of the node, with a durable exit record from ExecStopPost (L-13)";
         }
@@ -552,7 +553,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             ]);
             if (manager.WaitJob(job, TimeSpan.FromSeconds(10)) is not "done" || manager.ScopeControlGroup(name) is not { Length: > 0 } controlGroup)
             {
-                throw new AdoptionRefusedException("the user manager did not start the adoption scope (the process is outside its subtree, V-L01)");
+                throw new AdoptionRefusedException("the user manager did not start the adoption scope with the process");
             }
 
             if (ProcFs.CgroupOf(pid) != controlGroup)

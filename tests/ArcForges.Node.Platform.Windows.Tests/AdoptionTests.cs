@@ -81,6 +81,12 @@ public sealed class AdoptionTests
         var platform = harness.Platform;
         var report = platform.Evaluate();
         Assert.Equal(AdoptSupport.Limited, report.Adopt);
+
+        // 04 section 10, stated honestly: the refusal first, with how many of the user's processes are in a job now.
+        Assert.Matches(@"^a process already in a job is refused \(04 section 10\); \d+ of the user's \d+ processes are in a job now\. ", report.AdoptReason);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var (inJob, total) = WindowsExecutionPlatform.JobMembership();
+        TestContext.Current.TestOutputHelper?.WriteLine($"{report.AdoptReason} (a count of {inJob} of {total} took {watch.Elapsed.TotalMilliseconds:0.0} ms)");
         Assert.EndsWith("; same-user code can change or end ArcForges' containers (T-22), and work launched outside the recorded ancestry never joins them (T-23)",
             report.KillTreeReason, StringComparison.Ordinal);
 
@@ -118,8 +124,8 @@ public sealed class AdoptionTests
                 // run in a job on some machines), the refusal is what can be shown; the adoption itself cannot run here.
                 var refused = Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], rootPid, start)));
                 Assert.Contains("already in a job", refused.Message, StringComparison.Ordinal);
-                Assert.Skip("Every process this test can create is in a job on this machine (WMI-created ones included), and 04 section 10 refuses those: "
-                    + "adoption of a process outside every job cannot be shown here.");
+                Assert.Skip("The process this test created through WMI (Win32_Process.Create) is in a job, and 04 section 10 refuses a process in any job "
+                    + "(the refusal was asserted): adoption of a process outside every job cannot be shown on this machine.");
             }
             Assert.True(Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x1", rootPid, start.AddSeconds(-30)))).NotFound);
             var result = platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], rootPid, start));

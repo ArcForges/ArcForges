@@ -39,6 +39,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     private readonly Thread _portThread;
     private JobObject? _root;
     private RootLimits? _rootLimits;
+    private JobCount? _jobMembership;
     private string _nodeName = string.Empty;
     private string _helper = string.Empty;
     private string? _selfTest;
@@ -134,10 +135,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             KillTree = enforced ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort,
             KillTreeReason = enforced ? "TerminateJobObject ends every process of the attempt's job; jobs allow no breakaway" + SameUserQualifier : why,
             Adopt = enforced ? AdoptSupport.Limited : AdoptSupport.Unsupported,
-            AdoptReason = enforced
-                ? "a same-user process outside any job joins the root job and then its own adoption job (V-W01); a process already in a job is refused, its "
-                    + "exit status is not captured, and its adoption job is not re-opened after a node restart"
-                : why,
+            AdoptReason = enforced ? AdoptReasonNow() : why,
             RestartSurvival = enforced,
             RestartSurvivalReason = enforced ? "each attempt's holder keeps its jobs openable by name across node restarts (L-14)" : why,
         };
@@ -157,6 +155,51 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         Native.IsProcessInJob(new SafeKernelHandle(Native.GetCurrentProcess(), ownsHandle: false), 0, out var nodeInJob);
         report.PlatformFacts.Add(new KeyValue { Name = "node_in_job", Value = nodeInJob ? "true" : "false" });
         return report;
+    }
+
+    /// <summary>
+    /// The adopt capability's reason (04 section 10): a process already in a job is refused, so how many of the user's processes are in a job
+    /// now is stated with it (counted at most once a minute; a few milliseconds over the process table).
+    /// </summary>
+    private string AdoptReasonNow()
+    {
+        var now = Environment.TickCount64;
+        var membership = Volatile.Read(ref _jobMembership);
+        if (membership is null || now - membership.At > 60_000)
+        {
+            var (inJob, total) = JobMembership();
+            membership = new JobCount(now, inJob, total);
+            Volatile.Write(ref _jobMembership, membership);
+        }
+
+        return string.Create(CultureInfo.InvariantCulture,
+            $"a process already in a job is refused (04 section 10); {membership.InJob} of the user's {membership.Total} processes are in a job now. ")
+            + "A same-user process outside every job joins the root job and then its own adoption job (V-W01); its exit status is not captured, "
+            + "and its adoption job is not re-opened after a node restart";
+    }
+
+    private sealed record JobCount(long At, int InJob, int Total);
+
+    /// <summary>How many of the processes of this user (that the node can query) are in a job, and how many there are.</summary>
+    internal static (int InJob, int Total) JobMembership()
+    {
+        var (inJob, total) = (0, 0);
+        foreach (var (pid, _, _) in ProcessInfo.Snapshot())
+        {
+            using var process = ProcessInfo.Open(pid);
+            if (process is null || !EscapedProcesses.IsSameUser(process))
+            {
+                continue;
+            }
+
+            total++;
+            if (Native.IsProcessInJob(process, 0, out var member) && member)
+            {
+                inJob++;
+            }
+        }
+
+        return (inJob, total);
     }
 
     /// <inheritdoc />

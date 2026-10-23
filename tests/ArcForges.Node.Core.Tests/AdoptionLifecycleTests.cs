@@ -87,6 +87,42 @@ public sealed class AdoptionLifecycleTests
         }
     }
 
+    /// <summary>
+    /// Linux (04 section 10; L-29): another user's process is refused with <c>adopt_not_permitted</c> before systemd is asked, while a same-user
+    /// process is adopted wherever it runs, outside the user manager's subtree too (this test's own children, when the test runs from a
+    /// system service).
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task AnotherUsersProcessIsRefusedAndASameUserProcessOutsideTheSubtreeIsAdopted()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux only: adoption through the systemd user manager (04 section 10; L-29).");
+        RequirePlatform();
+        Assert.SkipWhen(Environment.UserName == "root", "The test runs as root.");
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var refused = await human.Resources.AdoptProcessAsync(new ResourceServiceAdoptProcessRequest { Meta = Tasks.Meta(), Process = ClientProcess.Identity(1) },
+            deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: Ct);
+        Assert.Equal("adopt_not_permitted", refused.Error?.Code);
+        Assert.Contains("another user", refused.Error!.Details.State.Reason, StringComparison.Ordinal);
+
+        var pid = StartOutsideAnyContainer();
+        try
+        {
+            var before = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup").Trim();
+            var taskId = await AdoptAsync(human, pid);
+            var after = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup").Trim();
+            Assert.Contains("/arcforges-x-", after, StringComparison.Ordinal);
+            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, taskId)).State);
+            TestContext.Current.TestOutputHelper?.WriteLine($"cgroup before adoption {before}; after {after}"
+                + (before.Contains("/user@", StringComparison.Ordinal) ? string.Empty : " (it was outside the user manager's subtree)"));
+        }
+        finally
+        {
+            Kill(pid);
+        }
+    }
+
     private static void RequirePlatform() =>
         Assert.SkipWhen(!OperatingSystem.IsWindows() && SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
 
@@ -100,7 +136,8 @@ public sealed class AdoptionLifecycleTests
         {
             // 04 section 10 refuses a process in any job; on some machines every process of the session is in one (WMI-created ones too).
             Kill(pid);
-            Assert.Skip($"The process is in a job, which 04 section 10 refuses ({adopted.Error.Details}); on this machine every process the test can create is.");
+            Assert.Skip($"The process this test created through WMI (Win32_Process.Create) is in a job, and 04 section 10 refuses a process in any job: "
+                + $"AdoptProcess answered adopt_not_permitted ({adopted.Error.Details.State.Reason}).");
         }
 
         Assert.True(adopted.Error is null, $"AdoptProcess: {adopted.Error?.Category}/{adopted.Error?.Code} {adopted.Error?.Details}");
