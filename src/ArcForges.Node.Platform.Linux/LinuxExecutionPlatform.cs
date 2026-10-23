@@ -261,9 +261,10 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.Pause = PauseSupport.Unsupported;
             report.PauseReason = why;
             report.KillTree = KillTreeGuarantee.BestEffort;
-            report.KillTreeReason = "attempts are plain child processes of the node in their own process group; a process that leaves the group is not reached";
+            report.KillTreeReason = "attempts are plain child processes of the node in their own process group; a process that leaves the group is not reached"
+                + SameUserQualifier;
             report.Adopt = AdoptSupport.Unsupported;
-            report.AdoptReason = "process adoption is not part of this build";
+            report.AdoptReason = "adoption needs a transient scope of the systemd user manager: " + why;
             report.RestartSurvival = false;
             report.RestartSurvivalReason = "attempts are plain child processes of the node: their exit status is lost when the node restarts before they finish";
         }
@@ -291,8 +292,8 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
                 ? "FreezeUnit and ThawUnit (cgroup.freeze)"
                 : failed ?? "the kernel or the user manager offers no unit freezer (cgroup.freeze)";
             report.KillTree = failed is null ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort;
-            report.KillTreeReason = failed
-                ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager" + SameUserQualifier;
+            report.KillTreeReason = (failed
+                ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager") + SameUserQualifier;
             report.Adopt = failed is null ? AdoptSupport.Limited : AdoptSupport.Unsupported;
             report.AdoptReason = failed ?? "a same-user process and its children move into a transient scope in the node's slice through the user manager, which "
                 + "moves any same-user process there, outside its own subtree too, through the system manager's AttachProcessesToUnit (systemd 257, L-29); "

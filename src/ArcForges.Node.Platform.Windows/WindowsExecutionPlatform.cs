@@ -133,7 +133,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             Pause = PauseSupport.Unsupported,
             PauseReason = "Windows has no supported job-wide freeze (AD-0005 Windows section 8)",
             KillTree = enforced ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort,
-            KillTreeReason = enforced ? "TerminateJobObject ends every process of the attempt's job; jobs allow no breakaway" + SameUserQualifier : why,
+            KillTreeReason = (enforced ? "TerminateJobObject ends every process of the attempt's job; jobs allow no breakaway" : why) + SameUserQualifier,
             Adopt = enforced ? AdoptSupport.Limited : AdoptSupport.Unsupported,
             AdoptReason = enforced ? AdoptReasonNow() : why,
             RestartSurvival = enforced,

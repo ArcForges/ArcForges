@@ -723,6 +723,9 @@ public sealed class DirectPlatformTests
         Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
         Assert.Contains("cannot be reached", report.CpuReason, StringComparison.Ordinal);
         Assert.Equal(KillTreeGuarantee.BestEffort, report.KillTree);
+        Assert.EndsWith(LinuxExecutionPlatform.SameUserQualifier, report.KillTreeReason, StringComparison.Ordinal);
+        Assert.Equal(AdoptSupport.Unsupported, report.Adopt);
+        Assert.StartsWith("adoption needs a transient scope of the systemd user manager: ", report.AdoptReason, StringComparison.Ordinal);
         Assert.False(report.RestartSurvival);
 
         var handle = harness.Launch(["/bin/sh", "-c", "printf hi; exit 2"]);
