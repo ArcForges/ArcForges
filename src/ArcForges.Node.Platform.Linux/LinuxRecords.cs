@@ -106,8 +106,8 @@ public static class LinuxRecords
     }
 
     /// <summary>
-    /// The record the node writes from a failed unit whose <c>ExecStopPost</c> systemd skipped (an OOM kill with <c>OOMPolicy=kill</c>
-    /// enters the final SIGKILL state directly): the unit's <c>Result</c>, <c>ExecMainCode</c>, <c>ExecMainStatus</c> and its own
+    /// The record the node writes from a failed unit whose <c>ExecStopPost</c> systemd skipped (an OOM kill that races the unit's
+    /// stop): the unit's <c>Result</c>, <c>ExecMainCode</c>, <c>ExecMainStatus</c> and its own
     /// accounting record (<c>MemoryPeak</c>, <c>MemorySwapPeak</c>, <c>CPUUsageNSec</c>).
     /// </summary>
     public static ExitRecord FromUnit(string attemptId, UnitState state, StopRecord? stop, DateTimeOffset now)

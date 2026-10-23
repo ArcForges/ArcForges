@@ -1789,7 +1789,7 @@ public sealed class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDispos
 
         if (exit is not null && (exit.ServiceResult == "oom-kill" || exit.OomKills > 0))
         {
-            // Linux (04 section 7): memory.events oom_kill increased, or SERVICE_RESULT=oom-kill (OOMPolicy=kill ended the unit).
+            // Linux (04 section 7): memory.events oom_kill increased, or SERVICE_RESULT=oom-kill (OOMPolicy=stop ended the unit).
             return new AttemptOutcome(TerminationReason.OomKilled, EffectCertainty.Happened, exitCode,
                 $"the OOM killer ended the attempt at its memory limit (peak {exit.MemPeakBytes} bytes)", null, signal, coreDumped);
         }
