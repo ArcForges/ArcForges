@@ -9,7 +9,7 @@
     <PackageVersion Include="ArcForges.Contracts.Foundation" Version="1.0.0-ci.375.1" />
     <PackageVersion Include="ArcForges.Contracts.Node" Version="1.0.0-ci.375.1" />
     <PackageVersion Include="ArcForges.LocalRpc" Version="1.0.0-ci.138.1" />
-    <PackageVersion Include="ArcForges.Observability" Version="1.0.0-ci.141.1" />
+    <PackageVersion Include="ArcForges.Observability" Version="1.0.0-ci.143.1" />
     <PackageVersion Include="ArcForges.Security.Secrets" Version="1.0.0-ci.141.1" />
     <PackageVersion Include="Avalonia.Desktop" Version="12.1.4" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
