@@ -272,11 +272,11 @@ public interface IAttemptHandle : IDisposable
     /// <summary>The graceful phase: CTRL_BREAK_EVENT to the root's process group through the helper, and WM_CLOSE to GUI windows.</summary>
     GracefulOutcome RequestGracefulStop();
 
-    /// <summary>The ancestry scan (04 section 3): descendants of the attempt's processes, running or exited, that run outside the container.</summary>
+    /// <summary>
+    /// The ancestry scan (04 section 3): descendants of the attempt's processes, running or exited, that run outside the container. The node
+    /// records them and terminates the same-user ones by identity in the stop sequence (04 section 6 step 4; <see cref="IExecutionPlatform.TerminateProcess"/>).
+    /// </summary>
     IReadOnlyList<EscapedProcess> ScanEscaped();
-
-    /// <summary>Terminates the same-user escaped processes (04 section 6 step 4); returns them as <c>image (pid)</c>.</summary>
-    IReadOnlyList<string> TerminateEscaped();
 
     /// <summary>The node recorded the attempt: the holder may release the container and exit.</summary>
     void Acknowledge();

@@ -105,14 +105,46 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>When the ancestry scan for escaped processes last ran (monotonic).</summary>
     internal long LastEscapeScan { get; set; } = long.MinValue;
 
-    /// <summary>Escaped processes already recorded: (pid, creation ticks); the resource monitor reads them for the process labels.</summary>
-    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartTicks), bool> KnownEscaped { get; } = new();
+    /// <summary>
+    /// Escaped processes already recorded: (pid, creation ticks) with the image; the resource monitor reads them for the process labels, and
+    /// the stop sequence terminates them (04 section 6 step 4).
+    /// </summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartTicks), string> KnownEscaped { get; } = new();
+
+    /// <summary>
+    /// Escaped processes the stop sequence has dealt with (terminated, already gone, or another user's): (pid, creation in store
+    /// microseconds). They are never touched again.
+    /// </summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartMicros), bool> EscapedHandled { get; } = new();
+
+    /// <summary>
+    /// Escaped processes found but not yet recorded in the store (pid, creation ticks): a record write that could not be queued or did not
+    /// commit is written again by the next scan, and finalization writes what is left with the attempt's record.
+    /// </summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartTicks), EscapedProcess> UnrecordedEscaped { get; } = new();
+
+    /// <summary>1 while a write of <see cref="UnrecordedEscaped"/> is queued (one at a time).</summary>
+    internal int EscapedWriting;
+
+    /// <summary>The escaped processes the stop sequence terminated, as <c>image (pid)</c> (04 section 6 step 4).</summary>
+    internal List<string> EscapedTerminated { get; } = [];
+
+    /// <summary>The graceful phase of the stop (the console signal or <c>KillUnit</c>, and its detail), once it was started.</summary>
+    internal Task? GracefulPhase { get; set; }
 
     /// <summary>Why the node stops the attempt.</summary>
     internal TerminationReason? StopReason { get; set; }
 
-    /// <summary>What the stop did (graceful outcome, escaped processes).</summary>
+    /// <summary>What the stop did (the graceful outcome, a guard's or a pressure stop's reason).</summary>
     internal string? StopDetail { get; set; }
+
+    /// <summary>
+    /// The stop's detail for the record: <see cref="StopDetail"/> and the escaped processes the stop terminated, composed when it is read,
+    /// so neither part is lost to the order in which they were recorded.
+    /// </summary>
+    internal string? StopDetailText => EscapedTerminated.Count == 0
+        ? StopDetail
+        : (StopDetail is null ? string.Empty : StopDetail + "; ") + "escaped processes terminated: " + string.Join(", ", EscapedTerminated);
 
     /// <summary>When the graceful phase ends (monotonic).</summary>
     internal long? GraceDeadline { get; set; }

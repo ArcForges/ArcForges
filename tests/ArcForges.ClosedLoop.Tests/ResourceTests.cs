@@ -235,6 +235,91 @@ public sealed partial class ResourceTests
         }
     }
 
+    /// <summary>
+    /// 04 section 6 step 4 on Linux with a real escape (repair MR-01): the attempt's shell starts a child in a scope of its own, as above,
+    /// traps the stop signal and exits at once. The test cancels as soon as the child runs (its own marker), without waiting for the 5 s
+    /// scan to label it, so the scan when the stop begins is what finds it unless a periodic scan came first (the output says which). The
+    /// attempt ends CANCELLED in the graceful phase, without a forced phase; once the shell has exited, the user manager adopts the
+    /// escaped child and a fresh ancestry scan no longer finds it, so the node terminates it by the identity it recorded when the stop
+    /// sequence ends, and the stop's detail names it. The first record write meets a full command queue (the test fault
+    /// <c>escaped-record-queue-full</c>): the stop still completes, and the record is written later, so the store holds it.
+    /// </summary>
+    [Fact(Timeout = 300_000)]
+    [Trait("env", "linux-real")]
+    public async Task AnEscapedProcessOfAnAttemptCancelledGracefullyIsTerminatedOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
+        var systemdRun = SystemdRunPaths.FirstOrDefault(File.Exists);
+        Assert.SkipWhen(systemdRun is null, "systemd-run is not installed.");
+        await using var node = TestNode.Create();
+        node.Environment["ARCFORGES_TEST_FAULT"] = "escaped-record-queue-full=0";
+        await node.StartNodeAsync();
+        var marker = Path.Combine(node.Root, "escaped.pid");
+        int? pid = null;
+        try
+        {
+            Id task, attempt;
+            DateTimeOffset cancelledAt;
+            await using (var channel = await ChannelAsync(node))
+            {
+                task = await SubmitAsync(channel, ["/bin/sh", "-c",
+                    "trap 'exit 0' TERM; \"$1\" --user --scope --quiet --collect -- /bin/sh -c 'echo $$ > \"$0\"; exec sleep 300' \"$2\" & sleep 300 & wait",
+                    "sh", systemdRun!, marker]);
+                attempt = await RunningAttemptAsync(channel, task);
+                await TestNode.WaitAsync(() => Task.FromResult(File.Exists(marker) && File.ReadAllText(marker).Trim().Length > 0), Bound, "the escaped child to run");
+                pid = int.Parse(File.ReadAllText(marker).Trim(), CultureInfo.InvariantCulture);
+                cancelledAt = DateTimeOffset.UtcNow;
+                await CancelAsync(channel, task);
+                Assert.Equal(TaskState.Cancelled, await TaskStateAsync(channel, task));
+                var record = await AttemptAsync(channel, attempt);
+                Assert.Equal(TerminationReason.Cancelled, record.Result.TerminationReason);
+                Assert.Contains("SIGTERM sent to every process", record.Result.Detail, StringComparison.Ordinal);
+                Assert.Contains("escaped processes terminated: ", record.Result.Detail, StringComparison.Ordinal);
+                Assert.Contains(string.Create(CultureInfo.InvariantCulture, $"({pid})"), record.Result.Detail, StringComparison.Ordinal);
+                await TestNode.WaitAsync(() => Task.FromResult(!Directory.Exists($"/proc/{pid}")), TimeSpan.FromSeconds(10), "the escaped process to end");
+            }
+
+            // The first record write found the queue full and was deferred, never thrown into the stop.
+            Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.escaped.record_deferred"));
+            var found = TestNode.LogEvents(node.NodeLog, "execution.escaped")
+                .Select(item => DateTimeOffset.Parse(item.GetProperty("at").GetString()!, CultureInfo.InvariantCulture)).Min();
+            TestContext.Current.TestOutputHelper?.WriteLine(found >= cancelledAt
+                ? $"The escaped child was found by the scan when the stop began ({found:O}; cancel sent {cancelledAt:O})."
+                : $"A periodic scan found the escaped child before the cancel ({found:O}; cancel sent {cancelledAt:O}).");
+
+            // The record was written after all, so a restarted node would know it.
+            await node.StopNodeAsync();
+            using var store = ArcForges.Node.Store.NodeStore.Open(new ArcForges.Node.Store.NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "records" });
+            var label = store.Read(reader =>
+            {
+                using var command = reader.CreateCommand("SELECT label FROM process_record WHERE attempt_id = $attempt AND pid = $pid;");
+                command.Parameters.AddWithValue("$attempt", attempt.Value.ToByteArray());
+                command.Parameters.AddWithValue("$pid", pid.Value);
+                return command.ExecuteScalar();
+            });
+            Assert.Equal((long)ProcessLabel.Escaped, label);
+        }
+        finally
+        {
+            if (pid is { } leftoverPid && Directory.Exists($"/proc/{leftoverPid}"))
+            {
+                try
+                {
+                    using var leftover = Process.GetProcessById(leftoverPid);
+                    if (leftover.ProcessName == "sleep")
+                    {
+                        leftover.Kill();
+                        leftover.WaitForExit(5_000);
+                    }
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------------------------------- process rates
 
     [Fact(Timeout = 300_000, DisableParallelization = true)]

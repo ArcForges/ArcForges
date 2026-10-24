@@ -66,10 +66,14 @@ public sealed class EscapedProcessTests
             // The members' own descendants inside the job are never reported, and a stranger is never a descendant.
             Assert.DoesNotContain(escaped, process => process.Pid == Environment.ProcessId);
 
-            var terminated = EscapedProcesses.Terminate(escaped, AttemptRunner.TerminatedExitCode);
-            Assert.Contains(terminated, text => text.Contains($"({escapedChild.ProcessId})", StringComparison.Ordinal));
+            // The stop sequence terminates the same-user ones by their identity as the scan found them (04 section 6 step 4;
+            // IExecutionPlatform.TerminateProcess); the child's console host may already be gone once the child is.
+            using var harness = PlatformHarness.Start();
+            var outcomes = escaped.Where(process => process.SameUser)
+                .Select(process => (process.Pid, Outcome: harness.Platform.TerminateProcess(process.Pid, process.StartTime))).ToList();
+            Assert.Contains((escapedChild.ProcessId, ProcessTermination.Terminated), outcomes);
             Assert.True(escapedChild.WaitForExit(TimeSpan.FromSeconds(5)), "The escaped child was terminated.");
-            Assert.Equal(AttemptRunner.TerminatedExitCode, escapedChild.ExitCode);
+            Assert.Equal(WindowsExecutionPlatform.TerminatedExitCode, escapedChild.ExitCode);
             Assert.True(PlatformHarness.Identity(attemptRoot).IsRunning(), "Terminating the escaped child leaves the job's processes alone.");
 
             // With the escaped child gone, nothing is reported.
@@ -287,7 +291,8 @@ public sealed class EscapedProcessTests
             var escaped = EscapedProcesses.Scan(job, members.Snapshot());
             var found = Assert.Single(escaped, process => process.Pid == escapedChild.ProcessId);
             Assert.Equal(attemptRoot.ProcessId, found.ParentPid);
-            Assert.Contains(EscapedProcesses.Terminate(escaped, AttemptRunner.TerminatedExitCode), text => text.Contains($"({escapedChild.ProcessId})", StringComparison.Ordinal));
+            using var harness = PlatformHarness.Start();
+            Assert.Equal(ProcessTermination.Terminated, harness.Platform.TerminateProcess(found.Pid, found.StartTime));
             Assert.True(escapedChild.WaitForExit(TimeSpan.FromSeconds(5)));
         }
         finally

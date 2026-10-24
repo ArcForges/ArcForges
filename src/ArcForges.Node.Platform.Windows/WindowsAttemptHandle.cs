@@ -212,9 +212,6 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<string> TerminateEscaped() => EscapedProcesses.Terminate(ScanEscaped(), AttemptRunner.TerminatedExitCode);
-
-    /// <inheritdoc />
     public void Acknowledge()
     {
         if (Ack is { } ack)
