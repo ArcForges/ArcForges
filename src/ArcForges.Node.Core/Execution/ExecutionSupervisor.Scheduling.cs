@@ -81,7 +81,7 @@ public sealed partial class ExecutionSupervisor
     /// <summary>The periodic admission pass while work is queued (03 section 4: at least every 2 s).</summary>
     public static readonly TimeSpan AdmissionInterval = TimeSpan.FromSeconds(2);
 
-    /// <summary>Root limits change at most this often (03 section 5.1 hysteresis).</summary>
+    /// <summary>Root limits rise at most this often (03 section 5.1 hysteresis; a fall applies at once, L-31).</summary>
     public static readonly TimeSpan RootLimitInterval = TimeSpan.FromSeconds(10);
 
     /// <summary>Pressure-frozen attempts thaw after this long at Normal (03 section 7).</summary>
@@ -1031,8 +1031,9 @@ public sealed partial class ExecutionSupervisor
 
     /// <summary>
     /// The scheduler's part of the pressure hook (03 sections 5.1 and 7; R-RES-009), on the monitor's thread and never blocking it (platform
-    /// calls are posted to <see cref="PlatformCalls"/>): the root limits follow the measured budgets with hysteresis (more than 5% of capacity,
-    /// at most every 10 s) and shrink at once on entering Tight; admission is woken when the budgets or the level changed while work waits;
+    /// calls are posted to <see cref="PlatformCalls"/>): the root limits follow the measured budgets with hysteresis (more than 5% of capacity;
+    /// a fall at once, a rise at most every 10 s, L-31) and shrink at once on entering Tight; admission is woken when the budgets or the level
+    /// changed while work waits;
     /// at Pressure the freeze (Linux) or the requeue (Windows) applies (at Critical only the monitor's shedding acts); after 30 s at Normal the
     /// frozen attempts thaw in priority order.
     /// </summary>
@@ -1076,7 +1077,10 @@ public sealed partial class ExecutionSupervisor
         }
     }
 
-    /// <summary>Applies root limits from <c>B</c> (03 section 5.1) when they changed by more than 5% of capacity and 10 s passed, or at once when forced.</summary>
+    /// <summary>
+    /// Applies root limits from <c>B</c> (03 section 5.1, L-31) when they changed by more than 5% of capacity: a fall at once, a rise once 10 s
+    /// passed since the last update, and any change at once when forced.
+    /// </summary>
     private void UpdateRootLimits(ExecutionSettings settings, ResourceState state, bool force)
     {
         if (Platform is not { } platform)
@@ -1085,29 +1089,59 @@ public sealed partial class ExecutionSupervisor
         }
 
         RootLimits limits;
+        (long Cpu, long Memory) next;
         lock (_rootGate)
         {
-            var (cpu, memory) = _rootBudget.Cpu < 0 ? (settings.BudgetCpu, settings.ManagedMemory) : _rootBudget;
-            var changed = Math.Abs(state.BudgetCpu - cpu) > settings.CapacityCpu / 20 || Math.Abs(state.BudgetMemory - memory) > settings.CapacityMemory / 20;
+            var applied = _rootBudget.Cpu < 0 ? (settings.BudgetCpu, settings.ManagedMemory) : _rootBudget;
             var due = _rootAppliedAt == long.MinValue || _clock.GetElapsedTime(_rootAppliedAt) >= RootLimitInterval;
-            if (!(force ? state.BudgetCpu != cpu || state.BudgetMemory != memory : changed && due))
+            if (NextRootBudget(applied, (state.BudgetCpu, state.BudgetMemory), (settings.CapacityCpu, settings.CapacityMemory), due, force) is not { } budget)
             {
                 return;
             }
 
-            _rootBudget = (state.BudgetCpu, state.BudgetMemory);
+            next = budget;
+            _rootBudget = next;
             _rootAppliedAt = _clock.GetTimestamp();
-            limits = settings.RootLimits(state.BudgetCpu, state.BudgetMemory);
+            limits = settings.RootLimits(next.Cpu, next.Memory);
             AppliedRootLimits = limits;
         }
 
         _log.Info("execution.root_limits", new LogField("cpuRate", limits.CpuRate), new LogField("memoryHigh", limits.NotificationBytes),
-            new LogField("budgetCpu", state.BudgetCpu), new LogField("budgetMemory", state.BudgetMemory), new LogField("forced", force));
+            new LogField("budgetCpu", next.Cpu), new LogField("budgetMemory", next.Memory), new LogField("forced", force));
         PlatformCalls.Post("root-limits", () =>
         {
             platform.UpdateRootLimits(limits);
             RootLimitsApplied?.Invoke(limits);
         });
+    }
+
+    /// <summary>
+    /// The budget the root limits take next (03 section 5.1, amended by L-31), or <see langword="null"/> to keep <paramref name="applied"/>.
+    /// A change counts when it exceeds 5% of capacity. Forced (entering Tight): any change applies at once. Once <paramref name="due"/> (10 s
+    /// since the last update), any counted change applies the measured budget, as before. Before that, only a counted fall applies at once,
+    /// to the dimension that fell; the other dimension keeps its applied value, so a rise still waits for the interval.
+    /// </summary>
+    internal static (long Cpu, long Memory)? NextRootBudget((long Cpu, long Memory) applied, (long Cpu, long Memory) measured,
+        (long Cpu, long Memory) capacity, bool due, bool force)
+    {
+        if (force)
+        {
+            return measured != applied ? measured : null;
+        }
+
+        var cpu = Math.Sign(measured.Cpu - applied.Cpu) * (Math.Abs(measured.Cpu - applied.Cpu) > capacity.Cpu / 20 ? 1 : 0);
+        var memory = Math.Sign(measured.Memory - applied.Memory) * (Math.Abs(measured.Memory - applied.Memory) > capacity.Memory / 20 ? 1 : 0);
+        if (cpu == 0 && memory == 0)
+        {
+            return null;
+        }
+
+        if (due)
+        {
+            return measured;
+        }
+
+        return cpu < 0 || memory < 0 ? (cpu < 0 ? measured.Cpu : applied.Cpu, memory < 0 ? measured.Memory : applied.Memory) : null;
     }
 
     /// <summary>
