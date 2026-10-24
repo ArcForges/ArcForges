@@ -75,9 +75,11 @@ any change. They are binding; this file summarizes them and adds the repository 
   projects at once (default 2, measured: the longest project bounds the run; each project's log in `artifacts/test-logs/`); `-Repeat` /
   `--repeat N` reruns the selected suites until the first failing iteration. Tests run in parallel inside their projects too, each
   with its own node, platform, data root, endpoint and slice; never add a serial collection. Test nodes see only themselves and their
-  attempts on the machine (the `--test-mode` hook `ARCFORGES_TEST_MACHINE=isolated`, `MachineIsolation`), so the other tests' load moves
-  neither their budgets nor their pressure level; a test of the measured budgets or of pressure uses the live machine (`LiveMachine` on
-  `InProcessNode` and `TestNode`) and carries `isolation=exclusive`. A timing-, CPU-share- or memory-sensitive
+  attempts on the machine (the `--test-mode` hook `ARCFORGES_TEST_MACHINE=isolated`, `MachineIsolation`): their budgets and pressure
+  come from their own and their attempts' CPU and memory, and memory stalls and OOM kills, their own attempts' included, raise no level.
+  So the other tests' load moves neither their budgets nor their pressure level. A test of the measured budgets or of pressure uses the
+  live machine (`LiveMachine` on `InProcessNode` and `TestNode`) and carries `isolation=exclusive` with `DisableParallelization = true`
+  (`ArcForges.Repository.Tests` checks this). A timing-, CPU-share- or memory-sensitive
   test, or one that changes machine-wide state, carries `isolation=exclusive` and `DisableParallelization = true`; the parallel suites
   leave it out and the `exclusive` suite runs it alone afterwards (`-Suite ci,exclusive`). Real-OS tests carry
   `env=windows-real|linux-real` and skip with a reason elsewhere (the Linux leg's `linux-real-os` step makes sure they

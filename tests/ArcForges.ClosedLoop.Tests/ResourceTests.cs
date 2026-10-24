@@ -32,6 +32,36 @@ public sealed partial class ResourceTests
 
     // ------------------------------------------------------------------------------------------------- snapshot and labels
 
+    /// <summary>
+    /// The node of a closed-loop test sees only itself and its attempts on the machine (MachineIsolation): TestNode passes
+    /// <c>ARCFORGES_TEST_MACHINE=isolated</c> and the executable under test (the JIT build, or the Native AOT host through
+    /// <c>ARCFORGES_HOST_PATH</c>) reads it with <c>--test-mode</c>. After more evaluations than the 5 s pressure persistence the CLI's
+    /// snapshot shows <c>U = 0</c>, <c>B_cpu = max(min_managed_cpu, C - R)</c>, <c>B_mem = C - R</c> and Normal, whatever runs beside the
+    /// test. This test process is outside the node and its attempts, so a node that read the live machine would count its memory in
+    /// <c>U_mem</c>.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task ATestNodeSeesOnlyItselfOnTheMachineThroughTheCli()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        await TestNode.WaitAsync(async () => (await node.CliAsync("resources", "--json")).Json().TryGetProperty("budgetCpuMillicores", out _), Bound,
+            "the first evaluation");
+        await Task.Delay(TimeSpan.FromSeconds(8), Ct);
+        var run = await node.CliAsync("resources", "--json");
+        Assert.Equal(0, run.ExitCode);
+        var snapshot = run.Json();
+        long Value(string name) => snapshot.GetProperty(name) is { ValueKind: JsonValueKind.String } text
+            ? long.Parse(text.GetString()!, CultureInfo.InvariantCulture)
+            : snapshot.GetProperty(name).GetInt64();
+        Assert.Equal(0, Value("unmanagedCpuMillicores"));
+        Assert.Equal(0, Value("unmanagedMemBytes"));
+        Assert.Equal(Math.Max(1000, Value("capacityCpuMillicores") - Value("reserveCpuMillicores")), Value("budgetCpuMillicores"));
+        Assert.Equal(Value("capacityMemBytes") - Value("reserveMemBytes"), Value("budgetMemBytes"));
+        Assert.Equal("PRESSURE_LEVEL_NORMAL", snapshot.GetProperty("pressure").GetString());
+    }
+
     [Fact(Timeout = 300_000, DisableParallelization = true)]
     [Trait("env", "linux-real")]
     [Trait("isolation", "exclusive")]

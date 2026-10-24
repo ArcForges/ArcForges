@@ -107,7 +107,8 @@ public sealed class LinuxExecutionTests
         Assert.Equal("stop", SystemdTestEnvironment.Property(unit, "OOMPolicy"));
 
         // 03 section 5.1 on the slice: CPUQuota from B_cpu, MemoryHigh = B_mem, MemoryMax = C_mem - R_mem, MemorySwapMax 0, TasksMax 32768.
-        var facts = Capabilities((await node.CliAsync("node", "capabilities", "--json")).Json());
+        // The report is evaluated again now (--reevaluate), so its root limits are the ones in force, not the startup report's.
+        var facts = Capabilities((await node.CliAsync("node", "capabilities", "--reevaluate", "--json")).Json());
         string Fact(string name) => facts.GetProperty("platformFacts").EnumerateArray().Single(fact => fact.GetProperty("name").GetString() == name).GetProperty("value").GetString()!;
         var slice = Path.GetDirectoryName(directory)!;
         var rate = long.Parse(Fact("root_cpu_rate"), CultureInfo.InvariantCulture);

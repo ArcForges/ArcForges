@@ -118,7 +118,8 @@ public interface IPressureResponse
 /// per-test isolation). Test nodes run beside other tests' nodes, workloads and deliberate OOM kills, which are unmanaged load to every
 /// node on the machine: they lower its measured budgets (03 section 2; at once, L-31) and raise its pressure level (03 section 7), so a test
 /// of anything else would depend on what ran beside it. With <c>ARCFORGES_TEST_MACHINE=isolated</c> (or
-/// <see cref="ResourceMonitor.IsolatedFromMachineLoad"/> in a component test) the node evaluates as if it were alone on the machine: see
+/// <see cref="ResourceMonitor.IsolatedFromMachineLoad"/> in a component test) the node evaluates its budgets and pressure from its own and
+/// its attempts' CPU and memory only, and ignores every memory stall and OOM kill, its own attempts' included: see
 /// <see cref="ResourceMonitor.IsolatedFromMachineLoad"/>. Tests of the measured budgets and of pressure run without it, alone (the
 /// <c>exclusive</c> suite). Production never sets it: the variable is ignored without <c>--test-mode</c>.
 /// </summary>
@@ -241,9 +242,11 @@ public sealed class ResourceMonitor : IDisposable
 
     /// <summary>
     /// Test seam (<see cref="MachineIsolation"/>): each evaluation sees the machine as if only this node and its attempts ran on it. The
-    /// machine's CPU use is the managed work's and the node's, its used memory theirs (available memory the rest of <c>C_mem</c>), and
-    /// there is no memory stall and no OOM kill elsewhere. So <c>U_cpu = U_mem = 0</c>, <c>B = C - R</c>, and the pressure level follows
-    /// only the node's own work. The samples, the process table, the managed and node figures and the stored samples stay the real ones.
+    /// machine's CPU use is the managed work's and the node's, its used memory theirs (available memory the rest of <c>C_mem</c>). The
+    /// machine-wide memory stall (PSI) and OOM kill count are not read at all, so a stall or an OOM kill of the node's own attempts raises
+    /// no level either. So <c>U_cpu = U_mem = 0</c>, <c>B = C - R</c>, and the pressure level follows only the memory the node and its
+    /// attempts use (Tight below 10% of <c>C_mem</c> available, and so on). The samples, the process table, the managed and node figures
+    /// and the stored samples stay the real ones.
     /// </summary>
     internal bool IsolatedFromMachineLoad { get; init; }
 
