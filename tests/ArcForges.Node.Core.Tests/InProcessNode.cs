@@ -105,6 +105,12 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>Awaited before the version check's mismatch finding is committed (the node's test seam; a test holds or fails the commit).</summary>
     public Func<Task>? VersionFindingCommitting { get; set; }
 
+    /// <summary>
+    /// The supervisor's forced-phase seam (<c>NodeHostOptions.ForcedBeforeStart</c>), from the next start: called right after a stop's forced
+    /// phase terminated an attempt whose start had not completed, so a fault-injection test completes the start exactly there.
+    /// </summary>
+    public Action<IAttemptHandle>? ForcedBeforeStart { get; set; }
+
     /// <summary>The node's own slice on Linux (16 section 4).</summary>
     public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
 
@@ -175,6 +181,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             VersionFindingCommitting = VersionFindingCommitting,
             IsolatedFromMachineLoad = !LiveMachine,
             WrapSampler = MachineScript is { } script ? sampler => new ScriptedMachineSampler(sampler, script) : null,
+            ForcedBeforeStart = ForcedBeforeStart,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;
