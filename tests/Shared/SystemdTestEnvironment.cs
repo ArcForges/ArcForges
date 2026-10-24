@@ -50,6 +50,49 @@ internal static class SystemdTestEnvironment
     /// <summary>The unit name of an attempt.</summary>
     public static string AttemptUnit(string attemptName) => "arcforges-a-" + attemptName + ".service";
 
+    /// <summary>
+    /// Writes the user unit file <paramref name="name"/> (a name never used before) into the runtime unit directory
+    /// (<c>$XDG_RUNTIME_DIR/systemd/user</c>) so that the manager finds it on its next use by name, without a daemon-reload (a reload
+    /// stalls the single-threaded user manager for every test running beside this one); returns the file's path. The manager rebuilds
+    /// its unit-name map only when the hash of its search directories' modification times (in microseconds) differs from the hash it
+    /// took at its last rebuild (systemd 257 <c>unit_file_build_name_map</c>, <c>lookup_paths_timestamp_hash_same</c>). On tmpfs those
+    /// times come from the kernel's coarse clock (one tick: 4 ms at HZ=250), so a file created in the tick of a rebuild that another
+    /// test's unit lookup started just before leaves the directory's time as hashed, and the manager answers "not found" (systemctl
+    /// exit 5) until the directory changes again. After the write the directory's time is therefore advanced with the kernel's clock (a
+    /// marker file, which is not a unit name, created and removed) until it is later than the time read after the write: a rebuild that
+    /// did not see the file hashed a time no later than that one, and changes only move it forward, so the next lookup rebuilds the map.
+    /// </summary>
+    public static string InstallUnitFile(string name, string content)
+    {
+        var directory = Path.Combine(Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR")!, "systemd", "user");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, name);
+        File.WriteAllText(path, content);
+        var written = DirectoryMicroseconds(directory);
+        var marker = Path.Combine(directory, ".arcforges-mtime-" + Guid.NewGuid().ToString("N"));
+        var watch = Stopwatch.StartNew();
+        while (true)
+        {
+            File.WriteAllBytes(marker, []);
+            File.Delete(marker);
+            if (DirectoryMicroseconds(directory) > written)
+            {
+                return path;
+            }
+
+            if (watch.Elapsed > TimeSpan.FromSeconds(5))
+            {
+                throw new TimeoutException($"The modification time of {directory} did not advance past {written.ToString(CultureInfo.InvariantCulture)} us within 5 s.");
+            }
+
+            // Within the same clock tick: wait for the next one.
+            Thread.Sleep(1);
+        }
+    }
+
+    /// <summary>The modification time of a directory in microseconds, the resolution at which systemd hashes it.</summary>
+    private static long DirectoryMicroseconds(string directory) => Directory.GetLastWriteTimeUtc(directory).Ticks / TimeSpan.TicksPerMicrosecond;
+
     /// <summary>The user manager's private socket, or null.</summary>
     public static string? PrivateSocket()
     {

@@ -83,15 +83,13 @@ internal sealed class TestNode : IAsyncDisposable
 
     /// <summary>
     /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled); the unit is
-    /// stopped and removed when the environment is disposed. <paramref name="name"/> must be new: the manager loads a unit it has not
-    /// loaded yet from the unit directories on its first use, so no daemon-reload is needed (a reload stalls the manager for every test
-    /// running beside this one).
+    /// stopped and removed when the environment is disposed. <paramref name="name"/> must be new: the manager loads it from the unit
+    /// directories on its first use, with no daemon-reload, once <see cref="ArcForges.Tests.SystemdTestEnvironment.InstallUnitFile"/> has
+    /// made the directory's modification time move past the manager's cached one.
     /// </summary>
     public string InstallUnit(string name, string content)
     {
-        var directory = Path.Combine(System.Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR")!, "systemd", "user");
-        Directory.CreateDirectory(directory);
-        File.WriteAllText(Path.Combine(directory, name), content);
+        ArcForges.Tests.SystemdTestEnvironment.InstallUnitFile(name, content);
         Units.Add(name);
         return name;
     }
