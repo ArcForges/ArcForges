@@ -113,6 +113,30 @@ public interface IPressureResponse
     void Respond(PressureLevel level, PressureLevel previous, ResourceState state);
 }
 
+/// <summary>
+/// The machine-isolation test hook (02 section 4: an <c>ARCFORGES_*</c> variable honoured only with <c>--test-mode</c>; 16 section 4:
+/// per-test isolation). Test nodes run beside other tests' nodes, workloads and deliberate OOM kills, which are unmanaged load to every
+/// node on the machine: they lower its measured budgets (03 section 2; at once, L-31) and raise its pressure level (03 section 7), so a test
+/// of anything else would depend on what ran beside it. With <c>ARCFORGES_TEST_MACHINE=isolated</c> (or
+/// <see cref="ResourceMonitor.IsolatedFromMachineLoad"/> in a component test) the node evaluates as if it were alone on the machine: see
+/// <see cref="ResourceMonitor.IsolatedFromMachineLoad"/>. Tests of the measured budgets and of pressure run without it, alone (the
+/// <c>exclusive</c> suite). Production never sets it: the variable is ignored without <c>--test-mode</c>.
+/// </summary>
+public static class MachineIsolation
+{
+    /// <summary>The environment variable.</summary>
+    public const string Variable = "ARCFORGES_TEST_MACHINE";
+
+    /// <summary>Its value that isolates the node.</summary>
+    public const string Isolated = "isolated";
+
+    /// <summary>True when the hook isolates this process's node (test mode only).</summary>
+    public static bool FromEnvironment(bool testMode) => Applies(testMode, Environment.GetEnvironmentVariable(Variable));
+
+    /// <summary>True when the variable's <paramref name="value"/> isolates the node: only <see cref="Isolated"/>, and only in test mode.</summary>
+    internal static bool Applies(bool testMode, string? value) => testMode && string.Equals(value, Isolated, StringComparison.Ordinal);
+}
+
 /// <summary>A process of the process table with its label, owner and CPU rate (<c>ListProcesses</c>).</summary>
 /// <param name="Process">The process.</param>
 /// <param name="Label">Its label.</param>
@@ -214,6 +238,14 @@ public sealed class ResourceMonitor : IDisposable
 
     /// <summary>The sampler.</summary>
     public IResourceSampler Sampler => _sampler;
+
+    /// <summary>
+    /// Test seam (<see cref="MachineIsolation"/>): each evaluation sees the machine as if only this node and its attempts ran on it. The
+    /// machine's CPU use is the managed work's and the node's, its used memory theirs (available memory the rest of <c>C_mem</c>), and
+    /// there is no memory stall and no OOM kill elsewhere. So <c>U_cpu = U_mem = 0</c>, <c>B = C - R</c>, and the pressure level follows
+    /// only the node's own work. The samples, the process table, the managed and node figures and the stored samples stay the real ones.
+    /// </summary>
+    internal bool IsolatedFromMachineLoad { get; init; }
 
     /// <summary>The last computed state, or <see langword="null"/> before the first evaluation.</summary>
     public ResourceState? Current => Volatile.Read(ref _state);
@@ -440,16 +472,22 @@ public sealed class ResourceMonitor : IDisposable
         }
 
         var used = Math.Max(0, capacityMemory - machine.AvailableMemoryBytes);
-        var unmanagedMemory = (long)_unmanagedMemory.Update(Math.Max(0, used - managedMemory - _nodeMemory), settings.AlphaUp, settings.AlphaDown);
+
+        // What the evaluation sees of the machine: the machine itself, or (test seam) only this node and its attempts on it.
+        var (seenCpu, seenUsed, seenPsi, seenOomKills) = IsolatedFromMachineLoad
+            ? (managedCpu + nodeCpu, Math.Min(capacityMemory, managedMemory + _nodeMemory), (double?)null, 0L)
+            : (totalCpu, used, machine.Pressure?.MemorySome, machine.OomKills);
+        var seenAvailable = IsolatedFromMachineLoad ? capacityMemory - seenUsed : machine.AvailableMemoryBytes;
+        var unmanagedMemory = (long)_unmanagedMemory.Update(Math.Max(0, seenUsed - managedMemory - _nodeMemory), settings.AlphaUp, settings.AlphaDown);
         var unmanagedCpu = _lastMachine is null || managedCpuUnknown
             ? (long)(_unmanagedCpu.Value ?? 0)
-            : (long)_unmanagedCpu.Update(Math.Max(0, totalCpu - managedCpu - nodeCpu), settings.AlphaUp, settings.AlphaDown);
+            : (long)_unmanagedCpu.Update(Math.Max(0, seenCpu - managedCpu - nodeCpu), settings.AlphaUp, settings.AlphaDown);
         _lastMachine = machine;
         var (budgetCpu, budgetMemory) = settings.Budgets(unmanagedCpu, unmanagedMemory);
 
         var before = _pressure.Level;
         var level = _pressure.Evaluate(_clock.GetElapsedTime(_started, now),
-            new PressureInputs(machine.AvailableMemoryBytes, capacityMemory, capacityCpu, unmanagedCpu, machine.Pressure?.MemorySome, machine.OomKills),
+            new PressureInputs(seenAvailable, capacityMemory, capacityCpu, unmanagedCpu, seenPsi, seenOomKills),
             settings.Pressure);
         var state = new ResourceState
         {
@@ -458,9 +496,9 @@ public sealed class ResourceMonitor : IDisposable
             CapacityMemory = capacityMemory,
             ReserveCpu = settings.ReserveCpu,
             ReserveMemory = settings.ReserveMemory,
-            TotalCpu = totalCpu,
-            AvailableMemory = machine.AvailableMemoryBytes,
-            UsedMemory = used,
+            TotalCpu = seenCpu,
+            AvailableMemory = seenAvailable,
+            UsedMemory = seenUsed,
             CommitBytes = machine.CommitBytes,
             ManagedCpu = managedCpu,
             ManagedMemory = managedMemory,

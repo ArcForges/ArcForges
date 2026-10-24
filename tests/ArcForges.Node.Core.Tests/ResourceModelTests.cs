@@ -415,6 +415,18 @@ public sealed class ResourceModelTests
     }
 
     [Fact]
+    public void TheMachineIsolationHookAppliesOnlyInTestModeAndOnlyToItsValue()
+    {
+        // 02 section 4: ARCFORGES_TEST_MACHINE is a test hook, honoured only with --test-mode; a node without it always sees the machine.
+        Assert.True(MachineIsolation.Applies(testMode: true, MachineIsolation.Isolated));
+        Assert.False(MachineIsolation.Applies(testMode: false, MachineIsolation.Isolated));
+        Assert.False(MachineIsolation.Applies(testMode: true, null));
+        Assert.False(MachineIsolation.Applies(testMode: true, string.Empty));
+        Assert.False(MachineIsolation.Applies(testMode: true, "1"));
+        Assert.False(MachineIsolation.Applies(testMode: true, "ISOLATED"));
+    }
+
+    [Fact]
     public void ProcessesAreLabelledByMembershipAncestryAndImage()
     {
         var attempt = new byte[16];

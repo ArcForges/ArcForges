@@ -48,6 +48,9 @@ public sealed partial class ResourceTests
     private static async Task HeadroomAsync()
     {
         await using var node = TestNode.Create();
+
+        // The live machine (exclusive): B_cpu, and the root CPU cap with it, is measured with the probe as unmanaged load.
+        node.LiveMachine = true;
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
         var threads = (2 * Environment.ProcessorCount).ToString(CultureInfo.InvariantCulture);
@@ -185,6 +188,9 @@ public sealed partial class ResourceTests
     {
         var oomBefore = OperatingSystem.IsLinux() ? VmStat("oom_kill") : 0;
         await using var node = TestNode.Create();
+
+        // The live machine (exclusive): B_mem is measured with the unmanaged allocator's memory.
+        node.LiveMachine = true;
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
         var snapshot = await SnapshotAsync(channel, snapshot => snapshot.HasBudgetMemBytes && snapshot.BudgetMemBytes > 0);

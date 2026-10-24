@@ -60,6 +60,9 @@ public sealed partial class ResourceTests
     private static async Task SnapshotAndLabelsAsync()
     {
         await using var node = TestNode.Create();
+
+        // The live machine (exclusive): the snapshot is compared with the operating system's figures.
+        node.LiveMachine = true;
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
 
@@ -558,6 +561,9 @@ public sealed partial class ResourceTests
         var (total, available) = OsMemory();
         Assert.SkipWhen(available < Allocation + (2048 * MiB), $"Only {available / MiB} MiB available; the test needs {(Allocation + (2048 * MiB)) / MiB} MiB.");
         await using var node = TestNode.Create();
+
+        // The live machine (exclusive): the unmanaged allocator must move the node to Critical.
+        node.LiveMachine = true;
         var critical = (available - (Allocation * 3 / 4)) / (double)total;
         node.SeedPolicy(policy => policy.Resources.Pressure = new PressureThresholds
         {

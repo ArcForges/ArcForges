@@ -72,6 +72,21 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>The version directory whose digests the node verifies after startup (default: the directory of the helper executable).</summary>
     public string? VersionDirectory { get; set; }
 
+    /// <summary>
+    /// The node evaluates its budgets and pressure from the live machine (03 sections 2 and 7), with every other test's load counted as
+    /// unmanaged. False (the default): it sees only itself and its attempts on the machine (<c>MachineIsolation</c>), so what runs beside the
+    /// test cannot change its budgets, root limits, AUTO parallelism or pressure level. Only a test of the measured budgets or of pressure
+    /// sets it, and such a test is <c>isolation=exclusive</c>.
+    /// </summary>
+    public bool LiveMachine { get; set; }
+
+    /// <summary>Sets <see cref="LiveMachine"/>.</summary>
+    public InProcessNode WithLiveMachine()
+    {
+        LiveMachine = true;
+        return this;
+    }
+
     /// <summary>Awaited before the version check's mismatch finding is committed (the node's test seam; a test holds or fails the commit).</summary>
     public Func<Task>? VersionFindingCommitting { get; set; }
 
@@ -143,6 +158,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             LinuxControllers = LinuxControllers,
             VersionDirectory = VersionDirectory,
             VersionFindingCommitting = VersionFindingCommitting,
+            IsolatedFromMachineLoad = !LiveMachine,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;

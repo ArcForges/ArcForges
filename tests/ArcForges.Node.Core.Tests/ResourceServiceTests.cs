@@ -100,11 +100,14 @@ public sealed class ResourceServiceTests
         }
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the snapshot is the live machine's (LiveMachine), and its pressure level is Normal only on a machine that no
+    // other test loads.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheSnapshotProcessesAndSamplesComeFromTheRealSamplers()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
+        await using var node = await InProcessNode.Create().WithLiveMachine().StartAsync();
         await using var channel = await node.ChannelAsync();
 
         // The first evaluation runs within a second of the start; machine samples are stored every 5 s.

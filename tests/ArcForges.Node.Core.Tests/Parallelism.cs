@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Tests run in parallel, test by test (16-testing-strategy section 4): every test has its own in-process node (data root, endpoint, Linux
-// slice), and the fixture ends only its own node's attempts and holders (named by their attempt on the command line).
+// slice), and the fixture ends only its own node's attempts and holders (named by their attempt on the command line). The node sees only
+// itself and its attempts on the machine (InProcessNode.LiveMachine), so the other tests' load moves neither its budgets nor its pressure.
 // A test that is timing-, CPU-share- or memory-sensitive, or that changes machine-wide state no per-test isolation can remove, carries
 // [Trait("isolation", "exclusive")] and DisableParallelization = true: xUnit runs it alone after the others, and the scripts run the
 // exclusive suite after every other suite (eng/test-suites.conf).

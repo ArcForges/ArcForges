@@ -1220,7 +1220,8 @@ public sealed class SchedulerTests
     /// <summary>03 section 5.1: the root limits follow the measured budget; the operating system's root carries what the node applied.</summary>
     private static async Task RootLimitsAsync()
     {
-        await using var node = await InProcessNode.Create().StartAsync();
+        // The live machine (exclusive): the root limits follow the budget measured from it.
+        await using var node = await InProcessNode.Create().WithLiveMachine().StartAsync();
         var execution = node.Runtime.Execution!;
         await Tasks.WaitForAsync(() => execution.AppliedRootLimits is not null, TimeSpan.FromSeconds(30), "root limits from the measured budget");
         await execution.PlatformCalls.DrainAsync(TimeSpan.FromSeconds(10));
@@ -1393,7 +1394,8 @@ public sealed class SchedulerTests
     /// </summary>
     private static async Task PressureRestartAsync()
     {
-        await using var node = await InProcessNode.Create().StartAsync();
+        // The live machine (exclusive): the thresholds are crossed by the machine's available memory.
+        await using var node = await InProcessNode.Create().WithLiveMachine().StartAsync();
         Id backgroundId;
         string unit, launchHigh;
         await using (var channel = await node.ChannelAsync(helloAsHuman: true))
@@ -1451,7 +1453,8 @@ public sealed class SchedulerTests
     /// </summary>
     private static async Task PressureAsync()
     {
-        await using var node = await InProcessNode.Create().StartAsync();
+        // The live machine (exclusive): the thresholds are crossed by the machine's available memory.
+        await using var node = await InProcessNode.Create().WithLiveMachine().StartAsync();
         await using var channel = await node.ChannelAsync(helloAsHuman: true);
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         var background = Sched.Hold(node, M(node, "background"), 240_000);

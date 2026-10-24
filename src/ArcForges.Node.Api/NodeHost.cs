@@ -85,6 +85,13 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Func<Task>? VersionFindingCommitting { get; init; }
 
+    /// <summary>
+    /// Test seam (component tests): the node evaluates its budgets and pressure as if it were alone on the machine
+    /// (<see cref="ArcForges.Node.Core.Resources.MachineIsolation"/>); the executable sets it from <c>ARCFORGES_TEST_MACHINE</c> in test
+    /// mode.
+    /// </summary>
+    internal bool IsolatedFromMachineLoad { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -258,6 +265,11 @@ public static class NodeHost
             heartbeat.Renewed = () => notifier.Notify("WATCHDOG=1");
             log.Info("node.watchdog", new LogField("intervalMs", (long)watchdogInterval.TotalMilliseconds));
         }
+        var isolated = options.IsolatedFromMachineLoad || ArcForges.Node.Core.Resources.MachineIsolation.FromEnvironment(options.TestMode);
+        if (isolated)
+        {
+            log.Info("node.machine_isolated", new LogField("detail", "test hook: budgets and pressure see only this node and its attempts on the machine"));
+        }
         var execution = new ExecutionSupervisor(new ExecutionOptions
         {
             Store = store,
@@ -274,6 +286,7 @@ public static class NodeHost
             Heartbeat = heartbeat,
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
             Sampler = CreateSampler(),
+            IsolatedFromMachineLoad = isolated,
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {

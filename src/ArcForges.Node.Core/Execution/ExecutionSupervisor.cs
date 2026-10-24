@@ -62,6 +62,9 @@ public sealed class ExecutionOptions
 
     /// <summary>The tool-level concurrency hook of the adapters (03 section 5.3), or <see langword="null"/>.</summary>
     public Scheduling.IToolConcurrency? Tools { get; init; }
+
+    /// <summary>Test seam: the resource monitor evaluates as if this node were alone on the machine (<see cref="MachineIsolation"/>).</summary>
+    internal bool IsolatedFromMachineLoad { get; init; }
 }
 
 /// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
@@ -216,7 +219,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         Adoptions = new Adoptions(this, _store, _processor, _log);
         if (options.Sampler is { } sampler)
         {
-            Resources = new ResourceMonitor(sampler, this, _store, _processor, _log, _clock);
+            Resources = new ResourceMonitor(sampler, this, _store, _processor, _log, _clock) { IsolatedFromMachineLoad = options.IsolatedFromMachineLoad };
             Resources.AddResponse(this);
         }
 

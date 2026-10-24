@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
 using Microsoft.Data.Sqlite;
@@ -57,6 +58,10 @@ internal sealed class TestNode : IAsyncDisposable
         // The --test-mode hook of 11 section 1's client-kind verification: this test process may present the Desktop kind, so a test acts as
         // the HUMAN approver (HumanChannelAsync); its CLI processes stay SCRIPT callers (no terminal).
         Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = System.Environment.ProcessPath;
+
+        // The --test-mode machine isolation (MachineIsolation): the node's budgets and pressure see only itself and its attempts, never the
+        // other tests' load (LiveMachine).
+        LiveMachine = false;
 
         if (!OperatingSystem.IsWindows())
         {
@@ -165,6 +170,18 @@ internal sealed class TestNode : IAsyncDisposable
     public string DataRoot { get; }
 
     public string Endpoint { get; }
+
+    /// <summary>
+    /// The node evaluates its budgets and pressure from the live machine (03 sections 2 and 7), with every other test's load counted as
+    /// unmanaged. False (the default): <c>ARCFORGES_TEST_MACHINE=isolated</c>, so it sees only itself and its attempts on the machine and what
+    /// runs beside the test cannot change its budgets, root limits, AUTO parallelism or pressure level. Only a test of the measured budgets or
+    /// of pressure sets it, and such a test is <c>isolation=exclusive</c>.
+    /// </summary>
+    public bool LiveMachine
+    {
+        get => Environment.GetValueOrDefault(MachineIsolation.Variable) is null;
+        set => Environment[MachineIsolation.Variable] = value ? null : MachineIsolation.Isolated;
+    }
 
     /// <summary>The child processes' environment changes (null removes a variable).</summary>
     public Dictionary<string, string?> Environment { get; } = new(StringComparer.Ordinal);
