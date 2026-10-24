@@ -150,8 +150,15 @@ public sealed class SignalTests
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "500", "--child", "group", "--child-hold-ms", "60000", "--marker", marker],
             leftoverGraceMs: 30_000);
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
-        var rootProcess = PlatformHarness.Identity(handle.Root!);
-        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), Bound, "the root to exit");
+
+        // The root has exited once its process object is signalled, which is what the holder waits for before it reads the exit code
+        // (04 section 3, exit capture). The process-by-ID view (Process.HasExited) already reports an exit while the root is still exiting:
+        // its exit code is set before the object is signalled, and a forced phase in that window still ends it with the termination code.
+        // The holder keeps its handle to the root until the record is written, so the root's object can be opened here.
+        var root = handle.Root!;
+        using var rootProcess = ProcessInfo.OpenIdentified(root.Pid, root.StartTime.ToFileTime());
+        Assert.NotNull(rootProcess);
+        PlatformHarness.WaitFor(() => !ProcessInfo.IsRunning(rootProcess), Bound, "the root to exit");
         var outcome = handle.RequestGracefulStop();
         Assert.False(outcome.ConsoleSignalled);
         Assert.Equal("the root process exited", outcome.Reason);
