@@ -629,6 +629,19 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     /// <summary><c>CancelTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
     internal async Task<TaskServiceCancelTaskResponse> CancelTask(TaskServiceCancelTaskRequest request, Caller caller)
     {
+        try
+        {
+            return await CancelTaskOnce(request, caller, allowSettled: true).ConfigureAwait(false);
+        }
+        catch (GateStaleException)
+        {
+            // Review round 2: the task changed between the check and the command; the request is checked again, with the gate.
+            return await CancelTaskOnce(request, caller, allowSettled: false).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<TaskServiceCancelTaskResponse> CancelTaskOnce(TaskServiceCancelTaskRequest request, Caller caller, bool allowSettled)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceCancelTaskResponse { Meta = Meta(request.Meta) };
@@ -644,7 +657,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         // Review round 1: cancelling a task that already ended (or does not exist) changes nothing and is answered without an approval.
-        var gate = refused is null && !Settled(request.TaskId) ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : null;
+        var settled = allowSettled && refused is null && Settled(request.TaskId);
+        var gate = refused is null && !settled ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : null;
         if (refused is null && gate is not null)
         {
             refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -662,6 +676,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "CancelTask", TaskServiceCancelTaskResponse.Parser,
             failure => new TaskServiceCancelTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
+            EnsureStillSettled(command, id, settled);
             var (state, error, attempt) = Execution.Cancel(command, id, reason);
             stopAttempt = attempt;
             return error is not null
@@ -760,6 +775,18 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     /// <summary><c>SetTaskPriority</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
     internal async Task<TaskServiceSetTaskPriorityResponse> SetTaskPriority(TaskServiceSetTaskPriorityRequest request, Caller caller)
     {
+        try
+        {
+            return await SetTaskPriorityOnce(request, caller, allowSettled: true).ConfigureAwait(false);
+        }
+        catch (GateStaleException)
+        {
+            return await SetTaskPriorityOnce(request, caller, allowSettled: false).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<TaskServiceSetTaskPriorityResponse> SetTaskPriorityOnce(TaskServiceSetTaskPriorityRequest request, Caller caller, bool allowSettled)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta) };
@@ -789,7 +816,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             + (request.HasPool ? " (pool " + request.Pool + ")" : string.Empty);
         var gate = new GateRequest(PermissionMatrix.TaskSetPriority, "TaskService.SetTaskPriority", summary + " " + IdText.Format(request.TaskId), "task",
             Bytes(request.TaskId));
-        var settled = refused is null && Settled(request.TaskId);
+        var settled = allowSettled && refused is null && Settled(request.TaskId);
         if (!settled)
         {
             refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -809,6 +836,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "SetTaskPriority", TaskServiceSetTaskPriorityResponse.Parser,
             failure => new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta), Error = failure }, command =>
             {
+                EnsureStillSettled(command, id, settled);
                 var (queue, error) = Execution.SetPriority(command, id, request.HasPriority ? request.Priority : null, request.HasPool ? request.Pool : null);
                 return error is not null
                     ? new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta), Error = error }
@@ -839,6 +867,19 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     private bool Settled(Id taskId) =>
         _node.Store.Read(reader => TaskRecords.GetRow(reader, taskId.Value.Span)) is not { Purged: false } row || row.Terminal;
 
+    /// <summary>
+    /// Review round 2: when the gate was skipped because the task had ended (or did not exist), that is checked again inside the command; a
+    /// task re-queued in between makes the command stop before it acts (nothing is stored), and the handler checks the request again with the
+    /// gate.
+    /// </summary>
+    private static void EnsureStillSettled(CommandContext command, byte[] taskId, bool settled)
+    {
+        if (settled && TaskRecords.GetRow(command.Transaction, taskId) is { Purged: false } row && !row.Terminal)
+        {
+            throw new GateStaleException("the task changed after the gate's check");
+        }
+    }
+
     private GateRequest? TaskGate(Id taskId, string method, string summary)
     {
         var id = taskId.Value.ToByteArray();
@@ -862,12 +903,24 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     /// <summary><c>PauseTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
     internal async Task<TaskServicePauseTaskResponse> PauseTask(TaskServicePauseTaskRequest request, Caller caller, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await PauseTaskOnce(request, caller, allowSettled: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GateStaleException)
+        {
+            return await PauseTaskOnce(request, caller, allowSettled: false, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<TaskServicePauseTaskResponse> PauseTaskOnce(TaskServicePauseTaskRequest request, Caller caller, bool allowSettled, CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServicePauseTaskResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
         var gate = new GateRequest(PermissionMatrix.TaskPause, "TaskService.PauseTask", "pause task " + IdText.Format(request.TaskId), "task", Bytes(request.TaskId));
-        var settled = refused is null && Settled(request.TaskId);
+        var settled = allowSettled && refused is null && Settled(request.TaskId);
         if (!settled)
         {
             refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -887,13 +940,16 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var done = Task.CompletedTask;
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "PauseTask", TaskServicePauseTaskResponse.Parser,
             failure => new TaskServicePauseTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
-                Execution.PauseTask(command.Transaction, id, out done) is { } error
+            {
+                EnsureStillSettled(command, id, settled);
+                return Execution.PauseTask(command.Transaction, id, out done) is { } error
                     ? new TaskServicePauseTaskResponse { Meta = Meta(request.Meta), Error = error }
                     : new TaskServicePauseTaskResponse
                     {
                         Meta = Meta(request.Meta),
                         Value = new TaskServicePauseTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Paused },
-                    }, settled ? null : gate).ConfigureAwait(false);
+                    };
+            }, settled ? null : gate).ConfigureAwait(false);
         await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), cancellationToken)).ConfigureAwait(false);
         return result;
     }
@@ -905,11 +961,24 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     /// <summary><c>ResumeTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
     internal async Task<TaskServiceResumeTaskResponse> ResumeTask(TaskServiceResumeTaskRequest request, Caller caller, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await ResumeTaskOnce(request, caller, allowSettled: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GateStaleException)
+        {
+            return await ResumeTaskOnce(request, caller, allowSettled: false, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<TaskServiceResumeTaskResponse> ResumeTaskOnce(TaskServiceResumeTaskRequest request, Caller caller, bool allowSettled, CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(caller);
         var response = new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
-        var gate = refused is null && !Settled(request.TaskId) ? TaskGate(request.TaskId, "TaskService.ResumeTask", "resume task") : null;
+        var settled = allowSettled && refused is null && Settled(request.TaskId);
+        var gate = refused is null && !settled ? TaskGate(request.TaskId, "TaskService.ResumeTask", "resume task") : null;
         if (gate is not null)
         {
             refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -925,13 +994,16 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var done = Task.CompletedTask;
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "ResumeTask", TaskServiceResumeTaskResponse.Parser,
             failure => new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
-                Execution.ResumeTask(command.Transaction, id, out done) is { } error
+            {
+                EnsureStillSettled(command, id, settled);
+                return Execution.ResumeTask(command.Transaction, id, out done) is { } error
                     ? new TaskServiceResumeTaskResponse { Meta = Meta(request.Meta), Error = error }
                     : new TaskServiceResumeTaskResponse
                     {
                         Meta = Meta(request.Meta),
                         Value = new TaskServiceResumeTaskValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, State = TaskState.Running },
-                    }, gate).ConfigureAwait(false);
+                    };
+            }, gate).ConfigureAwait(false);
         await Task.WhenAny(done, Task.Delay(TimeSpan.FromSeconds(8), cancellationToken)).ConfigureAwait(false);
         return result;
     }

@@ -11,14 +11,17 @@ namespace ArcForges.Node.Core.Security;
 /// <param name="Unlisted">Files in the directory the manifest does not list.</param>
 /// <param name="Links">Symbolic links and other reparse points in the directory: never followed, never changed, each a mismatch.</param>
 /// <param name="Invalid">Manifest entries that are not a plain relative path inside the directory (absolute, <c>..</c>, empty segments): never read.</param>
+/// <param name="HardLinks">Regular files (listed or not) with more than one hard link, or whose link count cannot be read: they share their data
+/// and permissions with a name elsewhere, so they are never made read-only and never hashed; each is a mismatch.</param>
 /// <param name="MadeReadOnly">Files this check made read-only (they were writable).</param>
 /// <param name="NotReadOnly">Files that could not be made read-only.</param>
 /// <param name="Problem">Why the manifest itself could not be used, or <see langword="null"/>.</param>
 public sealed record VersionIntegrityReport(string Fact, IReadOnlyList<string> Missing, IReadOnlyList<string> Changed, IReadOnlyList<string> Unlisted,
-    IReadOnlyList<string> Links, IReadOnlyList<string> Invalid, int MadeReadOnly, IReadOnlyList<string> NotReadOnly, string? Problem)
+    IReadOnlyList<string> Links, IReadOnlyList<string> Invalid, IReadOnlyList<string> HardLinks, int MadeReadOnly, IReadOnlyList<string> NotReadOnly,
+    string? Problem)
 {
     /// <summary>The entries that do not match the manifest (with an unusable manifest every file is unlisted, and at least one counts).</summary>
-    public int Mismatches => Math.Max(Missing.Count + Changed.Count + Unlisted.Count + Links.Count + Invalid.Count, Problem is null ? 0 : 1);
+    public int Mismatches => Math.Max(Missing.Count + Changed.Count + Unlisted.Count + Links.Count + Invalid.Count + HardLinks.Count, Problem is null ? 0 : 1);
 
     /// <summary>True when a manifest was present (the directory was checked).</summary>
     public bool Checked => !string.Equals(Fact, VersionIntegrity.NotChecked, StringComparison.Ordinal);
@@ -60,10 +63,11 @@ public static class VersionIntegrity
     public static string FactOf(int mismatches) => mismatches == 0 ? Verified : $"mismatch: {mismatches} files";
 
     /// <summary>
-    /// Makes the files of <paramref name="directory"/> read-only and verifies them against its manifest. Without a manifest nothing is
+    /// Verifies <paramref name="directory"/> against its manifest and makes the listed files read-only. Without a manifest nothing is
     /// changed and the report says <see cref="NotChecked"/>. The walk never follows a link: a symbolic link or other reparse point inside the
     /// directory is a mismatch and neither it nor its target is changed or read; a manifest entry that is not a plain relative path inside
-    /// the directory is a mismatch and is never read; only the regular files the walk reached are made read-only and hashed.
+    /// the directory is a mismatch and is never read; a file with more than one hard link is a mismatch and is never changed or hashed; only
+    /// listed files with a valid path and a single link are hashed and made read-only, and unlisted files are never touched.
     /// </summary>
     public static VersionIntegrityReport Check(string directory, CancellationToken cancellationToken = default)
     {
@@ -71,7 +75,7 @@ public static class VersionIntegrity
         var manifestPath = Path.Combine(directory, ManifestName);
         if (!File.Exists(manifestPath))
         {
-            return new VersionIntegrityReport(NotChecked, [], [], [], [], [], 0, [], null);
+            return new VersionIntegrityReport(NotChecked, [], [], [], [], [], [], 0, [], null);
         }
 
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
@@ -82,31 +86,20 @@ public static class VersionIntegrity
         files.Remove(ManifestName);
         var onDisk = files.Keys.Order(StringComparer.Ordinal).ToList();
 
-        // 1. Every regular file read-only (the manifest too); links are never touched.
-        var madeReadOnly = 0;
-        var notReadOnly = new List<string>();
-        foreach (var relative in manifestIsLink ? onDisk : onDisk.Append(ManifestName))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            switch (MakeReadOnly(Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar))))
-            {
-                case true:
-                    madeReadOnly++;
-                    break;
-                case null:
-                    notReadOnly.Add(relative);
-                    break;
-            }
-        }
-
-        // 2. The digests: only regular files the walk reached are read.
+        // Review round 2: the manifest is read and validated first, and only what it lists is ever changed. A file with more than one hard
+        // link shares its inode (data, mode, attributes) with a name outside the directory: it is a mismatch, never made read-only, never hashed.
+        static bool Single(string path) => Platform.FileLinks.Count(path) == 1;
         Dictionary<string, string> listed;
         var problem = manifestIsLink
             ? Fail("digests.json is a link; it is not followed", comparer, out listed)
-            : ReadManifest(manifestPath, comparer, out listed);
+            : !Single(manifestPath)
+                ? Fail("digests.json has more than one hard link; it is not used", comparer, out listed)
+                : ReadManifest(manifestPath, comparer, out listed);
         var missing = new List<string>();
         var changed = new List<string>();
         var invalid = new List<string>();
+        var hardLinks = new List<string>();
+        var protect = new List<string>();
         foreach (var (relative, digest) in listed)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -116,6 +109,13 @@ public static class VersionIntegrity
             }
             else if (files.TryGetValue(relative, out var path))
             {
+                if (!Single(path))
+                {
+                    hardLinks.Add(relative);
+                    continue;
+                }
+
+                protect.Add(relative);
                 if (!string.Equals(Sha256(path), digest, StringComparison.OrdinalIgnoreCase))
                 {
                     changed.Add(relative);
@@ -128,8 +128,32 @@ public static class VersionIntegrity
             }
         }
 
-        var unlisted = onDisk.Where(path => !listed.ContainsKey(path)).ToList();
-        var report = new VersionIntegrityReport(string.Empty, missing, changed, unlisted, links, invalid, madeReadOnly, notReadOnly, problem);
+        // Unlisted files are never touched; one with several links is reported as a hard link.
+        var unlisted = new List<string>();
+        foreach (var relative in onDisk.Where(path => !listed.ContainsKey(path)))
+        {
+            (Single(files[relative]) ? unlisted : hardLinks).Add(relative);
+        }
+
+        // Only listed files with a valid path and a single link are made read-only (and the manifest, once it was usable).
+        var madeReadOnly = 0;
+        var notReadOnly = new List<string>();
+        foreach (var relative in problem is null ? protect.Append(ManifestName) : protect)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar));
+            switch (Single(path) ? MakeReadOnly(path) : null)
+            {
+                case true:
+                    madeReadOnly++;
+                    break;
+                case null:
+                    notReadOnly.Add(relative);
+                    break;
+            }
+        }
+
+        var report = new VersionIntegrityReport(string.Empty, missing, changed, unlisted, links, invalid, hardLinks, madeReadOnly, notReadOnly, problem);
         return report with { Fact = FactOf(report.Mismatches) };
     }
 

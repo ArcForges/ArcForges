@@ -21,5 +21,15 @@ internal sealed class WindowsAdoptedJob(JobObject job) : IAdoptedContainer
     public void Terminate() => job.Terminate(WindowsExecutionPlatform.TerminatedExitCode);
 
     /// <inheritdoc />
+    public string Abandon()
+    {
+        // Windows cannot take a process out of a job: the processes stay in this node's root job and in the adoption job (which ends with its
+        // last process once this handle closes), under their limits, without being adopted.
+        var name = ContainerName;
+        job.Dispose();
+        return $"the processes stay in this node's root job and the adoption job {name}, which they cannot leave; they keep running, not adopted";
+    }
+
+    /// <inheritdoc />
     public void Dispose() => job.Dispose();
 }

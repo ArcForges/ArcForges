@@ -221,6 +221,40 @@ public sealed class AdoptionTests
         handle.Terminate();
         LinuxHarness.WaitExit(handle, Bound);
     }
+
+    /// <summary>
+    /// Review round 2: an adoption the node could not record is abandoned, never terminated: the user manager stops managing the scope
+    /// (<c>AbandonScope</c>), and the process keeps running.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public void AnAdoptionThatWasNotRecordedIsAbandonedWithoutTerminatingTheProcess()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        using var process = Process.Start(new ProcessStartInfo(TestPrograms.TestLoad, ["hold", "--hold-ms", "60000"]) { RedirectStandardOutput = true })!;
+        IAdoptedContainer? container = null;
+        try
+        {
+            LinuxHarness.WaitFor(() => ProcFs.StartOf(process.Id) is not null, Bound, "the process to run");
+            var start = ProcFs.StartOf(process.Id)!.Value.Start;
+            container = harness.Platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], process.Id, start)).Container;
+            var scope = container.ContainerName;
+            var outcome = container.Abandon();
+            Assert.Equal($"the adoption scope {scope} was abandoned: the user manager no longer manages it, and its processes keep running, not adopted", outcome);
+            Assert.Equal("abandoned", SystemdTestEnvironment.Property(scope, "SubState"));
+            Assert.False(process.HasExited, "Nothing is terminated.");
+        }
+        finally
+        {
+            container?.Dispose();
+            if (!process.HasExited)
+            {
+                process.Kill();
+                process.WaitForExit(30_000);
+            }
+        }
+    }
 }
 
 /// <summary>

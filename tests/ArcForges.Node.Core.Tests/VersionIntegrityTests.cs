@@ -60,7 +60,8 @@ public sealed class VersionIntegrityTests
             Assert.Equal(["extra.txt"], report.Unlisted);
             Assert.Equal(["notes.txt"], report.Missing);
             Assert.Null(report.Problem);
-            Assert.True(VersionIntegrity.IsReadOnly(Path.Combine(directory, "extra.txt")), "Every file is made read-only, listed or not.");
+            Assert.False(VersionIntegrity.IsReadOnly(Path.Combine(directory, "extra.txt")), "An unlisted file is never touched (review round 2).");
+            Assert.True(VersionIntegrity.IsReadOnly(Path.Combine(directory, "lib", "native.so")), "A listed file is made read-only, changed or not.");
         }
         finally
         {
@@ -197,6 +198,71 @@ public sealed class VersionIntegrityTests
     }
 
     /// <summary>
+    /// Review round 2: a hard link inside the version directory to a file outside it (unlisted) is a mismatch reported as a hard link; it is
+    /// never made read-only, so the outside file keeps its mode (Linux) or attributes (Windows).
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void AHardLinkToAnOutsideFileIsAMismatchAndItsTargetKeepsItsMode()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "victim.txt");
+        File.WriteAllText(victim, "outside");
+        var directory = CreateVersion();
+        try
+        {
+            HardLink(Path.Combine(directory, "evil-hardlink"), victim);
+            var before = Permissions(victim);
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(["evil-hardlink"], report.HardLinks);
+            Assert.Empty(report.Unlisted);
+            Assert.Equal("mismatch: 1 files", report.Fact);
+            Assert.Equal(before, Permissions(victim));
+            Assert.False(VersionIntegrity.IsReadOnly(victim), "The outside file is never made read-only through the hard link.");
+            Assert.True(VersionIntegrity.IsReadOnly(Path.Combine(directory, "notes.txt")), "The listed single-link files are still made read-only.");
+        }
+        finally
+        {
+            File.Delete(Path.Combine(directory, "evil-hardlink"));
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Review round 2: a listed file that has become a hard link (here to an outside file with the listed content, so its digest would
+    /// match) is a mismatch; it is neither hashed nor made read-only, and the outside file keeps its mode or attributes.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void AListedFileThatBecameAHardLinkIsAMismatch()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "notes.txt");
+        File.WriteAllText(victim, "notes");
+        var directory = CreateVersion();
+        try
+        {
+            File.Delete(Path.Combine(directory, "notes.txt"));
+            HardLink(Path.Combine(directory, "notes.txt"), victim);
+            var before = Permissions(victim);
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(["notes.txt"], report.HardLinks);
+            Assert.Empty(report.Changed);
+            Assert.Empty(report.Missing);
+            Assert.Equal("mismatch: 1 files", report.Fact);
+            Assert.Equal(before, Permissions(victim));
+            Assert.False(VersionIntegrity.IsReadOnly(victim));
+        }
+        finally
+        {
+            File.Delete(Path.Combine(directory, "notes.txt"));
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// At node level: the check runs after the node is ready. A tampered version directory raises ENFORCEMENT_DEGRADED with the paths and
     /// reports <c>mismatch: 2 files</c>; an intact one reports <c>verified</c> and raises nothing; a node without a manifest (the test
     /// build output) reports <c>not checked: no digest manifest</c>. The files are read-only after startup.
@@ -224,7 +290,8 @@ public sealed class VersionIntegrityTests
                 Assert.Contains(finding.Evidence, item => item.Name == "changed" && item.Value == "notes.txt");
                 Assert.Contains(finding.Evidence, item => item.Name == "unlisted" && item.Value == "lib/dropped.dll");
                 Assert.Contains(finding.Evidence, item => item.Name == "missing" && item.Value == "-");
-                Assert.All(Directory.EnumerateFiles(tampered, "*", SearchOption.AllDirectories), path => Assert.True(VersionIntegrity.IsReadOnly(path), path));
+                Assert.All(Directory.EnumerateFiles(tampered, "*", SearchOption.AllDirectories), path =>
+                    Assert.Equal(Path.GetFileName(path) != "dropped.dll", VersionIntegrity.IsReadOnly(path)));
             }
 
             await using (var node = InProcessNode.Create())
@@ -269,6 +336,25 @@ public sealed class VersionIntegrityTests
             await Task.Delay(100, Ct);
         }
     }
+
+    /// <summary>Creates a hard link (Linux <c>ln</c>; Windows <c>mklink /H</c>, which needs no privilege).</summary>
+    private static void HardLink(string link, string target)
+    {
+        var start = OperatingSystem.IsWindows()
+            ? new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), ["/d", "/c", "mklink", "/H", link, target])
+            : new System.Diagnostics.ProcessStartInfo("ln", [target, link]);
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        start.CreateNoWindow = true;
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        Assert.True(process.WaitForExit(30_000) && process.ExitCode == 0, "the hard link was not created: " + output);
+        Assert.Equal(2, ArcForges.Node.Core.Platform.FileLinks.Count(link));
+    }
+
+    /// <summary>A file's permissions: its Unix mode, or its Windows attributes.</summary>
+    private static string Permissions(string path) =>
+        OperatingSystem.IsWindows() ? File.GetAttributes(path).ToString() : File.GetUnixFileMode(path).ToString();
 
     /// <summary>Creates a Windows directory junction (<c>mklink /J</c>; no privilege needed).</summary>
     private static void Junction(string link, string target)

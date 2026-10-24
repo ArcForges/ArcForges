@@ -209,7 +209,11 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
         // Review round 1: the platform's adoption (D-Bus and a job wait, or job assignment) runs outside the store writer, then the result is
         // recorded in the command. A command that already ran replays its outcome without adopting again.
         PreparedAdoption? prepared = null;
-        if (!_api.Recorded(gate.Method, request, request.Meta))
+        if (_api.Recorded(gate.Method, request, request.Meta))
+        {
+            _api.MarkReplayOnly(request.Meta);
+        }
+        else
         {
             try
             {
@@ -252,7 +256,20 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             }, gate).ConfigureAwait(false);
         if (prepared is not null && !recorded)
         {
-            Adoptions.Release(prepared);
+            // Review round 2: the platform placed the process, but the node could not record it. Nothing is terminated; the outcome is
+            // reported and audited as it is.
+            var released = Adoptions.Release(prepared);
+            _node.Log.Warning("api.adoption.not_recorded", new LogField("pid", pid), new LogField("container", prepared.Result.Container.ContainerName),
+                new LogField("outcome", released));
+            await _api.AuditAsync(caller, gate, PermissionDecision.Allow, "failed: not recorded: " + gate.Summary + ": " + released).ConfigureAwait(false);
+            if (result.OutcomeCase == ResourceServiceAdoptProcessResponse.OutcomeOneofCase.Error && result.Error.Details?.State is { } state)
+            {
+                state.Reason = string.IsNullOrEmpty(state.Reason) ? released : state.Reason + "; " + released;
+            }
+            else if (result.OutcomeCase == ResourceServiceAdoptProcessResponse.OutcomeOneofCase.Error)
+            {
+                result.Error.Details = new ErrorDetails { State = new StateFailure { Reason = released } };
+            }
         }
 
         return result;

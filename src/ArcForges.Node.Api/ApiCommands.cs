@@ -54,6 +54,31 @@ public sealed record GateRequest(string Operation, string Method, string Summary
 }
 
 /// <summary>
+/// Thrown inside an idempotent command when what the gate relied on no longer holds (review round 2): the command stops before it acts, nothing
+/// is stored under the command ID, and the request is checked again. <see cref="ReplayOnly"/>: the gate was skipped because the command had
+/// already run, but its record expired before the command, so the call may only replay and answers <c>STATE/invalid_state</c> instead.
+/// </summary>
+internal sealed class GateStaleException : Exception
+{
+    public GateStaleException()
+    {
+    }
+
+    public GateStaleException(string message)
+        : base(message)
+    {
+    }
+
+    public GateStaleException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+
+    /// <summary>True for a call that skipped the gate as a replay.</summary>
+    public bool ReplayOnly { get; init; }
+}
+
+/// <summary>
 /// The shared plumbing of the node's services: response metas, the stopping check, the permission gate of 11 section 1 (the default matrix
 /// with the policy's <c>permissions</c> overrides; an APPROVAL cell raises an approval and fails with <c>AUTHORIZATION/approval_required</c>
 /// carrying its ID), the audit of privileged actions, and idempotent commands by <c>meta.command_id</c>, which also replay the outcome of a
@@ -61,6 +86,9 @@ public sealed record GateRequest(string Operation, string Method, string Summary
 /// </summary>
 internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, string service)
 {
+    /// <summary>Command IDs whose call skipped the gate as a replay of a recorded outcome: their idempotent command may only replay.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _replayOnly = new(StringComparer.Ordinal);
+
     /// <summary>The response meta echoing the request's correlation ID.</summary>
     public static ResponseMeta Meta(RequestMeta? request)
     {
@@ -107,7 +135,8 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         ArgumentNullException.ThrowIfNull(gate);
         if (request is not null && meta is not null && Recorded(gate.Method, request, meta))
         {
-            // Review round 1: a command that already ran answers with its recorded outcome, whatever the matrix says now.
+            // Review round 1: a command that already ran answers with its recorded outcome, whatever the matrix says now (replay only).
+            MarkReplayOnly(meta);
             return null;
         }
 
@@ -131,7 +160,8 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         if (Recorded(gate.Method, request, meta))
         {
             // Review round 1: the gate runs after dedup. A command that already ran (within the 24-hour window, or after its approval) answers
-            // with its recorded outcome and raises no new approval, whatever the matrix says now.
+            // with its recorded outcome and raises no new approval, whatever the matrix says now. Review round 2: replay only.
+            MarkReplayOnly(meta);
             return null;
         }
 
@@ -213,6 +243,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     {
         ArgumentNullException.ThrowIfNull(caller);
         var digest = PayloadDigest.Compute(request);
+        var replayOnly = _replayOnly.TryRemove(Key(meta), out _);
         try
         {
             // Review round 1: an approval recorded under this command ID answers only the same method and request; another request reusing the
@@ -231,6 +262,12 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     return stored;
                 }
 
+                if (replayOnly)
+                {
+                    // The gate let this call through as a replay, but the recorded outcome expired before the command: it never executes.
+                    throw new GateStaleException("the recorded outcome expired before the command") { ReplayOnly = true };
+                }
+
                 var response = execute(command);
                 if (audit is not null)
                 {
@@ -247,7 +284,12 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         {
             return (fail(NodeErrors.Overloaded(node.Clock.GetUtcNow())), false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (GateStaleException stale) when (stale.ReplayOnly)
+        {
+            return (fail(NodeErrors.InvalidState("EXPIRED",
+                "the recorded outcome of this command ID expired while the request was checked; nothing ran: send the request again")), false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException and not GateStaleException)
         {
             node.Log.Error("api.command.failed", exception);
             return (fail(NodeErrors.Internal(node.Clock.GetUtcNow())), false);
@@ -289,6 +331,15 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                 && SameRequest(approval, name, digest);
         });
     }
+
+    /// <summary>Marks the call of <paramref name="meta"/>'s command ID as replay-only (its gate was skipped as a replay).</summary>
+    public void MarkReplayOnly(RequestMeta meta)
+    {
+        ArgumentNullException.ThrowIfNull(meta);
+        _replayOnly[Key(meta)] = 0;
+    }
+
+    private static string Key(RequestMeta meta) => meta.CommandId is { } id ? Convert.ToHexString(id.Value.Span) : string.Empty;
 
     /// <summary>True when an approval captured this method (<c>&lt;Service&gt;.&lt;Method&gt;</c>) and this request digest.</summary>
     private static bool SameRequest(StoredApproval approval, string method, ReadOnlySpan<byte> digest) =>

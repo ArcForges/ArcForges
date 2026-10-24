@@ -99,11 +99,21 @@ public sealed class Adoptions : IDisposable
         return new PreparedAdoption(taskId, attemptId, pid, start, title, pool, result);
     }
 
-    /// <summary>Releases a prepared adoption that was not recorded (the container's handle; its processes keep running).</summary>
-    public static void Release(PreparedAdoption prepared)
+    /// <summary>
+    /// Gives up a prepared adoption that was not recorded (review round 2): nothing is terminated; on Linux the scope is abandoned, on Windows
+    /// the processes stay in the jobs they cannot leave. Returns what became of the processes.
+    /// </summary>
+    public static string Release(PreparedAdoption prepared)
     {
         ArgumentNullException.ThrowIfNull(prepared);
-        prepared.Result.Container.Dispose();
+        try
+        {
+            return prepared.Result.Container.Abandon();
+        }
+        finally
+        {
+            prepared.Result.Container.Dispose();
+        }
     }
 
     /// <summary>Records a prepared adoption's ADOPTED task and attempt (in the writer's command) and starts tracking its container.</summary>
@@ -161,8 +171,7 @@ public sealed class Adoptions : IDisposable
         }
         catch
         {
-            // The record could not be written: the container must not outlive the command that created it.
-            result.Container.Dispose();
+            // The record could not be written: the caller releases the container (Release), and reports what became of the processes.
             throw;
         }
 

@@ -598,7 +598,7 @@ public static class NodeHost
 
         node.Log.Warning("node.version_integrity.mismatch", new LogField("directory", directory), new LogField("missing", report.Missing.Count),
             new LogField("changed", report.Changed.Count), new LogField("unlisted", report.Unlisted.Count), new LogField("links", report.Links.Count),
-            new LogField("invalid", report.Invalid.Count), new LogField("manifest", report.Problem ?? "ok"));
+            new LogField("hardLinks", report.HardLinks.Count), new LogField("invalid", report.Invalid.Count), new LogField("manifest", report.Problem ?? "ok"));
         static string Paths(IReadOnlyList<string> paths) => paths.Count == 0 ? "-" : NodeLog.OneLine(string.Join(", ", paths.Take(50))) + (paths.Count > 50 ? $" (+{paths.Count - 50} more)" : string.Empty);
         try
         {
@@ -606,10 +606,11 @@ public static class NodeHost
             {
                 ExecutionFindings.Raise(context, FindingKind.EnforcementDegraded, Severity.Error, "node", node.NodeId.Span,
                     "The installed version's files do not match their digests",
-                    $"{report.Mismatches} entries in the version directory {directory} are missing, changed, links, invalid or not listed in its digests.json (AD-0007 section 8). "
+                    $"{report.Mismatches} entries in the version directory {directory} are missing, changed, links, hard links, invalid or not listed in its digests.json (AD-0007 section 8). "
                     + "The files may have been modified after installation; reinstall or repair this version.",
                     [("directory", directory), ("missing", Paths(report.Missing)), ("changed", Paths(report.Changed)), ("unlisted", Paths(report.Unlisted)),
-                     ("links", Paths(report.Links)), ("invalid", Paths(report.Invalid)), ("manifest", report.Problem ?? "ok")]);
+                     ("links", Paths(report.Links)), ("hard_links", Paths(report.HardLinks)), ("invalid", Paths(report.Invalid)),
+                     ("manifest", report.Problem ?? "ok")]);
                 return 0;
             }).ConfigureAwait(false);
         }

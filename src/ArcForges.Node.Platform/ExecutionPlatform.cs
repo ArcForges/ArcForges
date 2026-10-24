@@ -467,6 +467,11 @@ public interface IAdoptedContainer : IDisposable
 
     /// <summary>Terminates every process in the container.</summary>
     void Terminate();
+
+    /// <summary>
+    /// Gives up an adoption the node could not record, without terminating anything, and says what became of its processes (review round 2).
+    /// </summary>
+    string Abandon() => "the container was released; its processes keep running, not adopted";
 }
 
 /// <summary>The OS refused to place a process under management, or it is not the node's user's (<c>EXECUTION/adopt_not_permitted</c>).</summary>

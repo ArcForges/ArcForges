@@ -32,6 +32,21 @@ internal sealed class LinuxAdoptedScope(LinuxExecutionPlatform platform, string 
     }
 
     /// <inheritdoc />
+    public string Abandon()
+    {
+        // AbandonScope: the user manager stops managing the scope and never stops it; its processes keep running, in that cgroup.
+        try
+        {
+            platform.Manager.AbandonScope(unit);
+            return $"the adoption scope {unit} was abandoned: the user manager no longer manages it, and its processes keep running, not adopted";
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
+        {
+            return $"the adoption scope {unit} could not be abandoned ({exception.Message}): its processes keep running in it, not adopted";
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
     }
