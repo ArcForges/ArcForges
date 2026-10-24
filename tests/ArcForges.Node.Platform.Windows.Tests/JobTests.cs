@@ -286,11 +286,14 @@ public sealed class JobTests
         var stoppingFiles = harness.Files(out var stoppingName);
         using var plainJob = JobObject.Create(WindowsExecutionPlatform.JobName(harness.NodeName, plainName));
         using var stoppingJob = JobObject.Create(WindowsExecutionPlatform.JobName(harness.NodeName, stoppingName));
-        var plain = harness.Platform.Reopen(harness.NodeName, plainFiles, null);
-        var stopping = harness.Platform.Reopen(harness.NodeName, stoppingFiles, null, stopping: true);
+        IAttemptHandle? plain = null;
+        IAttemptHandle? stopping = null;
         LaunchedProcess? late = null;
+        var lateEnded = true;
         try
         {
+            plain = harness.Platform.Reopen(harness.NodeName, plainFiles, null);
+            stopping = harness.Platform.Reopen(harness.NodeName, stoppingFiles, null, stopping: true);
             Assert.NotNull(plain);
             Assert.True(plain!.Started.IsCompleted, "A recovered attempt that is not being stopped completes its start at once, as before.");
             Assert.Null(await plain.Started);
@@ -314,13 +317,22 @@ public sealed class JobTests
         }
         finally
         {
+            // Nothing here throws or asserts, so a failure above is not masked; the late process is killed directly, since a failed assignment
+            // leaves it suspended outside the job.
             plainJob.Terminate(AttemptRunner.TerminatedExitCode);
             stoppingJob.Terminate(AttemptRunner.TerminatedExitCode);
-            Assert.True(late?.WaitForExit(Bound) ?? true, "The late process was left running.");
-            late?.Dispose();
+            if (late is not null)
+            {
+                late.Kill(AttemptRunner.TerminatedExitCode);
+                lateEnded = late.WaitForExit(Bound);
+                late.Dispose();
+            }
+
             plain?.Dispose();
             stopping?.Dispose();
         }
+
+        Assert.True(lateEnded, "The late process was left running.");
     }
 
     private static void Report() =>
