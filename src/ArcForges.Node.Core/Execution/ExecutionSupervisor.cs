@@ -1948,11 +1948,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
             if (attempt.StopReason is { } stopped)
             {
-                // The root may have exited on the graceful signal before the graceful phase recorded what it did: its detail is awaited (the
-                // signal helper is bounded at 5 s).
+                // The root may have exited on the graceful signal before the graceful phase recorded what it did: its detail is awaited. The
+                // phase's own calls are bounded (the signal helper; on Linux the thaw and KillUnit calls of a paused attempt); the wait is capped
+                // at GracefulPhaseBound and ends at once when the node stops.
                 if (attempt.GracefulPhase is { } phase)
                 {
-                    await Task.WhenAny(phase, Task.Delay(GracefulPhaseBound)).ConfigureAwait(false);
+                    await Task.WhenAny(phase, Task.Delay(GracefulPhaseBound, _stop.Token)).ConfigureAwait(false);
                 }
 
                 // The stop sequence ends here, however the root ended (graceful or forced): its escaped processes are terminated (04 section 6
@@ -2147,11 +2148,15 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     {
         var transaction = context.Transaction;
         var now = transaction.NowMicroseconds;
-
-        // Escaped processes whose record write never committed are recorded with the attempt (a node restart then still knows them).
-        WriteEscaped(context, attempt, [.. attempt.UnrecordedEscaped.Values]);
         var task = TaskRecords.GetRow(transaction, attempt.TaskId);
         var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
+        if (previous is not null)
+        {
+            // Escaped processes whose record write never committed are recorded with the attempt (a node restart then still knows them);
+            // only while its row exists, which process_record references.
+            WriteEscaped(context, attempt, [.. attempt.UnrecordedEscaped.Values]);
+        }
+
         if (task is null || previous is null || previous.State == AttemptState.Finished)
         {
             return 0;
