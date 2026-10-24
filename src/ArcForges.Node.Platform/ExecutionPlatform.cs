@@ -407,4 +407,97 @@ public interface IExecutionPlatform : IDisposable
     bool Listens(int port, IReadOnlyCollection<int> processIds) => false;
     /// <summary>The container name of an attempt (the Windows job name; the Linux unit name), recorded with the attempt.</summary>
     string ContainerName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
+
+    /// <summary>
+    /// Places an existing same-user process, and its children that exist now, under management in a new adoption container (04 section 10;
+    /// R-RES-013): on Windows the root job and then a new adoption job nested under it; on Linux a transient scope in the node's slice.
+    /// </summary>
+    /// <exception cref="AdoptionRefusedException">The process is not the one named, not the node's user's, or the OS refused to place it.</exception>
+    AdoptionResult Adopt(AdoptionRequest request) => throw new AdoptionRefusedException("process adoption is not supported on this platform");
+
+    /// <summary>Re-opens a recorded adoption container by name after a node restart, or returns <see langword="null"/> when it is gone.</summary>
+    IAdoptedContainer? ReopenAdopted(string containerName) => null;
+
+    /// <summary>
+    /// Terminates the process identified by <paramref name="pid"/> and its start time when it still is that process and runs as the node's
+    /// user (a process ID alone is never trusted: it may have been reused).
+    /// </summary>
+    ProcessTermination TerminateProcess(int pid, DateTimeOffset start) => ProcessTermination.Failed;
+}
+
+/// <summary>What <see cref="IExecutionPlatform.TerminateProcess"/> did.</summary>
+public enum ProcessTermination
+{
+    /// <summary>The process was terminated.</summary>
+    Terminated = 0,
+
+    /// <summary>The process had already exited (its ID is free, or names a process that started later).</summary>
+    Gone = 1,
+
+    /// <summary>The process runs as another user: it is never terminated.</summary>
+    OtherUser = 2,
+
+    /// <summary>The OS refused or the platform cannot terminate processes.</summary>
+    Failed = 3,
+}
+
+/// <summary>A process to adopt (04 section 10).</summary>
+/// <param name="NodeName">The node ID's text (container names).</param>
+/// <param name="AttemptName">The adoption attempt's ID text (the container's own name).</param>
+/// <param name="Pid">The process ID.</param>
+/// <param name="Start">Its start time, which must match (a process ID alone may have been reused).</param>
+public sealed record AdoptionRequest(string NodeName, string AttemptName, int Pid, DateTimeOffset Start);
+
+/// <summary>The adoption container with how the children that existed at adoption time fared (04 section 10 step 3, best effort).</summary>
+/// <param name="Container">The adoption container.</param>
+/// <param name="Image">The adopted process's image.</param>
+/// <param name="AdoptedChildren">Children placed in the container individually.</param>
+/// <param name="FailedChildren">Children that could not be placed (each recorded in <paramref name="ChildResults"/>).</param>
+/// <param name="ChildResults">One line per child: its image, ID and result.</param>
+public sealed record AdoptionResult(IAdoptedContainer Container, string Image, int AdoptedChildren, int FailedChildren, IReadOnlyList<string> ChildResults);
+
+/// <summary>An adoption container: the adopted process and every process that joined it since (later children follow the container).</summary>
+public interface IAdoptedContainer : IDisposable
+{
+    /// <summary>The container's name (the Windows adoption job's name; the Linux scope unit).</summary>
+    string ContainerName { get; }
+
+    /// <summary>The processes in the container now.</summary>
+    IReadOnlyList<int> Processes();
+
+    /// <summary>Terminates every process in the container.</summary>
+    void Terminate();
+
+    /// <summary>
+    /// Gives up an adoption the node could not record, without terminating anything, and says what became of its processes (review round 2).
+    /// </summary>
+    string Abandon() => "the container was released; its processes keep running, not adopted";
+}
+
+/// <summary>The OS refused to place a process under management, or it is not the node's user's (<c>EXECUTION/adopt_not_permitted</c>).</summary>
+public sealed class AdoptionRefusedException : Exception
+{
+    /// <summary>Creates the exception.</summary>
+    public AdoptionRefusedException()
+        : base("adoption refused")
+    {
+    }
+
+    /// <summary>Creates the exception with the reason (<c>details.state.reason</c>).</summary>
+    public AdoptionRefusedException(string message)
+        : base(message)
+    {
+    }
+
+    /// <summary>Creates the exception.</summary>
+    public AdoptionRefusedException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+
+    /// <summary>True when the process named does not exist (it exited, or its ID names a process that started later): <c>STATE/not_found</c>.</summary>
+    public bool NotFound { get; init; }
+
+    /// <summary>True when the process is already in one of this node's containers: <c>CONFLICT/already_exists</c>.</summary>
+    public bool AlreadyManaged { get; init; }
 }

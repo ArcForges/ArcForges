@@ -7,7 +7,7 @@ namespace ArcForges.Client;
 /// <summary>
 /// The LocalRpc client channel to one node endpoint (architecture 12 section 1 <c>NodeChannel</c>): one HTTP/2 connection over
 /// the verified pipe or socket, with the generated <see cref="NodeService"/>, <see cref="NodeEventService"/>, <see cref="TaskService"/>,
-/// <see cref="ResourceService"/>, <see cref="QueueService"/> and <see cref="PolicyService"/> clients. It
+/// <see cref="ResourceService"/>, <see cref="QueueService"/>, <see cref="PolicyService"/> and <see cref="ApprovalService"/> clients. It
 /// records how its last connection attempt ended, so a failed call can be classified (not running, busy, refused).
 /// </summary>
 public sealed class NodeChannel : IAsyncDisposable
@@ -26,6 +26,7 @@ public sealed class NodeChannel : IAsyncDisposable
         Resources = new ResourceService.ResourceServiceClient(_channel.CallInvoker);
         Queue = new QueueService.QueueServiceClient(_channel.CallInvoker);
         Policy = new PolicyService.PolicyServiceClient(_channel.CallInvoker);
+        Approvals = new ApprovalService.ApprovalServiceClient(_channel.CallInvoker);
     }
 
     /// <summary>The endpoint.</summary>
@@ -48,6 +49,9 @@ public sealed class NodeChannel : IAsyncDisposable
 
     /// <summary>The generated PolicyService client.</summary>
     public PolicyService.PolicyServiceClient Policy { get; }
+
+    /// <summary>The generated ApprovalService client.</summary>
+    public ApprovalService.ApprovalServiceClient Approvals { get; }
 
     /// <summary>True once an operating-system connection to the endpoint was opened.</summary>
     public bool EverConnected => Volatile.Read(ref _connected) != 0;

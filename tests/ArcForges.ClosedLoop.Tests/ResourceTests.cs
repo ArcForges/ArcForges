@@ -7,6 +7,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using ArcForges.Node.Core.Security;
 using ArcForges.Tests;
 using Google.Protobuf;
 
@@ -139,8 +140,9 @@ public sealed partial class ResourceTests
     /// R-RES-002 and R-RES-012 end to end on Linux: the attempt's shell starts a child that leaves the attempt's unit for a scope of its
     /// own (<c>systemd-run --user --scope</c>: the child's parent is the attempt's shell, its cgroup is outside the unit, the Linux shape of
     /// an escape). The ancestry scan finds it, and <c>ListProcesses</c> labels it ESCAPED with its task and attempt (with the task filter
-    /// too), never MANAGED. The test ends the escaped process itself: the stop sequence terminates escaped processes only in its forced
-    /// phase (04 section 6 step 4), which a shell that exits on the graceful signal never reaches. On Windows a node attempt has no such
+    /// too), never MANAGED. T-18 (AF-SEC-01): a SCRIPT caller's <c>TerminateProcess</c> of it raises an approval; once a HUMAN approves, the
+    /// node terminates exactly that process (by ID and start time) under the original command ID, the retry receives the outcome, and the
+    /// action is audited. An unrelated process is never terminated (<c>not_found</c>). On Windows a node attempt has no such
     /// shape: its jobs allow no breakaway and every child inherits its parent's job, so the platform test (EscapedProcessTests) makes the
     /// escape under a root that is not yet assigned, which only the launcher itself could do.
     /// </summary>
@@ -179,7 +181,39 @@ public sealed partial class ResourceTests
             Assert.DoesNotContain(await ProcessesAsync(channel, new ProcessFilter { Labels = { ProcessLabel.Managed } }), process => process.Process.Pid == escaped.Process.Pid);
             Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.escaped"));
 
+            // T-18: the escaped process is terminated on request, through an approval (SCRIPT: P), never an unrelated one.
+            var unrelated = await channel.Resources.TerminateProcessAsync(new ResourceServiceTerminateProcessRequest
+            {
+                Meta = Meta(),
+                Process = ClientProcess.Current(),
+            }, deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
+            Assert.Equal("not_found", unrelated.Error?.Code);
+            var terminate = new ResourceServiceTerminateProcessRequest { Meta = Meta(), Process = escaped.Process, Reason = "escaped" };
+            var raised = await channel.Resources.TerminateProcessAsync(terminate, deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
+            Assert.Equal("approval_required", raised.Error?.Code);
+            Assert.True(Directory.Exists($"/proc/{escaped.Process.Pid}"), "nothing is terminated before the approval");
+            await using (var human = await node.HumanChannelAsync())
+            {
+                var approved = await TestNode.ApproveNextAsync(human, Bound);
+                Assert.Equal((ApprovalState.Executed, "ResourceService.TerminateProcess"), (approved.State, approved.Operation));
+            }
+
+            await TestNode.WaitAsync(() => Task.FromResult(!Directory.Exists($"/proc/{escaped.Process.Pid}")), Bound, "the escaped process to end");
+            var retried = await channel.Resources.TerminateProcessAsync(terminate, deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
+            Assert.Null(retried.Error);
+            Assert.Equal(EffectCertainty.Happened, retried.Value.Receipt.Effect);
+            Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "api.process.terminated"));
+
             await CancelAsync(channel, task);
+
+            // R-SEC-002: the request (SCRIPT, approval) and its execution after the approval are in the node's audit log.
+            await node.StopNodeAsync();
+            using var store = ArcForges.Node.Store.NodeStore.Open(new ArcForges.Node.Store.NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "audit" });
+            var audit = store.Read(reader => AuditLog.Recent(reader));
+            const string Operation = PermissionMatrix.ProcessTerminate + " ResourceService.TerminateProcess";
+            Assert.Contains(audit, entry => entry.Operation == Operation && entry.Decision == PermissionDecision.Approval && entry.Actor.Origin == Origin.Script
+                && entry.Outcome.StartsWith("approval requested", StringComparison.Ordinal));
+            Assert.Contains(audit, entry => entry.Operation == Operation && entry.Outcome == "executed after approval");
         }
         finally
         {
@@ -361,7 +395,7 @@ public sealed partial class ResourceTests
     private static async Task PeakObservedAsync(Func<string, string[]> argv, string? script = null)
     {
         // A disk-backed data root: on tmpfs the output would be shared memory, which is not reclaimable cache.
-        await using var node = TestNode.Create(OperatingSystem.IsWindows() ? null : AppContext.BaseDirectory);
+        await using var node = TestNode.Create(OperatingSystem.IsWindows() ? null : TestNode.DiskParent);
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
         var task = await SubmitAsync(channel, argv(node.Root), memExpected: 1024 * MiB, memCeiling: 2048 * MiB, script: script);

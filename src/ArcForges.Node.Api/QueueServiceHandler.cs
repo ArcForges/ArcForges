@@ -6,6 +6,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Scheduling;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
@@ -27,9 +28,28 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
 
     /// <summary>Creates the service over the running node.</summary>
     public QueueServiceHandler(NodeRuntime node, ClientSessions sessions)
+        : this(node, sessions, new ApprovalExecutors())
     {
+    }
+
+    /// <summary>Creates the service and registers how its approval-gated requests execute once approved.</summary>
+    internal QueueServiceHandler(NodeRuntime node, ClientSessions sessions, ApprovalExecutors executors)
+    {
+        ArgumentNullException.ThrowIfNull(executors);
         _node = node ?? throw new ArgumentNullException(nameof(node));
         _api = new ApiCommands(node, sessions ?? throw new ArgumentNullException(nameof(sessions)), ServiceName);
+        executors.Register<QueueServiceCreatePoolRequest, QueueServiceCreatePoolResponse>("QueueService.CreatePool", PermissionMatrix.PolicyChange,
+            QueueServiceCreatePoolRequest.Parser, CreatePool);
+        executors.Register<QueueServiceUpdatePoolRequest, QueueServiceUpdatePoolResponse>("QueueService.UpdatePool", PermissionMatrix.PolicyChange,
+            QueueServiceUpdatePoolRequest.Parser, UpdatePool);
+        executors.Register<QueueServiceDeletePoolRequest, QueueServiceDeletePoolResponse>("QueueService.DeletePool", PermissionMatrix.PolicyChange,
+            QueueServiceDeletePoolRequest.Parser, DeletePool);
+        executors.Register<QueueServicePausePoolRequest, QueueServicePausePoolResponse>("QueueService.PausePool", PermissionMatrix.PoolPause,
+            QueueServicePausePoolRequest.Parser, PausePool);
+        executors.Register<QueueServiceResumePoolRequest, QueueServiceResumePoolResponse>("QueueService.ResumePool", PermissionMatrix.PoolPause,
+            QueueServiceResumePoolRequest.Parser, ResumePool);
+        executors.Register<QueueServiceSetParallelismRequest, QueueServiceSetParallelismResponse>("QueueService.SetParallelism", PermissionMatrix.ParallelismChange,
+            QueueServiceSetParallelismRequest.Parser, SetParallelism);
     }
 
     private ExecutionSupervisor Execution => _node.Execution ?? throw new InvalidOperationException("The node has no execution supervisor.");
@@ -130,22 +150,28 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
     }
 
     /// <inheritdoc />
-    public override async Task<QueueServiceCreatePoolResponse> CreatePool(QueueServiceCreatePoolRequest request, ServerCallContext context)
+    public override Task<QueueServiceCreatePoolResponse> CreatePool(QueueServiceCreatePoolRequest request, ServerCallContext context) =>
+        CreatePool(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>CreatePool</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<QueueServiceCreatePoolResponse> CreatePool(QueueServiceCreatePoolRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new QueueServiceCreatePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "CreatePool")
+        var gate = new GateRequest(PermissionMatrix.PolicyChange, "QueueService.CreatePool", $"create pool '{request.Name}'", "pool");
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta)
             ?? PoolFields(request.HasName, request.Name, request.HasWeight, request.Weight, request.HasMaxParallelMode, request.MaxParallelMode, request.HasMaxParallelFixed,
                 request.MaxParallelFixed, request.HasDefaultPriority, request.DefaultPriority, nameRequired: true);
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        var actor = _api.Actor(context);
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "CreatePool", QueueServiceCreatePoolResponse.Parser,
+        var actor = caller.Actor;
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "CreatePool", QueueServiceCreatePoolResponse.Parser,
             failure => new QueueServiceCreatePoolResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 var current = PolicyRules.Current(command.Transaction);
@@ -181,29 +207,35 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                         Meta = ApiCommands.Meta(request.Meta),
                         Value = new QueueServiceCreatePoolValue { Pool = PoolView(pool, null, Execution.Settings), PolicyRevision = new Revision { Value = row!.Revision } },
                     };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         Changed(result.OutcomeCase == QueueServiceCreatePoolResponse.OutcomeOneofCase.Value && !replayed);
         return result;
     }
 
     /// <inheritdoc />
-    public override async Task<QueueServiceUpdatePoolResponse> UpdatePool(QueueServiceUpdatePoolRequest request, ServerCallContext context)
+    public override Task<QueueServiceUpdatePoolResponse> UpdatePool(QueueServiceUpdatePoolRequest request, ServerCallContext context) =>
+        UpdatePool(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>UpdatePool</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<QueueServiceUpdatePoolResponse> UpdatePool(QueueServiceUpdatePoolRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new QueueServiceUpdatePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "UpdatePool")
+        var gate = new GateRequest(PermissionMatrix.PolicyChange, "QueueService.UpdatePool", $"update pool '{request.Name}'", "pool");
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta)
             ?? PoolFields(request.HasName, request.Name, request.HasWeight, request.Weight, request.HasMaxParallelMode, request.MaxParallelMode, request.HasMaxParallelFixed,
                 request.MaxParallelFixed, request.HasDefaultPriority, request.DefaultPriority, nameRequired: true);
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        var actor = _api.Actor(context);
+        var actor = caller.Actor;
         long? expected = request.Meta.ExpectedRev is { HasValue: true } revision ? revision.Value : null;
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "UpdatePool", QueueServiceUpdatePoolResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "UpdatePool", QueueServiceUpdatePoolResponse.Parser,
             failure => new QueueServiceUpdatePoolResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 var current = PolicyRules.Current(command.Transaction);
@@ -247,27 +279,33 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                         Meta = ApiCommands.Meta(request.Meta),
                         Value = new QueueServiceUpdatePoolValue { Pool = PoolView(pool, null, Execution.Settings), PolicyRevision = new Revision { Value = row!.Revision } },
                     };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         Changed(result.OutcomeCase == QueueServiceUpdatePoolResponse.OutcomeOneofCase.Value && !replayed);
         return result;
     }
 
     /// <inheritdoc />
-    public override async Task<QueueServiceDeletePoolResponse> DeletePool(QueueServiceDeletePoolRequest request, ServerCallContext context)
+    public override Task<QueueServiceDeletePoolResponse> DeletePool(QueueServiceDeletePoolRequest request, ServerCallContext context) =>
+        DeletePool(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>DeletePool</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<QueueServiceDeletePoolResponse> DeletePool(QueueServiceDeletePoolRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new QueueServiceDeletePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangePolicy, "DeletePool")
+        var gate = new GateRequest(PermissionMatrix.PolicyChange, "QueueService.DeletePool", $"delete pool '{request.Name}'", "pool");
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta)
             ?? (request.HasName && request.Name.Length > 0 ? null : NodeErrors.InvalidArgument("name: required"));
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        var actor = _api.Actor(context);
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "DeletePool", QueueServiceDeletePoolResponse.Parser,
+        var actor = caller.Actor;
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "DeletePool", QueueServiceDeletePoolResponse.Parser,
             failure => new QueueServiceDeletePoolResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 var current = PolicyRules.Current(command.Transaction);
@@ -309,25 +347,31 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                         Meta = ApiCommands.Meta(request.Meta),
                         Value = new QueueServiceDeletePoolValue { PolicyRevision = new Revision { Value = row!.Revision } },
                     };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         Changed(result.OutcomeCase == QueueServiceDeletePoolResponse.OutcomeOneofCase.Value && !replayed);
         return result;
     }
 
     /// <inheritdoc />
-    public override async Task<QueueServicePausePoolResponse> PausePool(QueueServicePausePoolRequest request, ServerCallContext context)
+    public override Task<QueueServicePausePoolResponse> PausePool(QueueServicePausePoolRequest request, ServerCallContext context) =>
+        PausePool(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>PausePool</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<QueueServicePausePoolResponse> PausePool(QueueServicePausePoolRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new QueueServicePausePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.PauseOrResumePool, "PausePool") ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
+        var gate = new GateRequest(PermissionMatrix.PoolPause, "QueueService.PausePool", request.All ? "pause every pool" : $"pause pool '{request.Pool}'", "pool");
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "PausePool", QueueServicePausePoolResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "PausePool", QueueServicePausePoolResponse.Parser,
             failure => new QueueServicePausePoolResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Execution.SetPoolPaused(command, request.All ? null : request.Pool, paused: true);
@@ -336,30 +380,36 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                     Meta = ApiCommands.Meta(request.Meta),
                     Value = new QueueServicePausePoolValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened } },
                 };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         if (!replayed && result.OutcomeCase == QueueServicePausePoolResponse.OutcomeOneofCase.Value)
         {
             Execution.PoolsChanged();
-            _node.Log.Info("api.queue.paused", new LogField("pool", request.All ? "*" : request.Pool), new LogField("origin", _api.OriginOf(context)));
+            _node.Log.Info("api.queue.paused", new LogField("pool", request.All ? "*" : request.Pool), new LogField("origin", caller.Origin));
         }
 
         return result;
     }
 
     /// <inheritdoc />
-    public override async Task<QueueServiceResumePoolResponse> ResumePool(QueueServiceResumePoolRequest request, ServerCallContext context)
+    public override Task<QueueServiceResumePoolResponse> ResumePool(QueueServiceResumePoolRequest request, ServerCallContext context) =>
+        ResumePool(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>ResumePool</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<QueueServiceResumePoolResponse> ResumePool(QueueServiceResumePoolRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new QueueServiceResumePoolResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.PauseOrResumePool, "ResumePool") ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
+        var gate = new GateRequest(PermissionMatrix.PoolPause, "QueueService.ResumePool", request.All ? "resume every pool" : $"resume pool '{request.Pool}'", "pool");
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? PoolTarget(request.HasPool ? request.Pool : null, request.All);
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "ResumePool", QueueServiceResumePoolResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "ResumePool", QueueServiceResumePoolResponse.Parser,
             failure => new QueueServiceResumePoolResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Execution.SetPoolPaused(command, request.All ? null : request.Pool, paused: false);
@@ -368,7 +418,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                     Meta = ApiCommands.Meta(request.Meta),
                     Value = new QueueServiceResumePoolValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened } },
                 };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         if (!replayed && result.OutcomeCase == QueueServiceResumePoolResponse.OutcomeOneofCase.Value)
         {
             Execution.PoolsChanged();
@@ -378,21 +428,29 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
     }
 
     /// <inheritdoc />
-    public override async Task<QueueServiceSetParallelismResponse> SetParallelism(QueueServiceSetParallelismRequest request, ServerCallContext context)
+    public override Task<QueueServiceSetParallelismResponse> SetParallelism(QueueServiceSetParallelismRequest request, ServerCallContext context) =>
+        SetParallelism(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>SetParallelism</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<QueueServiceSetParallelismResponse> SetParallelism(QueueServiceSetParallelismRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new QueueServiceSetParallelismResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? _api.Permit(context, GatedOperation.ChangeParallelism, "SetParallelism") ?? ParallelismFields(request);
+        var gate = new GateRequest(PermissionMatrix.ParallelismChange, "QueueService.SetParallelism",
+            $"set parallelism {request.Scope.ToString().ToLowerInvariant()}{(request.HasTarget && request.Target.Length > 0 ? ":" + request.Target : string.Empty)} "
+            + request.Mode.ToString().ToLowerInvariant() + (request.Mode == ParallelismMode.Fixed ? " " + request.Fixed.ToString(CultureInfo.InvariantCulture) : string.Empty));
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? ParallelismFields(request);
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        var actor = _api.Actor(context);
+        var actor = caller.Actor;
         var target = request.HasTarget ? request.Target : string.Empty;
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, context, "SetParallelism", QueueServiceSetParallelismResponse.Parser,
+        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "SetParallelism", QueueServiceSetParallelismResponse.Parser,
             failure => new QueueServiceSetParallelismResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 var transaction = command.Transaction;
@@ -460,7 +518,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                         Meta = ApiCommands.Meta(request.Meta),
                         Value = new QueueServiceSetParallelismValue { PolicyRevision = new Revision { Value = row!.Revision } },
                     };
-            }).ConfigureAwait(false);
+            }, gate).ConfigureAwait(false);
         Changed(result.OutcomeCase == QueueServiceSetParallelismResponse.OutcomeOneofCase.Value && !replayed);
         return result;
     }

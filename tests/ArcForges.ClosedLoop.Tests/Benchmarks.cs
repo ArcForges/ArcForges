@@ -268,7 +268,7 @@ public sealed class Benchmarks
 
         // On Linux the captured output lives on a disk-backed file system like a real data root: on tmpfs (/tmp in WSL Debian) the file's
         // pages are shared memory charged to the attempt's cgroup, which cannot reclaim them without swap and throttles at MemoryHigh.
-        await using var node = TestNode.Create(OperatingSystem.IsWindows() ? null : AppContext.BaseDirectory);
+        await using var node = TestNode.Create(OperatingSystem.IsWindows() ? null : TestNode.DiskParent);
         await node.StartNodeAsync();
         await using var channel = ArcForges.Client.NodeChannel.Create(OperatingSystem.IsWindows()
             ? ArcForges.LocalRpc.LocalRpcEndpoint.NamedPipe(node.Endpoint)

@@ -1,0 +1,437 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Security;
+
+namespace ArcForges.Node.Core.Tests;
+
+/// <summary>
+/// Read-only version directories with digest checks (AD-0007 section 8; 11 section 1, the tamper finding; AF-SEC-01): a version directory
+/// with <c>digests.json</c> is made read-only and verified; an edited, an extra and a missing file are each a mismatch; without a manifest
+/// nothing is checked or changed and the fact never says verified. At node level the check runs after startup: the fact
+/// <c>version_integrity</c> becomes <c>verified</c> or <c>mismatch: &lt;n&gt; files</c>, a mismatch raises ENFORCEMENT_DEGRADED with the
+/// paths, and the files are read-only.
+/// </summary>
+public sealed class VersionIntegrityTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact(Timeout = 60_000)]
+    public void AnIntactVersionDirectoryIsVerifiedAndMadeReadOnly()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var directory = CreateVersion();
+        try
+        {
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(VersionIntegrity.Verified, report.Fact);
+            Assert.Equal(0, report.Mismatches);
+            Assert.Empty(report.NotReadOnly);
+            Assert.Equal(4, report.MadeReadOnly);
+            Assert.All(Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories), path => Assert.True(VersionIntegrity.IsReadOnly(path), path));
+
+            // A second run finds them read-only already and still verified.
+            var again = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal((VersionIntegrity.Verified, 0), (again.Fact, again.MadeReadOnly));
+        }
+        finally
+        {
+            Remove(directory);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public void AnEditedAnExtraAndAMissingFileAreEachAMismatch()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var directory = CreateVersion();
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "lib", "native.so"), "edited");
+            File.WriteAllText(Path.Combine(directory, "extra.txt"), "not listed");
+            File.Delete(Path.Combine(directory, "notes.txt"));
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal("mismatch: 3 files", report.Fact);
+            Assert.Equal(["lib/native.so"], report.Changed);
+            Assert.Equal(["extra.txt"], report.Unlisted);
+            Assert.Equal(["notes.txt"], report.Missing);
+            Assert.Null(report.Problem);
+            Assert.False(VersionIntegrity.IsReadOnly(Path.Combine(directory, "extra.txt")), "An unlisted file is never touched (review round 2).");
+            Assert.True(VersionIntegrity.IsReadOnly(Path.Combine(directory, "lib", "native.so")), "A listed file is made read-only, changed or not.");
+        }
+        finally
+        {
+            Remove(directory);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public void WithoutAManifestNothingIsCheckedOrChangedAndAnUnusableOneIsAMismatch()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var directory = CreateVersion();
+        try
+        {
+            File.Delete(Path.Combine(directory, VersionIntegrity.ManifestName));
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(VersionIntegrity.NotChecked, report.Fact);
+            Assert.False(report.Checked);
+            Assert.Equal(VersionIntegrity.NotChecked, VersionIntegrity.InitialFact(directory));
+            Assert.All(Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories), path => Assert.False(VersionIntegrity.IsReadOnly(path), path));
+
+            File.WriteAllText(Path.Combine(directory, VersionIntegrity.ManifestName), "{ \"version\": \"1\" }");
+            var unusable = VersionIntegrity.Check(directory, Ct);
+            Assert.NotNull(unusable.Problem);
+            Assert.Equal("mismatch: 3 files", unusable.Fact);
+            Assert.NotEqual(VersionIntegrity.Verified, unusable.Fact);
+        }
+        finally
+        {
+            Remove(directory);
+        }
+    }
+
+    /// <summary>
+    /// Review round 1, finding 1: a manifest entry that leaves the directory (<c>../victim.txt</c>, an absolute path) is an explicit mismatch
+    /// and is never read; the file outside keeps its permissions.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void AManifestEntryOutsideTheDirectoryIsAMismatchAndIsNeverRead()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "victim.txt");
+        File.WriteAllText(victim, "outside");
+        var directory = CreateVersion(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["../" + Path.GetFileName(outside) + "/victim.txt"] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("outside"))),
+            [victim.Replace('\\', '/')] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("outside"))),
+        });
+        try
+        {
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(2, report.Invalid.Count);
+            Assert.Empty(report.Changed);
+            Assert.Empty(report.Missing);
+            Assert.Equal("mismatch: 2 files", report.Fact);
+            Assert.False(VersionIntegrity.IsReadOnly(victim), "A file outside the version directory is never changed.");
+        }
+        finally
+        {
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Review round 1, finding 1: a symbolic link inside the version directory, to a file and to a directory outside it, is a mismatch;
+    /// neither link is followed, so the targets keep their permissions and are never hashed (a listed path under the directory link is
+    /// missing, not read through it). On Windows, where creating a symbolic link needs a privilege this user may lack, the directory link is a
+    /// junction (a reparse point any user can create), and the file link is checked only where Windows allows it.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void ALinkToAnOutsideFileIsAMismatchAndItsTargetIsNeverChanged()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "victim.txt");
+        File.WriteAllText(victim, "outside");
+        var directory = CreateVersion(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["linked/victim.txt"] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("outside"))),
+        });
+        try
+        {
+            var fileLink = true;
+            try
+            {
+                File.CreateSymbolicLink(Path.Combine(directory, "evil-link"), victim);
+            }
+            catch (Exception exception) when (OperatingSystem.IsWindows() && exception is IOException or UnauthorizedAccessException)
+            {
+                fileLink = false;
+                TestContext.Current.TestOutputHelper?.WriteLine($"Windows refused a file symbolic link for this user ({exception.Message}); the junction is checked.");
+            }
+
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(directory, "linked"), outside);
+            }
+            catch (Exception exception) when (OperatingSystem.IsWindows() && exception is IOException or UnauthorizedAccessException)
+            {
+                Junction(Path.Combine(directory, "linked"), outside);
+            }
+
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(fileLink ? ["evil-link", "linked"] : ["linked"], report.Links.Order(StringComparer.Ordinal));
+            Assert.Equal(["linked/victim.txt"], report.Missing);
+            Assert.Empty(report.Changed);
+            Assert.Equal(fileLink ? "mismatch: 3 files" : "mismatch: 2 files", report.Fact);
+            Assert.False(VersionIntegrity.IsReadOnly(victim), "The link's target is never changed.");
+            Assert.Equal("outside", File.ReadAllText(victim));
+        }
+        finally
+        {
+            foreach (var link in new[] { Path.Combine(directory, "evil-link"), Path.Combine(directory, "linked") })
+            {
+                if (new FileInfo(link).LinkTarget is not null)
+                {
+                    if (Directory.Exists(link))
+                    {
+                        // A directory link or junction: removing it never touches its target.
+                        Directory.Delete(link);
+                    }
+                    else
+                    {
+                        File.Delete(link);
+                    }
+                }
+            }
+
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Review round 2: a hard link inside the version directory to a file outside it (unlisted) is a mismatch reported as a hard link; it is
+    /// never made read-only, so the outside file keeps its mode (Linux) or attributes (Windows).
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void AHardLinkToAnOutsideFileIsAMismatchAndItsTargetKeepsItsMode()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "victim.txt");
+        File.WriteAllText(victim, "outside");
+        var directory = CreateVersion();
+        try
+        {
+            HardLink(Path.Combine(directory, "evil-hardlink"), victim);
+            var before = Permissions(victim);
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(["evil-hardlink"], report.HardLinks);
+            Assert.Empty(report.Unlisted);
+            Assert.Equal("mismatch: 1 files", report.Fact);
+            Assert.Equal(before, Permissions(victim));
+            Assert.False(VersionIntegrity.IsReadOnly(victim), "The outside file is never made read-only through the hard link.");
+            Assert.True(VersionIntegrity.IsReadOnly(Path.Combine(directory, "notes.txt")), "The listed single-link files are still made read-only.");
+        }
+        finally
+        {
+            File.Delete(Path.Combine(directory, "evil-hardlink"));
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Review round 2: a listed file that has become a hard link (here to an outside file with the listed content, so its digest would
+    /// match) is a mismatch; it is neither hashed nor made read-only, and the outside file keeps its mode or attributes.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public void AListedFileThatBecameAHardLinkIsAMismatch()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var outside = Directory.CreateTempSubdirectory("arcforges-outside-").FullName;
+        var victim = Path.Combine(outside, "notes.txt");
+        File.WriteAllText(victim, "notes");
+        var directory = CreateVersion();
+        try
+        {
+            File.Delete(Path.Combine(directory, "notes.txt"));
+            HardLink(Path.Combine(directory, "notes.txt"), victim);
+            var before = Permissions(victim);
+            var report = VersionIntegrity.Check(directory, Ct);
+            Assert.Equal(["notes.txt"], report.HardLinks);
+            Assert.Empty(report.Changed);
+            Assert.Empty(report.Missing);
+            Assert.Equal("mismatch: 1 files", report.Fact);
+            Assert.Equal(before, Permissions(victim));
+            Assert.False(VersionIntegrity.IsReadOnly(victim));
+        }
+        finally
+        {
+            File.Delete(Path.Combine(directory, "notes.txt"));
+            Remove(directory);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// At node level: the check runs after the node is ready. A tampered version directory raises ENFORCEMENT_DEGRADED with the paths and
+    /// reports <c>mismatch: 2 files</c>; an intact one reports <c>verified</c> and raises nothing; a node without a manifest (the test
+    /// build output) reports <c>not checked: no digest manifest</c>. The files are read-only after startup.
+    /// </summary>
+    [Fact(Timeout = 180_000)]
+    public async Task TheNodeVerifiesItsVersionDirectoryAfterStartup()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var intact = CreateVersion();
+        var tampered = CreateVersion();
+        try
+        {
+            File.WriteAllText(Path.Combine(tampered, "notes.txt"), "edited after installation");
+            File.WriteAllText(Path.Combine(tampered, "lib", "dropped.dll"), "not listed");
+
+            await using (var node = InProcessNode.Create())
+            {
+                node.VersionDirectory = tampered;
+                await node.StartAsync();
+                await using var channel = await node.ChannelAsync();
+                Assert.Equal("mismatch: 2 files", await FinalFactAsync(channel));
+                var finding = Assert.Single(node.Runtime.Store.Read(reader => ExecutionFindings.OpenFor(reader, "node", node.Runtime.NodeId.Span)),
+                    item => item.Kind == FindingKind.EnforcementDegraded);
+                Assert.Equal(Severity.Error, finding.Severity);
+                Assert.Contains(finding.Evidence, item => item.Name == "changed" && item.Value == "notes.txt");
+                Assert.Contains(finding.Evidence, item => item.Name == "unlisted" && item.Value == "lib/dropped.dll");
+                Assert.Contains(finding.Evidence, item => item.Name == "missing" && item.Value == "-");
+                Assert.All(Directory.EnumerateFiles(tampered, "*", SearchOption.AllDirectories), path =>
+                    Assert.Equal(Path.GetFileName(path) != "dropped.dll", VersionIntegrity.IsReadOnly(path)));
+            }
+
+            await using (var node = InProcessNode.Create())
+            {
+                node.VersionDirectory = intact;
+                await node.StartAsync();
+                await using var channel = await node.ChannelAsync();
+                Assert.Equal(VersionIntegrity.Verified, await FinalFactAsync(channel));
+                Assert.DoesNotContain(node.Runtime.Store.Read(reader => ExecutionFindings.OpenFor(reader, "node", node.Runtime.NodeId.Span)),
+                    item => item.Kind == FindingKind.EnforcementDegraded);
+                Assert.All(Directory.EnumerateFiles(intact, "*", SearchOption.AllDirectories), path => Assert.True(VersionIntegrity.IsReadOnly(path), path));
+            }
+
+            await using (var node = await InProcessNode.Create().StartAsync())
+            {
+                await using var channel = await node.ChannelAsync();
+                Assert.Equal(VersionIntegrity.NotChecked, await FinalFactAsync(channel));
+            }
+        }
+        finally
+        {
+            Remove(intact);
+            Remove(tampered);
+        }
+    }
+
+    /// <summary>The fact <c>version_integrity</c> once the check finished (bounded).</summary>
+    private static async Task<string> FinalFactAsync(ArcForges.Client.NodeChannel channel)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (true)
+        {
+            var response = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Meta = new RequestMeta() }, deadline: DateTime.UtcNow.AddSeconds(10),
+                cancellationToken: Ct);
+            Assert.Null(response.Error);
+            var fact = Assert.Single(response.Value.Capabilities.PlatformFacts, item => item.Name == VersionIntegrity.FactName).Value;
+            if (fact != VersionIntegrity.Checking || DateTime.UtcNow > deadline)
+            {
+                return fact;
+            }
+
+            await Task.Delay(100, Ct);
+        }
+    }
+
+    /// <summary>Creates a hard link (Linux <c>ln</c>; Windows <c>mklink /H</c>, which needs no privilege).</summary>
+    private static void HardLink(string link, string target)
+    {
+        var start = OperatingSystem.IsWindows()
+            ? new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), ["/d", "/c", "mklink", "/H", link, target])
+            : new System.Diagnostics.ProcessStartInfo("ln", [target, link]);
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        start.CreateNoWindow = true;
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        Assert.True(process.WaitForExit(30_000) && process.ExitCode == 0, "the hard link was not created: " + output);
+        Assert.Equal(2, ArcForges.Node.Core.Platform.FileLinks.Count(link));
+    }
+
+    /// <summary>A file's permissions: its Unix mode, or its Windows attributes.</summary>
+    private static string Permissions(string path) =>
+        OperatingSystem.IsWindows() ? File.GetAttributes(path).ToString() : File.GetUnixFileMode(path).ToString();
+
+    /// <summary>Creates a Windows directory junction (<c>mklink /J</c>; no privilege needed).</summary>
+    private static void Junction(string link, string target)
+    {
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), ["/d", "/c", "mklink", "/J", link, target])
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        })!;
+        var output = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
+        Assert.True(mklink.WaitForExit(30_000) && mklink.ExitCode == 0, "mklink /J failed: " + output);
+    }
+
+    /// <summary>A version directory of four files (one in a subdirectory) and its <c>digests.json</c> in the packaging step's format.</summary>
+    internal static string CreateVersion(IReadOnlyDictionary<string, string>? extraEntries = null)
+    {
+        var directory = Directory.CreateTempSubdirectory("arcforges-version-").FullName;
+        Directory.CreateDirectory(Path.Combine(directory, "lib"));
+        var files = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["arcforges.bin"] = "the node",
+            ["notes.txt"] = "notes",
+            ["lib/native.so"] = "a native library",
+        };
+        foreach (var (relative, content) in files)
+        {
+            File.WriteAllText(Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar)), content);
+        }
+
+        var manifest = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var relative in files.Keys)
+        {
+            manifest[relative] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(files[relative])));
+        }
+
+        foreach (var (relative, digest) in extraEntries ?? new Dictionary<string, string>())
+        {
+            manifest[relative] = digest;
+        }
+
+        using var stream = File.Create(Path.Combine(directory, VersionIntegrity.ManifestName));
+        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+        writer.WriteStartObject();
+        writer.WriteString("version", "0.0.0-test");
+        writer.WriteStartObject("files");
+        foreach (var (relative, digest) in manifest)
+        {
+            writer.WriteString(relative, digest);
+        }
+
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+        return directory;
+    }
+
+    /// <summary>Makes the files writable again (a read-only file cannot be deleted on Windows) and removes the directory.</summary>
+    internal static void Remove(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Where(path => new FileInfo(path).LinkTarget is null))
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
+            }
+            else
+            {
+                File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserWrite);
+            }
+        }
+
+        Directory.Delete(directory, recursive: true);
+    }
+}

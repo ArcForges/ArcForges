@@ -89,6 +89,18 @@ public static class NodeErrors
     public static ArcError EnforcementUnavailable(string capability) =>
         Create(ErrorCategory.Resource, "enforcement_unavailable", RetryMode.Never, new StateFailure { Reason = capability });
 
+    /// <summary><c>AUTHORIZATION/command_pattern_denied</c> (errors.md): the command is outside the agent's allowed patterns; <c>state.reason</c> = the policy path.</summary>
+    public static ArcError CommandPatternDenied(string policyPath) =>
+        Create(ErrorCategory.Authorization, "command_pattern_denied", RetryMode.Never, new StateFailure { Reason = policyPath });
+
+    /// <summary><c>EXECUTION/adopt_not_permitted</c>: the OS refused to place the process under management; <c>state.reason</c> says why.</summary>
+    public static ArcError AdoptNotPermitted(string reason) =>
+        Create(ErrorCategory.Execution, "adopt_not_permitted", RetryMode.Never, new StateFailure { Reason = reason });
+
+    /// <summary><c>STATE/not_found</c> for a process: <c>state.resource.kind</c> is <c>process</c>, <c>state.reason</c> names it.</summary>
+    public static ArcError ProcessNotFound(string reason) =>
+        Create(ErrorCategory.State, "not_found", RetryMode.Never, new StateFailure { Resource = new AggregateRef { Kind = "process" }, Reason = reason });
+
     /// <summary><c>STATE/node_stopping</c>: retry <c>AFTER_TIME</c> (2 s), effect <c>DID_NOT_HAPPEN</c>.</summary>
     public static ArcError NodeStopping(DateTimeOffset now)
     {

@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using ArcForges.Client;
 using ArcForges.Tests;
 
 namespace ArcForges.ClosedLoop.Tests;
@@ -74,9 +75,22 @@ public sealed class SchedulingCliTests
         var dependent = await RunAsync("--depends-on", holder + ":finished", "--", TestNode.TestLoad, "hold", "--hold-ms", "100", "--marker", Hold("dependent"));
         var explained = await ExplainedAsync(writer, "exclusive_key");
         Assert.Contains("name:db", explained.GetProperty("blockingKeys").EnumerateArray().Select(key => key.GetString()));
-        var text = await node.CliAsync("queue", "explain", writer);
-        Assert.True(text.ExitCode == 0, text.ToString());
-        Assert.Contains("name:db", text.Output, StringComparison.Ordinal);
+        // The text view of the same explanation (bounded: under the parallel suites' load another blocking reason, such as the CPU budget,
+        // may be reported first for a moment, and the keys are listed with the exclusive_key reason).
+        var watchText = Stopwatch.StartNew();
+        while (true)
+        {
+            var text = await node.CliAsync("queue", "explain", writer);
+            Assert.True(text.ExitCode == 0, text.ToString());
+            if (text.Output.Contains("name:db", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            Assert.True(watchText.Elapsed < Bound, $"queue explain {writer}: the key name:db is not listed ({text.Output})");
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+        }
+
         await ExplainedAsync(dependent, "dependency");
         var show = await node.CliAsync("queue", "show");
         Assert.True(show.ExitCode == 0, show.ToString());
@@ -88,11 +102,11 @@ public sealed class SchedulingCliTests
         Assert.True(pools.ExitCode == 0, pools.ToString());
         Assert.Contains("default", pools.Output, StringComparison.Ordinal);
         // The CLI here is a SCRIPT caller (no terminal): pausing a pool and changing a task's priority are allowed; pool, parallelism and
-        // policy changes need an approval (11 section 1) and are refused until AF-SEC-01.
+        // policy changes need an approval (11 section 1): the CLI prints the approval and exits 6 (cli.md section 5).
         async Task NeedsApprovalAsync(params string[] args)
         {
-            var refused = await node.CliAsync(args);
-            Assert.True(refused.ExitCode != 0 && (refused.Output + refused.Error).Contains("AF-SEC-01", StringComparison.Ordinal), $"{string.Join(' ', args)}: {refused}");
+            var pending = await node.CliAsync(args);
+            Assert.True(pending.ExitCode == 6 && pending.Error.Contains("Waiting for approval", StringComparison.Ordinal), $"{string.Join(' ', args)}: {pending}");
         }
 
         Assert.Equal(0, (await node.CliAsync("tasks", "priority", writer, "low")).ExitCode);
@@ -103,6 +117,32 @@ public sealed class SchedulingCliTests
         Assert.Equal(0, (await node.CliAsync("queue", "resume", "background")).ExitCode);
         await NeedsApprovalAsync("queue", "pool", "create", "builds", "--weight", "2", "--max", "off");
         await NeedsApprovalAsync("queue", "parallelism", "global", "4");
+
+        // With --wait-approval the CLI waits for a HUMAN's decision and then receives the executed outcome under its own command ID.
+        await using (var human = await node.HumanChannelAsync())
+        {
+            var listed = await node.CliAsync("approvals", "list", "--state", "pending", "--json");
+            Assert.True(listed.ExitCode == 0, listed.ToString());
+            Assert.Equal(2, listed.Json().GetProperty("approvals").GetArrayLength());
+            foreach (var approval in listed.Json().GetProperty("approvals").EnumerateArray())
+            {
+                // The requester (this SCRIPT CLI) withdraws its own requests.
+                Assert.Equal(0, (await node.CliAsync("approvals", "withdraw", approval.GetProperty("approvalId").GetString()!)).ExitCode);
+            }
+
+            var waiting = node.CliAsync("queue", "parallelism", "global", "3", "--wait-approval", "60s");
+            var approved = await TestNode.ApproveNextAsync(human, Bound);
+            Assert.Equal("QueueService.SetParallelism", approved.Operation);
+            var set = await waiting;
+            Assert.True(set.ExitCode == 0, set.ToString());
+            var shown = await node.CliAsync("approvals", "show", IdText.Format(approved.ApprovalId)[..20]);
+            Assert.True(shown.ExitCode == 0 && shown.Output.Contains("EXECUTED", StringComparison.Ordinal), shown.ToString());
+
+            // A SCRIPT caller never decides.
+            var decide = await node.CliAsync("approvals", "approve", IdText.Format(approved.ApprovalId));
+            Assert.Equal(5, decide.ExitCode);
+        }
+
         Assert.NotEqual(0, (await node.CliAsync("queue", "pool", "delete", "default")).ExitCode);
         Assert.Equal(2, (await node.CliAsync("queue", "parallelism", "everywhere", "off")).ExitCode);
 

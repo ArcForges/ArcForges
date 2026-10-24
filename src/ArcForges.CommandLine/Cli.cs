@@ -34,9 +34,20 @@ public sealed class Cli
     /// <summary><c>--yes</c>.</summary>
     public bool Yes { get; }
 
+    /// <summary><c>--wait-approval</c>: how long a mutation that needs an approval waits for its decision (cli.md section 5).</summary>
+    public TimeSpan? WaitApproval { get; init; }
+
+    /// <summary>The session of the command's last connection (the approval wait reads the approval through it).</summary>
+    private NodeSession? Session { get; set; }
+
     /// <summary>Connects to the node, starting it when <paramref name="autoStart"/> is set and it is absent (02 section 3).</summary>
-    public Task<NodeSession> ConnectAsync(bool autoStart, CancellationToken cancellationToken) =>
-        NodeClient.ConnectAsync(new NodeConnectOptions { Kind = ClientKind.Cli, TestMode = TestMode, AutoStart = autoStart }, cancellationToken);
+    public async Task<NodeSession> ConnectAsync(bool autoStart, CancellationToken cancellationToken)
+    {
+        var session = await NodeClient.ConnectAsync(new NodeConnectOptions { Kind = ClientKind.Cli, TestMode = TestMode, AutoStart = autoStart }, cancellationToken)
+            .ConfigureAwait(false);
+        Session = session;
+        return session;
+    }
 
     /// <summary>The deadline of a unary call: <c>--timeout</c>, or the method's own.</summary>
     public DateTime Deadline(TimeSpan methodDeadline) => DateTime.UtcNow + (Timeout ?? methodDeadline);
@@ -61,6 +72,7 @@ public sealed class Cli
     public async Task<TResponse> MutateAsync<TRequest, TResponse>(string method, Id commandId, UserAction<TRequest> action, Func<TRequest, AsyncUnaryCall<TResponse>> call,
         CancellationToken cancellationToken)
         where TRequest : IMessage<TRequest>
+        where TResponse : IMessage
     {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(call);
@@ -72,6 +84,15 @@ public sealed class Cli
             {
                 var response = await call(action.RequestForAttempt()).ResponseAsync.ConfigureAwait(false);
                 Output.Trace($"{method} {watch.Elapsed.TotalMilliseconds:0.0} ms, attempt {attempt} (command {IdText.Format(commandId)})");
+                if (WaitApproval is { } wait && Session is { } session && ErrorOf(response) is { Code: "approval_required" } required
+                    && required.Details?.State?.Resource?.Id is { } approvalId
+                    && await AwaitDecisionAsync(session, approvalId, wait, cancellationToken).ConfigureAwait(false))
+                {
+                    // 11 section 1: the approved request ran under this command ID; resending it returns the executed outcome (or the refusal).
+                    response = await call(action.RequestForAttempt()).ResponseAsync.ConfigureAwait(false);
+                    Output.Trace($"{method} resent after the approval's decision (command {IdText.Format(commandId)})");
+                }
+
                 return response;
             }
             catch (RpcException exception) when (exception.StatusCode == StatusCode.Unavailable && attempt <= MaxRetries)
@@ -80,6 +101,53 @@ public sealed class Cli
                 await Task.Delay(backoff.Next(attempt), cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// The <c>error</c> of a node response without knowing its type: every response has <c>meta = 1</c> and the <c>outcome</c> oneof with
+    /// <c>value = 2</c> and <c>error = 3</c> (contracts README section 4).
+    /// </summary>
+    internal static ArcError? ErrorOf(IMessage response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        var input = new CodedInputStream(response.ToByteArray());
+        while (input.ReadTag() is var tag and not 0)
+        {
+            if (WireFormat.GetTagFieldNumber(tag) == 3 && WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
+            {
+                var error = new ArcError();
+                input.ReadMessage(error);
+                return error;
+            }
+
+            input.SkipLastField();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Waits up to <paramref name="wait"/> for the approval's decision (cli.md section 5, <c>--wait-approval</c>), polling <c>GetApproval</c>
+    /// every second. True when it was decided (executed, failed, denied, expired or withdrawn): the request is then sent again.
+    /// </summary>
+    private async Task<bool> AwaitDecisionAsync(NodeSession session, Id approvalId, TimeSpan wait, CancellationToken cancellationToken)
+    {
+        Output.Error.WriteLine($"Waiting for approval {IdText.Format(approvalId)} (approve in ArcForges Desktop or with 'arcforges approvals approve {IdText.Format(approvalId)}')");
+        var until = DateTime.UtcNow + wait;
+        while (DateTime.UtcNow < until)
+        {
+            var request = new ApprovalServiceGetApprovalRequest { Meta = Meta(), ApprovalId = approvalId };
+            var response = await CallAsync("GetApproval", request.Meta, () => session.Channel.Approvals.GetApprovalAsync(request, deadline: Deadline(TimeSpan.FromSeconds(5)),
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+            if (response.Error is not null || response.Value.Approval.State is not (ApprovalState.Pending or ApprovalState.Approved))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
     }
 
     /// <summary>Runs a command body and maps connection and transport failures to the exit codes of section 3.</summary>

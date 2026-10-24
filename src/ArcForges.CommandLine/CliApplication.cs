@@ -68,6 +68,9 @@ public static class CliApplication
         root.Subcommands.Add(ResourceCommands.Samples(factory));
         root.Subcommands.Add(QueueCommands.Build(factory));
         root.Subcommands.Add(PolicyCommands.Build(factory));
+        root.Subcommands.Add(ApprovalCommands.Build(factory));
+        root.Subcommands.Add(ResourceCommands.Adopt(factory));
+        root.Subcommands.Add(ResourceCommands.Terminate(factory));
         root.Subcommands.Add(NodeCommands.Build(factory, nodeRunner));
         root.Subcommands.Add(ConfigCommands.Build(factory));
         root.Subcommands.Add(EventCommands.Build(factory));
@@ -99,6 +102,13 @@ internal sealed class GlobalOptions
 
     public Option<bool> Verbose { get; } = new("--verbose", "-v") { Recursive = true, Description = "Show correlation IDs and timings" };
 
+    public Option<string?> WaitApproval { get; } = new("--wait-approval")
+    {
+        Recursive = true,
+        Description = "When a mutation needs an approval, wait this long for the decision and print the outcome (for example 10m)",
+        HelpName = "dur",
+    };
+
     public Option<bool> TestMode { get; } = new(NodeLocations.TestModeOption) { Recursive = true, Hidden = true };
 
     public void AddTo(RootCommand root)
@@ -109,6 +119,7 @@ internal sealed class GlobalOptions
         root.Options.Add(Yes);
         root.Options.Add(Timeout);
         root.Options.Add(Verbose);
+        root.Options.Add(WaitApproval);
         root.Options.Add(TestMode);
     }
 
@@ -123,8 +134,14 @@ internal sealed class GlobalOptions
             timeout = Durations.TryParse(text, out var parsed) ? parsed : throw new UsageException($"--timeout: '{text}' is not a duration (90s, 5m, 2h, 1d).");
         }
 
+        TimeSpan? waitApproval = null;
+        if (result.GetValue(WaitApproval) is { } wait)
+        {
+            waitApproval = Durations.TryParse(wait, out var parsed) ? parsed : throw new UsageException($"--wait-approval: '{wait}' is not a duration (90s, 5m, 2h, 1d).");
+        }
+
         var cliOutput = new CliOutput(output, error, json, result.GetValue(Quiet), !json && !noColor, result.GetValue(Verbose), width);
-        return new Cli(cliOutput, result.GetValue(TestMode), timeout, result.GetValue(Yes));
+        return new Cli(cliOutput, result.GetValue(TestMode), timeout, result.GetValue(Yes)) { WaitApproval = waitApproval };
     }
 
     private static int SafeWidth()

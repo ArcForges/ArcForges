@@ -16,7 +16,7 @@ namespace ArcForges.CommandLine;
 /// <c>arcforges policy ...</c> (experience/cli.md C-04; policy.proto): show the document (the protobuf JSON mapping, optionally one
 /// section), the defaults, validate or apply a JSON file, edit the document in <c>$VISUAL</c> or <c>$EDITOR</c> (validated, then applied with
 /// <c>expected_rev</c>), list revisions and restore one. ID fields are base32 text in the JSON this command prints and accepts.
-/// <c>policy explain</c> belongs to the permission matrix (AF-SEC-01).
+/// <c>policy explain &lt;operation&gt; --origin agent|script|remote</c> shows the permission matrix's decision and its source (11 section 1).
 /// </summary>
 internal static class PolicyCommands
 {
@@ -34,6 +34,7 @@ internal static class PolicyCommands
         policy.Subcommands.Add(Edit(factory));
         policy.Subcommands.Add(Revisions(factory));
         policy.Subcommands.Add(Restore(factory));
+        policy.Subcommands.Add(Explain(factory));
         return policy;
     }
 
@@ -261,6 +262,53 @@ internal static class PolicyCommands
                 cli.Output.Line(string.Create(CultureInfo.InvariantCulture, $"policy revision {response.Value.Revision.Revision.Value}"));
             }
 
+            return ExitCodes.Success;
+        });
+        return command;
+    }
+
+    private static Command Explain(Func<ParseResult, Cli> factory)
+    {
+        var operation = new Argument<string>("operation") { Description = "A permission matrix operation, for example task.cancel_others" };
+        var origin = new Option<string>("--origin") { Description = "The origin: human, script, agent, remote or peer", Required = true, HelpName = "o" };
+        var command = new Command("explain", "Explain the permission decision for an operation and origin, with its source") { operation, origin };
+        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
+        {
+            var name = result.GetValue(origin)!;
+            var value = name.ToUpperInvariant() switch
+            {
+                "HUMAN" => Origin.Human,
+                "SCRIPT" => Origin.Script,
+                "AGENT" => Origin.Agent,
+                "REMOTE" => Origin.Remote,
+                "PEER" => Origin.Peer,
+                _ => throw new UsageException($"--origin: '{name}' is not human, script, agent, remote or peer."),
+            };
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var request = new PolicyServiceExplainPermissionRequest { Meta = Cli.Meta(), Operation = result.GetValue(operation)!, Origin = value };
+            var response = await cli.CallAsync("ExplainPermission", request.Meta, () => session.Channel.Policy.ExplainPermissionAsync(request,
+                deadline: cli.Deadline(TimeSpan.FromSeconds(5)), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return cli.Output.Fail(error, request.Meta.CorrelationId);
+            }
+
+            if (cli.Output.Json)
+            {
+                cli.Output.Document(response.Value);
+                return ExitCodes.Success;
+            }
+
+            var decision = response.Value.Decision switch
+            {
+                PermissionDecision.Allow => "allowed",
+                PermissionDecision.Approval => "needs an approval",
+                PermissionDecision.Deny => "denied",
+                PermissionDecision.RemotePolicy => "decided by the remote-control policy (risk " + response.Value.RemoteRisk.ToString().ToLowerInvariant() + ")",
+                _ => response.Value.Decision.ToString(),
+            };
+            cli.Output.Line($"{request.Operation} for {name.ToUpperInvariant()}: {decision}");
+            cli.Output.Line($"  source: {response.Value.Source}");
             return ExitCodes.Success;
         });
         return command;

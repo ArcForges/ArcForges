@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using ArcForges.Client;
+using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -204,7 +206,26 @@ public sealed class NodeLifecycleTests
         Assert.Equal(0, info.ExitCode);
         Assert.Matches("^[0-9a-hjkmnp-tv-z]{26}$", info.Json().GetProperty("node").GetProperty("node").GetProperty("nodeId").GetString());
 
-        Assert.Equal(0, (await node.CliAsync("config", "set", "logLevel", "debug")).ExitCode);
+        // node.proto: UpdateNodeSettings is HUMAN A, SCRIPT P (11 section 1). This CLI is a SCRIPT caller (no terminal): it raises an approval
+        // and exits 6; with --wait-approval it waits for the decision and then receives the executed outcome under its command ID.
+        var pending = await node.CliAsync("config", "set", "logLevel", "debug");
+        Assert.Equal(6, pending.ExitCode);
+        Assert.Matches(@"^Waiting for approval [0-9a-z]{26} \(approve in ArcForges Desktop or with 'arcforges approvals approve [0-9a-z]{26}'\)", pending.Error.Trim());
+        await using (var human = await node.HumanChannelAsync())
+        {
+            Assert.Null((await human.Approvals.CancelApprovalAsync(new ApprovalServiceCancelApprovalRequest
+            {
+                Meta = new RequestMeta { CommandId = CommandIds.New() },
+                ApprovalId = (await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest(), cancellationToken: TestContext.Current.CancellationToken))
+                    .Value.Approvals[0].ApprovalId,
+            }, cancellationToken: TestContext.Current.CancellationToken)).Error);
+            var waiting = node.CliAsync("config", "set", "logLevel", "debug", "--wait-approval", "60s");
+            var approved = await TestNode.ApproveNextAsync(human, TimeSpan.FromSeconds(60));
+            Assert.Equal((ApprovalState.Executed, "NodeService.UpdateNodeSettings"), (approved.State, approved.Operation));
+            var set = await waiting;
+            Assert.True(set.ExitCode == 0, set.ToString());
+        }
+
         Assert.Equal("debug", (await node.CliAsync("config", "get", "logLevel")).Output.Trim());
         Assert.Equal("1", (await node.CliAsync("config", "get", "revision", "--quiet")).Output.Trim());
         Assert.Equal(2, (await node.CliAsync("config", "set", "dataRoot", "/elsewhere")).ExitCode);

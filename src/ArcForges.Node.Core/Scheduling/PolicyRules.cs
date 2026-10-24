@@ -295,10 +295,10 @@ public static class PolicyRules
 
         for (var index = 0; index < document.Permissions.Count; index++)
         {
-            var rule = document.Permissions[index];
-            if (rule.Origin is not (Origin.Script or Origin.Agent or Origin.Remote))
+            // 11 section 1: overrides of the permission matrix (the operation a non-fixed matrix row; SCRIPT, AGENT or REMOTE).
+            if (Security.PermissionMatrix.Valid(document.Permissions[index]) is { } why)
             {
-                Error(string.Create(CultureInfo.InvariantCulture, $"permissions[{index}].origin"), "SCRIPT, AGENT or REMOTE (HUMAN rows are fixed)");
+                Error(string.Create(CultureInfo.InvariantCulture, $"permissions[{index}]"), why);
             }
         }
 

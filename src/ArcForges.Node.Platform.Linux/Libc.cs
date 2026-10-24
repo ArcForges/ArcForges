@@ -67,6 +67,23 @@ internal static unsafe partial class Libc
     [LibraryImport(Library, EntryPoint = "kill", SetLastError = true)]
     public static partial int Kill(int pid, int signal);
 
+    /// <summary><c>pidfd_open(pid, 0)</c> (Linux 5.3): a descriptor that names this process even after its ID is reused; -1 on failure.</summary>
+    public static int PidfdOpen(int pid) => (int)Syscall(434, pid, 0, 0, 0);
+
+    /// <summary><c>pidfd_send_signal(fd, signal, NULL, 0)</c> (Linux 5.1): signals exactly the process the descriptor names.</summary>
+    public static int PidfdSendSignal(int fd, int signal) => (int)Syscall(424, fd, signal, 0, 0);
+
+    // The generic syscall numbers (434 pidfd_open, 424 pidfd_send_signal) are the same on x86_64 and aarch64.
+    [LibraryImport(Library, EntryPoint = "syscall", SetLastError = true)]
+    private static partial long Syscall(long number, long first, long second, long third, long fourth);
+
+    [LibraryImport(Library, EntryPoint = "close", SetLastError = true)]
+    public static partial int Close(int fd);
+
+    /// <summary><c>dup(2)</c>: a second descriptor for the same open file (a pidfd passed in a D-Bus message).</summary>
+    [LibraryImport(Library, EntryPoint = "dup", SetLastError = true)]
+    public static partial int Dup(int fd);
+
     [LibraryImport(Library, EntryPoint = "getrlimit", SetLastError = true)]
     public static partial int GetRLimit(int resource, out RLimit limit);
 

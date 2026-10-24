@@ -22,6 +22,9 @@ public sealed class ProcessContext
     /// <summary>The members of every attempt container now (container membership).</summary>
     public required IReadOnlyDictionary<int, ProcessOwner> Managed { get; init; }
 
+    /// <summary>The members of every adoption container now (04 section 10).</summary>
+    public IReadOnlyDictionary<int, ProcessOwner> Adopted { get; init; } = new Dictionary<int, ProcessOwner>();
+
     /// <summary>The escaped processes the ancestry scan recorded, by ID and creation time.</summary>
     public IReadOnlyList<(int Pid, DateTimeOffset Start, ProcessOwner Owner)> Escaped { get; init; } = [];
 
@@ -33,8 +36,8 @@ public sealed class ProcessContext
 /// The process labels of 03 section 9 (R-RES-002), observed versus controlled: <c>MANAGED</c> by container membership (only these, and
 /// <c>ADOPTED</c> processes, are ever controlled); the node's own process and helpers <c>NODE_SELF</c>; <c>ESCAPED</c> when the ancestry
 /// scan found the process outside its attempt's container; a VM worker <c>GUEST_VM</c>, one unmanaged consumer that is never summed from
-/// the processes inside the VM (AD-0018 section 2); everything else <c>UNMANAGED</c>. <c>ADOPTED</c> needs adoption records
-/// (<c>AdoptProcess</c>) and <c>BYPASSED</c> registered agent roots (sessions); release 1 has neither yet, so neither label is produced.
+/// the processes inside the VM (AD-0018 section 2); <c>ADOPTED</c> by membership of an adoption container (<c>AdoptProcess</c>); everything
+/// else <c>UNMANAGED</c>. <c>BYPASSED</c> needs registered agent roots (sessions, AF-AI-01), so it is not produced yet.
 /// </summary>
 public static class ProcessClassifier
 {
@@ -46,6 +49,11 @@ public static class ProcessClassifier
         if (context.Managed.TryGetValue(process.Pid, out var owner))
         {
             return (ProcessLabel.Managed, owner);
+        }
+
+        if (context.Adopted.TryGetValue(process.Pid, out var adopted))
+        {
+            return (ProcessLabel.Adopted, adopted);
         }
 
         if (process.Pid == context.NodePid)

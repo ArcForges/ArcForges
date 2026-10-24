@@ -31,6 +31,105 @@ internal static class ResourceCommands
         ["node"] = ProcessLabel.NodeSelf,
     };
 
+    /// <summary>
+    /// <c>adopt &lt;pid&gt; [--title t] [--pool p]</c>: <c>AdoptProcess</c> (HUMAN only; 04 section 10). The process is named by its ID and its
+    /// start time, read here, so a reused ID is never adopted.
+    /// </summary>
+    public static Command Adopt(Func<ParseResult, Cli> factory)
+    {
+        var pid = new Argument<int>("pid") { Description = "The process ID" };
+        var title = new Option<string?>("--title") { Description = "The adopted task's title (<= 200 characters)", HelpName = "t" };
+        var pool = new Option<string?>("--pool") { Description = "The pool the adopted task belongs to (default: default)", HelpName = "p" };
+        var command = new Command("adopt", "Place an existing process of yours under management (an ADOPTED task)") { pid, title, pool };
+        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
+        {
+            if (ClientProcess.Identity(result.GetValue(pid)) is not { } process)
+            {
+                cli.Output.Error.WriteLine($"error: no process {result.GetValue(pid).ToString(CultureInfo.InvariantCulture)} (STATE/not_found)");
+                return ExitCodes.NotFound;
+            }
+
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var request = new ResourceServiceAdoptProcessRequest { Meta = Cli.Meta(), Process = process };
+            if (result.GetValue(title) is { } text)
+            {
+                request.Title = text;
+            }
+
+            if (result.GetValue(pool) is { } name)
+            {
+                request.Pool = name;
+            }
+
+            var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
+            var response = await cli.MutateAsync("AdoptProcess", request.Meta.CommandId, action, r => session.Channel.Resources.AdoptProcessAsync(r,
+                deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return cli.Output.Fail(error, request.Meta.CorrelationId);
+            }
+
+            if (cli.Output.Json)
+            {
+                cli.Output.Document(response.Value);
+            }
+            else
+            {
+                cli.Output.Line(string.Create(CultureInfo.InvariantCulture,
+                    $"adopted as task {IdText.Format(response.Value.TaskId)} ({response.Value.AdoptedChildren} children adopted, {response.Value.FailedChildren} failed)"));
+            }
+
+            return ExitCodes.Success;
+        });
+        return command;
+    }
+
+    /// <summary>
+    /// <c>terminate &lt;pid&gt; [--reason r]</c>: <c>TerminateProcess</c> (HUMAN A, SCRIPT and AGENT need an approval): only a process the node
+    /// manages, adopted or classified (ESCAPED, a leftover), named by its ID and start time.
+    /// </summary>
+    public static Command Terminate(Func<ParseResult, Cli> factory)
+    {
+        var pid = new Argument<int>("pid") { Description = "The process ID" };
+        var reason = new Option<string?>("--reason") { Description = "Why (<= 500 characters, for the record)", HelpName = "r" };
+        var command = new Command("terminate", "Terminate a process the node manages, adopted or found escaped") { pid, reason };
+        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
+        {
+            if (ClientProcess.Identity(result.GetValue(pid)) is not { } process)
+            {
+                cli.Output.Error.WriteLine($"error: no process {result.GetValue(pid).ToString(CultureInfo.InvariantCulture)} (STATE/not_found)");
+                return ExitCodes.NotFound;
+            }
+
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var request = new ResourceServiceTerminateProcessRequest { Meta = Cli.Meta(), Process = process };
+            if (result.GetValue(reason) is { } text)
+            {
+                request.Reason = text;
+            }
+
+            var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
+            var response = await cli.MutateAsync("TerminateProcess", request.Meta.CommandId, action, r => session.Channel.Resources.TerminateProcessAsync(r,
+                deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return cli.Output.Fail(error, request.Meta.CorrelationId);
+            }
+
+            if (cli.Output.Json)
+            {
+                cli.Output.Document(response.Value);
+            }
+            else
+            {
+                cli.Output.Line(string.Create(CultureInfo.InvariantCulture, $"process {process.Pid} terminated"));
+            }
+
+            return ExitCodes.Success;
+        });
+        return command;
+    }
+
     /// <summary><c>resources [--watch [--interval 5s]]</c>: <c>GetResourceSnapshot</c> or <c>WatchResources</c>.</summary>
     public static Command Resources(Func<ParseResult, Cli> factory)
     {

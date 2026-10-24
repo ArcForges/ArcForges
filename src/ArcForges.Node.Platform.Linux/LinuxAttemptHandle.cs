@@ -325,34 +325,61 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
             Remember(pid);
         }
 
-        Dictionary<int, long> members;
-        lock (_gate)
-        {
-            members = new Dictionary<int, long>(_members);
-        }
-
         var table = new Dictionary<int, (int Parent, long Start)>();
         foreach (var pid in ProcFs.AllProcesses())
         {
-            if (!inside.Contains(pid) && ProcFs.Stat(pid) is { } stat && stat.State is not ('Z' or 'X'))
+            if (ProcFs.Stat(pid) is { } stat && stat.State is not ('Z' or 'X'))
             {
                 table[pid] = (stat.ParentPid, stat.StartTicks);
             }
         }
 
+        Dictionary<int, long> members;
+        lock (_gate)
+        {
+            // A member that exited (or whose ID now names a later process) is never a parent again: its children were re-parented when it
+            // exited, so a process whose parent ID is that ID belongs to whoever reused it (AF-SEC-01 repair of AF-EXEC-02's scan).
+            foreach (var gone in _members.Where(member => !table.TryGetValue(member.Key, out var now) || now.Start != member.Value).Select(member => member.Key).ToList())
+            {
+                _members.Remove(gone);
+            }
+
+            members = new Dictionary<int, long>(_members);
+        }
+
+        var self = ProcFs.UserId;
+        return [.. Descendants(members, inside, table).Select(pair => new EscapedProcess(pair.Key, pair.Value.Parent, ProcFs.StartInstant(pair.Value.Start),
+            ProcFs.Image(pair.Key), ProcFs.OwnerOf(pair.Key) == self))];
+    }
+
+    /// <summary>
+    /// The escaped processes of an attempt (03 section 9): processes outside the unit's cgroup (<paramref name="inside"/>) whose parent is a
+    /// recorded member or another escaped process, created no earlier than that parent. A member is a parent only while its ID still names
+    /// the same process (its current start in <paramref name="table"/> equals the recorded one), so after an ID is reused, the children of
+    /// the unrelated process that reused it are never reported (and never killed). <paramref name="table"/> holds every live process with
+    /// its parent and start (clock ticks since boot).
+    /// </summary>
+    internal static Dictionary<int, (int Parent, long Start)> Descendants(IReadOnlyDictionary<int, long> members, IReadOnlySet<int> inside,
+        IReadOnlyDictionary<int, (int Parent, long Start)> table)
+    {
+        ArgumentNullException.ThrowIfNull(members);
+        ArgumentNullException.ThrowIfNull(inside);
+        ArgumentNullException.ThrowIfNull(table);
         var escaped = new Dictionary<int, (int Parent, long Start)>();
         for (var pass = 0; pass < 8; pass++)
         {
             var added = false;
             foreach (var (pid, (parent, start)) in table)
             {
-                if (escaped.ContainsKey(pid))
+                if (inside.Contains(pid) || escaped.ContainsKey(pid))
                 {
                     continue;
                 }
 
-                var fromMember = members.TryGetValue(parent, out var parentStart) && parentStart <= start;
-                if (fromMember || escaped.ContainsKey(parent))
+                var fromMember = members.TryGetValue(parent, out var memberStart) && table.TryGetValue(parent, out var current) && current.Start == memberStart
+                    && memberStart <= start;
+                var fromEscaped = escaped.TryGetValue(parent, out var escapedParent) && escapedParent.Start <= start;
+                if (fromMember || fromEscaped)
                 {
                     escaped[pid] = (parent, start);
                     added = true;
@@ -365,9 +392,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
             }
         }
 
-        var self = ProcFs.UserId;
-        return [.. escaped.Select(pair => new EscapedProcess(pair.Key, pair.Value.Parent, ProcFs.StartInstant(pair.Value.Start), ProcFs.Image(pair.Key),
-            ProcFs.OwnerOf(pair.Key) == self))];
+        return escaped;
     }
 
     /// <inheritdoc />
@@ -525,6 +550,14 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
                 if (root is not null)
                 {
                     Remember(root.Pid);
+                    if (_platform.Hardening is not null)
+                    {
+                        // AD-0007 section 8: the hardening is read back from the running unit; one that did not apply is reported as such, and
+                        // one whose root ended before the read is "not verified", never "applied".
+                        var (readOnly, inaccessible) = _platform.HardenedPaths;
+                        _platform.HardeningReadBack(Files.AttemptName,
+                            ProcFs.Stat(root.Pid) is { } stat ? LinuxExecutionPlatform.HardeningReadBackOf(root.Pid, stat.StartTicks, readOnly, inaccessible) : null);
+                    }
                 }
             }
             else if (!File.Exists(Files.LaunchPath) && result != "done")

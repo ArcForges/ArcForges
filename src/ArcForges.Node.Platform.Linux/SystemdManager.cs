@@ -30,7 +30,7 @@ public sealed record ExitStatusSet(IReadOnlyList<int> Statuses, IReadOnlyList<in
 /// <summary>One unit property of <c>StartTransientUnit</c> or <c>SetUnitProperties</c>.</summary>
 /// <param name="Name">The property name.</param>
 /// <param name="Value">A <see cref="string"/> (s), <see cref="ulong"/> (t), <see cref="int"/> (i), <see cref="bool"/> (b), a
-/// <see cref="string"/> array (as), a <see cref="SafeHandle"/> (h), a list of <see cref="ExecCommand"/> (a(sasb)) or an
+/// <see cref="string"/> array (as), a <see cref="uint"/> array (au), a <see cref="SafeHandle"/> (h), a list of <see cref="ExecCommand"/> (a(sasb)) or an
 /// <see cref="ExitStatusSet"/> ((aiai)).</param>
 public readonly record struct UnitProperty(string Name, object Value);
 
@@ -347,11 +347,27 @@ public sealed class SystemdManager : IDisposable
         }
     }
 
+    /// <summary>The cgroup path of a loaded scope unit (<c>org.freedesktop.systemd1.Scope.ControlGroup</c>), or null when it is not loaded.</summary>
+    public string? ScopeControlGroup(string name)
+    {
+        var path = GetUnit(name);
+        return path is null ? null : Run(async () => (await GetAsync(path, "org.freedesktop.systemd1.Scope", "ControlGroup").ConfigureAwait(false)).GetString());
+    }
+
     /// <summary><c>KillUnit(name, whom, signal)</c>.</summary>
     public void KillUnit(string name, string whom, int signal) => Call(Message("KillUnit", "ssi", name, whom, signal));
 
+    /// <summary>
+    /// <c>AttachProcessesToUnit(name, "", pids)</c> (systemd 238): moves processes into a running unit's cgroup. The user manager can move
+    /// only processes inside its own subtree (V-L01); others are refused with an error reply.
+    /// </summary>
+    public void AttachProcessesToUnit(string name, uint[] pids) => Call(Message("AttachProcessesToUnit", "ssau", name, string.Empty, pids));
+
     /// <summary><c>FreezeUnit(name)</c>: returns once the unit's cgroup is frozen.</summary>
     public void FreezeUnit(string name) => Call(Message("FreezeUnit", "s", name));
+
+    /// <summary><c>AbandonScope(name)</c>: the user manager stops managing the scope; its processes keep running, untouched.</summary>
+    public void AbandonScope(string name) => Call(Message("AbandonScope", "s", name));
 
     /// <summary><c>ThawUnit(name)</c>.</summary>
     public void ThawUnit(string name) => Call(Message("ThawUnit", "s", name));
@@ -545,6 +561,9 @@ public sealed class SystemdManager : IDisposable
                     case bool flag:
                         writer.WriteBool(flag);
                         break;
+                    case uint[] numbers:
+                        writer.WriteArray(numbers);
+                        break;
                     case string[] texts:
                         var array = writer.WriteArrayStart(DBusType.String);
                         foreach (var text in texts)
@@ -592,8 +611,17 @@ public sealed class SystemdManager : IDisposable
                     writer.WriteSignature("as");
                     writer.WriteArray(texts);
                     break;
+                case uint[] numbers:
+                    writer.WriteSignature("au");
+                    writer.WriteArray(numbers);
+                    break;
                 case SafeHandle handle:
                     writer.WriteVariantHandle(handle);
+                    break;
+                case SafeHandle[] handles:
+                    // PIDFDs (systemd 253 and later): processes named by pidfd, never by a reusable ID.
+                    writer.WriteSignature("ah");
+                    writer.WriteArray(handles);
                     break;
                 case IReadOnlyList<ExecCommand> commands:
                     // ExecStartEx, ExecStopEx, ExecStopPostEx: a(sasas) with flags; the plain names take a(sasb).

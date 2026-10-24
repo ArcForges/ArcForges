@@ -30,6 +30,16 @@ public sealed class LinuxPlatformOptions
     public string? NodeUnit { get; init; }
 
     /// <summary>
+    /// The optional unit hardening of AD-0007 section 8 (A-L04): attempt units get <c>ReadOnlyPaths=</c> for the installation and
+    /// <c>InaccessiblePaths=</c> for <see cref="ProtectedPaths"/> where the user manager applies them. Default on; it is GUARDRAIL hardening of
+    /// ArcForges' own files, never workload isolation.
+    /// </summary>
+    public bool UnitHardening { get; init; } = true;
+
+    /// <summary>The node's own files that attempt units must not reach (the store and the secret stores of the data root).</summary>
+    public IReadOnlyList<string> ProtectedPaths { get; init; } = [];
+
+    /// <summary>
     /// Tests only: entries added to every attempt unit's <c>Environment=</c> outside the resolved environment, standing in for a variable
     /// the user manager passes to its services (the command must never see them).
     /// </summary>
@@ -68,6 +78,15 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// </summary>
     public const int StopRecordMarginMs = 5_000;
 
+    /// <summary>The prefix of adoption scopes (04 section 10).</summary>
+    public const string AdoptionPrefix = "arcforges-x-";
+
+    /// <summary>The ending of every resource guarantee's reason (03 sections 5 and 8; 11 section 1: T-22, T-23).</summary>
+    public const string SameUserQualifier = "; same-user code can change or end ArcForges' containers (T-22), and work launched outside the recorded ancestry never joins them (T-23)";
+
+    /// <summary>How far two reads of a process's start time may differ (clock ticks of 10 ms).</summary>
+    private static readonly TimeSpan IdentityTolerance = TimeSpan.FromMilliseconds(20);
+
     /// <summary>The .NET runtime's switch for its diagnostic endpoints (framework-dependent helpers only).</summary>
     internal const string DiagnosticsVariable = "DOTNET_EnableDiagnostics";
 
@@ -87,6 +106,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     private bool _freezer;
     private int _systemdVersion;
     private bool _disposed;
+    private List<UnitProperty>? _hardening;
+    private string _hardeningReport = "not applied: the platform has not started";
+    private int _hardeningMisses;
+    private string? _hardeningMissed;
+    private int _hardeningUnverified;
+    private string? _hardeningUnverifiedLast;
 
     /// <summary>Creates the platform.</summary>
     public LinuxExecutionPlatform(LinuxPlatformOptions? options = null)
@@ -197,6 +222,9 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         {
             EnsureSlice(limits);
             _selfTest = Probe();
+            _hardeningReport = !_options.UnitHardening
+                ? "not applied: turned off for this node"
+                : _selfTest is not null ? "not applied: the enforcement probe failed" : HardeningProbe();
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or IOException or InvalidOperationException)
         {
@@ -235,9 +263,10 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.Pause = PauseSupport.Unsupported;
             report.PauseReason = why;
             report.KillTree = KillTreeGuarantee.BestEffort;
-            report.KillTreeReason = "attempts are plain child processes of the node in their own process group; a process that leaves the group is not reached";
+            report.KillTreeReason = "attempts are plain child processes of the node in their own process group; a process that leaves the group is not reached"
+                + SameUserQualifier;
             report.Adopt = AdoptSupport.Unsupported;
-            report.AdoptReason = "process adoption is not part of this build";
+            report.AdoptReason = "adoption needs a transient scope of the systemd user manager: " + why;
             report.RestartSurvival = false;
             report.RestartSurvivalReason = "attempts are plain child processes of the node: their exit status is lost when the node restarts before they finish";
         }
@@ -265,13 +294,17 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
                 ? "FreezeUnit and ThawUnit (cgroup.freeze)"
                 : failed ?? "the kernel or the user manager offers no unit freezer (cgroup.freeze)";
             report.KillTree = failed is null ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort;
-            report.KillTreeReason = failed ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager";
-            report.Adopt = AdoptSupport.Unsupported;
-            report.AdoptReason = "process adoption is not part of this build";
+            report.KillTreeReason = (failed
+                ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager") + SameUserQualifier;
+            report.Adopt = failed is null ? AdoptSupport.Limited : AdoptSupport.Unsupported;
+            report.AdoptReason = failed ?? "a same-user process and its children move into a transient scope in the node's slice through the user manager, which "
+                + "moves any same-user process there, outside its own subtree too, through the system manager's AttachProcessesToUnit (systemd 257, L-29); "
+                + "a process of another user is refused before systemd is asked; the moved process's earlier memory charges stay behind";
             report.RestartSurvival = failed is null;
             report.RestartSurvivalReason = failed ?? "attempts are transient units of the user manager, never children of the node, with a durable exit record from ExecStopPost (L-13)";
         }
 
+        report.PlatformFacts.Add(Fact("unit_hardening", HardeningReport));
         report.PlatformFacts.Add(Fact("os", RuntimeInformation.OSDescription));
         report.PlatformFacts.Add(Fact("arch", RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()));
         report.PlatformFacts.Add(Fact("runtime", RuntimeInformation.FrameworkDescription));
@@ -311,6 +344,476 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
 
     /// <inheritdoc />
     public PreparedCommand Prepare(CommandRequest request) => LinuxCommands.Prepare(request);
+
+    /// <summary>
+    /// The unit hardening as read back (AD-0007 section 8; F-L04): applied only when the probe unit and every attempt unit read back so far
+    /// carried it; otherwise not applied, with the reason. GUARDRAIL hardening of ArcForges' own files, never workload isolation.
+    /// </summary>
+    public string HardeningReport
+    {
+        get
+        {
+            const string Scope = "; GUARDRAIL hardening of ArcForges' own files against accidental writes, never workload isolation (AD-0007 section 8)";
+            var misses = Volatile.Read(ref _hardeningMisses);
+            var unverified = Volatile.Read(ref _hardeningUnverified);
+            var notVerified = unverified > 0
+                ? string.Create(CultureInfo.InvariantCulture,
+                    $"; not verified for {unverified} attempt unit(s): the attempt ended before read-back (last {_hardeningUnverifiedLast})")
+                : string.Empty;
+            return misses > 0
+                ? string.Create(CultureInfo.InvariantCulture, $"not applied to every attempt: {misses} attempt unit(s) read back without it (last {_hardeningMissed})") + notVerified + Scope
+                : _hardeningReport + notVerified + Scope;
+        }
+    }
+
+    /// <summary>The hardening properties every attempt unit gets, or <see langword="null"/> when the probe did not read them back as applied.</summary>
+    internal IReadOnlyList<UnitProperty>? Hardening => _hardening;
+
+    /// <summary>The installation directory made read-only, and the protected paths made inaccessible, that the read-back checks.</summary>
+    internal (string ReadOnly, IReadOnlyList<string> Inaccessible) HardenedPaths =>
+        (Path.GetDirectoryName(_helper) ?? "/", [.. _options.ProtectedPaths.Where(Directory.Exists)]);
+
+    /// <summary>
+    /// Records an attempt unit's read-back (after its start): a unit that did not carry the hardening makes the report "not applied"; one whose
+    /// root ended before its mount namespace could be read (<see langword="null"/>) is reported "not verified", never counted as applied.
+    /// </summary>
+    internal void HardeningReadBack(string attemptName, bool? applied)
+    {
+        if (applied is null)
+        {
+            _hardeningUnverifiedLast = attemptName;
+            Interlocked.Increment(ref _hardeningUnverified);
+        }
+        else if (applied == false)
+        {
+            _hardeningMissed = attemptName;
+            Interlocked.Increment(ref _hardeningMisses);
+        }
+    }
+
+    /// <summary>
+    /// The read-back of one process (<paramref name="pid"/>, started at <paramref name="startTicks"/>): true or false as
+    /// <see cref="HardeningApplied"/> reads it, or <see langword="null"/> when the process ended (or its ID was taken) before or while its
+    /// mount namespace was read, so nothing was verified.
+    /// </summary>
+    internal static bool? HardeningReadBackOf(int pid, long startTicks, string readOnly, IReadOnlyList<string> inaccessible)
+    {
+        if (ProcFs.Stat(pid) is not { } before || before.StartTicks != startTicks)
+        {
+            return null;
+        }
+
+        var applied = HardeningApplied(pid, readOnly, inaccessible, out var readable);
+        return !readable || ProcFs.Stat(pid) is not { } after || after.StartTicks != startTicks ? null : applied;
+    }
+
+    /// <summary>
+    /// True when the mount namespace of <paramref name="pid"/> shows the hardening: <paramref name="readOnly"/> mounted read-only, and every
+    /// path of <paramref name="inaccessible"/> over-mounted (systemd mounts an inaccessible node there). False when it does not, or when the
+    /// process cannot be read.
+    /// </summary>
+    internal static bool HardeningApplied(int pid, string readOnly, IReadOnlyList<string> inaccessible) => HardeningApplied(pid, readOnly, inaccessible, out _);
+
+    private static bool HardeningApplied(int pid, string readOnly, IReadOnlyList<string> inaccessible, out bool readable)
+    {
+        string[] lines;
+        readable = false;
+        try
+        {
+            lines = File.ReadAllLines(Path.Combine("/proc", pid.ToString(CultureInfo.InvariantCulture), "mountinfo"));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        readable = lines.Length > 0;
+
+        var mounts = new List<(string Point, string[] Options)>();
+        foreach (var line in lines)
+        {
+            var fields = line.Split(' ');
+            if (fields.Length > 5)
+            {
+                mounts.Add((Unescape(fields[4]), fields[5].Split(',')));
+            }
+        }
+
+        bool Mounted(string path, bool requireReadOnly) => mounts.Any(mount => string.Equals(mount.Point, Path.TrimEndingDirectorySeparator(path), StringComparison.Ordinal)
+            && (!requireReadOnly || mount.Options.Contains("ro", StringComparer.Ordinal)));
+        return Mounted(readOnly, requireReadOnly: true) && inaccessible.All(path => Mounted(path, requireReadOnly: false));
+    }
+
+    /// <summary>A mountinfo field with its octal escapes (<c>\040</c> for a space) decoded.</summary>
+    private static string Unescape(string field)
+    {
+        if (!field.Contains('\\', StringComparison.Ordinal))
+        {
+            return field;
+        }
+
+        var builder = new StringBuilder();
+        for (var index = 0; index < field.Length; index++)
+        {
+            if (field[index] == '\\' && index + 3 < field.Length && field.AsSpan(index + 1, 3).ToString() is var octal && octal.All(digit => digit is >= '0' and <= '7'))
+            {
+                builder.Append((char)Convert.ToInt32(octal, 8));
+                index += 3;
+            }
+            else
+            {
+                builder.Append(field[index]);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// The hardening probe (AD-0007 section 8; A-L04): a short unit with <c>ReadOnlyPaths=</c> and <c>InaccessiblePaths=</c> is started and its
+    /// mount namespace read back. Only a read-back that shows both makes attempt units carry them; a unit the user manager could not start,
+    /// or one that started without them, leaves attempt units without hardening (they run as before), and the report says so.
+    /// </summary>
+    private string HardeningProbe()
+    {
+        var sleep = File.Exists("/usr/bin/sleep") ? "/usr/bin/sleep" : File.Exists("/bin/sleep") ? "/bin/sleep" : null;
+        if (sleep is null)
+        {
+            return "not applied: the hardening probe needs /usr/bin/sleep, which is missing";
+        }
+
+        var (readOnly, inaccessible) = HardenedPaths;
+        List<UnitProperty> hardening =
+        [
+            new("ReadOnlyPaths", (string[])[readOnly]),
+            new("InaccessiblePaths", (string[])[.. _options.ProtectedPaths.Select(path => "-" + path)]),
+        ];
+        var manager = Manager;
+        var name = "arcforges-probe-" + _nodeName[..Math.Min(12, _nodeName.Length)].ToLowerInvariant() + "-" + Guid.NewGuid().ToString("N")[..8] + ".service";
+        try
+        {
+            var job = manager.StartTransientUnit(name, [
+                new("Description", "ArcForges hardening probe"),
+                new("Slice", Slice),
+                new("Type", "exec"),
+                new("ExecStartEx", (IReadOnlyList<ExecCommand>)[new ExecCommand(sleep, [sleep, "3"], false)]),
+                new("CollectMode", "inactive-or-failed"),
+                new("RuntimeMaxUSec", 3_000_000UL),
+                .. hardening,
+            ]);
+            var result = manager.WaitJob(job, TimeSpan.FromSeconds(10));
+            if (result is not "done" || manager.State(name) is not { MainPid: > 0 } state)
+            {
+                return $"not applied: the user manager did not start a unit with ReadOnlyPaths and InaccessiblePaths ({result ?? "no answer"})";
+            }
+
+            if (!HardeningApplied((int)state.MainPid, readOnly, inaccessible))
+            {
+                return "not applied: a unit with ReadOnlyPaths and InaccessiblePaths started without them (the user manager could not set up a mount namespace)";
+            }
+
+            _hardening = hardening;
+            return $"applied (read back from a probe unit and from each attempt unit after its start): ReadOnlyPaths={readOnly}; InaccessiblePaths={string.Join(' ', inaccessible)}";
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
+        {
+            return $"not applied: the hardening probe failed ({exception.GetType().Name}: {OneLine(exception.Message)})";
+        }
+        finally
+        {
+            try
+            {
+                manager.StopUnit(name);
+            }
+            catch (DBusErrorReplyException)
+            {
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public AdoptionResult Adopt(AdoptionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (_manager is null || _selfTest is not null)
+        {
+            throw new AdoptionRefusedException(_managerReason ?? _selfTest ?? "no systemd user manager is connected");
+        }
+
+        var pid = request.Pid;
+
+        // Review round 1 (TOCTOU): the process is named by a pidfd from here on. Its identity is checked after the descriptor was opened, so
+        // the checked process is the one the descriptor names, and the user manager is given the descriptor (PIDFDs), never the reusable ID.
+        using var identity = OpenPidfd(pid);
+        if (identity is null || ProcFs.StartOf(pid) is not { } start || (start.Start - request.Start).Duration() > IdentityTolerance)
+        {
+            throw new AdoptionRefusedException($"no process {pid.ToString(CultureInfo.InvariantCulture)} started at that time") { NotFound = true };
+        }
+
+        if (ProcFs.OwnerOf(pid) != ProcFs.UserId)
+        {
+            throw new AdoptionRefusedException("the process runs as another user (adoption is same-user only, R-RES-013)");
+        }
+
+        if (_sliceCgroup is { } slice && ProcFs.CgroupOf(pid) is { } cgroup && cgroup.StartsWith(slice + "/", StringComparison.Ordinal))
+        {
+            throw new AdoptionRefusedException("the process is already in a container of this node") { AlreadyManaged = true };
+        }
+
+        // The children that exist now (descendants by parent ID, each created no earlier than its parent), adopted one by one afterwards.
+        var table = ProcFs.AllProcesses().Select(candidate => (Pid: candidate, Stat: ProcFs.Stat(candidate))).Where(entry => entry.Stat is { State: not ('Z' or 'X') })
+            .ToDictionary(entry => entry.Pid, entry => (Parent: entry.Stat!.Value.ParentPid, Start: entry.Stat.Value.StartTicks));
+        var children = new List<(int Pid, long Start)>();
+        var frontier = new Queue<(int Pid, long Start)>([(pid, start.Ticks)]);
+        while (frontier.TryDequeue(out var parent) && children.Count < 4096)
+        {
+            foreach (var (child, (owner, created)) in table.Where(entry => entry.Value.Parent == parent.Pid && entry.Value.Start >= parent.Start && entry.Key != pid))
+            {
+                if (!children.Exists(known => known.Pid == child))
+                {
+                    children.Add((child, created));
+                    frontier.Enqueue((child, created));
+                }
+            }
+        }
+
+        var name = AdoptionPrefix + request.AttemptName + ".scope";
+        var manager = Manager;
+        try
+        {
+            var job = StartScope(manager, name, "ArcForges adopted process " + pid.ToString(CultureInfo.InvariantCulture), Slice, pid, identity, delegated: true);
+            if (manager.WaitJob(job, TimeSpan.FromSeconds(10)) is not "done" || manager.ScopeControlGroup(name) is not { Length: > 0 } controlGroup)
+            {
+                throw new AdoptionRefusedException("the user manager did not start the adoption scope with the process");
+            }
+
+            if (!Alive(identity))
+            {
+                // The process ended while it was being adopted. Where only its ID could be passed, another process may have taken the ID and been
+                // moved: it is released into a scope of its own that the user manager abandons (never terminated), and the adoption is refused.
+                var released = ProcFs.CgroupOf(pid) == controlGroup ? "; " + ReleaseStranger(manager, pid) : string.Empty;
+                StopQuietly(manager, name);
+                throw new AdoptionRefusedException($"process {pid.ToString(CultureInfo.InvariantCulture)} ended while it was being adopted{released}") { NotFound = true };
+            }
+
+            if (ProcFs.CgroupOf(pid) != controlGroup)
+            {
+                // A refusal is reported, never forced (R-RES-013): the scope started without the process.
+                StopQuietly(manager, name);
+                throw new AdoptionRefusedException("the user manager did not move the process into the adoption scope");
+            }
+
+            var directory = ProcFs.CgroupDirectory(controlGroup);
+            var results = new List<string>();
+            var adopted = 0;
+            foreach (var (child, created) in children)
+            {
+                var image = ProcFs.Image(child);
+                var label = child.ToString(CultureInfo.InvariantCulture);
+
+                // AttachProcessesToUnit takes IDs only: the child is held by a pidfd, its start checked through it, and after the move a child that
+                // ended in between (its ID possibly taken by another process, which is released again) is reported as not adopted.
+                using var held = OpenPidfd(child);
+                if (held is null || ProcFs.Stat(child) is not { } stat || stat.StartTicks != created)
+                {
+                    results.Add($"{image} ({label}): not adopted (it ended before the move)");
+                    continue;
+                }
+
+                try
+                {
+                    if (ProcFs.CgroupOf(child) != controlGroup)
+                    {
+                        manager.AttachProcessesToUnit(name, [(uint)child]);
+                    }
+
+                    if (!Alive(held))
+                    {
+                        var released = ProcFs.CgroupOf(child) == controlGroup ? "; " + ReleaseStranger(manager, child) : string.Empty;
+                        results.Add($"{image} ({label}): not adopted (it ended during the move{released})");
+                        continue;
+                    }
+
+                    adopted++;
+                    results.Add($"{image} ({label}): adopted");
+                }
+                catch (DBusErrorReplyException exception)
+                {
+                    results.Add($"{image} ({label}): not adopted ({OneLine(exception.Message)})");
+                }
+            }
+
+            return new AdoptionResult(new LinuxAdoptedScope(this, name, directory), ResolveImage(pid), adopted, children.Count - adopted, results);
+        }
+        catch (DBusErrorReplyException exception)
+        {
+            // L-29: the user manager moves any same-user process (through the system manager when it lies outside its subtree); what it still
+            // refuses is reported as it answered.
+            throw new AdoptionRefusedException($"the user manager refused to move the process ({exception.ErrorName}: {OneLine(exception.Message)})", exception);
+        }
+    }
+
+    /// <summary>How the last adoption scope named its process: by pidfd (<c>PIDFDs</c>), by ID (<c>PIDs</c>, then checked), or not yet.</summary>
+    internal bool? ScopesByPidfd { get; private set; }
+
+    /// <summary>A pidfd for <paramref name="pid"/> (closed on dispose), or <see langword="null"/> when the process does not exist.</summary>
+    private static SafeFileHandle? OpenPidfd(int pid)
+    {
+        var descriptor = Libc.PidfdOpen(pid);
+        return descriptor < 0 ? null : new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
+    }
+
+    /// <summary>True while the process a pidfd names has not ended (signal 0 through the descriptor).</summary>
+    private static bool Alive(SafeFileHandle pidfd) => Libc.PidfdSendSignal((int)pidfd.DangerousGetHandle(), 0) == 0;
+
+    /// <summary>
+    /// Starts a scope with the process named by <paramref name="pidfd"/> (<c>PIDFDs</c>, systemd 253 and later); a user manager that does not
+    /// know the property gets the ID (<c>PIDs</c>), and the caller checks the pidfd afterwards.
+    /// </summary>
+    private string StartScope(SystemdManager manager, string name, string description, string? slice, int pid, SafeFileHandle pidfd, bool delegated)
+    {
+        List<UnitProperty> properties = [new("Description", description)];
+        if (slice is not null)
+        {
+            properties.Add(new("Slice", slice));
+        }
+
+        if (delegated)
+        {
+            // AttachProcessesToUnit (the children, one by one) is available only on delegated units.
+            properties.Add(new("Delegate", true));
+            properties.Add(new("CPUAccounting", true));
+            properties.Add(new("MemoryAccounting", true));
+            properties.Add(new("TasksAccounting", true));
+        }
+
+        // The message carries its own duplicate of the descriptor.
+        using var passed = OpenPidfdDuplicate(pidfd);
+        try
+        {
+            if (passed is not null)
+            {
+                var job = manager.StartTransientUnit(name, [.. properties, new("PIDFDs", (SafeHandle[])[passed])]);
+                ScopesByPidfd = true;
+                return job;
+            }
+        }
+        catch (DBusErrorReplyException exception) when (exception.ErrorName is "org.freedesktop.DBus.Error.InvalidArgs" or "org.freedesktop.DBus.Error.PropertyReadOnly"
+            && exception.Message.Contains("PIDFDs", StringComparison.Ordinal))
+        {
+            // A user manager before systemd 253: the ID is passed, and the caller checks the pidfd afterwards.
+        }
+
+        ScopesByPidfd = false;
+        return manager.StartTransientUnit(name, [.. properties, new("PIDs", (uint[])[(uint)pid])]);
+    }
+
+    private static SafeFileHandle? OpenPidfdDuplicate(SafeFileHandle pidfd)
+    {
+        var duplicate = Libc.Dup((int)pidfd.DangerousGetHandle());
+        return duplicate < 0 ? null : new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
+    }
+
+    /// <summary>
+    /// A process that took the ID of one being adopted and was moved instead (only possible where the ID had to be passed): it is moved into a
+    /// scope of its own, which the user manager then abandons, so it keeps running and is never part of the adoption or its termination.
+    /// </summary>
+    private string ReleaseStranger(SystemdManager manager, int pid)
+    {
+        using var stranger = OpenPidfd(pid);
+        if (stranger is null)
+        {
+            return "no other process took its ID";
+        }
+
+        var name = "arcforges-released-" + Guid.NewGuid().ToString("N")[..12] + ".scope";
+        try
+        {
+            if (manager.WaitJob(StartScope(manager, name, "A process released from an ArcForges adoption", slice: null, pid, stranger, delegated: false), TimeSpan.FromSeconds(10)) is "done")
+            {
+                manager.AbandonScope(name);
+            }
+
+            return $"the process that took its ID was released into {name}";
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
+        {
+            return $"the process that took its ID could not be released ({OneLine(exception.Message)})";
+        }
+    }
+
+    /// <inheritdoc />
+    public IAdoptedContainer? ReopenAdopted(string containerName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
+        if (_manager is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Manager.ScopeControlGroup(containerName) is { Length: > 0 } controlGroup
+                ? new LinuxAdoptedScope(this, containerName, ProcFs.CgroupDirectory(controlGroup))
+                : null;
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public ProcessTermination TerminateProcess(int pid, DateTimeOffset start)
+    {
+        // The descriptor names the process from here on; the identity checked next is therefore the identity signalled.
+        var descriptor = Libc.PidfdOpen(pid);
+        try
+        {
+            if (ProcFs.StartOf(pid) is not { } current || (current.Start - start).Duration() > IdentityTolerance)
+            {
+                return ProcessTermination.Gone;
+            }
+
+            if (ProcFs.OwnerOf(pid) != ProcFs.UserId)
+            {
+                return ProcessTermination.OtherUser;
+            }
+
+            var sent = descriptor >= 0 ? Libc.PidfdSendSignal(descriptor, Libc.SigKill) : Libc.Kill(pid, Libc.SigKill);
+            return sent == 0 ? ProcessTermination.Terminated : Libc.LastError == 3 /* ESRCH */ ? ProcessTermination.Gone : ProcessTermination.Failed;
+        }
+        finally
+        {
+            if (descriptor >= 0)
+            {
+                Libc.Close(descriptor);
+            }
+        }
+    }
+
+    private static void StopQuietly(SystemdManager manager, string unit)
+    {
+        try
+        {
+            manager.StopUnit(unit);
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
+        {
+        }
+    }
+
+    private static string ResolveImage(int pid)
+    {
+        try
+        {
+            return File.ResolveLinkTarget(Path.Combine("/proc", pid.ToString(CultureInfo.InvariantCulture), "exe"), returnFinalTarget: false)?.FullName ?? ProcFs.Image(pid);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return ProcFs.Image(pid);
+        }
+    }
 
     /// <summary>True when attempt units can be frozen (<c>cgroup.freeze</c>) and the self-test passed (03 section 8 <c>pause</c>).</summary>
     internal bool Freezer => _freezer && _selfTest is null && _manager is not null;
@@ -522,6 +1025,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             new("MemoryAccounting", true),
             new("TasksAccounting", true),
         };
+        if (_hardening is { } hardening)
+        {
+            // AD-0007 section 8: only after the probe read it back as applied; each unit is read back again after its start.
+            properties.AddRange(hardening);
+        }
+
         foreach (var (resource, name) in (ReadOnlySpan<(int, string)>)[(Libc.RlimitCore, "LimitCORE"), (Libc.RlimitStack, "LimitSTACK")])
         {
             if (Libc.GetRLimit(resource, out var limit) == 0)

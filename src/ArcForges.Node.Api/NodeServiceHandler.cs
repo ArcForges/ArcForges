@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Grpc.Core;
 
@@ -20,12 +21,25 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
     private const string ServiceName = "arcforges.node.v1.NodeService";
     private readonly NodeRuntime _node;
     private readonly ClientSessions _sessions;
+    private readonly ApiCommands _api;
+    private readonly ClientImages _images;
 
     /// <summary>Creates the service over the running node.</summary>
     public NodeServiceHandler(NodeRuntime node, ClientSessions sessions)
+        : this(node, sessions, new ApprovalExecutors(), ClientImages.ForNode(testMode: false))
     {
+    }
+
+    /// <summary>Creates the service and registers how its approval-gated requests execute once approved.</summary>
+    internal NodeServiceHandler(NodeRuntime node, ClientSessions sessions, ApprovalExecutors executors, ClientImages images)
+    {
+        ArgumentNullException.ThrowIfNull(executors);
         _node = node ?? throw new ArgumentNullException(nameof(node));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        _images = images ?? throw new ArgumentNullException(nameof(images));
+        _api = new ApiCommands(node, sessions, ServiceName);
+        executors.Register<NodeServiceUpdateNodeSettingsRequest, NodeServiceUpdateNodeSettingsResponse>("NodeService.UpdateNodeSettings", PermissionMatrix.NodeSettings,
+            NodeServiceUpdateNodeSettingsRequest.Parser, UpdateNodeSettings);
     }
 
     /// <inheritdoc />
@@ -49,7 +63,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }
 
         var hello = request.Hello;
-        var origin = ClientSessions.AssignOrigin(hello);
+        var origin = _sessions.AssignOrigin(hello, peer!, _images);
         _sessions.Register(context, new ClientSession(peer!, hello.ClientKind, origin));
         var value = new NodeServiceHelloValue
         {
@@ -157,13 +171,20 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         var response = new NodeServiceRenameNodeResponse { Meta = Meta(request.Meta) };
-        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? (NodeName.IsValid(request.Name) ? null : NodeErrors.InvalidArgument("name: 1..64 chars; printable"))) is { } refused)
+        var caller = _api.CallerOf(context);
+        var gate = new GateRequest(PermissionMatrix.NodeRename, "NodeService.RenameNode", "rename the node to '" + request.Name + "'", "node");
+        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? (NodeName.IsValid(request.Name) ? null : NodeErrors.InvalidArgument("name: 1..64 chars; printable"));
+
+        // node.proto: HUMAN=A SCRIPT=A AGENT=D.
+        refused ??= await _api.DenyUnlessAllowedAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        if (refused is not null)
         {
             response.Error = refused;
             return response;
         }
 
-        return await Idempotent(request, request.Meta, context, "RenameNode", NodeServiceRenameNodeResponse.Parser,
+        // Review round 1: a privileged action (not ALLOW for every origin) is audited with its outcome.
+        return (await _api.IdempotentAsync(request, request.Meta, caller, "RenameNode", NodeServiceRenameNodeResponse.Parser,
             failure => new NodeServiceRenameNodeResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
             NodeName.Set(command.Transaction, request.Name);
@@ -173,7 +194,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
                 Meta = Meta(request.Meta),
                 Value = new NodeServiceRenameNodeValue { Node = _node.Info(command.Transaction) },
             };
-        }).ConfigureAwait(false);
+        }, gate).ConfigureAwait(false)).Response;
     }
 
     /// <inheritdoc />
@@ -196,10 +217,14 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
     }
 
     /// <inheritdoc />
-    public override async Task<NodeServiceUpdateNodeSettingsResponse> UpdateNodeSettings(NodeServiceUpdateNodeSettingsRequest request, ServerCallContext context)
+    public override Task<NodeServiceUpdateNodeSettingsResponse> UpdateNodeSettings(NodeServiceUpdateNodeSettingsRequest request, ServerCallContext context) =>
+        UpdateNodeSettings(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
+
+    /// <summary><c>UpdateNodeSettings</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
+    internal async Task<NodeServiceUpdateNodeSettingsResponse> UpdateNodeSettings(NodeServiceUpdateNodeSettingsRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(caller);
         var response = new NodeServiceUpdateNodeSettingsResponse { Meta = Meta(request.Meta) };
         var refused = Stopping() ?? Validation.CommandId(request.Meta);
         if (refused is null && request.HasLogLevel && !Enum.IsDefined(request.LogLevel))
@@ -207,12 +232,16 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             refused = NodeErrors.InvalidArgument("log_level: a LogLevel value");
         }
 
-        if (refused is null && request.HasTelemetryOptIn && _sessions.OriginOf(context) != Origin.Human)
+        if (refused is null && request.HasTelemetryOptIn && caller.Origin != Origin.Human)
         {
-            // node.proto: telemetry_opt_in "validate: HUMAN only".
+            // node.proto: telemetry_opt_in "validate: HUMAN only" (an approval does not lend it).
             refused = NodeErrors.PermissionDenied("UpdateNodeSettings.telemetry_opt_in (HUMAN only)");
         }
 
+        // node.proto: HUMAN=A SCRIPT=P AGENT=D.
+        var gate = new GateRequest(PermissionMatrix.NodeSettings, "NodeService.UpdateNodeSettings",
+            "change node settings" + (request.HasLogLevel ? " (log level " + request.LogLevel.ToString().ToLowerInvariant() + ")" : string.Empty), "node");
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
@@ -220,7 +249,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }
 
         long? expected = request.Meta.ExpectedRev is { HasValue: true } revision ? revision.Value : null;
-        return await Idempotent(request, request.Meta, context, "UpdateNodeSettings", NodeServiceUpdateNodeSettingsResponse.Parser,
+        return (await _api.IdempotentAsync(request, request.Meta, caller, "UpdateNodeSettings", NodeServiceUpdateNodeSettingsResponse.Parser,
             failure => new NodeServiceUpdateNodeSettingsResponse { Meta = Meta(request.Meta), Error = failure }, _ =>
         {
             var (settings, restart, error) = _node.Settings.Update(expected, request.HasLogLevel ? request.LogLevel : LogLevel.Unspecified,
@@ -237,7 +266,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             }
 
             return result;
-        }).ConfigureAwait(false);
+        }, gate).ConfigureAwait(false)).Response;
     }
 
     /// <inheritdoc />
@@ -257,6 +286,11 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             refused = NodeErrors.InvalidArgument("timeout_ms: 0..600 s");
         }
 
+        // 11 section 1: stop the node, HUMAN A, SCRIPT A, AGENT D.
+        var caller = _api.CallerOf(context);
+        var gate = new GateRequest(PermissionMatrix.NodeStop, "NodeService.StopNode", "stop the node", "node");
+        refused ??= await _api.DenyUnlessAllowedAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+
         if (refused is not null)
         {
             response.Error = refused;
@@ -264,7 +298,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }
 
         var reason = request.HasReason && request.Reason.Length > 0 ? request.Reason : "stop requested";
-        var result = await Idempotent(request, request.Meta, context, "StopNode", NodeServiceStopNodeResponse.Parser,
+        var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "StopNode", NodeServiceStopNodeResponse.Parser,
             failure => new NodeServiceStopNodeResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
             if (!_node.Lifecycle.IsStopping)
@@ -281,7 +315,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
                     Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
                 },
             };
-        }).ConfigureAwait(false);
+        }, gate).ConfigureAwait(false);
         if (result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
         {
             // The caller's free-text reason is not logged (it may carry anything); the log records that one was given and its length.
@@ -437,6 +471,11 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             }
         }
 
+        // node.proto: HUMAN=A SCRIPT=D AGENT=D.
+        var caller = _api.CallerOf(context);
+        var gate = new GateRequest(PermissionMatrix.NotificationsMarkRead, "NodeService.MarkNotificationsRead",
+            request.NotificationIds.Count > 0 ? $"mark {request.NotificationIds.Count} notification(s) read" : "mark notifications read up to a time", "notification");
+        refused ??= await _api.DenyUnlessAllowedAsync(caller, gate).ConfigureAwait(false);
         if (refused is not null)
         {
             response.Error = refused;
@@ -455,6 +494,9 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             response.Value = new NodeServiceMarkNotificationsReadValue { UnreadCount = unread.Value };
         }
 
+        // Review round 1: a privileged action (not ALLOW for every origin) is audited with its outcome.
+        await _api.AuditAsync(caller, gate, PermissionDecision.Allow,
+            response.Error is { } error ? $"failed ({error.Category}/{error.Code}): {gate.Summary}" : "done: " + gate.Summary).ConfigureAwait(false);
         return response;
     }
 

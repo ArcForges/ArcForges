@@ -85,6 +85,11 @@ internal static class SystemdTestEnvironment
         return (process.ExitCode, output.Result + error.Result);
     }
 
+    /// <summary>The user manager's systemd version (<c>systemctl --user show -P Version</c>), or 0.</summary>
+    public static int ManagerVersion() =>
+        int.TryParse(Systemctl("show", "-P", "Version").Output.Trim().Split(' ', '.', '-', '~')[0], System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var version) ? version : 0;
+
     /// <summary>A unit property (<c>systemctl --user show -P</c>), or empty.</summary>
     public static string Property(string unit, string property) => Systemctl("show", "-P", property, unit).Output.Trim();
 

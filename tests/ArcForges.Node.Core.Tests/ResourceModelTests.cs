@@ -28,6 +28,44 @@ public sealed class ResourceModelTests
     }
 
     [Fact]
+    public void ARootBudgetFallAppliesAtOnceARiseWaitsForTheIntervalAndSmallChangesAreIgnored()
+    {
+        // 03 section 5.1 as amended by L-31: a change counts above 5% of capacity; a fall applies at once, a rise at most every 10 s.
+        var capacity = (Cpu: 8_000L, Memory: 16 * GiB);
+        var applied = (Cpu: 6_000L, Memory: 10 * GiB);
+        var fiveCpu = capacity.Cpu / 20;
+        var fiveMemory = capacity.Memory / 20;
+
+        // A fall of more than 5%: applied at once, also before the interval; only the fallen dimension moves.
+        Assert.Equal((4_800L, 10 * GiB), ExecutionSupervisor.NextRootBudget(applied, (4_800, 10 * GiB), capacity, due: false, force: false));
+        Assert.Equal((6_000L, 8 * GiB), ExecutionSupervisor.NextRootBudget(applied, (6_000, 8 * GiB), capacity, due: false, force: false));
+        Assert.Equal((4_800L, 10 * GiB), ExecutionSupervisor.NextRootBudget(applied, (4_800, 12 * GiB), capacity, due: false, force: false));
+
+        // A rise of more than 5%: waits for the interval, then applies.
+        Assert.Null(ExecutionSupervisor.NextRootBudget(applied, (7_200, 10 * GiB), capacity, due: false, force: false));
+        Assert.Null(ExecutionSupervisor.NextRootBudget(applied, (6_000, 12 * GiB), capacity, due: false, force: false));
+        Assert.Equal((7_200L, 10 * GiB), ExecutionSupervisor.NextRootBudget(applied, (7_200, 10 * GiB), capacity, due: true, force: false));
+        Assert.Equal((4_800L, 12 * GiB), ExecutionSupervisor.NextRootBudget(applied, (4_800, 12 * GiB), capacity, due: true, force: false));
+
+        // Changes of at most 5% are ignored in both directions, due or not.
+        foreach (var due in (bool[])[false, true])
+        {
+            Assert.Null(ExecutionSupervisor.NextRootBudget(applied, (applied.Cpu - fiveCpu, applied.Memory), capacity, due, force: false));
+            Assert.Null(ExecutionSupervisor.NextRootBudget(applied, (applied.Cpu + fiveCpu, applied.Memory), capacity, due, force: false));
+            Assert.Null(ExecutionSupervisor.NextRootBudget(applied, (applied.Cpu, applied.Memory - fiveMemory), capacity, due, force: false));
+            Assert.Null(ExecutionSupervisor.NextRootBudget(applied, (applied.Cpu, applied.Memory + fiveMemory), capacity, due, force: false));
+        }
+
+        // Just above 5% counts.
+        Assert.Equal((applied.Cpu - fiveCpu - 1, applied.Memory),
+            ExecutionSupervisor.NextRootBudget(applied, (applied.Cpu - fiveCpu - 1, applied.Memory), capacity, due: false, force: false));
+
+        // Entering Tight forces any change at once, a small rise included; no change is nothing to apply.
+        Assert.Equal((6_100L, 10 * GiB), ExecutionSupervisor.NextRootBudget(applied, (6_100, 10 * GiB), capacity, due: false, force: true));
+        Assert.Null(ExecutionSupervisor.NextRootBudget(applied, applied, capacity, due: false, force: true));
+    }
+
+    [Fact]
     public void TheDefaultReservesAndBudgetsFollowTheDesignExample()
     {
         // 03 section 2: 16 logical processors and 32 GiB give R_cpu = 2,600 and R_mem = 5.2 GiB; D-04 shows the managed share 26.8 GiB.
