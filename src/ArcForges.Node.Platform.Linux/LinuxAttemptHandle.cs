@@ -61,6 +61,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     private volatile bool _signalled = true;
     private long _lastStateRead = long.MinValue;
     private long _vanishedAt = long.MinValue;
+    private int _launchWatchable;
     private bool _disposed;
 
     private LinuxAttemptHandle(LinuxExecutionPlatform platform, AttemptFiles files, Stream? stdinWriter)
@@ -73,6 +74,9 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
 
     /// <inheritdoc />
     public event Action? Changed;
+
+    /// <inheritdoc />
+    public event Action<int>? LaunchProcessEntered;
 
     /// <summary>The attempt's files.</summary>
     public AttemptFiles Files { get; }
@@ -210,6 +214,9 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         {
             handle._launchFinished = true;
             handle._started.TrySetResult(handle._root);
+
+            // Not being stopped, and not started yet: a stop may come later, and its forced phase reads the unit's start job then (WatchLaunch).
+            handle._launchWatchable = !stopping && handle._root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath) ? 1 : 0;
         }
 
         if (state.ActiveState == "failed" && !File.Exists(files.ExitPath))
@@ -218,6 +225,42 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         }
 
         return handle;
+    }
+
+    /// <inheritdoc />
+    public bool WatchLaunch()
+    {
+        if (Interlocked.Exchange(ref _launchWatchable, 0) == 0 || _disposed || Root is not null || File.Exists(Files.ExitPath) || File.Exists(Files.LaunchPath))
+        {
+            return false;
+        }
+
+        string? job;
+        try
+        {
+            job = _platform.Manager.PendingStartJob(Unit);
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException)
+        {
+            return false;
+        }
+
+        if (job is null)
+        {
+            // Started meanwhile (the forced phase ends its cgroup), or nothing left to start.
+            return false;
+        }
+
+        // As for a stop's re-open: no bound and no launch record, since the unit can start at any time. The root it starts is the late start.
+        _ = Task.Run(() =>
+        {
+            AwaitStart(job, Timeout.InfiniteTimeSpan, recordUnstarted: false);
+            if (Root is { } root)
+            {
+                LaunchProcessEntered?.Invoke(root.Pid);
+            }
+        });
+        return true;
     }
 
     /// <inheritdoc />

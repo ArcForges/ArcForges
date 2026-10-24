@@ -249,9 +249,11 @@ public interface IAttemptHandle : IDisposable
     Task<RootProcess?> Started { get; }
 
     /// <summary>
-    /// Raised (on a platform thread, with the process ID) for each process that enters the container of a handle re-opened for a stop while
-    /// the launch may still go on, until a launch or exit record exists: on Windows the only sign that a launch the node no longer controls went
-    /// on, since <see cref="Started"/> completes on the first such process only. Other handles never raise it.
+    /// Raised (on a platform thread, with the process ID) when a launch the node no longer controls goes on, in a handle re-opened while the
+    /// launch may still go on (no root recorded, no launch or exit record), until a launch or exit record exists. Windows: each process that
+    /// enters the job, the only sign that the launch went on, since <see cref="Started"/> completes on the first such process only (a stop) or
+    /// at once (any other re-open). Linux: the unit's main process, once the queued start job that <see cref="WatchLaunch"/> found completed.
+    /// Other handles never raise it.
     /// </summary>
     event Action<int>? LaunchProcessEntered
     {
@@ -263,6 +265,15 @@ public interface IAttemptHandle : IDisposable
         {
         }
     }
+
+    /// <summary>
+    /// Called by every forced phase before its termination, once it subscribed to <see cref="LaunchProcessEntered"/>. True when the handle was
+    /// re-opened after a node restart for an attempt the node was not stopping (its <see cref="Started"/> completed at once), while its launch
+    /// may still go on (no root recorded, no launch or exit record), and now reports that launch through <see cref="LaunchProcessEntered"/>:
+    /// Windows, every process that enters the job; Linux, the unit's queued start job read now (<c>PendingStartJob</c>), false when none waits.
+    /// Every other handle returns false, a handle re-opened for a stop included (its <see cref="Started"/> awaits the launch). Never throws.
+    /// </summary>
+    bool WatchLaunch() => false;
 
     /// <summary>The write end of a STREAM stdin pipe.</summary>
     Stream? StdinWriter { get; }
@@ -416,7 +427,8 @@ public interface IExecutionPlatform : IDisposable
     /// <summary>
     /// Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone. With <paramref name="stopping"/>
     /// (the node continues the attempt's stop) a launch that may still go on (no root recorded, no launch or exit record) is awaited:
-    /// <see cref="IAttemptHandle.Started"/> completes when it continues. Otherwise the start completes at once with <paramref name="root"/>.
+    /// <see cref="IAttemptHandle.Started"/> completes when it continues. Otherwise the start completes at once with <paramref name="root"/>, and
+    /// a forced phase that stops the attempt later still sees such a launch go on (<see cref="IAttemptHandle.WatchLaunch"/>).
     /// </summary>
     IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false);
 

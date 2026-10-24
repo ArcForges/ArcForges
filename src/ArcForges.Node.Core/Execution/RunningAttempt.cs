@@ -153,8 +153,9 @@ public sealed class RunningAttempt : IDisposable
     internal bool Forced { get; set; }
 
     /// <summary>
-    /// A forced phase ran while the attempt's start was pending: one more termination is owed to the late start, made by the start's
-    /// continuation or by a verification that finds the late start in the container first (<c>ExecutionSupervisor.TerminateWhenStarted</c>).
+    /// A forced phase ran while the attempt's start was pending, or while its re-opened handle watched a launch that may still go on: one more
+    /// termination is owed to the late start, made by the start's continuation (or the handle's report) or by a verification that finds the
+    /// late start in the container first (<c>ExecutionSupervisor.TerminateWhenStarted</c>, <c>TerminateEachLaunchProcess</c>).
     /// </summary>
     internal bool TerminationOwed { get; set; }
 

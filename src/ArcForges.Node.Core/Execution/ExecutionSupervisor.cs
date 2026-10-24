@@ -349,7 +349,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var root = row.RootPid is { } pid && row.RootStart is { } start ? new RootProcess(pid, StoreTime.FromMicroseconds(start)) : null;
 
             // The node was stopping it: the stop continues below, and a launch the node no longer controls may still start the command, so the
-            // platform awaits that start (only then: any other recovered attempt is re-opened as before).
+            // platform awaits that start (only then: any other recovered attempt completes its start at once, and a forced phase that stops it
+            // later watches such a launch, TerminateEachLaunchProcess).
             var stopping = row.State == AttemptState.Stopping && row.Reason is null;
             IAttemptHandle? handle = null;
             try
@@ -873,7 +874,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// The debt is settled by either, and by a start that completes without a root (the launch failed or was stopped). Nothing creates it again,
     /// because an attempt is forced once. So a start that never completes (a holder that never resumes, a unit whose start never runs) costs
     /// nothing and loops nowhere, and a process that survives the terminations is still recorded TERMINATION_INCOMPLETE, at most one window
-    /// later. Each process that enters a container re-opened for a stop is terminated at once too, whether or not the start was pending
+    /// later. Each process that enters a re-opened container is terminated at once too, whether or not the start was pending
     /// (<see cref="TerminateEachLaunchProcess"/>). Every termination counts the verification window anew. Nothing is terminated after the node began to stop (it released the
     /// handles), once the attempt is being recorded or no longer supervised, or through a handle disposed meanwhile.
     /// </summary>
@@ -909,11 +910,14 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     /// <summary>
     /// Every forced phase, before its termination (the caller holds the attempt's lock): each process reported to enter the container afterwards
-    /// (<see cref="IAttemptHandle.LaunchProcessEntered"/>, raised only by a handle re-opened for a stop while its launch may still go on) is
-    /// terminated at once, whether or not the start was still pending. Such a handle's start completes on the first process that enters,
-    /// possibly a launch step that ended before the forced phase; the holder's next process can then enter after the termination with nothing
-    /// owed to it. Subscribed before the termination, so none that enters after it is missed, and once per attempt (a termination that threw
-    /// is retried by the next pass).
+    /// (<see cref="IAttemptHandle.LaunchProcessEntered"/>, raised only by a handle re-opened after a restart while its launch may still go on)
+    /// is terminated at once, whether or not the start was still pending. A handle re-opened for a stop completes its start on the first
+    /// process that enters, possibly a launch step that ended before the forced phase; the holder's next process can then enter after the
+    /// termination with nothing owed to it. A handle re-opened for an attempt the node was not stopping completed its start at once, so the
+    /// forced phase arms it here (<see cref="IAttemptHandle.WatchLaunch"/>): when it now watches a launch that may still go on, one more
+    /// termination is owed to that late start (<see cref="RunningAttempt.TerminationOwed"/>), made by its first report or by a verification
+    /// that finds it first, as in <see cref="TerminateWhenStarted"/>. Subscribed before the termination, so none that enters after it is
+    /// missed, and once per attempt (a termination that threw is retried by the next pass).
     /// </summary>
     private void TerminateEachLaunchProcess(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
@@ -924,9 +928,16 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         attempt.LaunchProcessesWatched = true;
         handle.LaunchProcessEntered += entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
+        if (handle.WatchLaunch())
+        {
+            attempt.TerminationOwed = true;
+        }
     }
 
-    /// <summary>The owed termination of a late start (<see cref="TerminateWhenStarted"/>); takes the attempt's lock.</summary>
+    /// <summary>
+    /// The owed termination of a late start (<see cref="TerminateWhenStarted"/>), or of a process that entered a re-opened container
+    /// (<see cref="TerminateEachLaunchProcess"/>); takes the attempt's lock.
+    /// </summary>
     private void TerminateAgain(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
         lock (attempt)
