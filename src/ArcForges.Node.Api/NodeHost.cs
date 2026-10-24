@@ -85,6 +85,19 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Func<Task>? VersionFindingCommitting { get; init; }
 
+    /// <summary>
+    /// Test seam, set only by in-process component tests: the node evaluates its budgets and pressure as if it were alone on the machine
+    /// (<see cref="ArcForges.Node.Core.Resources.MachineIsolation"/>). The executable never sets it: <c>ServeAsync</c> isolates the node
+    /// also when this is false and the process runs with <c>--test-mode</c> and <c>ARCFORGES_TEST_MACHINE=isolated</c>.
+    /// </summary>
+    internal bool IsolatedFromMachineLoad { get; init; }
+
+    /// <summary>
+    /// Test seam, set only by in-process component tests: wraps the platform's resource sampler, so a test can script the machine-wide
+    /// figures over the real sampler's (a busy machine without creating the load). The executable never sets it.
+    /// </summary>
+    internal Func<IResourceSampler, IResourceSampler>? WrapSampler { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -258,6 +271,17 @@ public static class NodeHost
             heartbeat.Renewed = () => notifier.Notify("WATCHDOG=1");
             log.Info("node.watchdog", new LogField("intervalMs", (long)watchdogInterval.TotalMilliseconds));
         }
+        var isolated = options.IsolatedFromMachineLoad || ArcForges.Node.Core.Resources.MachineIsolation.FromEnvironment(options.TestMode);
+        if (isolated)
+        {
+            log.Info("node.machine_isolated", new LogField("detail", "test hook: budgets and pressure see only this node and its attempts on the machine"));
+        }
+
+        var sampler = CreateSampler();
+        if (sampler is not null && options.WrapSampler is { } wrap)
+        {
+            sampler = wrap(sampler);
+        }
         var execution = new ExecutionSupervisor(new ExecutionOptions
         {
             Store = store,
@@ -273,7 +297,8 @@ public static class NodeHost
             Faults = faults,
             Heartbeat = heartbeat,
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
-            Sampler = CreateSampler(),
+            Sampler = sampler,
+            IsolatedFromMachineLoad = isolated,
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {

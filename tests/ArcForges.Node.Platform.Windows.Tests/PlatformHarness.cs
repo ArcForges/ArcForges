@@ -141,21 +141,27 @@ internal sealed partial class PlatformHarness : IDisposable
     }
 
     /// <summary>Waits for <paramref name="condition"/> (bounded).</summary>
-    public static void WaitFor(Func<bool> condition, TimeSpan timeout, string what)
+    public static void WaitFor(Func<bool> condition, TimeSpan timeout, string what) => WaitFor(condition, timeout, () => what);
+
+    /// <summary>Waits for <paramref name="condition"/> (bounded); <paramref name="what"/> is read only when the wait fails.</summary>
+    public static void WaitFor(Func<bool> condition, TimeSpan timeout, Func<string> what)
     {
         var watch = Stopwatch.StartNew();
         while (!condition())
         {
             if (watch.Elapsed > timeout)
             {
-                throw new TimeoutException($"Timed out after {timeout.TotalSeconds:0.#} s waiting for {what}.");
+                throw new TimeoutException($"Timed out after {timeout.TotalSeconds:0.#} s waiting for {what()}.");
             }
 
             Thread.Sleep(20);
         }
     }
 
-    /// <summary>The lines of a marker file written by <c>arcforges-testload signal</c>: (event, pid, unix ms).</summary>
+    /// <summary>
+    /// The lines of a marker file written by <c>arcforges-testload signal</c>: (event, pid, unix ms). Only records ended by their newline
+    /// count: a read concurrent with an append never takes a partly written line (such as <c>close 1234 </c>) for a record.
+    /// </summary>
     public static List<(string Event, int Pid, long At)> Marker(string path)
     {
         if (!File.Exists(path))
@@ -165,7 +171,8 @@ internal sealed partial class PlatformHarness : IDisposable
 
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
-        return [.. reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        var text = reader.ReadToEnd();
+        return [.. text[..(text.LastIndexOf('\n') + 1)].Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Split(' '))
             .Where(parts => parts.Length == 3)
             .Select(parts => (parts[0], int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture), long.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)))];
@@ -177,6 +184,16 @@ internal sealed partial class PlatformHarness : IDisposable
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
+    }
+
+    /// <summary>The class names of the top-level windows (visible or hidden) of process <paramref name="pid"/>.</summary>
+    public static List<string> WindowClasses(int pid) =>
+        [.. GuiWindows.TopLevelWindows().Where(window => window.ProcessId == pid).Select(window => ClassName(window.Window))];
+
+    private static unsafe string ClassName(nint window)
+    {
+        var name = stackalloc char[256];
+        return new string(name, 0, GetClassName(window, name, 256));
     }
 
     /// <summary>The identity of an attempt's root process (it was alive at its recorded start).</summary>
@@ -268,6 +285,9 @@ internal sealed partial class PlatformHarness : IDisposable
     /// <summary>Sets this process's error mode, which the processes it creates inherit; returns the previous mode.</summary>
     [LibraryImport("kernel32.dll")]
     internal static partial uint SetErrorMode(uint mode);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetClassNameW")]
+    private static unsafe partial int GetClassName(nint window, char* name, int length);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -7,6 +7,7 @@ using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
@@ -71,6 +72,35 @@ internal sealed class InProcessNode : IAsyncDisposable
 
     /// <summary>The version directory whose digests the node verifies after startup (default: the directory of the helper executable).</summary>
     public string? VersionDirectory { get; set; }
+
+    /// <summary>
+    /// The node evaluates its budgets and pressure from the live machine (03 sections 2 and 7), with every other test's load counted as
+    /// unmanaged. False (the default): it sees only itself and its attempts on the machine (<c>MachineIsolation</c>), so what runs beside the
+    /// test cannot change its budgets, root limits, AUTO parallelism or pressure level. Only a test of the measured budgets or of pressure
+    /// sets it, and such a test is <c>isolation=exclusive</c>.
+    /// </summary>
+    public bool LiveMachine { get; set; }
+
+    /// <summary>Sets <see cref="LiveMachine"/>.</summary>
+    public InProcessNode WithLiveMachine()
+    {
+        LiveMachine = true;
+        return this;
+    }
+
+    /// <summary>
+    /// A script over the real sampler's machine samples (<c>NodeHostOptions.WrapSampler</c>): the node reads the machine-wide figures it
+    /// returns, while processes, attempt containers and the node's own figures stay real. A test seam for a machine state (a saturated
+    /// machine) that the test then need not create; null reads the machine as it is.
+    /// </summary>
+    public Func<MachineSample, MachineSample>? MachineScript { get; set; }
+
+    /// <summary>Sets <see cref="MachineScript"/>.</summary>
+    public InProcessNode WithMachineScript(Func<MachineSample, MachineSample> script)
+    {
+        MachineScript = script;
+        return this;
+    }
 
     /// <summary>Awaited before the version check's mismatch finding is committed (the node's test seam; a test holds or fails the commit).</summary>
     public Func<Task>? VersionFindingCommitting { get; set; }
@@ -143,6 +173,8 @@ internal sealed class InProcessNode : IAsyncDisposable
             LinuxControllers = LinuxControllers,
             VersionDirectory = VersionDirectory,
             VersionFindingCommitting = VersionFindingCommitting,
+            IsolatedFromMachineLoad = !LiveMachine,
+            WrapSampler = MachineScript is { } script ? sampler => new ScriptedMachineSampler(sampler, script) : null,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;
@@ -327,4 +359,22 @@ internal sealed class InProcessNode : IAsyncDisposable
             ("$created", createdAt));
         return id;
     }
+}
+
+/// <summary>The real sampler with its machine samples passed through a test's script (<see cref="InProcessNode.MachineScript"/>).</summary>
+internal sealed class ScriptedMachineSampler(IResourceSampler inner, Func<MachineSample, MachineSample> script) : IResourceSampler
+{
+    public string Name => inner.Name + " (scripted machine)";
+
+    public bool MachineIoFromProcesses => inner.MachineIoFromProcesses;
+
+    public MachineSample Machine() => script(inner.Machine());
+
+    public IReadOnlyList<ProcessSample> Processes() => inner.Processes();
+
+    public ProcessSample Detail(ProcessSample process) => inner.Detail(process);
+
+    public bool IsVmWorker(string image) => inner.IsVmWorker(image);
+
+    public bool IsVmLauncher(string image) => inner.IsVmLauncher(image);
 }
