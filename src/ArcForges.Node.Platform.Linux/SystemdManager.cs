@@ -74,6 +74,9 @@ public sealed class SystemdManager : IDisposable
     /// <summary>The service interface.</summary>
     public const string ServiceInterface = "org.freedesktop.systemd1.Service";
 
+    /// <summary>The job interface.</summary>
+    public const string JobInterface = "org.freedesktop.systemd1.Job";
+
     /// <summary>The error of a unit that is not loaded.</summary>
     public const string NoSuchUnit = "org.freedesktop.systemd1.NoSuchUnit";
 
@@ -278,7 +281,10 @@ public sealed class SystemdManager : IDisposable
         });
     }
 
-    /// <summary>Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout.</summary>
+    /// <summary>
+    /// Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout. Once the manager
+    /// is disposed the wait ends with the cancellation of <see cref="Dispose"/> (an <see cref="AggregateException"/>).
+    /// </summary>
     public string? WaitJob(string job, TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(job);
@@ -286,6 +292,12 @@ public sealed class SystemdManager : IDisposable
         if (_finishedJobs.TryRemove(job, out var finished))
         {
             waiter.TrySetResult(finished.Result);
+        }
+
+        if (Interlocked.CompareExchange(ref _disposed, 0, 0) != 0)
+        {
+            // Added after Dispose cancelled the waiters (the node stopped meanwhile): nothing would end an unbounded wait.
+            waiter.TrySetCanceled();
         }
 
         try
@@ -343,6 +355,40 @@ public sealed class SystemdManager : IDisposable
         }
         catch (DBusErrorReplyException exception) when (exception.ErrorName is NoSuchUnit or "org.freedesktop.DBus.Error.UnknownObject")
         {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The object path of the unit's queued start job (<c>Unit.Job</c>, of type <c>start</c>), or null when it has none, is not loaded, or
+    /// the manager does not answer.
+    /// </summary>
+    public string? PendingStartJob(string name)
+    {
+        try
+        {
+            var path = GetUnit(name);
+            if (path is null)
+            {
+                return null;
+            }
+
+            return Run<string?>(async () =>
+            {
+                var job = await GetAsync(path, UnitInterface, "Job").ConfigureAwait(false);
+                if (job.GetItem(0).GetUInt32() == 0)
+                {
+                    return null;
+                }
+
+                var jobPath = job.GetItem(1).GetObjectPathAsString();
+                var type = await GetAsync(jobPath, JobInterface, "JobType").ConfigureAwait(false);
+                return type.GetString() == "start" ? jobPath : null;
+            });
+        }
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
+        {
+            // Gone meanwhile (the job finished, the unit was unloaded), or no answer: no start job to wait for.
             return null;
         }
     }

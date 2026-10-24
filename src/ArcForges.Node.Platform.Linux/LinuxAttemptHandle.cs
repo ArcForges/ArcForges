@@ -160,7 +160,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
                 throw;
             }
 
-            _ = Task.Run(() => handle.AwaitStart(job));
+            _ = Task.Run(() => handle.AwaitStart(job, TimeSpan.FromSeconds(90), recordUnstarted: true));
             writer = null;
             return handle;
         }
@@ -178,8 +178,8 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         }
     }
 
-    /// <summary>Re-opens a recovered attempt's unit by name, or null when it is gone.</summary>
-    internal static LinuxAttemptHandle? Reopen(LinuxExecutionPlatform platform, AttemptFiles files, RootProcess? root)
+    /// <summary>Re-opens a recovered attempt's unit by name, or null when it is gone (<see cref="IExecutionPlatform.Reopen"/>).</summary>
+    internal static LinuxAttemptHandle? Reopen(LinuxExecutionPlatform platform, AttemptFiles files, RootProcess? root, bool stopping)
     {
         var handle = new LinuxAttemptHandle(platform, files, null);
         var manager = platform.Manager;
@@ -197,9 +197,21 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         }
 
         handle._root = root ?? RootOf(state);
-        handle._launchFinished = true;
-        handle._started.TrySetResult(handle._root);
         handle._watch = manager.WatchUnit(SystemdManager.UnitPath(handle.Unit), handle.OnUnitChanged);
+        if (stopping && handle._root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath)
+            && manager.PendingStartJob(handle.Unit) is { } job)
+        {
+            // The node stopped before the user manager started the unit of an attempt it was stopping (its start job still waits): the
+            // command may still start, and Started completes once the job ends. No bound and no launch record: the unit can start at any
+            // time, and the stop's verification and records apply once it did.
+            _ = Task.Run(() => handle.AwaitStart(job, Timeout.InfiniteTimeSpan, recordUnstarted: false));
+        }
+        else
+        {
+            handle._launchFinished = true;
+            handle._started.TrySetResult(handle._root);
+        }
+
         if (state.ActiveState == "failed" && !File.Exists(files.ExitPath))
         {
             handle.RecordFromUnit(state);
@@ -516,12 +528,16 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         return state.ExecMainStartUs > 0 ? new RootProcess(pid, DateTimeOffset.UnixEpoch.AddTicks((long)state.ExecMainStartUs * 10)) : null;
     }
 
-    private void AwaitStart(string job)
+    /// <summary>
+    /// Waits (up to <paramref name="bound"/>) for the unit's start job and completes <see cref="Started"/>. With
+    /// <paramref name="recordUnstarted"/> a job that did not end <c>done</c> leaves a launch record (a launched attempt).
+    /// </summary>
+    private void AwaitStart(string job, TimeSpan bound, bool recordUnstarted)
     {
         RootProcess? root = null;
         try
         {
-            var result = _platform.Manager.WaitJob(job, TimeSpan.FromSeconds(90));
+            var result = _platform.Manager.WaitJob(job, bound);
             if (result == "done" && _platform.Manager.State(Unit) is { } state)
             {
                 _lastState = state;
@@ -544,7 +560,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
                     }
                 }
             }
-            else if (!File.Exists(Files.LaunchPath) && result != "done")
+            else if (recordUnstarted && !File.Exists(Files.LaunchPath) && result != "done")
             {
                 HelperFiles.WriteAtomically(Files.LaunchPath, new LaunchRecord
                 {
@@ -555,9 +571,11 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
                 }.ToJson());
             }
         }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException)
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException
+            || (!recordUnstarted && exception is AggregateException))
         {
-            // The unit's own record (exit.json, launch.json) still finalizes the attempt.
+            // The unit's own record (exit.json, launch.json) still finalizes the attempt. An unbounded wait ends this way when the manager
+            // connection closes (the node stops).
         }
 
         Volatile.Write(ref _root, root);
