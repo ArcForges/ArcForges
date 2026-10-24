@@ -98,6 +98,12 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Func<IResourceSampler, IResourceSampler>? WrapSampler { get; init; }
 
+    /// <summary>
+    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it right after a stop's forced
+    /// phase terminated an attempt whose start had not completed (<c>ExecutionOptions.ForcedBeforeStart</c>). The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle>? ForcedBeforeStart { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -299,6 +305,7 @@ public static class NodeHost
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
             Sampler = sampler,
             IsolatedFromMachineLoad = isolated,
+            ForcedBeforeStart = options.ForcedBeforeStart,
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {

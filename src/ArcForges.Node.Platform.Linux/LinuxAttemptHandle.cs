@@ -197,9 +197,19 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         }
 
         handle._root = root ?? RootOf(state);
-        handle._launchFinished = true;
-        handle._started.TrySetResult(handle._root);
         handle._watch = manager.WatchUnit(SystemdManager.UnitPath(handle.Unit), handle.OnUnitChanged);
+        if (handle._root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath) && manager.PendingStartJob(handle.Unit) is { } job)
+        {
+            // The node stopped before the user manager started the unit (its start job still waits): the command may still start, and
+            // Started completes once it did, as for a launched attempt.
+            _ = Task.Run(() => handle.AwaitStart(job));
+        }
+        else
+        {
+            handle._launchFinished = true;
+            handle._started.TrySetResult(handle._root);
+        }
+
         if (state.ActiveState == "failed" && !File.Exists(files.ExitPath))
         {
             handle.RecordFromUnit(state);

@@ -239,7 +239,11 @@ public interface IAttemptHandle : IDisposable
     /// <summary>The root process once known.</summary>
     RootProcess? Root { get; }
 
-    /// <summary>Completes once the root process runs (its identity), or with <see langword="null"/> when the launch failed.</summary>
+    /// <summary>
+    /// Completes once the root process runs (its identity), or with <see langword="null"/> when the launch failed. A handle re-opened after a
+    /// node restart completes it at once with the recorded root, unless the launch may still go on (no root recorded, no launch or exit
+    /// record): it then completes once the platform sees the launch continue, or when the handle is disposed.
+    /// </summary>
     Task<RootProcess?> Started { get; }
 
     /// <summary>The write end of a STREAM stdin pipe.</summary>

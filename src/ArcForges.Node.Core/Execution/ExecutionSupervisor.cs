@@ -65,6 +65,13 @@ public sealed class ExecutionOptions
 
     /// <summary>Test seam: the resource monitor evaluates as if this node were alone on the machine (<see cref="MachineIsolation"/>).</summary>
     internal bool IsolatedFromMachineLoad { get; init; }
+
+    /// <summary>
+    /// Test seam (fault injection, 16-testing-strategy section 1), set only by in-process component tests: called on the thread of a
+    /// stop's forced phase right after it terminated an attempt whose start had not completed, before the supervisor arranges the
+    /// termination that follows the start, so a test can complete the start exactly there. The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle>? ForcedBeforeStart { get; init; }
 }
 
 /// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
@@ -168,6 +175,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly Task _keysReady;
     private readonly ILaunchStepProvider? _steps;
     private readonly ExecutionFaults _faults;
+    private readonly Action<IAttemptHandle>? _forcedBeforeStart;
     private readonly ConcurrentDictionary<string, RunningAttempt> _running = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, AsyncPulse> _taskPulses = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CallerKey> _bindings = new(StringComparer.Ordinal);
@@ -206,6 +214,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _keysReady = options.KeysReady;
         _steps = options.Steps;
         _faults = options.Faults;
+        _forcedBeforeStart = options.ForcedBeforeStart;
         Unenforced = options.Unenforced;
         Heartbeat = options.Heartbeat;
         NodeName = IdText.Format(_store.Metadata.NodeId.Span);
@@ -398,7 +407,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
             if (row.State == AttemptState.Stopping && row.Reason is null)
             {
-                // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed).
+                // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed). The node may have
+                // stopped in the middle of the launch: a start that completes after the forced phase is terminated again (Enforce).
                 running.StopReason = TerminationReason.Cancelled;
                 running.GraceDeadline = _clock.GetTimestamp();
             }
@@ -813,17 +823,30 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     /// <summary>
     /// The forced phase of a stop (the caller holds the attempt's lock): the container is terminated at once, which also ends a launch step
-    /// that runs in it. While the command is still being started (no root yet) the container may still be empty, and the holder or the unit
-    /// may start the command afterwards; so when the start completes with a root, the container is terminated again, and the verification
-    /// window counts from that last termination. Nothing is terminated after the node began to stop (it released the handles).
+    /// that runs in it. While the command is still being started the container may still be empty, and the holder or the unit may start the
+    /// command afterwards; so when the start had not completed before the termination, the container is terminated again once the start
+    /// completes with a root (<see cref="TerminateWhenStarted"/>), and the verification window counts from that last termination.
     /// </summary>
     private void ForceWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
-        if (!Force(attempt, handle, reason) || handle.Root is not null || handle.Started.IsCompleted)
+        // Read before the termination: a start that completed before it is ended by it; any later one is ended again.
+        var startPending = !handle.Started.IsCompleted;
+        if (Force(attempt, handle, reason) && startPending)
         {
-            return;
+            TerminateWhenStarted(attempt, handle, reason);
         }
+    }
 
+    /// <summary>
+    /// After a forced phase (the termination, or a limit stop) that ran while the attempt's start had not completed: terminates the attempt
+    /// again once the start completes with a root (the caller holds the attempt's lock). The continuation is registered after the
+    /// termination whatever the start did meanwhile, and runs at once when the start already completed, so no interleaving of the start
+    /// with the termination lets the command run on past the stop. Nothing is terminated after the node began to stop (it released the
+    /// handles), once the attempt is being recorded or no longer supervised, or through a handle disposed meanwhile.
+    /// </summary>
+    private void TerminateWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        _forcedBeforeStart?.Invoke(handle);
         _ = handle.Started.ContinueWith(started =>
         {
             if (!started.IsCompletedSuccessfully || started.Result is null)
@@ -911,6 +934,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             ScanEscaped(attempt, attempt.Handle);
             if (!graceful || attempt.Handle.Root is null)
             {
+                // A limit stop is a forced phase too: read before it, as in ForceWhenStarted.
+                var startPending = !attempt.Handle.Started.IsCompleted;
                 if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit or TerminationReason.Preempted)
                 {
                     var how = attempt.Handle.StopAtLimit();
@@ -927,6 +952,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 attempt.Forced = true;
                 attempt.VerifyDeadline = _clock.GetTimestamp() + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
                 _loopWake.Pulse();
+                if (startPending)
+                {
+                    TerminateWhenStarted(attempt, attempt.Handle, reason);
+                }
+
                 return;
             }
         }
@@ -1459,12 +1489,19 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         lock (attempt)
         {
             var now = _clock.GetTimestamp();
-            if (attempt.StopReason is not null && !attempt.Forced && attempt.GraceDeadline is { } grace && now >= grace)
+            if (attempt.StopReason is { } stopReason && !attempt.Forced && attempt.GraceDeadline is { } grace && now >= grace)
             {
+                // The forced phase after the grace period. A STOPPING attempt recovered after a node restart gets here at once, possibly in the
+                // middle of its launch (its handle's start still pending): read before the termination, as in ForceWhenStarted.
+                var startPending = !handle.Started.IsCompleted;
                 handle.Terminate();
-                TerminateEscaped(attempt, attempt.StopReason.Value);
+                TerminateEscaped(attempt, stopReason);
                 attempt.Forced = true;
                 attempt.VerifyDeadline = now + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
+                if (startPending)
+                {
+                    TerminateWhenStarted(attempt, handle, stopReason);
+                }
             }
             else if (attempt.Forced && attempt.VerifyDeadline is { } verify && now >= verify && handle.Accounting().ActiveProcesses > 0)
             {

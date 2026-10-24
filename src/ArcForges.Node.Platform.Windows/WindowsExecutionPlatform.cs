@@ -489,6 +489,13 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
 
         var key = (nuint)Interlocked.Increment(ref _nextKey);
         var handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
+        if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
+        {
+            // The node stopped in the middle of the launch: the holder may still start a launch step or the command. Before the port is
+            // associated, so no process that enters the job afterwards is missed.
+            handle.AwaitLaunch();
+        }
+
         _attempts[key] = handle;
         job.AssociateCompletionPort(_port, key, clearFirst: true);
         var ack = Native.OpenEvent(Native.EventModifyState | Native.Synchronize, inherit: false, AckName(nodeName, files.AttemptName));
