@@ -150,8 +150,8 @@ public sealed class LinuxTaskTests
     {
         // R-RES-014, 15 section 4: attempts are stopped at their own MemoryMax, the slice's MemoryMax = C_mem - R_mem bounds managed work,
         // and MemorySwapMax = swap_allowance (0) keeps managed work out of swap, in the mem-ramp scenario. The managed share C_mem - R_mem
-        // (the slice's MemoryMax) is set to the machine's current use plus 2 GiB, so the slice's bound lies within the memory free now and
-        // above the three attempts' ceilings (3 x 512 MiB). The test node is isolated from machine load (MachineIsolation: U = 0), so
+        // (the slice's MemoryMax) is set to 2 GiB above the machine's current use, so above the three attempts' ceilings together
+        // (3 x 512 MiB). The test node is isolated from machine load (MachineIsolation: U = 0), so
         // B_mem = C - R and admission (AF-SCHED-01: the accounted memory never exceeds B_mem) admits the three attempts (3 x 400 MiB
         // expected) at once; that the slice's MemoryMax bounds attempts together is proven at the platform level
         // (UnitPlatformTests.TheSliceMemoryMaxBoundsAllAttemptsTogether), since admission keeps the declared demand within B_mem.

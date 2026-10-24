@@ -35,10 +35,10 @@ public sealed partial class ResourceTests
     /// <summary>
     /// The node of a closed-loop test sees only itself and its attempts on the machine (MachineIsolation): TestNode passes
     /// <c>ARCFORGES_TEST_MACHINE=isolated</c> and the executable under test (the JIT build, or the Native AOT host through
-    /// <c>ARCFORGES_HOST_PATH</c>) reads it with <c>--test-mode</c>. After more evaluations than the 5 s pressure persistence the CLI's
-    /// snapshot shows <c>U = 0</c>, <c>B_cpu = max(min_managed_cpu, C - R)</c>, <c>B_mem = C - R</c> and Normal, whatever runs beside the
-    /// test. This test process is outside the node and its attempts, so a node that read the live machine would count its memory in
-    /// <c>U_mem</c>.
+    /// <c>ARCFORGES_HOST_PATH</c>) reads it with <c>--test-mode</c>. Once the snapshot's evaluation time is 6 s past the first one (more
+    /// evaluations than the 5 s pressure persistence) the CLI's snapshot shows <c>U = 0</c>, <c>B_cpu = max(min_managed_cpu, C - R)</c>,
+    /// <c>B_mem = C - R</c> and Normal, whatever runs beside the test. This test process is outside the node and its attempts, so a node
+    /// that read the live machine would count its memory in <c>U_mem</c>.
     /// </summary>
     [Fact(Timeout = 120_000)]
     public async Task ATestNodeSeesOnlyItselfOnTheMachineThroughTheCli()
@@ -46,15 +46,23 @@ public sealed partial class ResourceTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
-        await TestNode.WaitAsync(async () => (await node.CliAsync("resources", "--json")).Json().TryGetProperty("budgetCpuMillicores", out _), Bound,
-            "the first evaluation");
-        await Task.Delay(TimeSpan.FromSeconds(8), Ct);
-        var run = await node.CliAsync("resources", "--json");
-        Assert.Equal(0, run.ExitCode);
-        var snapshot = run.Json();
-        long Value(string name) => snapshot.GetProperty(name) is { ValueKind: JsonValueKind.String } text
-            ? long.Parse(text.GetString()!, CultureInfo.InvariantCulture)
-            : snapshot.GetProperty(name).GetInt64();
+        JsonElement snapshot = default;
+        async Task<JsonElement> ReadAsync()
+        {
+            var run = await node.CliAsync("resources", "--json");
+            Assert.Equal(0, run.ExitCode);
+            return snapshot = run.Json();
+        }
+
+        static long Number(JsonElement element) =>
+            element.ValueKind == JsonValueKind.String ? long.Parse(element.GetString()!, CultureInfo.InvariantCulture) : element.GetInt64();
+        static long EvaluatedAtMs(JsonElement at) =>
+            (Number(at.GetProperty("unixSeconds")) * 1000) + ((at.TryGetProperty("nanos", out var nanos) ? Number(nanos) : 0) / 1_000_000);
+        await TestNode.WaitAsync(async () => (await ReadAsync()).TryGetProperty("budgetCpuMillicores", out _), Bound, "the first evaluation");
+        var first = EvaluatedAtMs(snapshot.GetProperty("at"));
+        await TestNode.WaitAsync(async () => EvaluatedAtMs((await ReadAsync()).GetProperty("at")) - first >= 6_000, Bound,
+            "an evaluation 6 s after the first");
+        long Value(string name) => Number(snapshot.GetProperty(name));
         Assert.Equal(0, Value("unmanagedCpuMillicores"));
         Assert.Equal(0, Value("unmanagedMemBytes"));
         Assert.Equal(Math.Max(1000, Value("capacityCpuMillicores") - Value("reserveCpuMillicores")), Value("budgetCpuMillicores"));

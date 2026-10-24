@@ -177,8 +177,9 @@ public sealed class ResourceServiceTests
 
     /// <summary>
     /// The isolation against a saturated machine that the test does not have to create: the machine-wide figures of the real sampler are
-    /// scripted to every CPU busy, 1% of memory available, memory PSI 90 and a new OOM kill at every sample (each a Critical or Tight
-    /// condition, 03 section 7), and the isolated node still has <c>U = 0</c>, <c>B = C - R</c> and Normal after the persistence.
+    /// scripted to every CPU busy (unmanaged CPU at the whole machine, which sets <c>B_cpu</c> to its floor), 1% of memory available and a
+    /// new OOM kill at every sample (Critical conditions, 03 section 7) and memory PSI 90 (a Pressure condition), and the isolated node still
+    /// has <c>U = 0</c>, <c>B = C - R</c> and Normal after the persistence.
     /// </summary>
     [Fact(Timeout = 60_000)]
     public async Task AnIsolatedNodeKeepsItsBudgetsAndNormalPressureOnASaturatedMachine()
@@ -282,7 +283,10 @@ public sealed class ResourceServiceTests
         await cancel.CancelAsync();
     }
 
-    /// <summary>A saturated machine over the real sample: every CPU busy, 1% of memory available, memory PSI 90, one more OOM kill per sample.</summary>
+    /// <summary>
+    /// A saturated machine over the real sample: every CPU busy, 1% of memory available and one more OOM kill per sample (Critical conditions,
+    /// 03 section 7), and memory PSI 90 (a Pressure condition).
+    /// </summary>
     private static Func<MachineSample, MachineSample> Saturated()
     {
         long kills = 0;
