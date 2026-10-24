@@ -73,6 +73,10 @@ internal sealed class ScenarioOptions
         return value;
     }
 
+    /// <summary>An optional whole-number parameter, recorded (and so part of the report) only when given; absent, it is null.</summary>
+    public long? GetOptionalInt64(string name, long minimum, long maximum) =>
+        _given.ContainsKey(name) ? GetInt64(name, minimum, minimum, maximum) : null;
+
     public ulong GetSeed(string name = "seed")
     {
         ulong value = 1;

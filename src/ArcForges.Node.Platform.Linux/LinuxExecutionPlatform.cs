@@ -860,7 +860,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     }
 
     /// <inheritdoc />
-    public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root)
+    public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false)
     {
         ArgumentNullException.ThrowIfNull(files);
         if (_manager is null)
@@ -870,7 +870,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
 
         try
         {
-            return LinuxAttemptHandle.Reopen(this, files, root);
+            return LinuxAttemptHandle.Reopen(this, files, root, stopping);
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
         {

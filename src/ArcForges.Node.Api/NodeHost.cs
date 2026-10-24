@@ -98,6 +98,24 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Func<IResourceSampler, IResourceSampler>? WrapSampler { get; init; }
 
+    /// <summary>
+    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it right after a stop's forced
+    /// phase terminated an attempt whose start had not completed (<c>ExecutionOptions.ForcedBeforeStart</c>). The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle>? ForcedBeforeStart { get; init; }
+
+    /// <summary>
+    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it before and after the termination
+    /// that follows a forced phase's pending start (<c>ExecutionOptions.StartObserved</c>). The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle, bool>? StartObserved { get; init; }
+
+    /// <summary>
+    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it before and after the termination
+    /// of the forced phase after the grace period (<c>ExecutionOptions.ForcedPhase</c>). The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle, bool>? ForcedPhase { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -299,6 +317,9 @@ public static class NodeHost
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
             Sampler = sampler,
             IsolatedFromMachineLoad = isolated,
+            ForcedBeforeStart = options.ForcedBeforeStart,
+            StartObserved = options.StartObserved,
+            ForcedPhase = options.ForcedPhase,
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
