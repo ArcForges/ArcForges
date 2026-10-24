@@ -284,7 +284,8 @@ public sealed class SystemdManager : IDisposable
     /// <summary>
     /// Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout. A signal handled
     /// before or while the wait begins counts too (<see cref="OnJobRemoved"/>). One wait per job: the callers wait only for a job they just
-    /// queued. Once the manager is disposed the wait ends with the cancellation of <see cref="Dispose"/> (an <see cref="AggregateException"/>).
+    /// queued or found queued. Once the manager is disposed the wait ends with the cancellation of <see cref="Dispose"/> (an
+    /// <see cref="AggregateException"/>).
     /// </summary>
     public string? WaitJob(string job, TimeSpan timeout)
     {
@@ -322,7 +323,7 @@ public sealed class SystemdManager : IDisposable
 
     /// <summary>
     /// A <c>JobRemoved</c> signal (on the connection's receive loop; it never blocks). The result of an <c>arcforges*</c> unit's job (every
-    /// job the platform and the guard wait for) is recorded first, then the job's waiter, if any, gets it; <see cref="WaitJob"/> registers its
+    /// job the platform waits for) is recorded first, then the job's waiter, if any, gets it; <see cref="WaitJob"/> registers its
     /// waiter first, then reads the record. Whichever comes second sees the other, so a wait that begins while the signal is handled still
     /// gets the result. The reverse order lost it when the wait registered between this lookup and this record (MR-92: an adoption scope that
     /// started at once was refused after the 10 s wait).
