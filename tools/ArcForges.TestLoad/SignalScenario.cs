@@ -10,8 +10,8 @@ namespace ArcForges.TestLoad;
 /// <summary>
 /// <c>signal</c> (Windows): a process tree with defined console-signal and window behaviour, the input of the termination tests of
 /// architecture 04 section 6 (L-18, F-N03). The process records each event as a line <c>&lt;event&gt; &lt;pid&gt; &lt;unix ms&gt;</c> in the
-/// <c>marker</c> file: <c>ready</c> once its handlers (and its child) are in place, <c>break</c> when CTRL_BREAK_EVENT (or CTRL_C)
-/// arrives, <c>close</c> when its hidden window receives WM_CLOSE. Options:
+/// <c>marker</c> file: <c>ready</c> once its handlers (its hidden window, and its child) are in place, <c>break</c> when
+/// CTRL_BREAK_EVENT (or CTRL_C) arrives, <c>close</c> when its hidden window receives WM_CLOSE. Options:
 /// <list type="bullet">
 /// <item><c>--on-break exit|ignore</c>: exit with code 3 on the signal, or record it and keep running (a tree that ignores graceful
 /// signals, R-EXE-006).</item>
@@ -35,6 +35,7 @@ internal static unsafe partial class SignalScenario
     private const uint CreateBreakawayFromJob = 0x01000000;
     private const uint WmClose = 0x0010;
     private const uint WmDestroy = 0x0002;
+    private static readonly ManualResetEventSlim s_windowListed = new();
     private static string? s_marker;
 
     public static ScenarioReport Run(ScenarioOptions options)
@@ -61,6 +62,7 @@ internal static unsafe partial class SignalScenario
         {
             var thread = new Thread(WindowLoop) { IsBackground = true, Name = "hidden-window" };
             thread.Start();
+            s_windowListed.Wait();
         }
 
         Process? started = null;
@@ -153,11 +155,16 @@ internal static unsafe partial class SignalScenario
             };
             if (RegisterClassEx(&windowClass) == 0)
             {
+                s_windowListed.Set();
                 return;
             }
 
             // Not WS_VISIBLE and never shown: a hidden top-level window that EnumWindows still lists.
             var handle = CreateWindowEx(0, className, className, 0, 0, 0, 0, 0, 0, 0, windowClass.Instance, 0);
+
+            // Only now is the window listed. While CreateWindowEx runs, the thread's Default IME window is already a top-level window
+            // of this process, so a stop requested after an earlier "ready" could post WM_CLOSE to that window alone.
+            s_windowListed.Set();
             if (handle == 0)
             {
                 return;

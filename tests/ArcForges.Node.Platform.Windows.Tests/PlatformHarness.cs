@@ -155,7 +155,10 @@ internal sealed partial class PlatformHarness : IDisposable
         }
     }
 
-    /// <summary>The lines of a marker file written by <c>arcforges-testload signal</c>: (event, pid, unix ms).</summary>
+    /// <summary>
+    /// The lines of a marker file written by <c>arcforges-testload signal</c>: (event, pid, unix ms). Only records ended by their newline
+    /// count: a read concurrent with an append never takes a partly written line (such as <c>close 1234 </c>) for a record.
+    /// </summary>
     public static List<(string Event, int Pid, long At)> Marker(string path)
     {
         if (!File.Exists(path))
@@ -165,7 +168,8 @@ internal sealed partial class PlatformHarness : IDisposable
 
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
-        return [.. reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        var text = reader.ReadToEnd();
+        return [.. text[..(text.LastIndexOf('\n') + 1)].Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Split(' '))
             .Where(parts => parts.Length == 3)
             .Select(parts => (parts[0], int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture), long.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)))];

@@ -53,7 +53,7 @@ public sealed class JobTests
         Assert.True(harness.Platform.RootJob!.Accounting().ActiveProcesses >= 1);
         Assert.True(harness.Platform.RootJob.Terminate(AttemptRunner.TerminatedExitCode));
         var rootProcess = PlatformHarness.Identity(root);
-        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), TimeSpan.FromSeconds(5), "the nested attempt to end with the root job");
+        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), Bound, "the nested attempt to end with the root job");
         var exit = harness.WaitExit(handle, Bound);
         Assert.Equal((int)AttemptRunner.TerminatedExitCode, exit.ExitStatus);
     }
@@ -179,7 +179,7 @@ public sealed class JobTests
         var pids = handle.Processes().Select(process => ArcForges.Tests.ProcessIdentity.Capture(process.Pid)).OfType<ArcForges.Tests.ProcessIdentity>().ToList();
         harness.Track(handle);
         handle.Terminate();
-        PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, TimeSpan.FromSeconds(5), "the job to be empty");
+        PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, Bound, "the job to be empty");
         Assert.All(pids, process => Assert.False(process.IsRunning()));
         Assert.Equal((int)AttemptRunner.TerminatedExitCode, harness.WaitExit(handle, Bound).ExitStatus);
     }
@@ -217,7 +217,7 @@ public sealed class JobTests
 
         // The node's handle is the only one: closing it (the node exiting) ends the attempt.
         handle.Dispose();
-        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), TimeSpan.FromSeconds(5), "the kill_with_node attempt to end");
+        PlatformHarness.WaitFor(() => !rootProcess.IsRunning(), Bound, "the kill_with_node attempt to end");
     }
 
     private static TimeSpan Cpu(JobAccounting accounting) => accounting.UserTime + accounting.KernelTime;

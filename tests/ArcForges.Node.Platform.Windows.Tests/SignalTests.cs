@@ -11,7 +11,9 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 /// windowless console and generates CTRL_BREAK_EVENT for its process group. Descendants with their own process group or console do not
 /// receive it; GUI processes get WM_CLOSE on their (hidden) top-level windows; a failed attach is reported; and the forced phase ends
 /// whatever is left. The workloads are <c>arcforges-testload signal</c> trees; every window is hidden and created inside the attempt. The
-/// windowless supervisor at logon (H-15) is the user's end-to-end check and is not part of these tests.
+/// windowless supervisor at logon (H-15) is the user's end-to-end check and is not part of these tests. Every wait for an expected event
+/// has the generous <see cref="Bound"/> (16 section 4: generous timeouts only on the failure path); the one timing contract, ending
+/// within the default grace period, is asserted by an exclusive test.
 /// </summary>
 [Trait("env", "windows-real")]
 [SupportedOSPlatform("windows")]
@@ -19,7 +21,10 @@ public sealed class SignalTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the tree must end on the event within the default grace period (cancel_grace 10 s, 04 section 6 step 2),
+    // a timing contract.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task CtrlBreakReachesTheRootsProcessGroupThroughTheHelper()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -36,7 +41,7 @@ public sealed class SignalTests
         Assert.Null(outcome.Reason);
 
         // Both processes of the group received the event and ended on their own, well within the default grace period.
-        PlatformHarness.WaitFor(() => Events(marker, "break").Count == 2, TimeSpan.FromSeconds(5), "CTRL_BREAK in both processes");
+        PlatformHarness.WaitFor(() => Events(marker, "break").Count == 2, Bound, "CTRL_BREAK in both processes");
         var exit = harness.WaitExit(handle, TimeSpan.FromSeconds(10));
         Assert.Equal(3, exit.ExitStatus);
         Assert.Empty(exit.LeftoversTerminated);
@@ -60,7 +65,7 @@ public sealed class SignalTests
 
         var outcome = handle.RequestGracefulStop();
         Assert.True(outcome.ConsoleSignalled, outcome.Reason);
-        PlatformHarness.WaitFor(() => Events(marker, "break").Contains(rootPid), TimeSpan.FromSeconds(5), "CTRL_BREAK in the root");
+        PlatformHarness.WaitFor(() => Events(marker, "break").Contains(rootPid), Bound, "CTRL_BREAK in the root");
 
         // A deliberate hold: the child still has not seen the event 1 s after the root did (an absence cannot be awaited).
         await Task.Delay(1_000, TestContext.Current.CancellationToken);
@@ -69,7 +74,7 @@ public sealed class SignalTests
 
         // The forced phase ends the whole job either way.
         handle.Terminate();
-        PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, TimeSpan.FromSeconds(5), "the job to be empty");
+        PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, Bound, "the job to be empty");
         Assert.False(childProcess.IsRunning());
     }
 
@@ -80,7 +85,9 @@ public sealed class SignalTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows console control events and the node signal helper.");
         using var harness = PlatformHarness.Start();
         var marker = Path.Combine(harness.Root, "marker.txt");
-        var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--child", "window", "--marker", marker]);
+        // The root ends on the event; the leftover grace (04 section 3) gives the window child as long as the waits below.
+        var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--child", "window", "--marker", marker],
+            leftoverGraceMs: (int)Bound.TotalMilliseconds);
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
         PlatformHarness.WaitFor(() => Ready(marker).Count == 2, Bound, "the root and its window child");
         var rootPid = handle.Root!.Pid;
@@ -91,8 +98,8 @@ public sealed class SignalTests
         var outcome = handle.RequestGracefulStop();
         Assert.True(outcome.ConsoleSignalled, outcome.Reason);
         Assert.True(outcome.WindowsClosed >= 1, "WM_CLOSE was posted to the child's window.");
-        PlatformHarness.WaitFor(() => Events(marker, "close").Contains(childProcess.Pid), TimeSpan.FromSeconds(5), "WM_CLOSE in the window child");
-        PlatformHarness.WaitFor(() => !childProcess.IsRunning(), TimeSpan.FromSeconds(5), "the window child to exit");
+        PlatformHarness.WaitFor(() => Events(marker, "close").Contains(childProcess.Pid), Bound, "WM_CLOSE in the window child");
+        PlatformHarness.WaitFor(() => !childProcess.IsRunning(), Bound, "the window child to exit");
         Assert.DoesNotContain(childProcess.Pid, Events(marker, "break"));
         harness.WaitExit(handle, Bound);
     }
@@ -149,14 +156,14 @@ public sealed class SignalTests
         PlatformHarness.WaitFor(() => Ready(marker).Count == 2, Bound, "the tree");
         var pids = Ready(marker);
         Assert.True(handle.RequestGracefulStop().ConsoleSignalled);
-        PlatformHarness.WaitFor(() => Events(marker, "break").Count == 2, TimeSpan.FromSeconds(5),
+        PlatformHarness.WaitFor(() => Events(marker, "break").Count == 2, Bound,
             "both to see the event: " + PlatformHarness.ReadShared(marker).ReplaceLineEndings(" | "));
 
         // A deliberate hold: both still run 500 ms after the event they ignore (their survival cannot be awaited).
         await Task.Delay(500, TestContext.Current.CancellationToken);
         Assert.All(pids, process => Assert.True(process.IsRunning()));
         handle.Terminate();
-        PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, TimeSpan.FromSeconds(5), "the job to be empty");
+        PlatformHarness.WaitFor(() => handle.Job.Accounting().ActiveProcesses == 0, Bound, "the job to be empty");
         Assert.All(pids, process => Assert.False(process.IsRunning()));
     }
 
