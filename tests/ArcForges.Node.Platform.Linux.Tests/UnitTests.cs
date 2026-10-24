@@ -52,7 +52,13 @@ public sealed class UnitTests
     [InlineData(232, 232, "sleep", "/usr/bin/sleep", false)] // a paused attempt's own main process
     [InlineData(232, 232, "systemd", "/usr/local/bin/systemd", false)] // an attempt command merely named systemd
     [InlineData(232, 232, "(x)", "/usr/bin/x", false)]
-    [InlineData(232, 232, "9", null, false)] // an unreadable process with another name
+    [InlineData(232, 232, "9", null, true)] // systemd 257.9: the executor's own name, exe unreadable (L-24, ArcForges-Design#23)
+    [InlineData(232, 232, "12", null, true)]
+    [InlineData(500, 232, "9", null, false)] // a digits name with another parent
+    [InlineData(232, 232, "9", "/usr/local/bin/9", false)] // a readable executable other than the executor, named 9
+    [InlineData(232, 232, "sleep", null, false)] // an unreadable process with a name neither digits nor parenthesized
+    [InlineData(232, 232, "9a", null, false)]
+    [InlineData(232, 232, "", null, false)]
     [InlineData(500, 232, "9", "/usr/lib/systemd/systemd-executor", false)] // not the manager's child
     [InlineData(232, 0, "systemd", null, false)] // the manager is unknown
     [SupportedOSPlatform("linux")]

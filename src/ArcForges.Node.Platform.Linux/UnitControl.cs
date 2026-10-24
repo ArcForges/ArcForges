@@ -105,6 +105,11 @@ public static class UnitControl
         foreach (var directory in units)
         {
             var freeze = Path.Combine(directory, "cgroup.freeze");
+
+            // The thaw decision. An attempt's own processes are excluded only while the unit has its own user namespace (hardening
+            // applied and read back). Without it, an attempt process that made itself non-dumpable and took the name "systemd", "(...)" or
+            // digits counts as the manager's spawn (see IsManagerSpawn), and a frozen unit whose processes all match is thawed here. That
+            // is the only effect, and same-user code can thaw its own cgroup anyway (T-22).
             if (ProcFs.Text(freeze) == "1" && OnlyManagerSpawns(directory, manager) && ProcFs.WriteControl(freeze, "0"))
             {
                 released.Add(directory);
@@ -129,13 +134,25 @@ public static class UnitControl
         ProcFs.Stat(pid) is { } stat && IsManagerSpawn(stat.ParentPid, manager, ProcFs.Image(pid), Executable(pid));
 
     /// <summary>
-    /// Whether a process is one the user manager started for a unit's command that has not become that command, from its parent,
-    /// name and executable (null when <c>/proc/&lt;pid&gt;/exe</c> cannot be read). Its parent must be the user manager (known), and
-    /// either its executable is <c>systemd-executor</c> (systemd 255 and later: the executor, whatever name it gives itself; observed
-    /// on 255.4 with the name <c>9</c>), or it is still a fork of the manager, whose executable cannot be read (the manager is not
-    /// dumpable), named <c>systemd</c> (257, frozen right after the fork) or with systemd's parenthesized pre-exec name
-    /// (<c>(arcforges)</c>, <c>(sd-...)</c>). An attempt's own processes, its main process included (also a child of the manager), have
-    /// their command's readable executable and are never matched.
+    /// Whether a process is one the user manager started for a unit's command that has not become that command. The check uses the
+    /// process's parent, name and executable (null when <c>/proc/&lt;pid&gt;/exe</c> cannot be read). The parent must be the user
+    /// manager (known). L-24 records three shapes (ArcForges-Design#23):
+    /// <list type="bullet">
+    /// <item>The executable is <c>systemd-executor</c>, whatever name the executor gives itself (systemd 255 and later; on 255.4 the
+    /// name was <c>9</c>).</item>
+    /// <item>A fork of the manager whose executable cannot be read (the manager is not dumpable), named <c>systemd</c> (257, frozen
+    /// right after the fork) or with systemd's parenthesized pre-exec name (<c>(arcforges)</c>, <c>(sd-...)</c>).</item>
+    /// <item>The executor's own name, made only of digits, with an executable that cannot be read (257.9: <c>9</c>).</item>
+    /// </list>
+    /// Limit: an attempt's own processes are excluded only while the unit has its own user namespace (hardening applied and read back).
+    /// Its main process, and any orphan the manager (a subreaper) adopts, are children of the manager too. Inside that namespace the node
+    /// owns the namespace and can read their executable even if they made themselves non-dumpable. Without it, an attempt process that
+    /// makes itself non-dumpable (<c>prctl(PR_SET_DUMPABLE, 0)</c>, no privilege needed) and takes the name <c>systemd</c>, <c>(...)</c>
+    /// or digits is treated as the manager's spawn. This was already true for the first two names. The only effect is that the start-up
+    /// release and the guard may thaw a frozen unit whose processes all match (<see cref="ReleaseStuckFreezes"/>). Same-user code can thaw
+    /// its own cgroup anyway (T-22), so this adds no new class of exposure.
+    /// Probe (AF-SEC-01, systemd 257.9): in a plain user service an orphan named <c>9</c> that made itself non-dumpable had the manager as
+    /// parent and an unreadable executable. In a <c>PrivateUsers=yes</c> service the same orphan's executable was readable.
     /// </summary>
     internal static bool IsManagerSpawn(int parentPid, int manager, string name, string? executable)
     {
@@ -151,7 +168,7 @@ public static class UnitControl
             return Path.GetFileName(path) == "systemd-executor";
         }
 
-        return name == "systemd" || (name.Length > 2 && name[0] == '(' && name[^1] == ')');
+        return name == "systemd" || (name.Length > 2 && name[0] == '(' && name[^1] == ')') || (name.Length > 0 && name.All(char.IsAsciiDigit));
     }
 
     /// <summary>The target of <c>/proc/&lt;pid&gt;/exe</c>, or null when it cannot be read.</summary>
