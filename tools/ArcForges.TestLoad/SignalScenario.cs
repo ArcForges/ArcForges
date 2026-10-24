@@ -24,6 +24,9 @@ namespace ArcForges.TestLoad;
 /// window; <c>breakaway</c> asks for <c>CREATE_BREAKAWAY_FROM_JOB</c> and records <c>breakaway-refused</c> when the job refuses it, or
 /// starts the child outside the job when it allows it.</item>
 /// <item><c>--hold-ms</c>: how long to run before exiting 0; <c>--child-hold-ms</c> the child's (default the same).</item>
+/// <item><c>--wait-children-ms</c> (absent by default): with <c>--on-break exit</c>, a process that started a child waits up to this long
+/// for the child to exit before it exits on the break itself, so the tree ends only once both handlers ran (a holder's
+/// <c>leftover_grace</c> after the root's exit would otherwise end a child whose handler has not run yet).</item>
 /// </list>
 /// An event that cannot be recorded ends the process with code 5 and a message on standard error; no event is dropped silently.
 /// </summary>
@@ -51,6 +54,8 @@ internal static unsafe partial class SignalScenario
     private static readonly ManualResetEventSlim s_windowListed = new();
     private static int s_windowError;
     private static string? s_marker;
+    private static uint s_waitChildrenMs;
+    private static nint s_childProcess;
 
     public static ScenarioReport Run(ScenarioOptions options)
     {
@@ -60,6 +65,7 @@ internal static unsafe partial class SignalScenario
         var freeConsole = options.GetInt64("free-console", 0, 0, 1) == 1;
         var child = options.GetChoice("child", "none", "none", "same", "group", "console", "window", "breakaway");
         var childHoldMs = options.GetInt64("child-hold-ms", holdMs, 0, MaxHoldMs);
+        s_waitChildrenMs = (uint)(options.GetOptionalInt64("wait-children-ms", 1, MaxHoldMs) ?? 0);
         s_marker = options.GetUnrecorded("marker") ?? throw new UsageException("Option '--marker' is required.");
         options.GetUnrecorded("report");
         options.EnsureAllUsed();
@@ -113,6 +119,12 @@ internal static unsafe partial class SignalScenario
         context.Cancel = true;
         if (onBreak == "exit")
         {
+            if (s_waitChildrenMs > 0 && s_childProcess != 0)
+            {
+                // Bounded: a child that never exits leaves the tree to the stop's forced phase.
+                _ = WaitForSingleObject(s_childProcess, s_waitChildrenMs);
+            }
+
             Environment.Exit(BreakExitCode);
         }
     }
@@ -158,7 +170,16 @@ internal static unsafe partial class SignalScenario
             }
 
             CloseHandle(info.Thread);
-            CloseHandle(info.Process);
+            if (s_waitChildrenMs > 0)
+            {
+                // Kept open for the wait on the break: the handle names this child, whatever happens to its ID.
+                s_childProcess = info.Process;
+            }
+            else
+            {
+                CloseHandle(info.Process);
+            }
+
             return Process.GetProcessById(info.ProcessId);
         }
     }
@@ -357,6 +378,9 @@ internal static unsafe partial class SignalScenario
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CloseHandle(nint handle);
+
+    [LibraryImport("kernel32.dll")]
+    private static partial uint WaitForSingleObject(nint handle, uint milliseconds);
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     private static partial nint CreateFile(string name, uint access, uint share, nint security, uint disposition, uint attributes, nint template);
