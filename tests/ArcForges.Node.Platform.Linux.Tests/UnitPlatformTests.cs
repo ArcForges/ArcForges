@@ -205,8 +205,9 @@ public sealed class UnitPlatformTests
         // whole manager blocks until it is thawed; systemd 255.4 puts systemd-executor (named "9") there, keeps answering, and the unit
         // stays deactivating until the cgroup is thawed. Neither the platform's start nor the guard needs the manager to release it.
         // What the running systemd does is printed and asserted as observed. Once thawed, the manager completes the stop of the killed
-        // unit (ExecStop, then exit-record as ExecStopPost) and removes its cgroup, with the native host within milliseconds, so each thaw
-        // is asserted as a cgroup that is thawed or already removed, and the stop as completed by exit-record (MR-76).
+        // unit (ExecStop, then exit-record as ExecStopPost) and removes its cgroup, with the native host within milliseconds, so the cgroup
+        // is checked as thawed or already removed. Removal alone does not prove a thaw: an empty frozen cgroup can be removed (for example
+        // after a stop timeout). The exit-record assertion does, because exit-record runs as ExecStopPost inside this cgroup (MR-76).
         RequireUnits();
         using var harness = LinuxHarness.Start();
 
@@ -269,7 +270,8 @@ public sealed class UnitPlatformTests
 
         static bool? Frozen(string directory) => ProcFs.Text(Path.Combine(directory, "cgroup.freeze")) is { } value ? value == "1" : null;
 
-        // Removed only once the stop completed, which the manager's spawn frozen in the cgroup cannot do before the thaw (L-24).
+        // Thawed, or already removed. Removal alone does not prove a thaw: an empty frozen cgroup can be removed (for example after a stop
+        // timeout). The exit-record assertions do, because exit-record runs as ExecStopPost inside this cgroup.
         static bool ThawedOrRemoved(string directory) =>
             ProcFs.Text(Path.Combine(directory, "cgroup.freeze")) is { } value ? value == "0" : !Directory.Exists(directory);
     }
