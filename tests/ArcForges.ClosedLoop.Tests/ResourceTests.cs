@@ -235,6 +235,64 @@ public sealed partial class ResourceTests
         }
     }
 
+    /// <summary>
+    /// 04 section 6 step 4 on Linux with a real escape (repair MR-01): the attempt's shell starts a child in a scope of its own, as above,
+    /// traps the stop signal and exits at once. Cancelled, the attempt ends CANCELLED in the graceful phase, without a forced phase; once
+    /// the shell has exited, the user manager adopts the escaped child, so a fresh ancestry scan no longer finds it, and the node
+    /// terminates it by the identity it recorded when the stop sequence ends. The stop's detail names it.
+    /// </summary>
+    [Fact(Timeout = 300_000)]
+    [Trait("env", "linux-real")]
+    public async Task AnEscapedProcessOfAnAttemptCancelledGracefullyIsTerminatedOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
+        var systemdRun = SystemdRunPaths.FirstOrDefault(File.Exists);
+        Assert.SkipWhen(systemdRun is null, "systemd-run is not installed.");
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        await using var channel = await ChannelAsync(node);
+        var task = await SubmitAsync(channel, ["/bin/sh", "-c", "trap 'exit 0' TERM; \"$1\" --user --scope --quiet --collect -- sleep 300 & sleep 300 & wait", "sh", systemdRun!]);
+        var attempt = await RunningAttemptAsync(channel, task);
+        ProcessView? escaped = null;
+        try
+        {
+            await TestNode.WaitAsync(async () =>
+            {
+                escaped = (await ProcessesAsync(channel, new ProcessFilter { TaskId = task })).FirstOrDefault(process => process.Label == ProcessLabel.Escaped);
+                return escaped is not null;
+            }, Bound, "an ESCAPED process");
+            Assert.Equal("sleep", escaped!.Executable);
+
+            await CancelAsync(channel, task);
+            Assert.Equal(TaskState.Cancelled, await TaskStateAsync(channel, task));
+            var record = await AttemptAsync(channel, attempt);
+            Assert.Equal(TerminationReason.Cancelled, record.Result.TerminationReason);
+            Assert.Contains("SIGTERM sent to every process", record.Result.Detail, StringComparison.Ordinal);
+            Assert.Contains(string.Create(CultureInfo.InvariantCulture, $"escaped processes terminated: sleep ({escaped.Process.Pid})"), record.Result.Detail,
+                StringComparison.Ordinal);
+            await TestNode.WaitAsync(() => Task.FromResult(!Directory.Exists($"/proc/{escaped.Process.Pid}")), TimeSpan.FromSeconds(10), "the escaped process to end");
+        }
+        finally
+        {
+            if (escaped is not null && Directory.Exists($"/proc/{escaped.Process.Pid}"))
+            {
+                try
+                {
+                    using var leftover = Process.GetProcessById((int)escaped.Process.Pid);
+                    if (leftover.ProcessName == "sleep")
+                    {
+                        leftover.Kill();
+                        leftover.WaitForExit(5_000);
+                    }
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------------------------------- process rates
 
     [Fact(Timeout = 300_000, DisableParallelization = true)]

@@ -141,9 +141,6 @@ public sealed class DirectAttemptHandle : IAttemptHandle
     public IReadOnlyList<EscapedProcess> ScanEscaped() => [];
 
     /// <inheritdoc />
-    public IReadOnlyList<string> TerminateEscaped() => [];
-
-    /// <inheritdoc />
     public void Acknowledge()
     {
     }

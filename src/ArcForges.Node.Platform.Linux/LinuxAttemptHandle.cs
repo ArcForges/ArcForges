@@ -396,22 +396,6 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<string> TerminateEscaped()
-    {
-        var terminated = new List<string>();
-        foreach (var process in ScanEscaped().Where(process => process.SameUser))
-        {
-            if (ProcFs.StartOf(process.Pid) is { } start && Math.Abs((start.Start - process.StartTime).TotalMilliseconds) < 1_000
-                && Libc.Kill(process.Pid, Libc.SigKill) == 0)
-            {
-                terminated.Add($"{process.Image} ({process.Pid.ToString(CultureInfo.InvariantCulture)})");
-            }
-        }
-
-        return terminated;
-    }
-
-    /// <inheritdoc />
     public void Acknowledge()
     {
         // The exit record is durable in the attempt's directory and nothing waits. A unit that ended failed (an OOM kill, a stop timeout)

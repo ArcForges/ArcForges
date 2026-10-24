@@ -896,6 +896,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 return;
             }
 
+            // The escaped processes as the stop begins: once the root has exited, a scan may no longer find them (on Linux they are
+            // re-parented to the user manager), and the stop sequence terminates the recorded ones (04 section 6 step 4).
+            ScanEscaped(attempt, attempt.Handle);
             if (!graceful || attempt.Handle.Root is null)
             {
                 if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit or TerminationReason.Preempted)
@@ -1474,7 +1477,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return;
         }
 
-        var found = escaped.Where(process => attempt.KnownEscaped.TryAdd((process.Pid, process.StartTime.UtcTicks), true)).ToList();
+        var found = escaped.Where(process => attempt.KnownEscaped.TryAdd((process.Pid, process.StartTime.UtcTicks), process.Image)).ToList();
         if (found.Count == 0)
         {
             return;
@@ -1510,24 +1513,74 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     /// <summary>
     /// Terminates the attempt's same-user escaped processes when the node stops it (04 section 6 step 4: <c>terminate_escaped</c>, true for
-    /// cancellation, timeouts and limit stops; false for node shutdown, where the attempt itself is left to run or dies with the node).
+    /// cancellation, timeouts and limit stops; false for node shutdown, where the attempt itself is left to run or dies with the node). It
+    /// runs with the forced phase and again when the stop sequence ends (finalization), however the root ended: a root that exits on the
+    /// graceful signal leaves its escaped processes to this step too. An attempt the node did not stop keeps its escaped processes.
+    /// The processes are the ones the node recorded for the attempt: those the ancestry scan found while this node ran (a scan runs first),
+    /// and the attempt's ESCAPED process records, which a node restart keeps. A fresh scan alone is not enough: once the root has exited, an
+    /// escaped process on Linux is re-parented to the user manager and no longer descends from the attempt. Each process is identified by
+    /// its ID and start time, so a reused ID is never terminated, and only the node's user's processes are
+    /// (<see cref="IExecutionPlatform.TerminateProcess"/>); a process already dealt with is not touched again.
     /// </summary>
     private void TerminateEscaped(RunningAttempt attempt, TerminationReason reason)
     {
-        if (reason == TerminationReason.NodeShutdown || attempt.Handle is not { } handle)
+        if (reason == TerminationReason.NodeShutdown || Platform is not { } platform)
         {
             return;
         }
 
-        IReadOnlyList<string> terminated;
+        if (attempt.Handle is { } handle)
+        {
+            ScanEscaped(attempt, handle);
+        }
+
+        var recorded = new Dictionary<(int Pid, long StartMicros), (DateTimeOffset Start, string Image)>();
+        foreach (var ((pid, ticks), image) in attempt.KnownEscaped)
+        {
+            var start = new DateTimeOffset(ticks, TimeSpan.Zero);
+            recorded.TryAdd((pid, StoreTime.ToMicroseconds(start)), (start, image));
+        }
+
         try
         {
-            terminated = handle.TerminateEscaped();
+            foreach (var (pid, micros, image) in _store.Read(reader => EscapedRecords(reader, attempt.AttemptId)))
+            {
+                recorded.TryAdd((pid, micros), (StoreTime.FromMicroseconds(micros), image));
+            }
         }
-        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or UnauthorizedAccessException)
+        catch (Microsoft.Data.Sqlite.SqliteException exception)
         {
-            _log.Warning("execution.escaped.terminate_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
-            return;
+            _log.Warning("execution.escaped.records_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+        }
+
+        var terminated = new List<string>();
+        foreach (var (key, (start, image)) in recorded)
+        {
+            if (attempt.EscapedHandled.ContainsKey(key))
+            {
+                continue;
+            }
+
+            ProcessTermination outcome;
+            try
+            {
+                outcome = platform.TerminateProcess(key.Pid, start);
+            }
+            catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or UnauthorizedAccessException)
+            {
+                _log.Warning("execution.escaped.terminate_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+                continue;
+            }
+
+            if (outcome != ProcessTermination.Failed)
+            {
+                attempt.EscapedHandled.TryAdd(key, true);
+            }
+
+            if (outcome == ProcessTermination.Terminated)
+            {
+                terminated.Add(string.Create(CultureInfo.InvariantCulture, $"{image} ({key.Pid})"));
+            }
         }
 
         if (terminated.Count > 0)
@@ -1535,6 +1588,22 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             attempt.StopDetail = (attempt.StopDetail is null ? string.Empty : attempt.StopDetail + "; ") + "escaped processes terminated: " + string.Join(", ", terminated);
             _log.Info("execution.escaped.terminated", new LogField("attempt", attempt.Name), new LogField("processes", string.Join(", ", terminated)));
         }
+    }
+
+    /// <summary>The attempt's ESCAPED process records (process_record, label 3): pid, start (store microseconds) and image.</summary>
+    private static List<(int Pid, long StartMicros, string Image)> EscapedRecords(StoreReader reader, byte[] attemptId)
+    {
+        using var command = reader.CreateCommand("SELECT pid, start_at, executable FROM process_record WHERE attempt_id = $id AND label = $label;");
+        command.Parameters.AddWithValue("$id", attemptId);
+        command.Parameters.AddWithValue("$label", (int)ProcessLabel.Escaped);
+        using var rows = command.ExecuteReader();
+        var records = new List<(int Pid, long StartMicros, string Image)>();
+        while (rows.Read())
+        {
+            records.Add((rows.GetInt32(0), rows.GetInt64(1), rows.GetString(2)));
+        }
+
+        return records;
     }
 
     // ---------------------------------------------------------------------------------------------------------------- admission
@@ -1797,6 +1866,16 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 }
                 catch (Win32Exception)
                 {
+                }
+            }
+
+            if (attempt.StopReason is { } stopped)
+            {
+                // The stop sequence ends here, however the root ended (graceful or forced): its escaped processes are terminated (04 section 6
+                // step 4), with the result in the stop's detail.
+                lock (attempt)
+                {
+                    TerminateEscaped(attempt, stopped);
                 }
             }
 

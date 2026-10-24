@@ -105,8 +105,17 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>When the ancestry scan for escaped processes last ran (monotonic).</summary>
     internal long LastEscapeScan { get; set; } = long.MinValue;
 
-    /// <summary>Escaped processes already recorded: (pid, creation ticks); the resource monitor reads them for the process labels.</summary>
-    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartTicks), bool> KnownEscaped { get; } = new();
+    /// <summary>
+    /// Escaped processes already recorded: (pid, creation ticks) with the image; the resource monitor reads them for the process labels, and
+    /// the stop sequence terminates them (04 section 6 step 4).
+    /// </summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartTicks), string> KnownEscaped { get; } = new();
+
+    /// <summary>
+    /// Escaped processes the stop sequence has dealt with (terminated, already gone, or another user's): (pid, creation in store
+    /// microseconds). They are never touched again.
+    /// </summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<(int Pid, long StartMicros), bool> EscapedHandled { get; } = new();
 
     /// <summary>Why the node stops the attempt.</summary>
     internal TerminationReason? StopReason { get; set; }
