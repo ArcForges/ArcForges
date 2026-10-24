@@ -79,6 +79,12 @@ public sealed record NodeHostOptions
     /// </summary>
     public string? VersionDirectory { get; init; }
 
+    /// <summary>
+    /// Test seam (component tests): awaited after the version check found a mismatch and before its finding is committed, inside the
+    /// commit's failure handling, so a test can hold the commit (as a commit queued behind other writes waits) or fail it.
+    /// </summary>
+    internal Func<Task>? VersionFindingCommitting { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -383,7 +389,7 @@ public static class NodeHost
                 new LogField("heartbeatInstance", heartbeat.Instance));
 
             // AD-0007 section 8: the version directory is made read-only and verified against its digests off the startup path.
-            versionCheck = CheckVersionAsync(node, versionDirectory, loops.Token);
+            versionCheck = CheckVersionAsync(node, versionDirectory, options.VersionFindingCommitting, loops.Token);
 
             try
             {
@@ -539,7 +545,7 @@ public static class NodeHost
     /// then reports the fact <c>version_integrity</c>; a mismatch raises the tamper finding ENFORCEMENT_DEGRADED (11 section 1) with the
     /// paths. Without a manifest nothing runs (the fact stays "not checked").
     /// </summary>
-    private static async Task CheckVersionAsync(NodeRuntime node, string directory, CancellationToken cancellationToken)
+    private static async Task CheckVersionAsync(NodeRuntime node, string directory, Func<Task>? findingCommitting, CancellationToken cancellationToken)
     {
         if (!VersionIntegrity.HasManifest(directory))
         {
@@ -578,19 +584,23 @@ public static class NodeHost
             Priority = ThreadPriority.BelowNormal,
         };
         thread.Start();
-        await RecordVersionCheckAsync(node, directory, checkedReport.Task).ConfigureAwait(false);
+        await RecordVersionCheckAsync(node, directory, checkedReport.Task, findingCommitting).ConfigureAwait(false);
     }
 
-    private static async Task RecordVersionCheckAsync(NodeRuntime node, string directory, Task<VersionIntegrityReport?> check)
+    /// <summary>
+    /// Publishes the check's result. A mismatch's ENFORCEMENT_DEGRADED finding is committed before the fact reports the mismatch, so a
+    /// client that reads <c>mismatch: n files</c> also reads the finding with its paths; the fact is published even when the commit fails.
+    /// </summary>
+    private static async Task RecordVersionCheckAsync(NodeRuntime node, string directory, Task<VersionIntegrityReport?> check, Func<Task>? findingCommitting)
     {
         if (await check.ConfigureAwait(false) is not { } report)
         {
             return;
         }
 
-        node.SetFact(VersionIntegrity.FactName, report.Fact);
         if (report.Mismatches == 0)
         {
+            node.SetFact(VersionIntegrity.FactName, report.Fact);
             node.Log.Info("node.version_integrity.verified", new LogField("directory", directory), new LogField("madeReadOnly", report.MadeReadOnly),
                 new LogField("notReadOnly", report.NotReadOnly.Count));
             return;
@@ -602,6 +612,11 @@ public static class NodeHost
         static string Paths(IReadOnlyList<string> paths) => paths.Count == 0 ? "-" : NodeLog.OneLine(string.Join(", ", paths.Take(50))) + (paths.Count > 50 ? $" (+{paths.Count - 50} more)" : string.Empty);
         try
         {
+            if (findingCommitting is not null)
+            {
+                await findingCommitting().ConfigureAwait(false);
+            }
+
             await node.Processor.ExecuteAsync(context =>
             {
                 ExecutionFindings.Raise(context, FindingKind.EnforcementDegraded, Severity.Error, "node", node.NodeId.Span,
@@ -617,6 +632,11 @@ public static class NodeHost
         catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException or ObjectDisposedException)
         {
             node.Log.Warning("node.version_integrity.finding_failed", new LogField("errorType", exception.GetType().Name));
+        }
+        finally
+        {
+            // After the finding's commit, never before it; and always, so a failed commit never loses the fact.
+            node.SetFact(VersionIntegrity.FactName, report.Fact);
         }
     }
 
