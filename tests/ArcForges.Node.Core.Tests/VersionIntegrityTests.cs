@@ -318,16 +318,93 @@ public sealed class VersionIntegrityTests
         }
     }
 
+    /// <summary>
+    /// MR-75: the fact reports a mismatch only once its finding is committed. The test holds the finding's commit, as a commit queued behind
+    /// other writes under load waits; meanwhile the fact keeps its initial value (<see cref="VersionIntegrity.Checking"/>) and no finding
+    /// exists. Released, the fact reports the mismatch and the finding is there.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task TheMismatchFactIsPublishedOnlyAfterItsFindingIsCommitted()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var tampered = CreateVersion();
+        var committing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            File.WriteAllText(Path.Combine(tampered, "notes.txt"), "edited after installation");
+            await using var node = InProcessNode.Create();
+            node.VersionDirectory = tampered;
+            node.VersionFindingCommitting = () =>
+            {
+                committing.TrySetResult();
+                return release.Task;
+            };
+            await node.StartAsync();
+            await using var channel = await node.ChannelAsync();
+            try
+            {
+                await committing.Task.WaitAsync(TimeSpan.FromSeconds(60), Ct);
+                Assert.Equal(VersionIntegrity.Checking, await FactAsync(channel));
+                Assert.DoesNotContain(node.Runtime.Store.Read(reader => ExecutionFindings.OpenFor(reader, "node", node.Runtime.NodeId.Span)),
+                    item => item.Kind == FindingKind.EnforcementDegraded);
+            }
+            finally
+            {
+                release.TrySetResult();
+            }
+
+            Assert.Equal("mismatch: 1 files", await FinalFactAsync(channel));
+            var finding = Assert.Single(node.Runtime.Store.Read(reader => ExecutionFindings.OpenFor(reader, "node", node.Runtime.NodeId.Span)),
+                item => item.Kind == FindingKind.EnforcementDegraded);
+            Assert.Contains(finding.Evidence, item => item.Name == "changed" && item.Value == "notes.txt");
+        }
+        finally
+        {
+            Remove(tampered);
+        }
+    }
+
+    /// <summary>
+    /// MR-75: when the finding cannot be committed (here the command queue is full, as <c>CommandProcessor</c> reports it), the fact still
+    /// reports the mismatch and the failure is logged.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task TheMismatchFactIsPublishedWhenItsFindingCannotBeCommitted()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var tampered = CreateVersion();
+        try
+        {
+            File.WriteAllText(Path.Combine(tampered, "notes.txt"), "edited after installation");
+            await using var node = InProcessNode.Create();
+            node.VersionDirectory = tampered;
+            node.VersionFindingCommitting = () => Task.FromException(new CommandQueueFullException());
+            await node.StartAsync();
+            await using (var channel = await node.ChannelAsync())
+            {
+                Assert.Equal("mismatch: 1 files", await FinalFactAsync(channel));
+            }
+
+            Assert.DoesNotContain(node.Runtime.Store.Read(reader => ExecutionFindings.OpenFor(reader, "node", node.Runtime.NodeId.Span)),
+                item => item.Kind == FindingKind.EnforcementDegraded);
+            await node.StopAsync();
+            Assert.Contains("node.version_integrity.finding_failed", File.ReadAllText(Path.Combine(node.DataRoot, "logs", "node", "node.log")),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Remove(tampered);
+        }
+    }
+
     /// <summary>The fact <c>version_integrity</c> once the check finished (bounded).</summary>
     private static async Task<string> FinalFactAsync(ArcForges.Client.NodeChannel channel)
     {
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (true)
         {
-            var response = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Meta = new RequestMeta() }, deadline: DateTime.UtcNow.AddSeconds(10),
-                cancellationToken: Ct);
-            Assert.Null(response.Error);
-            var fact = Assert.Single(response.Value.Capabilities.PlatformFacts, item => item.Name == VersionIntegrity.FactName).Value;
+            var fact = await FactAsync(channel);
             if (fact != VersionIntegrity.Checking || DateTime.UtcNow > deadline)
             {
                 return fact;
@@ -335,6 +412,15 @@ public sealed class VersionIntegrityTests
 
             await Task.Delay(100, Ct);
         }
+    }
+
+    /// <summary>The fact <c>version_integrity</c> as the node reports it now.</summary>
+    private static async Task<string> FactAsync(ArcForges.Client.NodeChannel channel)
+    {
+        var response = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Meta = new RequestMeta() }, deadline: DateTime.UtcNow.AddSeconds(10),
+            cancellationToken: Ct);
+        Assert.Null(response.Error);
+        return Assert.Single(response.Value.Capabilities.PlatformFacts, item => item.Name == VersionIntegrity.FactName).Value;
     }
 
     /// <summary>Creates a hard link (Linux <c>ln</c>; Windows <c>mklink /H</c>, which needs no privilege).</summary>

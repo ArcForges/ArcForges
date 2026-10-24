@@ -72,6 +72,9 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>The version directory whose digests the node verifies after startup (default: the directory of the helper executable).</summary>
     public string? VersionDirectory { get; set; }
 
+    /// <summary>Awaited before the version check's mismatch finding is committed (the node's test seam; a test holds or fails the commit).</summary>
+    public Func<Task>? VersionFindingCommitting { get; set; }
+
     /// <summary>The node's own slice on Linux (16 section 4).</summary>
     public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
 
@@ -139,6 +142,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             SystemdAddress = SystemdAddress,
             LinuxControllers = LinuxControllers,
             VersionDirectory = VersionDirectory,
+            VersionFindingCommitting = VersionFindingCommitting,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;
