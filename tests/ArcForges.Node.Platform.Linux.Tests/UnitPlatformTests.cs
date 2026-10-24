@@ -204,7 +204,9 @@ public sealed class UnitPlatformTests
         // spawns ExecStop into it. Observed (L-24): systemd 257 forks a child named "systemd" (exe unreadable) into the cgroup and the
         // whole manager blocks until it is thawed; systemd 255.4 puts systemd-executor (named "9") there, keeps answering, and the unit
         // stays deactivating until the cgroup is thawed. Neither the platform's start nor the guard needs the manager to release it.
-        // What the running systemd does is printed and asserted as observed.
+        // What the running systemd does is printed and asserted as observed. Once thawed, the manager completes the stop of the killed
+        // unit (ExecStop, then exit-record as ExecStopPost) and removes its cgroup, with the native host within milliseconds, so each thaw
+        // is asserted as a cgroup that is thawed or already removed, and the stop as completed by exit-record (MR-76).
         RequireUnits();
         using var harness = LinuxHarness.Start();
 
@@ -216,9 +218,9 @@ public sealed class UnitPlatformTests
             Assert.Contains(first.CgroupDirectory!, restarted.ReleasedFreezes);
         }
 
-        Assert.Equal("0", File.ReadAllText(Path.Combine(first.CgroupDirectory!, "cgroup.freeze")).Trim());
+        Assert.True(ThawedOrRemoved(first.CgroupDirectory!), "The starting platform left the cgroup frozen.");
         var firstExit = LinuxHarness.WaitExit(first, Bound);
-        Assert.Equal(("killed", 9), (firstExit.ExitCodeKind, firstExit.ExitStatus));
+        Assert.Equal(("killed", 9, "exit-record"), (firstExit.ExitCodeKind, firstExit.ExitStatus, firstExit.RecordedBy));
 
         var second = (LinuxAttemptHandle)harness.Launch(["sleep", "60"]);
         LeaveStuck(second);
@@ -226,9 +228,9 @@ public sealed class UnitPlatformTests
         var guard = Task.Run(() => GuardRole.Run(new GuardOptions { DataRoot = harness.DataRoot, Stop = stop.Token }), Ct);
         try
         {
-            LinuxHarness.WaitFor(() => File.ReadAllText(Path.Combine(second.CgroupDirectory!, "cgroup.freeze")).Trim() == "0", Bound, "the guard to thaw the cgroup");
+            LinuxHarness.WaitFor(() => ThawedOrRemoved(second.CgroupDirectory!), Bound, "the guard to thaw the cgroup");
             var secondExit = LinuxHarness.WaitExit(second, Bound);
-            Assert.Equal(("killed", 9), (secondExit.ExitCodeKind, secondExit.ExitStatus));
+            Assert.Equal(("killed", 9, "exit-record"), (secondExit.ExitCodeKind, secondExit.ExitStatus, secondExit.RecordedBy));
         }
         finally
         {
@@ -266,6 +268,10 @@ public sealed class UnitPlatformTests
         }
 
         static bool? Frozen(string directory) => ProcFs.Text(Path.Combine(directory, "cgroup.freeze")) is { } value ? value == "1" : null;
+
+        // Removed only once the stop completed, which the manager's spawn frozen in the cgroup cannot do before the thaw (L-24).
+        static bool ThawedOrRemoved(string directory) =>
+            ProcFs.Text(Path.Combine(directory, "cgroup.freeze")) is { } value ? value == "0" : !Directory.Exists(directory);
     }
 
     // isolation=exclusive: it asserts that the machine-wide release of stuck freezes finds nothing.
