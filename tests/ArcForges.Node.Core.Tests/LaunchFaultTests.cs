@@ -264,7 +264,10 @@ public sealed partial class LaunchFaultTests
     /// re-opened job reports every process the launch starts, and each is terminated: the task ends CANCELLED and the command does not run on.
     /// The order is fixed without timing: the holder is suspended while the first step ends, the attempt is cancelled and the node restarted;
     /// the restarted node's forced phase resumes the holder, the start's continuation is held (the seam <c>StartObserved</c>) until the second
-    /// step ended with the holder suspended again, and the holder resumes only after that continuation's termination.
+    /// step ended with the holder suspended again, and the holder resumes only after that continuation's termination. The job holds no process
+    /// when the attempt is cancelled (<see cref="WaitForEmptyJobAsync"/>), so the holder can start the second step after the restarted node's
+    /// termination. The second step's own report (each process that enters is terminated) may end it before the seam suspends the holder;
+    /// the order under test still holds, and the seam tolerates a holder that ended meanwhile.
     /// </summary>
     [Fact(Timeout = 240_000)]
     [Trait("env", "windows-real")]
@@ -324,6 +327,7 @@ public sealed partial class LaunchFaultTests
                 await File.WriteAllTextAsync(Dir("go1"), "go", Ct);
                 var first = Tasks.Processes(Dir("step1.txt")).Single();
                 await Tasks.WaitForAsync(() => !first.IsRunning(), Tasks.Bound, "the first launch step to end");
+                await WaitForEmptyJobAsync(node, name);
                 var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
                 Assert.Null(cancel.Error);
                 Assert.Equal(AttemptState.Stopping, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
@@ -332,31 +336,41 @@ public sealed partial class LaunchFaultTests
             await node.StopAsync();
             var forcedCalls = 0;
             var observed = 0;
+            IAttemptHandle? forced = null;
             node.ForcedBeforeStart = handle =>
             {
                 if (Interlocked.Increment(ref forcedCalls) == 1)
                 {
+                    forced = handle;
                     // The holder goes on: it starts the second launch step, whose entry completes the restarted node's start.
                     Resume();
                 }
             };
             node.StartObserved = (handle, terminated) =>
             {
-                if (!terminated && Interlocked.Increment(ref observed) == 1)
+                try
                 {
-                    // The second step ends with the holder suspended, before the continuation's termination, which then finds the job empty.
-                    Suspend();
-                    File.WriteAllText(Dir("go2"), "go");
-                    var watch = Stopwatch.StartNew();
-                    while (handle.Accounting().ActiveProcesses > 0 && watch.Elapsed < Tasks.Bound)
+                    if (!terminated && Interlocked.Increment(ref observed) == 1)
                     {
-                        Thread.Sleep(20);
+                        // The second step ends with the holder suspended, before the continuation's termination, which then finds the job
+                        // empty.
+                        Suspend();
+                        File.WriteAllText(Dir("go2"), "go");
+                        var watch = Stopwatch.StartNew();
+                        while (handle.Accounting().ActiveProcesses > 0 && watch.Elapsed < Tasks.Bound)
+                        {
+                            Thread.Sleep(20);
+                        }
+                    }
+                    else if (terminated && Volatile.Read(ref observed) == 1)
+                    {
+                        // After that termination the holder goes on: it starts the command (or records the step it found terminated).
+                        Resume();
                     }
                 }
-                else if (terminated && Volatile.Read(ref observed) == 1)
+                catch (Exception exception) when (exception is Win32Exception or ObjectDisposedException)
                 {
-                    // After that termination the holder goes on: it starts the command (or records the step it found terminated).
-                    Resume();
+                    // The second step's own termination ended the launch first: the holder exited (or the handle was released) meanwhile.
                 }
             };
             await node.StartAsync();
@@ -365,7 +379,8 @@ public sealed partial class LaunchFaultTests
             AssertCancelled(task);
             Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
             Assert.Equal(1, Volatile.Read(ref forcedCalls));
-            Assert.Equal(1, Volatile.Read(ref observed));
+            Assert.True(Volatile.Read(ref observed) == 1,
+                $"The restarted node's start never completed with a root ({LaunchEnded(forced)}; attempt result {task.CurrentAttempt?.Result}).");
             AssertNeverRanPastTheStop(commandMarker);
         }
         finally
@@ -419,6 +434,37 @@ public sealed partial class LaunchFaultTests
     {
         string[] argv = [Tasks.TestLoad, "hold", "--until-file", untilFile, "--hold-ms", "120000", "--marker", marker];
         return new StepSpec { Name = name, Application = argv[0], CommandLine = WindowsCommandLine.Build(argv), TimeoutMs = 120_000 };
+    }
+
+    /// <summary>
+    /// Waits until the attempt's job holds no process. A launch step's console host may outlive the step, and a termination that still finds a
+    /// process makes the job refuse new processes until they are gone (observed on the workstation: AssignProcessToJobObject right after
+    /// TerminateJobObject failed with ERROR_ACCESS_DENIED 200 times of 200, and succeeded 50 of 50 after an empty job's termination), so the
+    /// holder's later start would fail instead of coming late.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static async Task WaitForEmptyJobAsync(InProcessNode node, string attempt)
+    {
+        using var job = JobObject.Open(WindowsExecutionPlatform.JobName(ArcForges.Client.IdText.Format(node.Runtime.Store.Metadata.NodeId.Span), attempt));
+        var emptied = Stopwatch.StartNew();
+        while (job is not null && job.Accounting().ActiveProcesses > 0)
+        {
+            Assert.True(emptied.Elapsed < Tasks.Bound, $"Timed out after {Tasks.Bound.TotalSeconds:0} s waiting for the attempt's job to hold no process.");
+            await Task.Delay(25, Ct);
+        }
+    }
+
+    /// <summary>What ended a launch without a command (diagnostics of a failure; never throws).</summary>
+    private static string LaunchEnded(IAttemptHandle? handle)
+    {
+        try
+        {
+            return $"launch record: {handle?.TryReadLaunchFailure()?.ToJson() ?? "none"}; exit record: {handle?.TryReadExit()?.ToJson() ?? "none"}";
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException or UnauthorizedAccessException)
+        {
+            return "records unreadable: " + exception.Message;
+        }
     }
 
     /// <summary>The node's log so far (<c>logs/node/node.log</c> under its data root).</summary>
@@ -526,17 +572,8 @@ public sealed partial class LaunchFaultTests
                 await Tasks.WaitForAsync(() => !step.IsRunning(), Tasks.Bound, "the launch step to end");
                 _stepExitCode = stepHandle is not null && Native.GetExitCodeProcess(stepHandle, out var code) ? unchecked((int)code) : null;
 
-                // The job must hold nothing when the stop terminates it (the case under test), and the step's console host may outlive the
-                // step. A termination that still finds a process makes the job refuse new processes until they are gone (observed on the
-                // workstation: AssignProcessToJobObject right after TerminateJobObject failed with ERROR_ACCESS_DENIED 200 times of 200,
-                // and succeeded 50 of 50 after an empty job's termination), so the holder's start would then fail instead of coming late.
-                using var job = JobObject.Open(WindowsExecutionPlatform.JobName(ArcForges.Client.IdText.Format(_node!.Runtime.Store.Metadata.NodeId.Span), attempt));
-                var emptied = Stopwatch.StartNew();
-                while (job is not null && job.Accounting().ActiveProcesses > 0)
-                {
-                    Assert.True(emptied.Elapsed < Tasks.Bound, $"Timed out after {Tasks.Bound.TotalSeconds:0} s waiting for the attempt's job to hold no process.");
-                    await Task.Delay(25, Ct);
-                }
+                // The job must hold nothing when the stop terminates it (the case under test).
+                await WaitForEmptyJobAsync(_node!, attempt);
             }
             else
             {
