@@ -61,20 +61,21 @@ public sealed class TaskControlTests
             // The tree is up, the timeout fired, or the task already ended (the precondition below then reports it at once).
             var lines = Tasks.Marker(marker);
             if (lines.Count(line => line.Event == "ready") == 2 || lines.Any(line => line.Event == "break")
-                || (await Tasks.GetAsync(channel, taskId)).State is TaskState.Succeeded or TaskState.Failed or TaskState.Cancelled or TaskState.Lost)
+                || Execution.TaskRecords.IsTerminal((await Tasks.GetAsync(channel, taskId)).State))
             {
                 break;
             }
 
             Assert.True(waited.Elapsed < Tasks.Bound, $"Timed out after {Tasks.Bound.TotalSeconds:0} s waiting for the tree to start.");
-            await Task.Delay(50, Ct);
+            await Task.Delay(200, Ct);
         }
 
         var task = await Tasks.WaitAsync(channel, taskId);
         var attempt = task.CurrentAttempt;
         var tree = Tasks.Marker(marker);
         TestContext.Current.TestOutputHelper?.WriteLine($"submitted {submittedAt}, attempt {Sched.Ms(attempt.StartedAt)}..{Sched.Ms(attempt.FinishedAt)}, "
-            + $"exit {attempt.Result.ExitCode}, leftovers terminated {attempt.Result.LeftoverProcessesTerminated}, detail '{attempt.Result.Detail}', "
+            + $"exit {attempt.Result.ExitCode}, leftovers terminated {attempt.Result.LeftoverProcessesTerminated} [{string.Join(", ", attempt.Result.LeftoverImages)}], "
+            + $"detail '{attempt.Result.Detail}', "
             + $"marker {string.Join(", ", tree)}");
         var ready = tree.Where(line => line.Event == "ready").ToList();
         Assert.True(ready.Count == 2 && ready.All(line => line.At < submittedAt + TimeoutMs),
@@ -83,8 +84,10 @@ public sealed class TaskControlTests
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, attempt.Result.TerminationReason);
         Assert.Equal(3, attempt.Result.ExitCode);
-        Assert.True(attempt.Result.LeftoverProcessesTerminated == 0,
-            $"leftover_grace terminated {attempt.Result.LeftoverProcessesTerminated} process(es) after the root exited: the child did not end on the break first.");
+        // Only the tree's own image counts: the root's console host (conhost.exe) is in the job too, runs below normal priority as well and may
+        // still be closing when leftover_grace ends; it never ran a break handler.
+        Assert.True(!attempt.Result.LeftoverImages.Any(image => image.Contains("arcforges-testload", StringComparison.OrdinalIgnoreCase)),
+            $"leftover_grace terminated {string.Join(", ", attempt.Result.LeftoverImages)} after the root exited: the child did not end on the break first.");
 
         // A generous safety bound, not a timing contract (so the test stays in the parallel suites), on the attempt's own times: after the
         // timeout fires the stop takes at most the grace; the bound only catches a timeout that fires late or not at all (the command holds
