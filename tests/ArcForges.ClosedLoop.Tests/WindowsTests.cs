@@ -175,13 +175,16 @@ public sealed partial class WindowsTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows supervisor.");
         await using var node = TestNode.Create();
         using var supervisor = node.Start(Supervisor, [NodeLocations.TestModeOption]);
-        var killed = new HashSet<int>();
+        // Each crash must hit a new node instance. Windows reuses process IDs quickly, so an instance is its ID with its start time (the
+        // descriptor's start time is checked against the live process).
+        var killed = new HashSet<(int Pid, long StartUnixMs)>();
         for (var crash = 1; crash <= 5; crash++)
         {
             await node.WaitReadyAsync();
             var pid = node.NodePid();
-            Assert.DoesNotContain(pid, killed);
-            killed.Add(pid);
+            var instance = (pid, node.Descriptor()!.ProcessStartUnixMs);
+            Assert.DoesNotContain(instance, killed);
+            killed.Add(instance);
             using var process = Process.GetProcessById(pid);
             process.Kill();
             process.WaitForExit(TimeSpan.FromSeconds(10));
