@@ -30,33 +30,46 @@ public sealed class TaskControlTests
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
         var marker = Path.Combine(node.Root, "timeout.txt");
-        var timed = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--child", "same", "--marker", marker);
+        var timed = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--child", "same", "--marker", marker);
         // The break reaches the processes of the root's group that exist when the timeout fires (04 section 6): a child started later gets
         // none, and the forced phase ends it. The attempt runs below normal priority (03 section 5.2, amended), so under the parallel suites'
         // load its processes may take seconds to start (a 5 s timeout fired before the child was up). So the test waits for both processes
-        // to record "ready" (their break handlers in place) and requires that before the timeout fires: the timeout is the bound of the
-        // tree's start, on the failure path only (with every processor saturated at normal priority the tree started in about 5 s).
+        // to record "ready" (their break handlers in place) and requires that before the timeout can fire: the timeout is the bound of the
+        // tree's start, on the failure path only, and a tree that starts later fails the test with that diagnosis.
         const int TimeoutMs = 20_000;
         timed.TimeoutMs = TimeoutMs;
+
+        // Both processes exit on the break, so the grace is never waited on the success path; it is the failure-path bound of their break
+        // handlers, which under a normal-priority load each run only when Windows boosts the starved thread (about every 4 s). With every
+        // processor saturated they recorded the break up to 14 s after the signal, past the default 10 s grace.
+        const int GraceMs = 30_000;
+        timed.Resources = new ResourceSpec { CancelGraceMs = GraceMs };
         var watch = Stopwatch.StartNew();
+
+        // The attempt starts after the submission, so its timeout fires no earlier than this instant plus the timeout (the processes record
+        // their events with the same wall clock). A process that is not ready when the timeout fires may record no "break" at all, so only
+        // the "ready" times prove that the whole tree was up before it fired.
+        var submittedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var taskId = await Tasks.SubmitAsync(channel, timed);
         await Tasks.WaitForAsync(() =>
         {
             var lines = Tasks.Marker(marker);
             return lines.Count(line => line.Event == "ready") == 2 || lines.Any(line => line.Event == "break");
         }, Tasks.Bound, "the tree to start");
-        var tree = Tasks.Marker(marker);
-        TestContext.Current.TestOutputHelper?.WriteLine($"tree {string.Join(", ", tree)} at {watch.ElapsedMilliseconds} ms after the submission");
-        Assert.True(tree.Count(line => line.Event == "ready") == 2 && !tree.Any(line => line.Event == "break"),
-            $"The tree was not ready before the {TimeoutMs} ms timeout fired: {string.Join(", ", tree)}.");
-
         var task = await Tasks.WaitAsync(channel, taskId);
+        var tree = Tasks.Marker(marker);
+        TestContext.Current.TestOutputHelper?.WriteLine($"submitted {submittedAt}, attempt {Sched.Ms(task.CurrentAttempt.StartedAt)}..{Sched.Ms(task.CurrentAttempt.FinishedAt)}, "
+            + $"exit {task.CurrentAttempt.Result.ExitCode}, detail '{task.CurrentAttempt.Result.Detail}', marker {string.Join(", ", tree)}");
+        var ready = tree.Where(line => line.Event == "ready").ToList();
+        Assert.True(ready.Count == 2 && ready.All(line => line.At < submittedAt + TimeoutMs),
+            $"The tree was not ready before the {TimeoutMs} ms timeout could fire (submitted at {submittedAt}): {string.Join(", ", tree)}.");
+
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(3, task.CurrentAttempt.Result.ExitCode);
-        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the stop takes a few seconds after the
-        // timeout fires; the bound only catches a timeout that does not fire (the command holds 60 s).
-        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(TimeoutMs + 15_000), $"The timeout took {watch.Elapsed}.");
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): after the timeout fires the stop takes
+        // at most the grace; the bound only catches a timeout that fires late or not at all (the command holds 120 s).
+        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(TimeoutMs + GraceMs + 15_000), $"The timeout took {watch.Elapsed}.");
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
 
         var cpu = Tasks.Argv(node.Root, Tasks.TestLoad, "cpu", "--threads", "2", "--iterations", "20000000000");
@@ -76,18 +89,22 @@ public sealed class TaskControlTests
         var marker = Path.Combine(node.Root, "ignore.txt");
         var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--on-break", "ignore", "--child", "same", "--marker", marker);
         // The grace must outlast the start of each process's break handler: the attempt runs below normal priority (03 section 5.2, amended),
-        // and under the parallel suites' normal-priority load its handler thread can wait seconds for a processor (Windows' starvation boost
-        // runs a ready thread within about 4 s), so the forced phase waits 10 s; the assertions are unchanged.
-        spec.Resources = new ResourceSpec { CancelGraceMs = 10_000 };
+        // and under a normal-priority load its handler thread can wait seconds for a processor (Windows' starvation boost runs a ready thread
+        // within about 4 s, once per step). With every processor saturated the break was recorded up to 14 s after the cancel, past a 10 s
+        // grace, so the forced phase waits 30 s; the tree ignores the break, so this test always waits the full grace.
+        const int GraceMs = 30_000;
+        spec.Resources = new ResourceSpec { CancelGraceMs = GraceMs };
         var taskId = await Tasks.SubmitAsync(channel, spec);
         await Tasks.RunningAsync(channel, taskId);
         await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "ready") == 2, Tasks.Bound, "the tree");
         var processes = Tasks.Processes(marker);
 
+        var cancelledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Reason = "test" }, cancellationToken: Ct);
         Assert.Equal(TaskState.Running, cancel.Value.State);
-        await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "break") == 2, TimeSpan.FromSeconds(10), "both processes to record the break");
+        await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "break") == 2, TimeSpan.FromMilliseconds(GraceMs), "both processes to record the break");
         var task = await Tasks.WaitAsync(channel, taskId);
+        TestContext.Current.TestOutputHelper?.WriteLine($"cancelled at {cancelledAt}, marker {string.Join(", ", Tasks.Marker(marker))}");
         Assert.Equal(TaskState.Cancelled, task.State);
         Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
         Assert.Contains("CTRL_BREAK_EVENT delivered", task.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
