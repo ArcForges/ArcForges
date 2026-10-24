@@ -44,9 +44,6 @@ public sealed class LinuxTests
         Assert.SkipUnless(Linux.UserManagerAvailable(), "requires-user-manager: no systemd user manager runs for this user.");
         await using var node = TestNode.Create();
         var unit = "arcforges-node-test-" + Guid.NewGuid().ToString("N")[..10] + ".service";
-        var unitDirectory = Path.Combine(Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR")!, "systemd", "user");
-        var unitFile = Path.Combine(unitDirectory, unit);
-        Directory.CreateDirectory(unitDirectory);
         var template = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Procedures", "arcforges-node.service"));
         var variables = node.Environment.Where(pair => pair.Value is not null).Select(pair => (pair.Key, Value: pair.Value!)).ToList();
         if (Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } dotnetRoot)
@@ -56,13 +53,14 @@ public sealed class LinuxTests
         }
 
         var environment = string.Join("\n", variables.Select(pair => $"Environment=\"{pair.Key}={pair.Value}\""));
-        File.WriteAllText(unitFile, template
+        var unitFile = ArcForges.Tests.SystemdTestEnvironment.InstallUnitFile(unit, template
             .Replace("@ARCFORGES@ node run --systemd", $"{TestNode.Host} node run --systemd {NodeLocations.TestModeOption}", StringComparison.Ordinal)
             .Replace("[Service]\n", "[Service]\n" + environment + "\n", StringComparison.Ordinal));
         node.Environment[NodeLocations.NodeUnitVariable] = unit;
         try
         {
-            // No daemon-reload: the manager loads the new unit on its first use (a reload stalls the manager for the tests beside this one).
+            // No daemon-reload: the manager loads the new unit on its first use (InstallUnitFile; a reload stalls the manager for the tests
+            // beside this one).
             var status = await node.CliAsync("status", "--json");
             Assert.True(status.ExitCode == 0, status.ToString());
             Assert.True(status.Json().GetProperty("autoStarted").GetBoolean());

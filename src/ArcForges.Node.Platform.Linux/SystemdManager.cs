@@ -282,13 +282,18 @@ public sealed class SystemdManager : IDisposable
     }
 
     /// <summary>
-    /// Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout. Once the manager
-    /// is disposed the wait ends with the cancellation of <see cref="Dispose"/> (an <see cref="AggregateException"/>).
+    /// Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout. A signal handled
+    /// before or while the wait begins counts too (<see cref="OnJobRemoved"/>). One wait per job: the callers wait only for a job they just
+    /// queued or found queued. Once the manager is disposed the wait ends with the cancellation of <see cref="Dispose"/> (an
+    /// <see cref="AggregateException"/>).
     /// </summary>
     public string? WaitJob(string job, TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(job);
         var waiter = _jobWaiters.GetOrAdd(job, _ => new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously));
+
+        // Registered before the record is read; OnJobRemoved records before it looks for the waiter.
+        Interlocked.MemoryBarrier();
         if (_finishedJobs.TryRemove(job, out var finished))
         {
             waiter.TrySetResult(finished.Result);
@@ -307,6 +312,52 @@ public sealed class SystemdManager : IDisposable
         finally
         {
             _jobWaiters.TryRemove(job, out _);
+        }
+    }
+
+    /// <summary>
+    /// Test seam (fault injection), set only by tests: called by <see cref="OnJobRemoved"/> after it recorded a job's result and before it
+    /// looks for the job's waiter, so a test can begin the wait exactly there. The executable never sets it.
+    /// </summary>
+    internal Action<string>? JobRemovedRecorded { get; set; }
+
+    /// <summary>
+    /// A <c>JobRemoved</c> signal (on the connection's receive loop; it never blocks). The result of an <c>arcforges*</c> unit's job (every
+    /// job the platform waits for) is recorded first, then the job's waiter, if any, gets it; <see cref="WaitJob"/> registers its
+    /// waiter first, then reads the record. Whichever comes second sees the other, so a wait that begins while the signal is handled still
+    /// gets the result. The reverse order lost it when the wait registered between this lookup and this record (MR-92: an adoption scope that
+    /// started at once was refused after the 10 s wait).
+    /// </summary>
+    internal void OnJobRemoved(string job, string unit, string result)
+    {
+        var recorded = unit.StartsWith("arcforges", StringComparison.Ordinal);
+        var now = Environment.TickCount64;
+        if (recorded)
+        {
+            _finishedJobs[job] = (result, now);
+            Interlocked.MemoryBarrier();
+        }
+
+        JobRemovedRecorded?.Invoke(job);
+        if (_jobWaiters.TryGetValue(job, out var waiter))
+        {
+            waiter.TrySetResult(result);
+            if (recorded)
+            {
+                // Delivered: the record is not needed (a wait that read it meanwhile got the same result).
+                _finishedJobs.TryRemove(job, out _);
+            }
+        }
+
+        if (recorded)
+        {
+            foreach (var (key, value) in _finishedJobs)
+            {
+                if (now - value.At > FinishedJobRetention.TotalMilliseconds)
+                {
+                    _finishedJobs.TryRemove(key, out _);
+                }
+            }
         }
     }
 
@@ -517,27 +568,9 @@ public sealed class SystemdManager : IDisposable
             },
             (Notification<(string Job, string Unit, string Result)> notification) =>
             {
-                if (!notification.HasValue)
+                if (notification.HasValue)
                 {
-                    return;
-                }
-
-                var removed = notification.Value;
-                if (_jobWaiters.TryGetValue(removed.Job, out var waiter))
-                {
-                    waiter.TrySetResult(removed.Result);
-                }
-                else if (removed.Unit.StartsWith("arcforges", StringComparison.Ordinal))
-                {
-                    var now = Environment.TickCount64;
-                    _finishedJobs[removed.Job] = (removed.Result, now);
-                    foreach (var (key, value) in _finishedJobs)
-                    {
-                        if (now - value.At > FinishedJobRetention.TotalMilliseconds)
-                        {
-                            _finishedJobs.TryRemove(key, out _);
-                        }
-                    }
+                    OnJobRemoved(notification.Value.Job, notification.Value.Unit, notification.Value.Result);
                 }
             },
             false, OnBus ? ObserverFlags.None : ObserverFlags.NoSubscribe, null).ConfigureAwait(false));
