@@ -626,6 +626,82 @@ public sealed class UnitPlatformTests
         Assert.Equal(9, LinuxHarness.WaitExit(reopened, Bound).ExitStatus);
     }
 
+    [Fact(Timeout = 120_000)]
+    public async Task AReopenedUnitWithAQueuedStartAwaitsItOnlyForAStop()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // Review round 1, finding 3 (04 section 9): a restarted platform re-opens a unit whose start job still waits. For a stop it awaits that
+        // start (the command may still start, and the stop must end it); for any other recovered attempt the start completes at once, as
+        // before, and no launch record is left for a unit that can still start.
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var files = harness.Files(out var name);
+        var unit = SystemdTestEnvironment.AttemptUnit(name);
+        var gate = "arcforges-test-gate-" + Guid.NewGuid().ToString("N")[..12] + ".service";
+        var go = Path.Combine(harness.Root, "gate-go");
+        try
+        {
+            // Ordered before the attempt's unit (Before=), so the unit's start job waits until the gate ends. A shell loop: the user manager's
+            // environment has no .NET runtime for the JIT test binaries; no '$', which systemd expands.
+            SystemdRun("--user", "--no-block", "--unit=" + gate, "--slice=" + harness.Slice, "-p", "Type=oneshot", "-p", "Before=" + unit, "/bin/sh", "-c",
+                $"while [ ! -e '{go}' ]; do sleep 0.05; done");
+            WaitUntil(() => SystemdTestEnvironment.Property(gate, "ActiveState") == "activating", "the gate unit to start");
+            harness.Launch(["sleep", "60"], files: files);
+            WaitUntil(() => SystemdTestEnvironment.Systemctl("list-jobs", "--no-legend", unit).Output.Contains(unit, StringComparison.Ordinal),
+                "the attempt unit's start job to wait for the gate");
+            harness.Platform.Dispose();
+
+            var restarted = harness.NewPlatform();
+            var plain = restarted.Reopen(harness.NodeName, files, null);
+            Assert.NotNull(plain);
+            Assert.True(plain!.Started.IsCompleted, "A recovered attempt that is not being stopped completes its start at once, as before.");
+            Assert.Null(await plain.Started);
+            plain.Dispose();
+
+            var stopping = restarted.Reopen(harness.NodeName, files, null, stopping: true);
+            Assert.NotNull(stopping);
+            Assert.False(stopping!.Started.IsCompleted, "A stop awaits the queued start: the command may still start.");
+            await File.WriteAllTextAsync(go, "go", Ct);
+            var root = await stopping.Started.WaitAsync(Bound, Ct);
+            Assert.NotNull(root);
+            Assert.False(File.Exists(files.LaunchPath), "The awaited start left a launch record.");
+            stopping.Terminate();
+            Assert.Equal(9, LinuxHarness.WaitExit(stopping, Bound).ExitStatus);
+            stopping.Dispose();
+        }
+        finally
+        {
+            File.WriteAllText(go, "go");
+            SystemdTestEnvironment.Systemctl("stop", gate);
+            SystemdTestEnvironment.Systemctl("reset-failed", gate);
+        }
+    }
+
+    private static void WaitUntil(Func<bool> condition, string what)
+    {
+        var watch = Stopwatch.StartNew();
+        while (!condition())
+        {
+            Assert.True(watch.Elapsed < Bound, $"Timed out after {Bound.TotalSeconds:0} s waiting for {what}.");
+            Thread.Sleep(50);
+        }
+    }
+
+    private static void SystemdRun(params string[] arguments)
+    {
+        var start = new ProcessStartInfo("systemd-run") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var argument in arguments)
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync(Ct);
+        var error = process.StandardError.ReadToEndAsync(Ct);
+        Assert.True(process.WaitForExit(TimeSpan.FromSeconds(30)), "systemd-run did not finish within 30 s.");
+        Assert.True(process.ExitCode == 0, $"systemd-run {string.Join(' ', arguments)} failed ({process.ExitCode}): {output.Result}{error.Result}");
+    }
+
     // isolation=exclusive: daemon-reexec restarts the user manager every other test uses.
     [Fact(Timeout = 120_000, DisableParallelization = true)]
     [Trait("isolation", "exclusive")]
