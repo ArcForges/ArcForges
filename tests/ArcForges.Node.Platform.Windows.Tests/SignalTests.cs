@@ -101,7 +101,10 @@ public sealed class SignalTests
         PlatformHarness.WaitFor(() => PlatformHarness.WindowClasses(childProcess.Pid).Contains(windowClass), Bound,
             () => $"the child's hidden window {windowClass} (its windows: {string.Join(", ", PlatformHarness.WindowClasses(childProcess.Pid))})");
         Assert.DoesNotContain(GuiWindows.TopLevelWindows(), window => window.ProcessId == childProcess.Pid && IsWindowVisible(window.Window));
+        // Its handle is taken while it runs (GetProcessById holds none): the failure description can read its exit code after it exited,
+        // and a reused ID is never taken for it.
         using var child = System.Diagnostics.Process.GetProcessById(childProcess.Pid);
+        _ = child.SafeHandle;
         var windowsBefore = string.Join(", ", PlatformHarness.WindowClasses(childProcess.Pid));
 
         var outcome = handle.RequestGracefulStop();
