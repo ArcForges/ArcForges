@@ -31,17 +31,32 @@ public sealed class TaskControlTests
         await using var channel = await node.ChannelAsync();
         var marker = Path.Combine(node.Root, "timeout.txt");
         var timed = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--child", "same", "--marker", marker);
-        // 5 s: the attempt runs below normal priority (03 section 5.2, amended), so under the parallel suites' load its child may take a few
-        // seconds to start; the timeout must fire after both processes are up for both to receive the break.
-        timed.TimeoutMs = 5_000;
+        // The break reaches the processes of the root's group that exist when the timeout fires (04 section 6): a child started later gets
+        // none, and the forced phase ends it. The attempt runs below normal priority (03 section 5.2, amended), so under the parallel suites'
+        // load its processes may take seconds to start (a 5 s timeout fired before the child was up). So the test waits for both processes
+        // to record "ready" (their break handlers in place) and requires that before the timeout fires: the timeout is the bound of the
+        // tree's start, on the failure path only (with every processor saturated at normal priority the tree started in about 5 s).
+        const int TimeoutMs = 20_000;
+        timed.TimeoutMs = TimeoutMs;
         var watch = Stopwatch.StartNew();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, timed));
+        var taskId = await Tasks.SubmitAsync(channel, timed);
+        await Tasks.WaitForAsync(() =>
+        {
+            var lines = Tasks.Marker(marker);
+            return lines.Count(line => line.Event == "ready") == 2 || lines.Any(line => line.Event == "break");
+        }, Tasks.Bound, "the tree to start");
+        var tree = Tasks.Marker(marker);
+        TestContext.Current.TestOutputHelper?.WriteLine($"tree {string.Join(", ", tree)} at {watch.ElapsedMilliseconds} ms after the submission");
+        Assert.True(tree.Count(line => line.Event == "ready") == 2 && !tree.Any(line => line.Event == "break"),
+            $"The tree was not ready before the {TimeoutMs} ms timeout fired: {string.Join(", ", tree)}.");
+
+        var task = await Tasks.WaitAsync(channel, taskId);
         Assert.Equal(TaskState.Failed, task.State);
         Assert.Equal(TerminationReason.TimedOut, task.CurrentAttempt.Result.TerminationReason);
         Assert.Equal(3, task.CurrentAttempt.Result.ExitCode);
-        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the 5 s timeout and the stop take a
-        // few seconds; the bound only catches a timeout that does not fire (the command holds 60 s).
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"The timeout took {watch.Elapsed}.");
+        // A generous safety bound, not a timing contract (so the test stays in the parallel suites): the stop takes a few seconds after the
+        // timeout fires; the bound only catches a timeout that does not fire (the command holds 60 s).
+        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(TimeoutMs + 15_000), $"The timeout took {watch.Elapsed}.");
         Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
 
         var cpu = Tasks.Argv(node.Root, Tasks.TestLoad, "cpu", "--threads", "2", "--iterations", "20000000000");
