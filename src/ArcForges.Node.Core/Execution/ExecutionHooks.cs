@@ -29,6 +29,8 @@ public interface ILaunchStepProvider
 /// record (a crash between the commit and the acknowledgement).</item>
 /// <item><c>finalize-throw=0</c>: the first finalization throws an exception no handler expects (NotSupportedException) before it
 /// records.</item>
+/// <item><c>escaped-record-queue-full=0</c>: the first write of escaped-process records finds the command queue full, as
+/// <see cref="CommandProcessor.ExecuteAsync{T}"/> reports it (the scan keeps the processes and writes them again).</item>
 /// </list>
 /// </summary>
 public sealed class ExecutionFaults

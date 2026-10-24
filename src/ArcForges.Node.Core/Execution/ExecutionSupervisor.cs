@@ -141,6 +141,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// <summary>The ancestry scan interval (04 section 3).</summary>
     public static readonly TimeSpan EscapeScanInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long finalization waits for a stop's graceful phase to record what it did.</summary>
+    private static readonly TimeSpan GracefulPhaseBound = TimeSpan.FromSeconds(15);
+
     /// <summary>The delay before a finalization that failed on a store error is retried.</summary>
     public static readonly TimeSpan FinalizeRetry = TimeSpan.FromSeconds(5);
 
@@ -922,7 +925,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         var period = grace ?? attempt.CancelGrace;
-        _ = Task.Run(() =>
+        var phase = new Task(() =>
         {
             GracefulOutcome? outcome = null;
             try
@@ -965,6 +968,10 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 new LogField("graceMs", (long)period.TotalMilliseconds));
             _loopWake.Pulse();
         });
+
+        // Kept before it starts: the root may exit on the signal before the phase records its detail, and finalization waits for it.
+        attempt.GracefulPhase = phase;
+        phase.Start(TaskScheduler.Default);
     }
 
     /// <summary>
@@ -1462,7 +1469,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// <summary>
     /// The ancestry scan (04 section 3, every 5 s): a process outside the attempt's job that descends from one of its processes is
     /// recorded as <c>ESCAPED</c> (process_record, label 3) and raises an <c>ESCAPED_PROCESS</c> finding about the attempt (R-RES-012).
-    /// It is not controlled; the stop sequence terminates it when it runs as the node's user (04 section 6 step 4).
+    /// It is not controlled; the stop sequence terminates it when it runs as the node's user (04 section 6 step 4). The scan never throws
+    /// into its caller (a stop, the enforcement pass): a found process is kept in <see cref="RunningAttempt.KnownEscaped"/> at once, and a
+    /// record write that cannot be queued or does not commit is written again by the next scan.
     /// </summary>
     private void ScanEscaped(RunningAttempt attempt, IAttemptHandle handle)
     {
@@ -1474,41 +1483,109 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or UnauthorizedAccessException)
         {
             _log.Warning("execution.escape_scan.failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
-            return;
+            escaped = [];
         }
 
         var found = escaped.Where(process => attempt.KnownEscaped.TryAdd((process.Pid, process.StartTime.UtcTicks), process.Image)).ToList();
-        if (found.Count == 0)
+        foreach (var process in found)
+        {
+            attempt.UnrecordedEscaped[(process.Pid, process.StartTime.UtcTicks)] = process;
+        }
+
+        if (found.Count > 0)
+        {
+            _log.Warning("execution.escaped", new LogField("attempt", attempt.Name),
+                new LogField("processes", string.Join(", ", found.Select(process => $"{process.Image} ({process.Pid}, parent {process.ParentPid})"))));
+        }
+
+        RecordEscaped(attempt);
+    }
+
+    /// <summary>
+    /// Queues the write of the attempt's escaped processes that are not recorded yet (one write at a time). A full command queue or a
+    /// failed commit leaves them in <see cref="RunningAttempt.UnrecordedEscaped"/> for the next scan; nothing is thrown.
+    /// </summary>
+    private void RecordEscaped(RunningAttempt attempt)
+    {
+        if (attempt.UnrecordedEscaped.IsEmpty || Interlocked.CompareExchange(ref attempt.EscapedWriting, 1, 0) != 0)
         {
             return;
         }
 
-        _log.Warning("execution.escaped", new LogField("attempt", attempt.Name),
-            new LogField("processes", string.Join(", ", found.Select(process => $"{process.Image} ({process.Pid}, parent {process.ParentPid})"))));
-        _ = _processor.ExecuteAsync(context =>
+        var pending = attempt.UnrecordedEscaped.Values.ToList();
+        Task<int> write;
+        try
         {
-            var now = context.Transaction.NowMicroseconds;
-            foreach (var process in found)
+            if (_faults.Take("escaped-record-queue-full") is not null)
             {
-                context.Transaction.Execute(
-                    """
-                    INSERT INTO process_record (attempt_id, pid, start_at, parent_pid, executable, arguments_redacted, first_seen, last_seen, mem_peak_bytes, label)
-                    VALUES ($attempt, $pid, $start, $parent, $image, NULL, $now, $now, 0, $label)
-                    ON CONFLICT (attempt_id, pid, start_at) DO UPDATE SET last_seen = $now, label = $label;
-                    """,
-                    ("$attempt", attempt.AttemptId), ("$pid", process.Pid), ("$start", StoreTime.ToMicroseconds(process.StartTime)),
-                    ("$parent", process.ParentPid), ("$image", process.Image), ("$now", now), ("$label", (int)ProcessLabel.Escaped));
-                ExecutionFindings.Raise(context, FindingKind.EscapedProcess, Severity.Warning, "attempt", attempt.AttemptId,
-                    "A process escaped its attempt's job",
-                    "A descendant of the attempt runs outside its job (created through WMI, a service broker or another parent), so the job's limits "
-                    + "and kill do not reach it. The stop sequence terminates it when it runs as your user (04 section 6).",
-                    [("attempt", attempt.Name), ("pid", process.Pid.ToString(CultureInfo.InvariantCulture)),
-                        ("parent_pid", process.ParentPid.ToString(CultureInfo.InvariantCulture)), ("image", process.Image),
-                        ("same_user", process.SameUser ? "true" : "false")]);
+                throw new CommandQueueFullException();
             }
 
-            return 0;
-        });
+            write = _processor.ExecuteAsync(context => WriteEscaped(context, attempt, pending));
+        }
+        catch (CommandQueueFullException exception)
+        {
+            Volatile.Write(ref attempt.EscapedWriting, 0);
+            _log.Warning("execution.escaped.record_deferred", new LogField("attempt", attempt.Name), new LogField("processes", pending.Count),
+                new LogField("errorType", exception.GetType().Name));
+            return;
+        }
+
+        _ = write.ContinueWith(done =>
+        {
+            if (done.IsCompletedSuccessfully)
+            {
+                foreach (var process in pending)
+                {
+                    attempt.UnrecordedEscaped.TryRemove((process.Pid, process.StartTime.UtcTicks), out _);
+                }
+            }
+            else
+            {
+                _log.Warning("execution.escaped.record_deferred", new LogField("attempt", attempt.Name), new LogField("processes", pending.Count),
+                    new LogField("errorType", done.Exception?.InnerException?.GetType().Name ?? "Canceled"));
+            }
+
+            Volatile.Write(ref attempt.EscapedWriting, 0);
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Records escaped processes (process_record, label ESCAPED) and raises each one's finding once: a process already recorded as ESCAPED is
+    /// only seen again, so a write that is repeated (a retry, or finalization) changes nothing else.
+    /// </summary>
+    private static int WriteEscaped(CommandContext context, RunningAttempt attempt, IReadOnlyCollection<EscapedProcess> processes)
+    {
+        var now = context.Transaction.NowMicroseconds;
+        foreach (var process in processes)
+        {
+            var start = StoreTime.ToMicroseconds(process.StartTime);
+            var label = context.Transaction.Scalar("SELECT label FROM process_record WHERE attempt_id = $attempt AND pid = $pid AND start_at = $start;",
+                ("$attempt", attempt.AttemptId), ("$pid", process.Pid), ("$start", start));
+            var recorded = label is not null and not DBNull && Convert.ToInt32(label, CultureInfo.InvariantCulture) == (int)ProcessLabel.Escaped;
+            context.Transaction.Execute(
+                """
+                INSERT INTO process_record (attempt_id, pid, start_at, parent_pid, executable, arguments_redacted, first_seen, last_seen, mem_peak_bytes, label)
+                VALUES ($attempt, $pid, $start, $parent, $image, NULL, $now, $now, 0, $label)
+                ON CONFLICT (attempt_id, pid, start_at) DO UPDATE SET last_seen = $now, label = $label;
+                """,
+                ("$attempt", attempt.AttemptId), ("$pid", process.Pid), ("$start", start),
+                ("$parent", process.ParentPid), ("$image", process.Image), ("$now", now), ("$label", (int)ProcessLabel.Escaped));
+            if (recorded)
+            {
+                continue;
+            }
+
+            ExecutionFindings.Raise(context, FindingKind.EscapedProcess, Severity.Warning, "attempt", attempt.AttemptId,
+                "A process escaped its attempt's job",
+                "A descendant of the attempt runs outside its job (created through WMI, a service broker or another parent), so the job's limits "
+                + "and kill do not reach it. The stop sequence terminates it when it runs as your user (04 section 6).",
+                [("attempt", attempt.Name), ("pid", process.Pid.ToString(CultureInfo.InvariantCulture)),
+                    ("parent_pid", process.ParentPid.ToString(CultureInfo.InvariantCulture)), ("image", process.Image),
+                    ("same_user", process.SameUser ? "true" : "false")]);
+        }
+
+        return 0;
     }
 
     /// <summary>
@@ -1585,7 +1662,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         if (terminated.Count > 0)
         {
-            attempt.StopDetail = (attempt.StopDetail is null ? string.Empty : attempt.StopDetail + "; ") + "escaped processes terminated: " + string.Join(", ", terminated);
+            attempt.EscapedTerminated.AddRange(terminated);
             _log.Info("execution.escaped.terminated", new LogField("attempt", attempt.Name), new LogField("processes", string.Join(", ", terminated)));
         }
     }
@@ -1871,6 +1948,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
             if (attempt.StopReason is { } stopped)
             {
+                // The root may have exited on the graceful signal before the graceful phase recorded what it did: its detail is awaited (the
+                // signal helper is bounded at 5 s).
+                if (attempt.GracefulPhase is { } phase)
+                {
+                    await Task.WhenAny(phase, Task.Delay(GracefulPhaseBound)).ConfigureAwait(false);
+                }
+
                 // The stop sequence ends here, however the root ended (graceful or forced): its escaped processes are terminated (04 section 6
                 // step 4), with the result in the stop's detail.
                 lock (attempt)
@@ -2033,7 +2117,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         if (attempt.StopReason is { } stop)
         {
             var limitBy = stop is TerminationReason.OutputLimit or TerminationReason.DiskLimit ? attempt.LimitEnforcedBy ?? "NODE" : null;
-            return new AttemptOutcome(stop, EffectCertainty.Happened, exitCode, attempt.StopDetail, limitBy, signal, coreDumped);
+            return new AttemptOutcome(stop, EffectCertainty.Happened, exitCode, attempt.StopDetailText, limitBy, signal, coreDumped);
         }
 
         if (guard.FirstOrDefault(item => item.Event == GuardEventKinds.Terminate) is { } guardStop)
@@ -2063,6 +2147,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     {
         var transaction = context.Transaction;
         var now = transaction.NowMicroseconds;
+
+        // Escaped processes whose record write never committed are recorded with the attempt (a node restart then still knows them).
+        WriteEscaped(context, attempt, [.. attempt.UnrecordedEscaped.Values]);
         var task = TaskRecords.GetRow(transaction, attempt.TaskId);
         var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
         if (task is null || previous is null || previous.State == AttemptState.Finished)

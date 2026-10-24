@@ -57,11 +57,12 @@ public sealed class EscapedTerminationTests
         Func<string, string, TaskSpec> untilFile, string graceful)
     {
         var image = Path.GetFileName(Tasks.TestLoad);
-        using var escaped = StartOutside();
-        using var reused = StartOutside();
-        using var ownEnd = StartOutside();
+        Process? escaped = null, reused = null, ownEnd = null;
         try
         {
+            escaped = StartOutside();
+            reused = StartOutside();
+            ownEnd = StartOutside();
             await using var node = await InProcessNode.Create().StartAsync();
             var ready = Path.Combine(node.Root, "ready.txt");
             var go = Path.Combine(node.Root, "go");
@@ -105,13 +106,15 @@ public sealed class EscapedTerminationTests
         }
         finally
         {
-            foreach (var process in (Process[])[escaped, reused, ownEnd])
+            foreach (var process in ((Process?[])[escaped, reused, ownEnd]).OfType<Process>())
             {
                 if (!process.HasExited)
                 {
                     process.Kill();
                     process.WaitForExit(TimeSpan.FromSeconds(10));
                 }
+
+                process.Dispose();
             }
         }
     }

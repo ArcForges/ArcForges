@@ -240,23 +240,6 @@ public static class EscapedProcesses
     public static bool WithinLifetime(long created, ProcessLifetime parent) =>
         created > 0 && parent.Created > 0 && parent.Exited >= 0 && created >= parent.Created && (parent.Exited == 0 || created <= parent.Exited);
 
-    /// <summary>Terminates the same-user processes of <paramref name="escaped"/> that are still the ones found; returns them as <c>image (pid)</c>.</summary>
-    public static List<string> Terminate(IEnumerable<EscapedProcess> escaped, uint exitCode)
-    {
-        ArgumentNullException.ThrowIfNull(escaped);
-        var terminated = new List<string>();
-        foreach (var process in escaped.Where(process => process.SameUser))
-        {
-            using var handle = ProcessInfo.OpenIdentified(process.Pid, process.StartTime.ToFileTime(), terminate: true);
-            if (handle is not null && Native.TerminateProcess(handle, exitCode))
-            {
-                terminated.Add($"{process.Image} ({process.Pid})");
-            }
-        }
-
-        return terminated;
-    }
-
     /// <summary>True when the process runs as the current user.</summary>
     public static bool IsSameUser(SafeKernelHandle process)
     {
