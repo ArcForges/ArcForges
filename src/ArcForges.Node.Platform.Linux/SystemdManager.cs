@@ -281,7 +281,10 @@ public sealed class SystemdManager : IDisposable
         });
     }
 
-    /// <summary>Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout.</summary>
+    /// <summary>
+    /// Waits for a job's <c>JobRemoved</c> signal; returns its result (<c>done</c>, <c>failed</c>, ...) or null on timeout. Once the manager
+    /// is disposed the wait ends with the cancellation of <see cref="Dispose"/> (an <see cref="AggregateException"/>).
+    /// </summary>
     public string? WaitJob(string job, TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(job);
@@ -289,6 +292,12 @@ public sealed class SystemdManager : IDisposable
         if (_finishedJobs.TryRemove(job, out var finished))
         {
             waiter.TrySetResult(finished.Result);
+        }
+
+        if (Interlocked.CompareExchange(ref _disposed, 0, 0) != 0)
+        {
+            // Added after Dispose cancelled the waiters (the node stopped meanwhile): nothing would end an unbounded wait.
+            waiter.TrySetCanceled();
         }
 
         try

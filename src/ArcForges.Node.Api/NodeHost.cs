@@ -110,6 +110,12 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Action<IAttemptHandle, bool>? StartObserved { get; init; }
 
+    /// <summary>
+    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it before and after the termination
+    /// of the forced phase after the grace period (<c>ExecutionOptions.ForcedPhase</c>). The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle, bool>? ForcedPhase { get; init; }
+
     /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
     public ILaunchStepProvider? LaunchSteps { get; init; }
 
@@ -313,6 +319,7 @@ public static class NodeHost
             IsolatedFromMachineLoad = isolated,
             ForcedBeforeStart = options.ForcedBeforeStart,
             StartObserved = options.StartObserved,
+            ForcedPhase = options.ForcedPhase,
         });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {

@@ -677,6 +677,23 @@ public sealed class UnitPlatformTests
         }
     }
 
+    [Fact(Timeout = 60_000)]
+    public async Task AJobWaitThatStartsAfterTheManagerWasDisposedEndsAtOnce()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // Review round 2, item B: a wait added after Dispose cancelled the job waiters (the node stops during a recovery) ends at once with
+        // that cancellation, instead of blocking its thread for good when it has no bound (a recovered stop's queued start job).
+        RequireUnits();
+        var manager = SystemdManager.Connect(SystemdManager.DefaultAddress()!, TimeSpan.FromSeconds(5));
+        manager.Dispose();
+        var wait = Task.Factory.StartNew(() => manager.WaitJob("/org/freedesktop/systemd1/job/0", Timeout.InfiniteTimeSpan), CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Assert.True(await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(10), Ct)) == wait,
+            "A job wait that started after the manager was disposed still blocks after 10 s.");
+        var exception = await Assert.ThrowsAsync<AggregateException>(() => wait);
+        Assert.IsType<TaskCanceledException>(exception.InnerException);
+    }
+
     private static void WaitUntil(Func<bool> condition, string what)
     {
         var watch = Stopwatch.StartNew();

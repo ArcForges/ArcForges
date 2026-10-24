@@ -80,6 +80,13 @@ public sealed class ExecutionOptions
     /// executable never sets it.
     /// </summary>
     internal Action<IAttemptHandle, bool>? StartObserved { get; init; }
+
+    /// <summary>
+    /// Test seam (fault injection), set only by in-process component tests: called by the forced phase after the grace period (the one a
+    /// STOPPING attempt recovered after a restart gets at once) before it reads the start and terminates (<see langword="false"/>), and right
+    /// after the termination (<see langword="true"/>), so a test can let the launch go on exactly there. The executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle, bool>? ForcedPhase { get; init; }
 }
 
 /// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
@@ -185,6 +192,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly ExecutionFaults _faults;
     private readonly Action<IAttemptHandle>? _forcedBeforeStart;
     private readonly Action<IAttemptHandle, bool>? _startObserved;
+    private readonly Action<IAttemptHandle, bool>? _forcedPhase;
     private readonly ConcurrentDictionary<string, RunningAttempt> _running = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, AsyncPulse> _taskPulses = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CallerKey> _bindings = new(StringComparer.Ordinal);
@@ -225,6 +233,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _faults = options.Faults;
         _forcedBeforeStart = options.ForcedBeforeStart;
         _startObserved = options.StartObserved;
+        _forcedPhase = options.ForcedPhase;
         Unenforced = options.Unenforced;
         Heartbeat = options.Heartbeat;
         NodeName = IdText.Format(_store.Metadata.NodeId.Span);
@@ -864,15 +873,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// The debt is settled by either, and by a start that completes without a root (the launch failed or was stopped). Nothing creates it again,
     /// because an attempt is forced once. So a start that never completes (a holder that never resumes, a unit whose start never runs) costs
     /// nothing and loops nowhere, and a process that survives the terminations is still recorded TERMINATION_INCOMPLETE, at most one window
-    /// later. An attempt re-opened for its stop on Windows also reports every process that enters while its launch may go on
-    /// (<see cref="IAttemptHandle.LaunchProcessEntered"/>; its start completes on the first, possibly a launch step), and each is terminated at
-    /// once. Every termination counts the verification window anew. Nothing is terminated after the node began to stop (it released the
+    /// later. Each process that enters a container re-opened for a stop is terminated at once too, whether or not the start was pending
+    /// (<see cref="TerminateEachLaunchProcess"/>). Every termination counts the verification window anew. Nothing is terminated after the node began to stop (it released the
     /// handles), once the attempt is being recorded or no longer supervised, or through a handle disposed meanwhile.
     /// </summary>
     private void TerminateWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
         attempt.TerminationOwed = true;
-        handle.LaunchProcessEntered += entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
         _forcedBeforeStart?.Invoke(handle);
         _ = handle.Started.ContinueWith(started =>
         {
@@ -900,6 +907,25 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }, TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// Every forced phase, before its termination (the caller holds the attempt's lock): each process reported to enter the container afterwards
+    /// (<see cref="IAttemptHandle.LaunchProcessEntered"/>, raised only by a handle re-opened for a stop while its launch may still go on) is
+    /// terminated at once, whether or not the start was still pending. Such a handle's start completes on the first process that enters,
+    /// possibly a launch step that ended before the forced phase; the holder's next process can then enter after the termination with nothing
+    /// owed to it. Subscribed before the termination, so none that enters after it is missed, and once per attempt (a termination that threw
+    /// is retried by the next pass).
+    /// </summary>
+    private void TerminateEachLaunchProcess(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        if (attempt.LaunchProcessesWatched)
+        {
+            return;
+        }
+
+        attempt.LaunchProcessesWatched = true;
+        handle.LaunchProcessEntered += entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
+    }
+
     /// <summary>The owed termination of a late start (<see cref="TerminateWhenStarted"/>); takes the attempt's lock.</summary>
     private void TerminateAgain(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
@@ -922,6 +948,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         attempt.Forced = true;
+        TerminateEachLaunchProcess(attempt, handle, reason);
         TerminateNow(attempt, handle, reason);
         return true;
     }
@@ -986,6 +1013,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 var startPending = !attempt.Handle.Started.IsCompleted;
                 if (!graceful && reason is TerminationReason.OutputLimit or TerminationReason.DiskLimit or TerminationReason.Preempted)
                 {
+                    TerminateEachLaunchProcess(attempt, attempt.Handle, reason);
                     var how = attempt.Handle.StopAtLimit();
                     _log.Info("execution.limit_stop", new LogField("attempt", attemptName), new LogField("reason", reason),
                         new LogField("container", attempt.Handle.ContainerName), new LogField("stop", how));
@@ -1541,11 +1569,14 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 // The forced phase after the grace period. A STOPPING attempt recovered after a node restart gets here at once, possibly in the
                 // middle of its launch (its handle's start still pending): read before the termination, as in ForceWhenStarted.
+                _forcedPhase?.Invoke(handle, false);
                 var startPending = !handle.Started.IsCompleted;
+                TerminateEachLaunchProcess(attempt, handle, stopReason);
                 handle.Terminate();
                 TerminateEscaped(attempt, stopReason);
                 attempt.Forced = true;
                 attempt.VerifyDeadline = now + (long)(VerifyWindow.TotalSeconds * TimeProvider.System.TimestampFrequency);
+                _forcedPhase?.Invoke(handle, true);
                 if (startPending)
                 {
                     TerminateWhenStarted(attempt, handle, stopReason);

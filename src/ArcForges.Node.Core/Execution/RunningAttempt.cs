@@ -158,6 +158,12 @@ public sealed class RunningAttempt : IDisposable
     /// </summary>
     internal bool TerminationOwed { get; set; }
 
+    /// <summary>
+    /// A forced phase subscribed to the processes that enter the attempt's re-opened container
+    /// (<c>ExecutionSupervisor.TerminateEachLaunchProcess</c>).
+    /// </summary>
+    internal bool LaunchProcessesWatched { get; set; }
+
     /// <summary>When the verification window ends (monotonic).</summary>
     internal long? VerifyDeadline { get; set; }
 

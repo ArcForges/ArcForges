@@ -392,6 +392,129 @@ public sealed partial class LaunchFaultTests
         }
     }
 
+    /// <summary>
+    /// Review round 2, item A (Windows): a STOPPING attempt recovered in the middle of its launch whose start completed before the restarted
+    /// node's forced phase: a launch step entered the re-opened job (completing the start) and ended before that phase, so the phase finds the
+    /// start complete and the job empty, and owes nothing. The holder's next process (the command) enters after the termination; it is
+    /// reported and terminated all the same: the task ends CANCELLED and the command does not run on. The order is fixed without timing: the
+    /// holder is suspended while the first step ends, the attempt is cancelled and the node restarted; the restarted node's forced phase (the
+    /// seam <c>ForcedPhase</c>, before it reads the start) resumes the holder until the second step entered and completed the start, suspends
+    /// it again until that step ended and the job is empty, and resumes it only after the termination, so the command enters after it.
+    /// </summary>
+    [Fact(Timeout = 240_000)]
+    [Trait("env", "windows-real")]
+    [SupportedOSPlatform("windows")]
+    public async Task AProcessEnteringAfterTheRecoveredForcedPhaseIsTerminatedWhenTheStartCompletedBeforeItOnWindows()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(),
+            "A re-opened Windows job; on Linux the launch steps and the command run in the unit, which the forced phase ends.");
+        var attempt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        InProcessNode? node = null;
+        string Dir(string name) => Path.Combine(node!.Root, name);
+        var steps = new Tasks.FixedSteps(files =>
+        {
+            attempt.TrySetResult(files.AttemptName);
+            return [WindowsHoldStep("first", Dir("step1.txt"), Dir("go1")), WindowsHoldStep("second", Dir("step2.txt"), Dir("go2"))];
+        }, _ => []);
+        node = InProcessNode.Create(steps: steps);
+        await using var started = await node.StartAsync();
+        var commandMarker = Dir("command.txt");
+        var gate = new Lock();
+        int? holder = null;
+        var suspended = false;
+        void Suspend()
+        {
+            lock (gate)
+            {
+                if (!suspended)
+                {
+                    Suspension.Suspend(holder!.Value);
+                    suspended = true;
+                }
+            }
+        }
+
+        void Resume()
+        {
+            lock (gate)
+            {
+                if (suspended)
+                {
+                    Suspension.Resume(holder!.Value);
+                    suspended = false;
+                }
+            }
+        }
+
+        try
+        {
+            Id id;
+            await using (var channel = await node.ChannelAsync())
+            {
+                id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
+                var name = await attempt.Task.WaitAsync(Tasks.Bound, Ct);
+                await Tasks.WaitForAsync(() => Tasks.Marker(Dir("step1.txt")).Any(line => line.Event == "start"), Tasks.Bound, "the first launch step to run");
+                holder = ExecutionCleanup.Holders([name]).Single();
+                Suspend();
+                await File.WriteAllTextAsync(Dir("go1"), "go", Ct);
+                var first = Tasks.Processes(Dir("step1.txt")).Single();
+                await Tasks.WaitForAsync(() => !first.IsRunning(), Tasks.Bound, "the first launch step to end");
+                await WaitForEmptyJobAsync(node, name);
+                var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
+                Assert.Null(cancel.Error);
+                Assert.Equal(AttemptState.Stopping, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
+            }
+
+            await node.StopAsync();
+            var phases = 0;
+            var pendingCalls = 0;
+            RootProcess? startedBefore = null;
+            var emptyBefore = false;
+            node.ForcedBeforeStart = _ => Interlocked.Increment(ref pendingCalls);
+            node.ForcedPhase = (handle, terminated) =>
+            {
+                if (!terminated && Interlocked.Increment(ref phases) == 1)
+                {
+                    // The second step enters the re-opened job and completes the start; it then ends with the holder suspended.
+                    Resume();
+                    startedBefore = handle.Started.Wait(Tasks.Bound) ? handle.Started.Result : null;
+                    Suspend();
+                    File.WriteAllText(Dir("go2"), "go");
+                    var watch = Stopwatch.StartNew();
+                    while (handle.Accounting().ActiveProcesses > 0 && watch.Elapsed < Tasks.Bound)
+                    {
+                        Thread.Sleep(20);
+                    }
+
+                    emptyBefore = handle.Accounting().ActiveProcesses == 0;
+                }
+                else if (terminated && Volatile.Read(ref phases) == 1)
+                {
+                    // After the termination the holder goes on: it starts the command, which enters the job after the forced phase.
+                    Resume();
+                }
+            };
+            await node.StartAsync();
+            await using var after = await node.ChannelAsync();
+            var task = await Tasks.WaitAsync(after, id);
+            AssertCancelled(task);
+            Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
+            Assert.Equal(1, Volatile.Read(ref phases));
+            Assert.True(startedBefore is not null, "The second launch step did not complete the restarted node's start before its forced phase.");
+            Assert.True(emptyBefore, "The second launch step had not ended when the forced phase terminated the job.");
+            Assert.Equal(0, Volatile.Read(ref pendingCalls));
+            AssertNeverRanPastTheStop(commandMarker);
+        }
+        finally
+        {
+            if (holder is not null)
+            {
+                Resume();
+            }
+        }
+    }
+
     private static void SkipWithoutPlatform()
     {
         if (!OperatingSystem.IsWindows())

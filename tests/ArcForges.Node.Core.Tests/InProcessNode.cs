@@ -117,6 +117,12 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// </summary>
     public Action<IAttemptHandle, bool>? StartObserved { get; set; }
 
+    /// <summary>
+    /// The supervisor's seam around the termination of the forced phase after the grace period (<c>NodeHostOptions.ForcedPhase</c>), from the
+    /// next start: called before the phase reads the start (<see langword="false"/>) and right after the termination (<see langword="true"/>).
+    /// </summary>
+    public Action<IAttemptHandle, bool>? ForcedPhase { get; set; }
+
     /// <summary>The node's own slice on Linux (16 section 4).</summary>
     public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
 
@@ -189,6 +195,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             WrapSampler = MachineScript is { } script ? sampler => new ScriptedMachineSampler(sampler, script) : null,
             ForcedBeforeStart = ForcedBeforeStart,
             StartObserved = StartObserved,
+            ForcedPhase = ForcedPhase,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;
