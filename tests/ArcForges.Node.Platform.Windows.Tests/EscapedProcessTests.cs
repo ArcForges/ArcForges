@@ -14,6 +14,9 @@ namespace ArcForges.Node.Platform.Windows.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class EscapedProcessTests
 {
+    /// <summary>How long a wait for an expected event may take before the test fails (16 section 4: generous on the failure path).</summary>
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
     [Fact(Timeout = 60_000)]
     public void AChildCreatedUnderTheRootBeforeItsAssignmentIsFoundEscapedAndTerminated()
     {
@@ -72,7 +75,7 @@ public sealed class EscapedProcessTests
             var outcomes = escaped.Where(process => process.SameUser)
                 .Select(process => (process.Pid, Outcome: harness.Platform.TerminateProcess(process.Pid, process.StartTime))).ToList();
             Assert.Contains((escapedChild.ProcessId, ProcessTermination.Terminated), outcomes);
-            Assert.True(escapedChild.WaitForExit(TimeSpan.FromSeconds(5)), "The escaped child was terminated.");
+            Assert.True(escapedChild.WaitForExit(Bound), "The escaped child was terminated.");
             Assert.Equal(WindowsExecutionPlatform.TerminatedExitCode, escapedChild.ExitCode);
             Assert.True(PlatformHarness.Identity(attemptRoot).IsRunning(), "Terminating the escaped child leaves the job's processes alone.");
 
@@ -293,7 +296,7 @@ public sealed class EscapedProcessTests
             Assert.Equal(attemptRoot.ProcessId, found.ParentPid);
             using var harness = PlatformHarness.Start();
             Assert.Equal(ProcessTermination.Terminated, harness.Platform.TerminateProcess(found.Pid, found.StartTime));
-            Assert.True(escapedChild.WaitForExit(TimeSpan.FromSeconds(5)));
+            Assert.True(escapedChild.WaitForExit(Bound));
         }
         finally
         {
