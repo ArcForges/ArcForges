@@ -146,7 +146,7 @@ public sealed partial class LaunchFaultTests
 
         var task = await Tasks.WaitAsync(channel, id);
         AssertCancelled(task);
-        seam.AssertStartedInBetween();
+        seam.AssertStartedInBetween(task);
         AssertNeverRanPastTheStop(commandMarker);
     }
 
@@ -188,7 +188,7 @@ public sealed partial class LaunchFaultTests
         var task = await Tasks.WaitAsync(after, id);
         AssertCancelled(task);
         Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
-        seam.AssertStartedInBetween();
+        seam.AssertStartedInBetween(task);
         AssertNeverRanPastTheStop(commandMarker);
     }
 
@@ -443,6 +443,7 @@ public sealed partial class LaunchFaultTests
         private int _calls;
         private bool _pendingAtCall;
         private RootProcess? _started;
+        private string? _launchEnded;
 
         public void Invoke(IAttemptHandle handle)
         {
@@ -454,14 +455,21 @@ public sealed partial class LaunchFaultTests
             _pendingAtCall = !handle.Started.IsCompleted;
             hold.Release();
             _started = handle.Started.Wait(Tasks.Bound) ? handle.Started.Result : null;
+            if (_started is null)
+            {
+                // What ended the launch without a command, for the failure message.
+                _launchEnded = $"launch record: {handle.TryReadLaunchFailure()?.ToJson() ?? "none"}; exit record: {handle.TryReadExit()?.ToJson() ?? "none"}; "
+                    + hold.Describe();
+            }
         }
 
         /// <summary>The forced phase ran once while the start was pending, and the start completed with a root while it was held.</summary>
-        public void AssertStartedInBetween()
+        public void AssertStartedInBetween(ManagedTask task)
         {
             Assert.Equal(1, Volatile.Read(ref _calls));
             Assert.True(_pendingAtCall, "The start had completed before the forced phase's termination.");
-            Assert.True(_started is not null, "The start did not complete with a root while the forced phase was held.");
+            Assert.True(_started is not null,
+                $"The start did not complete with a root while the forced phase was held ({_launchEnded}; attempt result {task.CurrentAttempt?.Result}).");
         }
     }
 
@@ -480,6 +488,7 @@ public sealed partial class LaunchFaultTests
         private readonly TaskCompletionSource<string> _attempt = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private InProcessNode? _node;
         private int? _holder;
+        private int? _stepExitCode;
         private int _released;
         private string? _gate;
 
@@ -509,9 +518,25 @@ public sealed partial class LaunchFaultTests
                 await Tasks.WaitForAsync(() => Tasks.Marker(StepMarker).Any(line => line.Event == "start"), Tasks.Bound, "the launch step to run");
                 _holder = ExecutionCleanup.Holders([attempt]).Single();
                 Suspension.Suspend(_holder.Value);
+
+                // A handle on the step before it is released, so its exit code can be read afterwards (diagnostics; never fails the test).
+                using var stepHandle = ProcessInfo.Open(Tasks.Marker(StepMarker).First(line => line.Event == "start").Pid);
                 await File.WriteAllTextAsync(StepGo, "go", Ct);
                 var step = Tasks.Processes(StepMarker).Single();
                 await Tasks.WaitForAsync(() => !step.IsRunning(), Tasks.Bound, "the launch step to end");
+                _stepExitCode = stepHandle is not null && Native.GetExitCodeProcess(stepHandle, out var code) ? unchecked((int)code) : null;
+
+                // The job must hold nothing when the stop terminates it (the case under test), and the step's console host may outlive the
+                // step. A termination that still finds a process makes the job refuse new processes until they are gone (observed on the
+                // workstation: AssignProcessToJobObject right after TerminateJobObject failed with ERROR_ACCESS_DENIED 200 times of 200,
+                // and succeeded 50 of 50 after an empty job's termination), so the holder's start would then fail instead of coming late.
+                using var job = JobObject.Open(WindowsExecutionPlatform.JobName(ArcForges.Client.IdText.Format(_node!.Runtime.Store.Metadata.NodeId.Span), attempt));
+                var emptied = Stopwatch.StartNew();
+                while (job is not null && job.Accounting().ActiveProcesses > 0)
+                {
+                    Assert.True(emptied.Elapsed < Tasks.Bound, $"Timed out after {Tasks.Bound.TotalSeconds:0} s waiting for the attempt's job to hold no process.");
+                    await Task.Delay(25, Ct);
+                }
             }
             else
             {
@@ -522,6 +547,10 @@ public sealed partial class LaunchFaultTests
                 Assert.True(SystemdTestEnvironment.Property(unit, "ActiveState") == "inactive", SystemdTestEnvironment.Describe(unit));
             }
         }
+
+        /// <summary>What the hold saw (diagnostics of a failure).</summary>
+        public string Describe() =>
+            "launch step exit code " + (_stepExitCode is { } code ? code.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unknown");
 
         /// <summary>Lets the command start (once).</summary>
         public void Release()
