@@ -173,6 +173,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private int _kicked;
     private readonly AsyncPulse _loopWake = new();
     private readonly CancellationTokenSource _stop = new();
+
+    /// <summary><see cref="_stop"/>'s token, taken once: it stays readable after the source is disposed (always after it was cancelled).</summary>
+    private readonly CancellationToken _stopping;
     private readonly HeartbeatMonitor _tailerMonitor;
     private ExecutionSettings _settings;
     private Thread? _loop;
@@ -190,6 +193,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     {
         ArgumentNullException.ThrowIfNull(options);
         _store = options.Store;
+        _stopping = _stop.Token;
         _processor = options.Processor;
         _log = options.Log;
         _clock = options.Clock;
@@ -1953,7 +1957,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 // at GracefulPhaseBound and ends at once when the node stops.
                 if (attempt.GracefulPhase is { } phase)
                 {
-                    await Task.WhenAny(phase, Task.Delay(GracefulPhaseBound, _stop.Token)).ConfigureAwait(false);
+                    await Task.WhenAny(phase, Task.Delay(GracefulPhaseBound, _stopping)).ConfigureAwait(false);
                 }
 
                 // The stop sequence ends here, however the root ended (graceful or forced): its escaped processes are terminated (04 section 6
