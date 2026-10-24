@@ -269,6 +269,60 @@ public sealed class JobTests
         }
     }
 
+    /// <summary>
+    /// MR-89: a job re-opened after a node restart without a root and without a launch or exit record, for an attempt the node was not
+    /// stopping, completes its start at once (as before); once a forced phase watches its launch (<c>WatchLaunch</c>), each process that
+    /// enters the job later is reported. A job re-opened for a stop awaits its start instead and is not watched that way. The test assigns the
+    /// process to the job itself (created suspended, assigned, resumed), as the holder assigns its steps and the command: the completion port
+    /// reports it whatever the timing.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task AJobReopenedWithoutARootReportsALaterProcessOnceAForcedPhaseWatchesIt()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job objects.");
+        using var harness = PlatformHarness.Start();
+        var plainFiles = harness.Files(out var plainName);
+        var stoppingFiles = harness.Files(out var stoppingName);
+        using var plainJob = JobObject.Create(WindowsExecutionPlatform.JobName(harness.NodeName, plainName));
+        using var stoppingJob = JobObject.Create(WindowsExecutionPlatform.JobName(harness.NodeName, stoppingName));
+        var plain = harness.Platform.Reopen(harness.NodeName, plainFiles, null);
+        var stopping = harness.Platform.Reopen(harness.NodeName, stoppingFiles, null, stopping: true);
+        LaunchedProcess? late = null;
+        try
+        {
+            Assert.NotNull(plain);
+            Assert.True(plain!.Started.IsCompleted, "A recovered attempt that is not being stopped completes its start at once, as before.");
+            Assert.Null(await plain.Started);
+            Assert.NotNull(stopping);
+            Assert.False(stopping!.Started.IsCompleted, "A stop awaits the launch: the holder may still start the command.");
+            Assert.False(stopping.WatchLaunch(), "A stop's re-open awaits its start through Started, not WatchLaunch.");
+
+            var entered = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            plain.LaunchProcessEntered += pid => entered.TrySetResult(pid);
+            Assert.True(plain.WatchLaunch(), "A forced phase watches the launch of a re-open without a root that is not for a stop.");
+            late = ProcessLauncher.Start(new LaunchOptions
+            {
+                Application = TestPrograms.TestLoad,
+                CommandLine = WindowsCommandLine.Build([TestPrograms.TestLoad, "hold", "--hold-ms", "60000"]),
+                Flags = Native.CreateSuspended | Native.CreateNoWindow,
+            });
+            plainJob.Assign(late.Process);
+            late.Resume();
+            Assert.Equal(late.ProcessId, await entered.Task.WaitAsync(Bound, TestContext.Current.CancellationToken));
+            Assert.True(plain.Root is null, "A reported process is not taken for the root: it may be a launch step.");
+        }
+        finally
+        {
+            plainJob.Terminate(AttemptRunner.TerminatedExitCode);
+            stoppingJob.Terminate(AttemptRunner.TerminatedExitCode);
+            Assert.True(late?.WaitForExit(Bound) ?? true, "The late process was left running.");
+            late?.Dispose();
+            plain?.Dispose();
+            stopping?.Dispose();
+        }
+    }
+
     private static void Report() =>
         TestContext.Current.TestOutputHelper?.WriteLine($"elevated: {PlatformHarness.IsElevated()}");
 }

@@ -252,6 +252,8 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         }
 
         // As for a stop's re-open: no bound and no launch record, since the unit can start at any time. The root it starts is the late start.
+        // The handle's own Dispose does not end this wait: the job's end does, or the manager's Dispose as the node stops. A report that comes
+        // after the attempt was recorded or released terminates nothing (TerminateAgain's guards).
         _ = Task.Run(() =>
         {
             AwaitStart(job, Timeout.InfiniteTimeSpan, recordUnstarted: false);

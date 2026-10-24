@@ -875,8 +875,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// because an attempt is forced once. So a start that never completes (a holder that never resumes, a unit whose start never runs) costs
     /// nothing and loops nowhere, and a process that survives the terminations is still recorded TERMINATION_INCOMPLETE, at most one window
     /// later. Each process that enters a re-opened container is terminated at once too, whether or not the start was pending
-    /// (<see cref="TerminateEachLaunchProcess"/>). Every termination counts the verification window anew. Nothing is terminated after the node began to stop (it released the
-    /// handles), once the attempt is being recorded or no longer supervised, or through a handle disposed meanwhile.
+    /// (<see cref="TerminateEachLaunchProcess"/>). Every termination counts the verification window anew. Nothing is terminated after the
+    /// node began to stop (it released the handles), once the attempt is being recorded or no longer supervised, or through a handle disposed
+    /// meanwhile.
     /// </summary>
     private void TerminateWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {

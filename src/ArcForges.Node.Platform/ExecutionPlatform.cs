@@ -252,8 +252,10 @@ public interface IAttemptHandle : IDisposable
     /// Raised (on a platform thread, with the process ID) when a launch the node no longer controls goes on, in a handle re-opened while the
     /// launch may still go on (no root recorded, no launch or exit record), until a launch or exit record exists. Windows: each process that
     /// enters the job, the only sign that the launch went on, since <see cref="Started"/> completes on the first such process only (a stop) or
-    /// at once (any other re-open). Linux: the unit's main process, once the queued start job that <see cref="WatchLaunch"/> found completed.
-    /// Other handles never raise it.
+    /// at once (any other re-open). The adapter's end steps (04 section 3) enter the job before the exit record too, so a forced phase that
+    /// watches the launch ends a stopped attempt's end steps as well, as for a stop's re-open; that includes a recovered attempt whose command
+    /// started while the node was down, which Windows re-opens without a root. Linux: the unit's main process, once the queued start job that
+    /// <see cref="WatchLaunch"/> found completed. Other handles never raise it.
     /// </summary>
     event Action<int>? LaunchProcessEntered
     {
@@ -270,8 +272,9 @@ public interface IAttemptHandle : IDisposable
     /// Called by every forced phase before its termination, once it subscribed to <see cref="LaunchProcessEntered"/>. True when the handle was
     /// re-opened after a node restart for an attempt the node was not stopping (its <see cref="Started"/> completed at once), while its launch
     /// may still go on (no root recorded, no launch or exit record), and now reports that launch through <see cref="LaunchProcessEntered"/>:
-    /// Windows, every process that enters the job; Linux, the unit's queued start job read now (<c>PendingStartJob</c>), false when none waits.
-    /// Every other handle returns false, a handle re-opened for a stop included (its <see cref="Started"/> awaits the launch). Never throws.
+    /// Windows, every process that enters the job, the end steps included (each is then terminated, as for a stop's re-open); Linux, the unit's
+    /// queued start job read now (<c>PendingStartJob</c>), once, false when none waits. Every other handle returns false, a handle re-opened for
+    /// a stop included (its <see cref="Started"/> awaits the launch). Never throws.
     /// </summary>
     bool WatchLaunch() => false;
 

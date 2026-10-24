@@ -664,18 +664,31 @@ public sealed class UnitPlatformTests
             Assert.NotNull(plain);
             Assert.True(plain!.Started.IsCompleted, "A recovered attempt that is not being stopped completes its start at once, as before.");
             Assert.Null(await plain.Started);
-            plain.Dispose();
+
+            // MR-89: a forced phase that stops such an attempt later reads its queued start job then (WatchLaunch), once, and the unit's main
+            // process is reported as the late start and becomes the handle's root. Both re-opens wait for the same job (one waiter), so the gate
+            // ends only once both are waiting.
+            var entered = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            plain.LaunchProcessEntered += pid => entered.TrySetResult(pid);
+            Assert.True(plain.WatchLaunch(), "A forced phase watches the queued start of a recovered attempt that is not being stopped.");
+            Assert.False(plain.WatchLaunch(), "The queued start is read once.");
 
             var stopping = restarted.Reopen(harness.NodeName, files, null, stopping: true);
             Assert.NotNull(stopping);
             Assert.False(stopping!.Started.IsCompleted, "A stop awaits the queued start: the command may still start.");
+            Assert.False(stopping.WatchLaunch(), "A stop's re-open awaits the start through Started, not WatchLaunch.");
             await File.WriteAllTextAsync(go, "go", Ct);
             var root = await stopping.Started.WaitAsync(Bound, Ct);
             Assert.NotNull(root);
+            var reported = await entered.Task.WaitAsync(Bound, Ct);
+            Assert.Equal(int.Parse(SystemdTestEnvironment.Property(unit, "MainPID"), System.Globalization.CultureInfo.InvariantCulture), reported);
+            Assert.Equal(root!.Pid, reported);
+            Assert.True(plain.Root is { } plainRoot && plainRoot.Pid == reported, $"The watched start did not become the handle's root ({plain.Root}).");
             Assert.False(File.Exists(files.LaunchPath), "The awaited start left a launch record.");
             stopping.Terminate();
             Assert.Equal(9, LinuxHarness.WaitExit(stopping, Bound).ExitStatus);
             stopping.Dispose();
+            plain.Dispose();
         }
         finally
         {
