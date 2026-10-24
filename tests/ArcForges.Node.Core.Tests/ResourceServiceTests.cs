@@ -3,6 +3,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Resources;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Grpc.Core;
@@ -100,11 +101,14 @@ public sealed class ResourceServiceTests
         }
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the snapshot is the live machine's (LiveMachine), and its pressure level is Normal only on a machine that no
+    // other test loads.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task TheSnapshotProcessesAndSamplesComeFromTheRealSamplers()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
+        await using var node = await InProcessNode.Create().WithLiveMachine().StartAsync();
         await using var channel = await node.ChannelAsync();
 
         // The first evaluation runs within a second of the start; machine samples are stored every 5 s.
@@ -119,6 +123,7 @@ public sealed class ResourceServiceTests
         Assert.Equal(snapshot.CapacityCpuMillicores - snapshot.ReserveCpuMillicores - snapshot.UnmanagedCpuMillicores,
             Math.Max(1000, snapshot.BudgetCpuMillicores));
         Assert.Equal(snapshot.CapacityMemBytes - snapshot.ReserveMemBytes - snapshot.UnmanagedMemBytes, snapshot.BudgetMemBytes);
+        Assert.True(snapshot.UnmanagedMemBytes > 0, "On the live machine other processes' memory is unmanaged (U_mem > 0).");
         Assert.InRange(snapshot.AvailableMemBytes, 1ul, snapshot.CapacityMemBytes);
         Assert.Equal(PressureLevel.Normal, snapshot.Pressure);
         Assert.Equal(OperatingSystem.IsLinux(), snapshot.PressureDetail.Available);
@@ -155,6 +160,59 @@ public sealed class ResourceServiceTests
         Assert.All(samples.Samples, sample => Assert.InRange(sample.Usage.MemBytes, 1ul, snapshot.CapacityMemBytes));
         Assert.True((await channel.Resources.GetSamplesAsync(new ResourceServiceGetSamplesRequest { Meta = new RequestMeta(), Scope = SampleScope.Managed },
             deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct)).Value.Samples.Count >= 1);
+    }
+
+    /// <summary>
+    /// A test node sees only itself and its attempts on the machine (MachineIsolation, the fixture's default), whatever runs beside it: after
+    /// more evaluations than the 5 s pressure persistence, <c>U = 0</c>, <c>B_cpu = max(min_managed_cpu, C - R)</c>, <c>B_mem = C - R</c> and
+    /// the level is Normal. On any real machine other processes use memory, so a node that read the live machine would show U_mem above 0.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public async Task ATestNodeSeesOnlyItselfOnTheMachine()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        AssertIsolated(await EvaluatedAsync(node, 8));
+    }
+
+    /// <summary>
+    /// The isolation against a saturated machine that the test does not have to create: the machine-wide figures of the real sampler are
+    /// scripted to every CPU busy (unmanaged CPU at the whole machine, which sets <c>B_cpu</c> to its floor), 1% of memory available and a
+    /// new OOM kill at every sample (Critical conditions, 03 section 7) and memory PSI 90 (a Pressure condition), and the isolated node still
+    /// has <c>U = 0</c>, <c>B = C - R</c> and Normal after the persistence.
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public async Task AnIsolatedNodeKeepsItsBudgetsAndNormalPressureOnASaturatedMachine()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().WithMachineScript(Saturated()).StartAsync();
+        AssertIsolated(await EvaluatedAsync(node, 8));
+    }
+
+    /// <summary>
+    /// The live machine (<see cref="InProcessNode.LiveMachine"/>) on the same scripted saturated machine: the unmanaged load counts, so
+    /// <c>B_cpu</c> falls to <c>min_managed_cpu</c>, <c>B_mem = max(0, C - R - U_mem)</c>, and the level reaches Critical.
+    /// </summary>
+    // isolation=exclusive: LiveMachine (every live-machine test runs alone); the machine-wide figures are scripted, so the result does not
+    // depend on the load either way.
+    [Fact(Timeout = 60_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task ALiveNodeOnASaturatedMachineLosesItsBudgetsAndReachesCritical()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().WithLiveMachine().WithMachineScript(Saturated()).StartAsync();
+        await using var channel = await node.ChannelAsync();
+        ResourceSnapshot snapshot = new();
+        await WaitAsync(async () =>
+        {
+            snapshot = (await channel.Resources.GetResourceSnapshotAsync(new ResourceServiceGetResourceSnapshotRequest { Meta = new RequestMeta() },
+                deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: Ct)).Value.Snapshot;
+            return snapshot.Pressure == PressureLevel.Critical;
+        }, "the Critical level on the saturated machine");
+        Assert.True(snapshot.UnmanagedCpuMillicores > snapshot.CapacityCpuMillicores / 2, $"U_cpu {snapshot.UnmanagedCpuMillicores} of {snapshot.CapacityCpuMillicores}");
+        Assert.Equal(1000u, snapshot.BudgetCpuMillicores);
+        Assert.True(snapshot.UnmanagedMemBytes > snapshot.CapacityMemBytes / 2, $"U_mem {snapshot.UnmanagedMemBytes} of {snapshot.CapacityMemBytes}");
+        Assert.Equal((ulong)Math.Max(0, (long)snapshot.CapacityMemBytes - (long)snapshot.ReserveMemBytes - (long)snapshot.UnmanagedMemBytes), snapshot.BudgetMemBytes);
     }
 
     [Fact(Timeout = 60_000)]
@@ -223,6 +281,56 @@ public sealed class ResourceServiceTests
         Assert.Equal([1ul, 2ul, 3ul], frames.Select(frame => frame.Position.Sequence));
         Assert.InRange(elapsed, TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
         await cancel.CancelAsync();
+    }
+
+    /// <summary>
+    /// A saturated machine over the real sample: every CPU busy, 1% of memory available and one more OOM kill per sample (Critical conditions,
+    /// 03 section 7), and memory PSI 90 (a Pressure condition).
+    /// </summary>
+    private static Func<MachineSample, MachineSample> Saturated()
+    {
+        long kills = 0;
+        return real => real with
+        {
+            CpuBusyMs = real.CpuTotalMs,
+            AvailableMemoryBytes = real.TotalMemoryBytes / 100,
+            Pressure = new PressureStall(CpuSome: 90, MemorySome: 90, MemoryFull: 90, IoSome: 0),
+            OomKills = Interlocked.Increment(ref kills),
+        };
+    }
+
+    /// <summary>The snapshot after <paramref name="evaluations"/> more evaluations of the node's resource monitor.</summary>
+    private static async Task<ResourceSnapshot> EvaluatedAsync(InProcessNode node, int evaluations)
+    {
+        var resources = node.Runtime.Execution!.Resources!;
+        for (var seen = 0; seen < evaluations;)
+        {
+            if (await resources.Sampled.WaitAsync(TimeSpan.FromSeconds(10), Ct))
+            {
+                seen++;
+            }
+            else
+            {
+                Assert.Fail($"The resource monitor did not evaluate within 10 s ({seen} of {evaluations}).");
+            }
+        }
+
+        await using var channel = await node.ChannelAsync();
+        var response = await channel.Resources.GetResourceSnapshotAsync(new ResourceServiceGetResourceSnapshotRequest { Meta = new RequestMeta() },
+            deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: Ct);
+        Assert.Null(response.Error);
+        return response.Value.Snapshot;
+    }
+
+    /// <summary>The figures of a node isolated from machine load (MachineIsolation): <c>U = 0</c>, <c>B = C - R</c>, Normal.</summary>
+    private static void AssertIsolated(ResourceSnapshot snapshot)
+    {
+        Assert.True(snapshot.HasBudgetCpuMillicores && snapshot.HasBudgetMemBytes && snapshot.HasUnmanagedCpuMillicores && snapshot.HasUnmanagedMemBytes);
+        Assert.Equal(0u, snapshot.UnmanagedCpuMillicores);
+        Assert.Equal(0ul, snapshot.UnmanagedMemBytes);
+        Assert.Equal(Math.Max(1000L, (long)snapshot.CapacityCpuMillicores - snapshot.ReserveCpuMillicores), snapshot.BudgetCpuMillicores);
+        Assert.Equal(snapshot.CapacityMemBytes - snapshot.ReserveMemBytes, snapshot.BudgetMemBytes);
+        Assert.Equal(PressureLevel.Normal, snapshot.Pressure);
     }
 
     private static (string Code, ErrorCategory Category) Code(ArcError? error) => (error?.Code ?? "none", error?.Category ?? ErrorCategory.Unspecified);

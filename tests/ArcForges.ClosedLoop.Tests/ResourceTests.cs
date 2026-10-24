@@ -32,6 +32,44 @@ public sealed partial class ResourceTests
 
     // ------------------------------------------------------------------------------------------------- snapshot and labels
 
+    /// <summary>
+    /// The node of a closed-loop test sees only itself and its attempts on the machine (MachineIsolation): TestNode passes
+    /// <c>ARCFORGES_TEST_MACHINE=isolated</c> and the executable under test (the JIT build, or the Native AOT host through
+    /// <c>ARCFORGES_HOST_PATH</c>) reads it with <c>--test-mode</c>. Once the snapshot's evaluation time is 6 s past the first one (more
+    /// evaluations than the 5 s pressure persistence) the CLI's snapshot shows <c>U = 0</c>, <c>B_cpu = max(min_managed_cpu, C - R)</c>,
+    /// <c>B_mem = C - R</c> and Normal, whatever runs beside the test. This test process is outside the node and its attempts, so a node
+    /// that read the live machine would count its memory in <c>U_mem</c>.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task ATestNodeSeesOnlyItselfOnTheMachineThroughTheCli()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = TestNode.Create();
+        await node.StartNodeAsync();
+        JsonElement snapshot = default;
+        async Task<JsonElement> ReadAsync()
+        {
+            var run = await node.CliAsync("resources", "--json");
+            Assert.Equal(0, run.ExitCode);
+            return snapshot = run.Json();
+        }
+
+        static long Number(JsonElement element) =>
+            element.ValueKind == JsonValueKind.String ? long.Parse(element.GetString()!, CultureInfo.InvariantCulture) : element.GetInt64();
+        static long EvaluatedAtMs(JsonElement at) =>
+            (Number(at.GetProperty("unixSeconds")) * 1000) + ((at.TryGetProperty("nanos", out var nanos) ? Number(nanos) : 0) / 1_000_000);
+        await TestNode.WaitAsync(async () => (await ReadAsync()).TryGetProperty("budgetCpuMillicores", out _), Bound, "the first evaluation");
+        var first = EvaluatedAtMs(snapshot.GetProperty("at"));
+        await TestNode.WaitAsync(async () => EvaluatedAtMs((await ReadAsync()).GetProperty("at")) - first >= 6_000, Bound,
+            "an evaluation 6 s after the first");
+        long Value(string name) => Number(snapshot.GetProperty(name));
+        Assert.Equal(0, Value("unmanagedCpuMillicores"));
+        Assert.Equal(0, Value("unmanagedMemBytes"));
+        Assert.Equal(Math.Max(1000, Value("capacityCpuMillicores") - Value("reserveCpuMillicores")), Value("budgetCpuMillicores"));
+        Assert.Equal(Value("capacityMemBytes") - Value("reserveMemBytes"), Value("budgetMemBytes"));
+        Assert.Equal("PRESSURE_LEVEL_NORMAL", snapshot.GetProperty("pressure").GetString());
+    }
+
     [Fact(Timeout = 300_000, DisableParallelization = true)]
     [Trait("env", "linux-real")]
     [Trait("isolation", "exclusive")]
@@ -60,6 +98,9 @@ public sealed partial class ResourceTests
     private static async Task SnapshotAndLabelsAsync()
     {
         await using var node = TestNode.Create();
+
+        // The live machine (exclusive): the snapshot is compared with the operating system's figures.
+        node.LiveMachine = true;
         await node.StartNodeAsync();
         await using var channel = await ChannelAsync(node);
 
@@ -558,6 +599,9 @@ public sealed partial class ResourceTests
         var (total, available) = OsMemory();
         Assert.SkipWhen(available < Allocation + (2048 * MiB), $"Only {available / MiB} MiB available; the test needs {(Allocation + (2048 * MiB)) / MiB} MiB.");
         await using var node = TestNode.Create();
+
+        // The live machine (exclusive): the unmanaged allocator must move the node to Critical.
+        node.LiveMachine = true;
         var critical = (available - (Allocation * 3 / 4)) / (double)total;
         node.SeedPolicy(policy => policy.Resources.Pressure = new PressureThresholds
         {
