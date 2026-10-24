@@ -72,6 +72,14 @@ public sealed class ExecutionOptions
     /// termination that follows the start, so a test can complete the start exactly there. The executable never sets it.
     /// </summary>
     internal Action<IAttemptHandle>? ForcedBeforeStart { get; init; }
+
+    /// <summary>
+    /// Test seam (fault injection), set only by in-process component tests: called by the continuation that follows a forced phase's pending
+    /// start, once the start completed with a root, before it terminates the attempt again (<see langword="false"/>) and after it
+    /// (<see langword="true"/>), so a test can let a verification run first, or let the launch go on right after that termination. The
+    /// executable never sets it.
+    /// </summary>
+    internal Action<IAttemptHandle, bool>? StartObserved { get; init; }
 }
 
 /// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
@@ -176,6 +184,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly ILaunchStepProvider? _steps;
     private readonly ExecutionFaults _faults;
     private readonly Action<IAttemptHandle>? _forcedBeforeStart;
+    private readonly Action<IAttemptHandle, bool>? _startObserved;
     private readonly ConcurrentDictionary<string, RunningAttempt> _running = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, AsyncPulse> _taskPulses = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CallerKey> _bindings = new(StringComparer.Ordinal);
@@ -215,6 +224,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _steps = options.Steps;
         _faults = options.Faults;
         _forcedBeforeStart = options.ForcedBeforeStart;
+        _startObserved = options.StartObserved;
         Unenforced = options.Unenforced;
         Heartbeat = options.Heartbeat;
         NodeName = IdText.Format(_store.Metadata.NodeId.Span);
@@ -328,10 +338,14 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             }
 
             var root = row.RootPid is { } pid && row.RootStart is { } start ? new RootProcess(pid, StoreTime.FromMicroseconds(start)) : null;
+
+            // The node was stopping it: the stop continues below, and a launch the node no longer controls may still start the command, so the
+            // platform awaits that start (only then: any other recovered attempt is re-opened as before).
+            var stopping = row.State == AttemptState.Stopping && row.Reason is null;
             IAttemptHandle? handle = null;
             try
             {
-                handle = Platform?.Reopen(NodeName, files, root);
+                handle = Platform?.Reopen(NodeName, files, root, stopping);
             }
             catch (Win32Exception exception)
             {
@@ -405,7 +419,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 continue;
             }
 
-            if (row.State == AttemptState.Stopping && row.Reason is null)
+            if (stopping)
             {
                 // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed). The node may have
                 // stopped in the middle of the launch: a start that completes after the forced phase is terminated again (Enforce).
@@ -824,8 +838,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// <summary>
     /// The forced phase of a stop (the caller holds the attempt's lock): the container is terminated at once, which also ends a launch step
     /// that runs in it. While the command is still being started the container may still be empty, and the holder or the unit may start the
-    /// command afterwards; so when the start had not completed before the termination, the container is terminated again once the start
-    /// completes with a root (<see cref="TerminateWhenStarted"/>), and the verification window counts from that last termination.
+    /// command afterwards; so when the start had not completed before the termination, one more termination is owed to that late start
+    /// (<see cref="TerminateWhenStarted"/>).
     /// </summary>
     private void ForceWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
@@ -838,31 +852,65 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     }
 
     /// <summary>
-    /// After a forced phase (the termination, or a limit stop) that ran while the attempt's start had not completed: terminates the attempt
-    /// again once the start completes with a root (the caller holds the attempt's lock). The continuation is registered after the
-    /// termination whatever the start did meanwhile, and runs at once when the start already completed, so no interleaving of the start
-    /// with the termination lets the command run on past the stop. Nothing is terminated after the node began to stop (it released the
+    /// After a forced phase (the termination, or a limit stop) that ran while the attempt's start had not completed (the caller holds the
+    /// attempt's lock): one more termination is owed to the late start (<see cref="RunningAttempt.TerminationOwed"/>). Whichever comes first
+    /// makes it:
+    /// <list type="bullet">
+    /// <item>the start completing with a root: a continuation registered after the termination whatever the start did meanwhile, so it runs
+    /// at once when the start already completed;</item>
+    /// <item>a verification after the window that finds processes in the container: the late start entered it before the node saw the start
+    /// complete, and the verification terminates it instead of recording TERMINATION_INCOMPLETE (<see cref="Enforce"/>).</item>
+    /// </list>
+    /// The debt is settled by either, and by a start that completes without a root (the launch failed or was stopped). Nothing creates it again,
+    /// because an attempt is forced once. So a start that never completes (a holder that never resumes, a unit whose start never runs) costs
+    /// nothing and loops nowhere, and a process that survives the terminations is still recorded TERMINATION_INCOMPLETE, at most one window
+    /// later. An attempt re-opened for its stop on Windows also reports every process that enters while its launch may go on
+    /// (<see cref="IAttemptHandle.LaunchProcessEntered"/>; its start completes on the first, possibly a launch step), and each is terminated at
+    /// once. Every termination counts the verification window anew. Nothing is terminated after the node began to stop (it released the
     /// handles), once the attempt is being recorded or no longer supervised, or through a handle disposed meanwhile.
     /// </summary>
     private void TerminateWhenStarted(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
     {
+        attempt.TerminationOwed = true;
+        handle.LaunchProcessEntered += entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
         _forcedBeforeStart?.Invoke(handle);
         _ = handle.Started.ContinueWith(started =>
         {
-            if (!started.IsCompletedSuccessfully || started.Result is null)
+            var root = started.IsCompletedSuccessfully ? started.Result : null;
+            if (root is null)
             {
                 // No command started: the launch failure (or the stopped launch step) finalizes the attempt.
+                lock (attempt)
+                {
+                    attempt.TerminationOwed = false;
+                }
+
                 return;
             }
 
-            lock (attempt)
+            _startObserved?.Invoke(handle, false);
+            try
             {
-                if (!attempt.Finalizing && !_stop.IsCancellationRequested && _running.TryGetValue(attempt.Name, out var current) && current == attempt)
-                {
-                    TerminateNow(attempt, handle, reason);
-                }
+                TerminateAgain(attempt, handle, reason);
+            }
+            finally
+            {
+                _startObserved?.Invoke(handle, true);
             }
         }, TaskScheduler.Default);
+    }
+
+    /// <summary>The owed termination of a late start (<see cref="TerminateWhenStarted"/>); takes the attempt's lock.</summary>
+    private void TerminateAgain(RunningAttempt attempt, IAttemptHandle handle, TerminationReason reason)
+    {
+        lock (attempt)
+        {
+            attempt.TerminationOwed = false;
+            if (!attempt.Finalizing && !_stopping.IsCancellationRequested && _running.TryGetValue(attempt.Name, out var current) && current == attempt)
+            {
+                TerminateNow(attempt, handle, reason);
+            }
+        }
     }
 
     /// <summary>Terminates the attempt once (a stop and the launch can both get here); never one that is already being recorded.</summary>
@@ -1503,9 +1551,20 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                     TerminateWhenStarted(attempt, handle, stopReason);
                 }
             }
-            else if (attempt.Forced && attempt.VerifyDeadline is { } verify && now >= verify && handle.Accounting().ActiveProcesses > 0)
+            else if (attempt.Forced && attempt.VerifyDeadline is { } verify && now >= verify && handle.Accounting().ActiveProcesses is var active and > 0)
             {
-                BeginFinalize(attempt, incomplete: true);
+                if (attempt.TerminationOwed)
+                {
+                    // The late start entered the container before the node saw the start complete (TerminateWhenStarted): it is terminated,
+                    // not recorded as left over, and the window counts from this termination.
+                    attempt.TerminationOwed = false;
+                    _log.Info("execution.stop.late_start", new LogField("attempt", attempt.Name), new LogField("processes", active));
+                    TerminateNow(attempt, handle, attempt.StopReason ?? TerminationReason.Cancelled);
+                }
+                else
+                {
+                    BeginFinalize(attempt, incomplete: true);
+                }
             }
         }
     }

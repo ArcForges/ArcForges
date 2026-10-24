@@ -152,6 +152,12 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>The forced phase ran.</summary>
     internal bool Forced { get; set; }
 
+    /// <summary>
+    /// A forced phase ran while the attempt's start was pending: one more termination is owed to the late start, made by the start's
+    /// continuation or by a verification that finds the late start in the container first (<c>ExecutionSupervisor.TerminateWhenStarted</c>).
+    /// </summary>
+    internal bool TerminationOwed { get; set; }
+
     /// <summary>When the verification window ends (monotonic).</summary>
     internal long? VerifyDeadline { get; set; }
 

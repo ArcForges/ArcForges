@@ -241,10 +241,28 @@ public interface IAttemptHandle : IDisposable
 
     /// <summary>
     /// Completes once the root process runs (its identity), or with <see langword="null"/> when the launch failed. A handle re-opened after a
-    /// node restart completes it at once with the recorded root, unless the launch may still go on (no root recorded, no launch or exit
-    /// record): it then completes once the platform sees the launch continue, or when the handle is disposed.
+    /// node restart completes it at once with the recorded root, unless it was re-opened for a stop while the launch may still go on (no root
+    /// recorded, no launch or exit record; <see cref="IExecutionPlatform.Reopen"/>). It then completes when the platform sees the launch
+    /// continue, which may be a launch step rather than the root (Windows: the first process that enters the job; Linux: the unit's queued
+    /// start job completing, with its main process), or when the handle is disposed.
     /// </summary>
     Task<RootProcess?> Started { get; }
+
+    /// <summary>
+    /// Raised (on a platform thread, with the process ID) for each process that enters the container of a handle re-opened for a stop while
+    /// the launch may still go on, until a launch or exit record exists: on Windows the only sign that a launch the node no longer controls went
+    /// on, since <see cref="Started"/> completes on the first such process only. Other handles never raise it.
+    /// </summary>
+    event Action<int>? LaunchProcessEntered
+    {
+        add
+        {
+        }
+
+        remove
+        {
+        }
+    }
 
     /// <summary>The write end of a STREAM stdin pipe.</summary>
     Stream? StdinWriter { get; }
@@ -395,8 +413,12 @@ public interface IExecutionPlatform : IDisposable
     /// <summary>Creates the attempt's container and starts it (through its holder, or directly for <c>kill_with_node</c>).</summary>
     IAttemptHandle Launch(AttemptLaunch launch);
 
-    /// <summary>Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone.</summary>
-    IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root);
+    /// <summary>
+    /// Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone. With <paramref name="stopping"/>
+    /// (the node continues the attempt's stop) a launch that may still go on (no root recorded, no launch or exit record) is awaited:
+    /// <see cref="IAttemptHandle.Started"/> completes when it continues. Otherwise the start completes at once with <paramref name="root"/>.
+    /// </summary>
+    IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false);
 
     /// <summary>
     /// Acknowledges the exit record of an attempt the store already records as finished, when its holder still waits (the node stopped

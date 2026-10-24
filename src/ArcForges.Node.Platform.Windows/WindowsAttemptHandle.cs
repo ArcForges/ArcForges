@@ -42,6 +42,9 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     /// <summary>Raised (on a platform thread) when the attempt changed: started, the root exited, the record was written, a limit event.</summary>
     public event Action? Changed;
 
+    /// <inheritdoc />
+    public event Action<int>? LaunchProcessEntered;
+
     /// <summary>The attempt's files.</summary>
     public AttemptFiles Files { get; }
 
@@ -251,10 +254,11 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     }
 
     /// <summary>
-    /// A re-opened attempt whose launch may still go on (no root recorded, no launch or exit record): the restarted node no longer receives
-    /// its holder's reports, so <see cref="Started"/> completes with the first process that enters the job after the re-open (a launch step
-    /// or the command the holder went on to start), or with the recorded root (none) when the handle is disposed. Called before the job is
-    /// associated with the completion port; the processes in the job now are left out.
+    /// An attempt re-opened for its stop whose launch may still go on (no root recorded, no launch or exit record): the restarted node no
+    /// longer receives its holder's reports, so <see cref="Started"/> completes with the first process that enters the job after the re-open
+    /// (a launch step or the command the holder went on to start), or with the recorded root (none) when the handle is disposed, and every
+    /// such process is reported (<see cref="LaunchProcessEntered"/>). Called before the job is associated with the completion port; the
+    /// processes in the job now are left out.
     /// </summary>
     internal void AwaitLaunch()
     {
@@ -281,7 +285,11 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         _beforeReopen = present;
     }
 
-    /// <summary>A process entered the job of a re-opened attempt whose launch may still go on (<see cref="AwaitLaunch"/>).</summary>
+    /// <summary>
+    /// A process entered the job of an attempt re-opened for its stop whose launch may still go on (<see cref="AwaitLaunch"/>): the first one
+    /// completes <see cref="Started"/>, and each one is reported until a launch or exit record exists (the end steps run before the exit
+    /// record, so a stopped attempt's end steps are reported too).
+    /// </summary>
     private void LaunchContinued(int pid, HashSet<(int Pid, long Created)> before)
     {
         using var process = ProcessInfo.Open(pid);
@@ -291,10 +299,13 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         }
 
         var created = ProcessInfo.CreationFileTime(process);
-        if (created != 0 && !before.Contains((pid, created)))
+        if (created == 0 || before.Contains((pid, created)) || File.Exists(Files.LaunchPath) || File.Exists(Files.ExitPath))
         {
-            _started.TrySetResult(new RootProcess(pid, ProcessInfo.FromFileTime(created)));
+            return;
         }
+
+        _started.TrySetResult(new RootProcess(pid, ProcessInfo.FromFileTime(created)));
+        LaunchProcessEntered?.Invoke(pid);
     }
 
     internal void ReadReports(Stream stream)
@@ -377,7 +388,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
                 // Every member is remembered with its exact lifetime, so the ancestry scan also finds children of members that exited
                 // and never mistakes the children of a process that reused a member's ID for the member's.
                 _members.Remember(data);
-                if (_beforeReopen is { } before && !_started.Task.IsCompleted)
+                if (_beforeReopen is { } before)
                 {
                     LaunchContinued(data, before);
                 }

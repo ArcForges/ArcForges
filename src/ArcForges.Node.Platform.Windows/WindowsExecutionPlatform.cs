@@ -478,7 +478,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     }
 
     /// <inheritdoc />
-    public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root)
+    public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false)
     {
         ArgumentNullException.ThrowIfNull(files);
         var job = JobObject.Open(JobName(nodeName, files.AttemptName));
@@ -489,10 +489,11 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
 
         var key = (nuint)Interlocked.Increment(ref _nextKey);
         var handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
-        if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
+        if (stopping && root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
         {
-            // The node stopped in the middle of the launch: the holder may still start a launch step or the command. Before the port is
-            // associated, so no process that enters the job afterwards is missed.
+            // The node stopped in the middle of the launch of an attempt it was stopping: the holder may still start a launch step or the
+            // command. Before the port is associated: the association posts a new-process message for every process in the job then
+            // (observed on the workstation), so the ones present now are told apart, and none that enters later is missed.
             handle.AwaitLaunch();
         }
 
