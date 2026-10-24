@@ -89,16 +89,29 @@ public sealed class SignalTests
         var handle = harness.Launch([TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--child", "window", "--marker", marker],
             leftoverGraceMs: (int)Bound.TotalMilliseconds);
         await handle.Started.WaitAsync(Bound, TestContext.Current.CancellationToken);
-        PlatformHarness.WaitFor(() => Ready(marker).Count == 2, Bound, "the root and its window child");
+        PlatformHarness.WaitFor(() => Ready(marker).Count == 2 || Events(marker, "window-failed").Count > 0, Bound, "the root and its window child");
+        Assert.True(Events(marker, "window-failed").Count == 0,
+            "The window child could not create its hidden window: " + PlatformHarness.ReadShared(marker).ReplaceLineEndings(" | "));
         var rootPid = handle.Root!.Pid;
         var childProcess = Ready(marker).Single(process => process.Pid != rootPid);
-        PlatformHarness.WaitFor(() => GuiWindows.TopLevelWindows().Any(window => window.ProcessId == childProcess.Pid), Bound, "the child's hidden window");
+
+        // The child's own window, by its class: while CreateWindowEx runs, the thread's Default IME window can be the process's only
+        // top-level window.
+        var windowClass = "ArcForgesTestLoadHidden" + childProcess.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        PlatformHarness.WaitFor(() => PlatformHarness.WindowClasses(childProcess.Pid).Contains(windowClass), Bound,
+            () => $"the child's hidden window {windowClass} (its windows: {string.Join(", ", PlatformHarness.WindowClasses(childProcess.Pid))})");
         Assert.DoesNotContain(GuiWindows.TopLevelWindows(), window => window.ProcessId == childProcess.Pid && IsWindowVisible(window.Window));
+        using var child = System.Diagnostics.Process.GetProcessById(childProcess.Pid);
+        var windowsBefore = string.Join(", ", PlatformHarness.WindowClasses(childProcess.Pid));
 
         var outcome = handle.RequestGracefulStop();
         Assert.True(outcome.ConsoleSignalled, outcome.Reason);
         Assert.True(outcome.WindowsClosed >= 1, "WM_CLOSE was posted to the child's window.");
-        PlatformHarness.WaitFor(() => Events(marker, "close").Contains(childProcess.Pid), Bound, "WM_CLOSE in the window child");
+        PlatformHarness.WaitFor(() => Events(marker, "close").Contains(childProcess.Pid), Bound,
+            () => $"WM_CLOSE in the window child (the stop: {outcome.WindowsClosed} window(s) closed, reason {outcome.Reason ?? "none"}; "
+                + $"the child's windows before the stop: {windowsBefore}; now: {string.Join(", ", PlatformHarness.WindowClasses(childProcess.Pid))}; "
+                + $"the child {(child.HasExited ? "exited with " + child.ExitCode : "still runs")}; "
+                + $"marker: {PlatformHarness.ReadShared(marker).ReplaceLineEndings(" | ")})");
         PlatformHarness.WaitFor(() => !childProcess.IsRunning(), Bound, "the window child to exit");
         Assert.DoesNotContain(childProcess.Pid, Events(marker, "break"));
         harness.WaitExit(handle, Bound);

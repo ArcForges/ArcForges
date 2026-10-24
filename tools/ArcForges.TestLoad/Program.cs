@@ -28,7 +28,8 @@ internal static class Program
           signal    --marker <file>  --hold-ms ms (60000)  --on-break exit|ignore (exit)  --window 0|1 (0)
                     --free-console 0|1 (0)  --child none|same|group|console|window|breakaway (none)
                     --child-hold-ms ms (hold-ms)   (Windows only)
-                    (records ready/break/close lines in the marker; break exits 3, WM_CLOSE exits 4)
+                    (records ready/break/close lines in the marker; break exits 3, WM_CLOSE exits 4;
+                    window-failed instead of ready exits 6; an event that cannot be recorded exits 5)
           hold      --hold-ms ms (1000)  --ready-after-ms ms (0)  --ready-line text  --port N (0)  --file <path>
                     --exit-code N (0)  --marker <file>   (records start/end lines; then prints, listens, creates)
                     --until-file <path>   (holds until the file exists, at most hold-ms)
