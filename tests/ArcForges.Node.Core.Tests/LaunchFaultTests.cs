@@ -932,6 +932,8 @@ public sealed partial class LaunchFaultTests
         private const uint ExceptionNotHandled = 0x80010001;
         private const uint Breakpoint = 0x80000003;
         private const uint Synchronize = 0x00100000;
+        private const int AccessDenied = 5;
+        private const int InvalidParameter = 87;
         private readonly ManualResetEventSlim _release = new();
         private readonly ManualResetEventSlim _detach = new();
         private readonly TaskCompletionSource _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -961,9 +963,26 @@ public sealed partial class LaunchFaultTests
         /// <summary>Attaches to <paramref name="pid"/> and returns once the attach completed (the debugger's initial breakpoint).</summary>
         public static ExitHold Attach(int pid, TimeSpan bound)
         {
+            Assert.SkipUnless(Environment.Is64BitProcess, "The exit hold reads DEBUG_EVENT with its 64-bit layout.");
             var hold = new ExitHold(pid, bound);
-            Assert.True(hold._attached.Task.Wait(TimeSpan.FromSeconds(30)), $"The debugger did not attach to {pid} within 30 s.");
-            return hold;
+            try
+            {
+                Assert.True(hold._attached.Task.Wait(TimeSpan.FromSeconds(30)), $"The debugger did not attach to {pid} within 30 s.");
+                return hold;
+            }
+            catch (AggregateException exception) when (exception.InnerException is Win32Exception { NativeErrorCode: AccessDenied or InvalidParameter } refused)
+            {
+                // Refused, not failed: a host policy (or an endpoint agent) forbids debugging the step, or another debugger is attached to it
+                // (STATUS_PORT_ALREADY_SET reads as ERROR_INVALID_PARAMETER).
+                hold.Dispose();
+                Assert.Skip($"Attaching a debugger to the launch step was refused: Win32 error {refused.NativeErrorCode} ({refused.Message}).");
+                throw;
+            }
+            catch
+            {
+                hold.Dispose();
+                throw;
+            }
         }
 
         /// <summary>Lets the process's exit go on, now or whenever it comes.</summary>

@@ -145,38 +145,62 @@ public sealed class AttemptRunner
     }
 
     /// <summary>
-    /// Waits up to <paramref name="timeout"/> for a step to end and returns its exit code, or <see langword="null"/> at the timeout. The step
-    /// ends when its process handle is signaled, or as soon as the child job holds no process and the step's exit status is final (not
-    /// <c>STILL_ACTIVE</c>). A forced phase terminates the job (<c>TerminateJobObject</c>): the job then reports no process and the step
-    /// its termination code at once, but the step's handle is signaled only once the step's own threads have run down, at the job's
+    /// Waits up to <paramref name="timeout"/> (<see cref="Timeout.InfiniteTimeSpan"/>: without a bound) for a step to end and returns its
+    /// exit code, or <see langword="null"/> at the timeout. The step ends when its process handle is signaled, or as soon as it was stopped
+    /// (<see cref="StoppedCode"/>). A forced phase terminates the job (<c>TerminateJobObject</c>): the job then reports no process and the
+    /// step its termination code at once, but the step's handle is signaled only once the step's own threads have run down, at the job's
     /// below-normal priority. Under CPU load that took seconds (MR-101: up to 12 s after the node found the job empty; about 4.8 s, the
     /// scheduler's starvation boost, for a terminated process on a saturated machine), and the stop's records waited for it, so the end
-    /// of the stopped attempt did too. A step that leaves processes in the job, or whose exit status is not final yet, is still awaited
-    /// through its handle.
+    /// of the stopped attempt did too.
     /// </summary>
     private uint? WaitForStep(LaunchedProcess process, TimeSpan timeout)
     {
+        var infinite = timeout == Timeout.InfiniteTimeSpan;
         var waited = Stopwatch.StartNew();
         while (true)
         {
-            var remaining = timeout - waited.Elapsed;
+            var remaining = infinite ? StepCheckInterval : timeout - waited.Elapsed;
             var slice = remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining < StepCheckInterval ? remaining : StepCheckInterval;
             if (process.WaitForExit(slice))
             {
                 return process.ExitCode;
             }
 
-            // ExitCode reads uint.MaxValue when it cannot be read: only a status that is known and final counts.
-            if (_child.Accounting().ActiveProcesses == 0 && process.ExitCode is var code and not Native.StillActive and not uint.MaxValue)
+            if (StoppedCode(process) is { } code)
             {
                 return code;
             }
 
-            if (waited.Elapsed >= timeout)
+            if (!infinite && waited.Elapsed >= timeout)
             {
                 return null;
             }
         }
+    }
+
+    /// <summary>
+    /// The exit code of a step that was stopped before its handle is signaled: the child job holds no process and the step's exit status
+    /// is final and not 0 (a terminated job gives <see cref="TerminatedExitCode"/>), or <see langword="null"/>. A step that exits 0 is
+    /// awaited through its handle only, as before: in a normal exit a process can leave the job's active count before its handles are
+    /// closed, and the next step, the command or the end of the attempt would then start while it still holds files, locks or pipes. A
+    /// job query that fails reads as not empty.
+    /// </summary>
+    private uint? StoppedCode(LaunchedProcess process)
+    {
+        try
+        {
+            if (_child.Accounting().ActiveProcesses != 0)
+            {
+                return null;
+            }
+        }
+        catch (Win32Exception)
+        {
+            return null;
+        }
+
+        // ExitCode reads uint.MaxValue when it cannot be read: only a status that is known, final and nonzero counts.
+        return process.ExitCode is var code and not 0 and not Native.StillActive and not uint.MaxValue ? code : null;
     }
 
     private void RunEndSteps()
