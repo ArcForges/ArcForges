@@ -103,9 +103,10 @@ public sealed class RepositoryLayoutTests
     [Fact]
     public void TheScriptsRunTheExclusiveSuiteOneTestAtATime()
     {
-        // DisableParallelization keeps a test away from the parallel tests, but xUnit (4.0.1) still starts the first such test of each test
-        // class together (MR-96: the Linux headroom probe ran beside the guard flood test of another class), so every test application of
-        // a suite that selects isolation=exclusive gets xUnit's --parallel none, from both scripts and on every one of their run paths.
+        // DisableParallelization keeps a test away from the parallel tests but (observed with xunit.v3 4.0.1) not from the
+        // DisableParallelization tests of other test classes (MR-96: the Linux headroom probe ran beside both rows of the guard flood test
+        // of another class), so every test application of a suite that selects isolation=exclusive gets xUnit's --parallel none, from both
+        // scripts and on every one of their run paths.
         var shell = File.ReadAllText(RepositoryFiles.PathOf("eng/test.sh"));
         Assert.Contains("if exclusive \"$name\"; then alone=(--parallel none); fi", shell, StringComparison.Ordinal);
         var shellRuns = shell.Split('\n').Where(line => line.Contains("(dotnet test ", StringComparison.Ordinal)).ToList();
@@ -117,6 +118,18 @@ public sealed class RepositoryLayoutTests
         var powershellRuns = powershell.Split('\n').Where(line => line.Contains("dotnet test ", StringComparison.Ordinal) && !line.TrimStart().StartsWith('#')).ToList();
         Assert.Equal(2, powershellRuns.Count);
         Assert.All(powershellRuns, line => Assert.Contains("@($item.Ignore) @($item.Alone) @($item.Filters)", line, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheShellScriptHelpIsItsWholeHeader()
+    {
+        // eng/test.sh --help prints its header comment from line 3 to the first line that is not a comment, not a fixed line range that
+        // drifts when the header grows (a fixed range once cut off the --repeat line).
+        var lines = File.ReadAllLines(RepositoryFiles.PathOf("eng/test.sh"));
+        Assert.Contains(lines, line => line.Trim() == "-h|--help) awk 'NR > 2 && !/^#/ { exit } NR > 2' \"$0\"; exit 0 ;;");
+        var header = lines.Skip(2).TakeWhile(line => line.StartsWith('#')).ToList();
+        Assert.Contains(header, line => line.StartsWith("# --parallel N ", StringComparison.Ordinal));
+        Assert.Contains(header, line => line.StartsWith("# --repeat N ", StringComparison.Ordinal));
     }
 
     [Fact]

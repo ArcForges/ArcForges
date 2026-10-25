@@ -13,7 +13,8 @@
   Each project's output goes to artifacts/test-logs/ and is printed when the project completes.
   -Parallel 1 runs the projects one after another with live output. A suite that selects
   isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time and
-  one test at a time (xUnit's --parallel none).
+  one test at a time (xUnit's --parallel none, so passing -- --parallel <x> to that suite fails with
+  exit code 5, a duplicate option).
   -Repeat <n> runs the selected suites n times, stops at the first failing iteration and prints the
   duration of every iteration (stress and flake hunting).
 .EXAMPLE
@@ -117,8 +118,9 @@ $work = @(foreach ($name in $Suite) {
         Filters = @($definition.Filters)
         Ignore = if ($definition.Filters.Count -gt 0) { @('--ignore-exit-code', '8') } else { @() }
         Exclusive = $exclusive
-        # DisableParallelization keeps a test away from the parallel tests, but xUnit (4.0.1) still starts the first such test of each
-        # test class together, so the exclusive suite turns xUnit's parallelization off: its tests run one at a time.
+        # DisableParallelization keeps a test away from the parallel tests but (observed with xunit.v3 4.0.1) not from the
+        # DisableParallelization tests of other test classes, so the exclusive suite turns xUnit's parallelization off: its tests run one
+        # at a time.
         Alone = if ($exclusive) { @('--parallel', 'none') } else { @() }
         Log = Join-Path $repository "artifacts/test-logs/$name-$project.log"
       }
