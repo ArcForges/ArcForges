@@ -532,6 +532,10 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
 
         _vanishedAt = long.MinValue;
         _lastState = state;
+        if (Root is null && RootOf(state) is { } root)
+        {
+            Volatile.Write(ref _root, root);
+        }
         if (state.ControlGroup.Length > 0)
         {
             Volatile.Write(ref _cgroup, ProcFs.CgroupDirectory(state.ControlGroup));

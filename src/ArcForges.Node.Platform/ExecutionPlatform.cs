@@ -248,6 +248,9 @@ public interface IAttemptHandle : IDisposable
     /// </summary>
     Task<RootProcess?> Started { get; }
 
+    /// <summary>The known root start in UTC; a recovered Windows holder supplies its durable resume time.</summary>
+    DateTimeOffset? StartedAt => Root?.StartTime;
+
     /// <summary>
     /// Raised (on a platform thread, with the process ID) when a launch the node no longer controls goes on, in a handle re-opened while the
     /// launch may still go on (no root recorded, no launch or exit record), until a launch or exit record exists. Windows: each process that

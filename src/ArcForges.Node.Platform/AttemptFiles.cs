@@ -4,8 +4,8 @@ namespace ArcForges.Node.Platform;
 /// <summary>
 /// The files of one attempt under the node data root (architecture 04 sections 3-4, 06 sections 1 and 5): <c>logs/&lt;attempt&gt;/</c>
 /// holds the output (<c>stdout.bin</c>, <c>stderr.bin</c>), the node's output index (<c>index.bin</c>), the durable exit record
-/// (<c>exit.json</c>), a failed launch step (<c>launch.json</c>), what the attempt's guard enforces (<c>guard.json</c>) and the guard's
-/// actions (<c>guard-events.jsonl</c>); <c>tmp/&lt;attempt&gt;/</c> is the attempt's temporary directory. The attempt directory name is
+/// (<c>exit.json</c>), the Windows command start (<c>started.json</c>), a failed launch step (<c>launch.json</c>), what the guard
+/// enforces (<c>guard.json</c>) and its actions (<c>guard-events.jsonl</c>); <c>tmp/&lt;attempt&gt;/</c> is the attempt's temporary directory. The attempt directory name is
 /// the attempt ID's base32 text.
 /// </summary>
 public sealed class AttemptFiles
@@ -24,6 +24,9 @@ public sealed class AttemptFiles
 
     /// <summary>The record of a failed launch step.</summary>
     public const string Launch = "launch.json";
+
+    /// <summary>The command root start evidence (Windows holder).</summary>
+    public const string Started = "started.json";
 
     /// <summary>What the guard enforces.</summary>
     public const string Guard = "guard.json";
@@ -79,6 +82,9 @@ public sealed class AttemptFiles
 
     /// <summary><c>launch.json</c>.</summary>
     public string LaunchPath => Path.Combine(Directory, Launch);
+
+    /// <summary><c>started.json</c>.</summary>
+    public string StartedPath => Path.Combine(Directory, Started);
 
     /// <summary><c>guard.json</c>.</summary>
     public string GuardPath => Path.Combine(Directory, Guard);

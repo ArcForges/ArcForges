@@ -106,7 +106,24 @@ public sealed class AttemptRunner
                 var creation = process.CreationFileTime;
                 process.Resume();
                 Root = new RootProcess(process.ProcessId, ProcessInfo.FromFileTime(creation));
-                _report(new HolderReport { Event = "started", Pid = process.ProcessId, StartFileTime = creation });
+                string? startRecordError = null;
+                try
+                {
+                    HelperFiles.WriteAtomically(_files.StartedPath, new StartedRecord
+                    {
+                        AttemptId = _files.AttemptName,
+                        RootPid = process.ProcessId,
+                        RootStartFileTime = creation,
+                        StartedAt = HelperFiles.Now(_clock),
+                    }.ToJson());
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    // A metadata-write failure must not abandon a root that was already resumed. The live start report still reaches the node.
+                    startRecordError = "started.json unavailable: " + exception.GetType().Name;
+                }
+
+                _report(new HolderReport { Event = "started", Pid = process.ProcessId, StartFileTime = creation, Error = startRecordError });
                 var exitCode = WaitForProcess(process, Timeout.InfiniteTimeSpan, RootCheckInterval)!.Value;
                 _report(new HolderReport { Event = "exited", ExitCode = unchecked((int)exitCode) });
                 RunEndSteps();
