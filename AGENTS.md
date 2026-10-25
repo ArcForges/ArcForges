@@ -83,7 +83,9 @@ any change. They are binding; this file summarizes them and adds the repository 
   is for `ResourceServiceTests` only; every other test reads the real machine (`ArcForges.Repository.Tests` checks this too). A timing-,
   CPU-share- or memory-sensitive
   test, or one that changes machine-wide state, carries `isolation=exclusive` and `DisableParallelization = true`; the parallel suites
-  leave it out and the `exclusive` suite runs it alone afterwards (`-Suite ci,exclusive`). Real-OS tests carry
+  leave it out and the `exclusive` suite runs it alone afterwards (`-Suite ci,exclusive`): the scripts turn xUnit's parallelization
+  off for that suite (`--parallel none`), because `DisableParallelization` alone still lets xUnit start the first such test of each test
+  class together. Real-OS tests carry
   `env=windows-real|linux-real` and skip with a reason elsewhere (the Linux leg's `linux-real-os` step makes sure they
   do not skip there); tool-dependent tests
   carry `tool=...` and skip with a reason when the tool is missing. Closed-loop tests (`loop=local`)

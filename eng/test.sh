@@ -12,7 +12,8 @@
 # --parallel N runs up to N test projects at once (default 2: measured on 18 logical processors, the ci suite takes as long at 2 as at
 # 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel); each project's output goes
 # to artifacts/test-logs/ and is printed when the project completes. --parallel 1 runs them one after another with live output.
-# A suite that selects isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time.
+# A suite that selects isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time and one test at a
+# time (xUnit's --parallel none).
 # --repeat N runs the selected suites N times, stops at the first failing iteration and prints every iteration's duration.
 set -euo pipefail
 set -f # trait filters contain '*', which must reach the test applications unexpanded
@@ -114,10 +115,13 @@ declare -A running=()
 # Runs one work item; with a log file its output goes there. Exit code 8 (no test ran) is accepted only where trait filters select a
 # subset of a project.
 run_item() {
-  local name="$1" project="$2" log="${3:-}" filters ignore=()
+  local name="$1" project="$2" log="${3:-}" filters ignore=() alone=()
   read -r -a filters <<< "${suite_filters[$name]}"
   if [ ${#filters[@]} -gt 0 ]; then ignore=(--ignore-exit-code 8); fi
-  local command=(dotnet test --project "$repository/tests/$project/$project.csproj" -c "$configuration" --no-build "${ignore[@]}" "${filters[@]}" "${passthru[@]}")
+  # DisableParallelization keeps a test away from the parallel tests, but xUnit (4.0.1) still starts the first such test of each test
+  # class together, so the exclusive suite turns xUnit's parallelization off: its tests run one at a time.
+  if exclusive "$name"; then alone=(--parallel none); fi
+  local command=(dotnet test --project "$repository/tests/$project/$project.csproj" -c "$configuration" --no-build "${ignore[@]}" "${alone[@]}" "${filters[@]}" "${passthru[@]}")
   if [ -n "$log" ]; then "${command[@]}" > "$log" 2>&1; else "${command[@]}"; fi
 }
 

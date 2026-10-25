@@ -101,6 +101,25 @@ public sealed class RepositoryLayoutTests
     }
 
     [Fact]
+    public void TheScriptsRunTheExclusiveSuiteOneTestAtATime()
+    {
+        // DisableParallelization keeps a test away from the parallel tests, but xUnit (4.0.1) still starts the first such test of each test
+        // class together (MR-96: the Linux headroom probe ran beside the guard flood test of another class), so every test application of
+        // a suite that selects isolation=exclusive gets xUnit's --parallel none, from both scripts and on every one of their run paths.
+        var shell = File.ReadAllText(RepositoryFiles.PathOf("eng/test.sh"));
+        Assert.Contains("if exclusive \"$name\"; then alone=(--parallel none); fi", shell, StringComparison.Ordinal);
+        var shellRuns = shell.Split('\n').Where(line => line.Contains("(dotnet test ", StringComparison.Ordinal)).ToList();
+        Assert.Single(shellRuns);
+        Assert.Contains("\"${ignore[@]}\" \"${alone[@]}\" \"${filters[@]}\"", shellRuns[0], StringComparison.Ordinal);
+
+        var powershell = File.ReadAllText(RepositoryFiles.PathOf("eng/test.ps1"));
+        Assert.Contains("Alone = if ($exclusive) { @('--parallel', 'none') } else { @() }", powershell, StringComparison.Ordinal);
+        var powershellRuns = powershell.Split('\n').Where(line => line.Contains("dotnet test ", StringComparison.Ordinal) && !line.TrimStart().StartsWith('#')).ToList();
+        Assert.Equal(2, powershellRuns.Count);
+        Assert.All(powershellRuns, line => Assert.Contains("@($item.Ignore) @($item.Alone) @($item.Filters)", line, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AvaloniaBuildTelemetryIsReplacedForEveryProject()
     {
         // Avalonia.BuildServices defines AvaloniaStats; the later Directory.Build.targets definition wins.
