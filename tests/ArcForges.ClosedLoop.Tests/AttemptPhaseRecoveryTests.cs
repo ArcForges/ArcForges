@@ -78,12 +78,13 @@ public sealed class AttemptPhaseRecoveryTests
             Assert.Null(submitted.Error);
             await TestNode.WaitAsync(() => TestNode.ReadShared(marker).Split('\n').Any(line => line.StartsWith("start ", StringComparison.Ordinal)),
                 Bound, "the actual command before cancellation");
-            var cancelled = channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest
+            using var cancelCall = channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest
             {
                 Meta = Meta(),
                 TaskId = submitted.Value.TaskId,
                 GraceMs = 0,
-            }, cancellationToken: Ct).ResponseAsync;
+            }, cancellationToken: Ct);
+            var cancelled = cancelCall.ResponseAsync;
             await TestNode.WaitAsync(() => File.Exists(Path.Combine(node.DataRoot, "run", "fault-hold-stop-before-stop.done")),
                 Bound, "the committed stop before platform action");
             Assert.False(cancelled.IsCompleted, "CancelTask replied before the durable stop's platform phase began.");
@@ -98,8 +99,10 @@ public sealed class AttemptPhaseRecoveryTests
                 ended = await TaskAsync(channel, submitted.Value.TaskId);
                 return ended.State == TaskState.Cancelled;
             }, Bound, "the acknowledged stop to finish");
-            Assert.Equal(TerminationReason.Cancelled, ended.CurrentAttempt.Result.TerminationReason);
-            Assert.Equal(EffectCertainty.Happened, ended.CurrentAttempt.Result.Effect);
+            var result = ended.CurrentAttempt.Result;
+            Assert.NotNull(result);
+            Assert.Equal(TerminationReason.Cancelled, result.TerminationReason);
+            Assert.Equal(EffectCertainty.Happened, result.Effect);
         }
         finally
         {
