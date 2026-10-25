@@ -88,7 +88,12 @@ public sealed class AdoptionLifecycleTests
             Assert.Equal(TaskState.Lost, ended.State);
             Assert.StartsWith(Adoptions.ContainerMissing + ":", ended.StateReason, StringComparison.Ordinal);
             AssertAdoptedResult(ended, TerminationReason.Lost, EffectCertainty.Unknown);
-            var events = await TaskLifecycleModelTests.EventsSinceAsync(channel, cursor);
+            var reset = await channel.Events.ListEventsAsync(new NodeEventServiceListEventsRequest { Topics = { EventTopic.Tasks }, Cursor = cursor, Limit = 1000 },
+                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
+            Assert.Null(reset.Error);
+            Assert.True(reset.Value.ResetRequired, "A node restart starts a new stream generation.");
+            var events = PersistedTaskEvents(node);
+            Assert.Equal(2, events.Select(item => item.Generation).Distinct().Count());
             TaskLifecycleModelTests.AssertStateMachines(events);
             AssertAdoptedChanges(events, taskId, cancelled: false);
         }
@@ -169,6 +174,21 @@ public sealed class AdoptionLifecycleTests
             Kill(pid);
         }
     }
+
+    // A restart resets API cursors; the persisted journal retains the real events from both generations.
+    private static List<NodeEvent> PersistedTaskEvents(InProcessNode node) => node.Runtime.Store.Read(reader =>
+    {
+        using var command = reader.CreateCommand("SELECT payload FROM event_journal WHERE topic = $topic ORDER BY seq;");
+        command.Parameters.AddWithValue("$topic", (int)EventTopic.Tasks);
+        using var rows = command.ExecuteReader();
+        var events = new List<NodeEvent>();
+        while (rows.Read())
+        {
+            events.Add(NodeEvent.Parser.ParseFrom((byte[])rows.GetValue(0)));
+        }
+
+        return events;
+    });
 
     private static void AssertAdoptedResult(ManagedTask task, TerminationReason reason, EffectCertainty effect)
     {
