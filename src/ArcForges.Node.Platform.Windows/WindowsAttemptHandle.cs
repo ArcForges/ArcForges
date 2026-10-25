@@ -24,6 +24,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     private volatile bool _memoryLimit;
     private RootProcess? _root;
     private volatile HashSet<(int Pid, long Created)>? _beforeReopen;
+    private volatile bool _launchAwaited;
     private SafeKernelHandle? _rootHandle;
     private Thread? _reportThread;
     private bool _disposed;
@@ -247,20 +248,24 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     {
         Reopened = true;
         _launchFinished = true;
-        if (_beforeReopen is null)
+        if (!_launchAwaited)
         {
             _started.TrySetResult(Root);
         }
     }
 
+    /// <inheritdoc />
+    public bool WatchLaunch() => _beforeReopen is not null && !_launchAwaited && !File.Exists(Files.LaunchPath) && !File.Exists(Files.ExitPath);
+
     /// <summary>
-    /// An attempt re-opened for its stop whose launch may still go on (no root recorded, no launch or exit record): the restarted node no
-    /// longer receives its holder's reports, so <see cref="Started"/> completes with the first process that enters the job after the re-open
-    /// (a launch step or the command the holder went on to start), or with the recorded root (none) when the handle is disposed, and every
-    /// such process is reported (<see cref="LaunchProcessEntered"/>). Called before the job is associated with the completion port; the
-    /// processes in the job now are left out.
+    /// An attempt re-opened whose launch may still go on (no root recorded, no launch or exit record): the restarted node no longer receives
+    /// its holder's reports, so every process that enters the job after the re-open (a launch step or the command the holder went on to start)
+    /// is reported (<see cref="LaunchProcessEntered"/>). With <paramref name="awaitStart"/> (a stop) <see cref="Started"/> completes with the
+    /// first such process, or with the recorded root (none) when the handle is disposed; otherwise at the re-open, as before, and a forced
+    /// phase that stops the attempt later watches the launch (<see cref="WatchLaunch"/>). Called before the job is associated with the
+    /// completion port; the processes in the job now are left out.
     /// </summary>
-    internal void AwaitLaunch()
+    internal void AwaitLaunch(bool awaitStart)
     {
         var present = new HashSet<(int Pid, long Created)>();
         int[] pids;
@@ -282,11 +287,12 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
             }
         }
 
+        _launchAwaited = awaitStart;
         _beforeReopen = present;
     }
 
     /// <summary>
-    /// A process entered the job of an attempt re-opened for its stop whose launch may still go on (<see cref="AwaitLaunch"/>): the first one
+    /// A process entered the job of an attempt re-opened while its launch may still go on (<see cref="AwaitLaunch"/>): for a stop the first one
     /// completes <see cref="Started"/>, and each one is reported until a launch or exit record exists (the end steps run before the exit
     /// record, so a stopped attempt's end steps are reported too).
     /// </summary>
@@ -304,7 +310,11 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
             return;
         }
 
-        _started.TrySetResult(new RootProcess(pid, ProcessInfo.FromFileTime(created)));
+        if (_launchAwaited)
+        {
+            _started.TrySetResult(new RootProcess(pid, ProcessInfo.FromFileTime(created)));
+        }
+
         LaunchProcessEntered?.Invoke(pid);
     }
 
@@ -388,7 +398,10 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
                 // Every member is remembered with its exact lifetime, so the ancestry scan also finds children of members that exited
                 // and never mistakes the children of a process that reused a member's ID for the member's.
                 _members.Remember(data);
-                if (_beforeReopen is { } before)
+
+                // Once the start completed, a process is looked at only while a forced phase watches the launch: a recovered attempt that
+                // runs on is not inspected process by process for the rest of its life.
+                if (_beforeReopen is { } before && (!_started.Task.IsCompleted || LaunchProcessEntered is not null))
                 {
                     LaunchContinued(data, before);
                 }

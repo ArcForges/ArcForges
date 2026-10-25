@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -190,6 +191,66 @@ public sealed partial class LaunchFaultTests
         Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
         seam.AssertStartedInBetween(task);
         AssertNeverRanPastTheStop(commandMarker);
+    }
+
+    /// <summary>
+    /// MR-89: a node restart in the middle of the launch of an attempt that is STARTING (its command held back, nothing cancelled yet), then a
+    /// cancel after the restart. The restarted node re-opened the attempt as one it was not stopping, so its start completed at once without a
+    /// root; the cancel's forced phase finds the container empty, and the launch the node no longer controls starts the command after it: the
+    /// hold is released once the cancel answered, and the cancel stops the attempt before it answers. The restarted node must see that late
+    /// start itself (Windows: a process entering the re-opened job; Linux: the unit's queued start job, read at the forced phase, completing)
+    /// and terminate it. The task ends CANCELLED, never TERMINATION_INCOMPLETE, the late start was reported, and the command does not run on.
+    /// </summary>
+    [Fact(Timeout = 240_000)]
+    public async Task ACancelAfterARestartInTheMiddleOfTheLaunchOfAStartingAttemptEndsTheCommandThatStartsLate()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        SkipWithoutPlatform();
+        var hold = new LaunchHold();
+        var node = InProcessNode.Create(steps: hold.Steps);
+        await using var started = await node.StartAsync();
+        await using var held = hold.Attach(node);
+        var commandMarker = Path.Combine(node.Root, "command.txt");
+        Id id;
+        string attempt;
+        await using (var channel = await node.ChannelAsync())
+        {
+            id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
+            attempt = await hold.HeldAsync();
+
+            // Nothing cancelled it: the attempt is STARTING when the node stops, its command still held back.
+            Assert.Equal(AttemptState.Starting, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
+        }
+
+        await node.StopAsync();
+        var pendingCalls = 0;
+        node.ForcedBeforeStart = _ => Interlocked.Increment(ref pendingCalls);
+        await node.StartAsync();
+        await using var after = await node.ChannelAsync();
+        Assert.Equal(AttemptState.Starting, (await Tasks.GetAsync(after, id)).CurrentAttempt.State);
+        var handle = node.Runtime.Execution?.Running(attempt)?.Handle;
+        Assert.True(handle is not null, "The restarted node did not re-open the attempt's container.");
+        var entered = new ConcurrentQueue<int>();
+        handle!.LaunchProcessEntered += entered.Enqueue;
+
+        var cancel = await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
+        Assert.Null(cancel.Error);
+
+        // The forced phase ran before the cancel answered: the command starts after it.
+        hold.Release();
+        var task = await Tasks.WaitAsync(after, id);
+        AssertCancelled(task);
+        Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
+        Assert.True(!entered.IsEmpty,
+            $"The restarted node did not see the command start after the forced phase ({LaunchEnded(handle)}; attempt result {task.CurrentAttempt?.Result}).");
+        Assert.Equal(0, Volatile.Read(ref pendingCalls));
+        AssertNeverRanPastTheStop(commandMarker);
+        if (!OperatingSystem.IsWindows())
+        {
+            // The late start's root (the unit's main process, which becomes the command) is recorded with the attempt. On Windows the first
+            // process that enters a re-opened job may be a launch step, so none is recorded there.
+            Assert.True(RootPid(node, id) is not null, "The late start's root was not recorded with the attempt.");
+        }
     }
 
     /// <summary>
@@ -590,6 +651,16 @@ public sealed partial class LaunchFaultTests
         }
     }
 
+    /// <summary>The recorded root process ID of the task's attempt, or null.</summary>
+    private static long? RootPid(InProcessNode node, Id id) => node.Runtime.Store.Read(reader =>
+    {
+        using var command = reader.CreateCommand("SELECT root_pid FROM attempt WHERE task_id = $id;");
+        command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
+        using var rows = command.ExecuteReader();
+        Assert.True(rows.Read());
+        return rows.IsDBNull(0) ? (long?)null : rows.GetInt64(0);
+    });
+
     /// <summary>The node's log so far (<c>logs/node/node.log</c> under its data root).</summary>
     private static string NodeLog(InProcessNode node)
     {
@@ -678,8 +749,8 @@ public sealed partial class LaunchFaultTests
             return this;
         }
 
-        /// <summary>Waits until the attempt is being launched and its command is held back.</summary>
-        public async Task HeldAsync()
+        /// <summary>Waits until the attempt is being launched and its command is held back; returns the attempt's name.</summary>
+        public async Task<string> HeldAsync()
         {
             var attempt = await _attempt.Task.WaitAsync(Tasks.Bound, Ct);
             if (OperatingSystem.IsWindows())
@@ -706,6 +777,8 @@ public sealed partial class LaunchFaultTests
                     Tasks.Bound, "the attempt unit's start job to wait for the gate");
                 Assert.True(SystemdTestEnvironment.Property(unit, "ActiveState") == "inactive", SystemdTestEnvironment.Describe(unit));
             }
+
+            return attempt;
         }
 
         /// <summary>What the hold saw (diagnostics of a failure).</summary>

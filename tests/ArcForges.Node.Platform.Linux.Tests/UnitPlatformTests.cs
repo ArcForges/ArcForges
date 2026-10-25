@@ -640,42 +640,65 @@ public sealed class UnitPlatformTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         // Review round 1, finding 3 (04 section 9): a restarted platform re-opens a unit whose start job still waits. For a stop it awaits that
         // start (the command may still start, and the stop must end it); for any other recovered attempt the start completes at once, as
-        // before, and no launch record is left for a unit that can still start.
+        // before, and no launch record is left for a unit that can still start. MR-89: a forced phase that stops such an attempt later reads
+        // its queued start job then (WatchLaunch), once, and the unit's main process is reported as the late start and becomes its root.
         RequireUnits();
         using var harness = LinuxHarness.Start();
-        var files = harness.Files(out var name);
-        var unit = SystemdTestEnvironment.AttemptUnit(name);
+        var plainFiles = harness.Files(out var plainName);
+        var stoppingFiles = harness.Files(out var stoppingName);
+        var plainUnit = SystemdTestEnvironment.AttemptUnit(plainName);
+        var stoppingUnit = SystemdTestEnvironment.AttemptUnit(stoppingName);
         var gate = "arcforges-test-gate-" + Guid.NewGuid().ToString("N")[..12] + ".service";
         var go = Path.Combine(harness.Root, "gate-go");
         try
         {
-            // Ordered before the attempt's unit (Before=), so the unit's start job waits until the gate ends. A shell loop: the user manager's
-            // environment has no .NET runtime for the JIT test binaries; no '$', which systemd expands.
-            SystemdRun("--user", "--no-block", "--unit=" + gate, "--slice=" + harness.Slice, "-p", "Type=oneshot", "-p", "Before=" + unit, "/bin/sh", "-c",
-                $"while [ ! -e '{go}' ]; do sleep 0.05; done");
+            // Ordered before both attempts' units (Before=), so each unit's start job waits until the gate ends. A shell loop: the user
+            // manager's environment has no .NET runtime for the JIT test binaries; no '$', which systemd expands.
+            SystemdRun("--user", "--no-block", "--unit=" + gate, "--slice=" + harness.Slice, "-p", "Type=oneshot", "-p", "Before=" + plainUnit,
+                "-p", "Before=" + stoppingUnit, "/bin/sh", "-c", $"while [ ! -e '{go}' ]; do sleep 0.05; done");
             WaitUntil(() => SystemdTestEnvironment.Property(gate, "ActiveState") == "activating", "the gate unit to start");
-            harness.Launch(["sleep", "60"], files: files);
-            WaitUntil(() => SystemdTestEnvironment.Systemctl("list-jobs", "--no-legend", unit).Output.Contains(unit, StringComparison.Ordinal),
-                "the attempt unit's start job to wait for the gate");
+            harness.Launch(["sleep", "60"], files: plainFiles);
+            harness.Launch(["sleep", "60"], files: stoppingFiles);
+            foreach (var unit in new[] { plainUnit, stoppingUnit })
+            {
+                WaitUntil(() => SystemdTestEnvironment.Systemctl("list-jobs", "--no-legend", unit).Output.Contains(unit, StringComparison.Ordinal),
+                    "the attempt unit's start job to wait for the gate");
+            }
+
             harness.Platform.Dispose();
 
+            // Each re-open waits for its own unit's start job: one wait per job (SystemdManager.WaitJob). The test does not wait for the waits to
+            // begin: a job that ends before its wait begins is delivered from the manager's record of finished jobs, so either order holds.
             var restarted = harness.NewPlatform();
-            var plain = restarted.Reopen(harness.NodeName, files, null);
+            var plain = restarted.Reopen(harness.NodeName, plainFiles, null);
             Assert.NotNull(plain);
             Assert.True(plain!.Started.IsCompleted, "A recovered attempt that is not being stopped completes its start at once, as before.");
             Assert.Null(await plain.Started);
-            plain.Dispose();
+            var entered = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            plain.LaunchProcessEntered += pid => entered.TrySetResult(pid);
+            Assert.True(plain.WatchLaunch(), "A forced phase watches the queued start of a recovered attempt that is not being stopped.");
+            Assert.False(plain.WatchLaunch(), "The queued start is read once.");
 
-            var stopping = restarted.Reopen(harness.NodeName, files, null, stopping: true);
+            var stopping = restarted.Reopen(harness.NodeName, stoppingFiles, null, stopping: true);
             Assert.NotNull(stopping);
             Assert.False(stopping!.Started.IsCompleted, "A stop awaits the queued start: the command may still start.");
+            Assert.False(stopping.WatchLaunch(), "A stop's re-open awaits the start through Started, not WatchLaunch.");
+
             await File.WriteAllTextAsync(go, "go", Ct);
             var root = await stopping.Started.WaitAsync(Bound, Ct);
             Assert.NotNull(root);
-            Assert.False(File.Exists(files.LaunchPath), "The awaited start left a launch record.");
-            stopping.Terminate();
-            Assert.Equal(9, LinuxHarness.WaitExit(stopping, Bound).ExitStatus);
-            stopping.Dispose();
+            Assert.Equal(MainPid(stoppingUnit), root!.Pid);
+            var reported = await entered.Task.WaitAsync(Bound, Ct);
+            Assert.Equal(MainPid(plainUnit), reported);
+            Assert.True(plain.Root is { } plainRoot && plainRoot.Pid == reported, $"The watched start did not become the handle's root ({plain.Root}).");
+            Assert.False(File.Exists(plainFiles.LaunchPath), "The watched start left a launch record.");
+            Assert.False(File.Exists(stoppingFiles.LaunchPath), "The awaited start left a launch record.");
+            foreach (var handle in new[] { plain, stopping })
+            {
+                handle.Terminate();
+                Assert.Equal(9, LinuxHarness.WaitExit(handle, Bound).ExitStatus);
+                handle.Dispose();
+            }
         }
         finally
         {
@@ -701,6 +724,8 @@ public sealed class UnitPlatformTests
         var exception = await Assert.ThrowsAsync<AggregateException>(() => wait);
         Assert.IsType<TaskCanceledException>(exception.InnerException);
     }
+
+    private static int MainPid(string unit) => int.Parse(SystemdTestEnvironment.Property(unit, "MainPID"), System.Globalization.CultureInfo.InvariantCulture);
 
     private static void WaitUntil(Func<bool> condition, string what)
     {
