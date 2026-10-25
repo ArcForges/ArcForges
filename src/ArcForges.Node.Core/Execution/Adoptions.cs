@@ -206,7 +206,12 @@ public sealed class Adoptions : IDisposable
             _log.Warning("execution.adopted.terminate_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name));
         }
 
-        context.Transaction.Execute("UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state = 4;", ("$id", adopted.AttemptId));
+        if (context.Transaction.Execute("UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state = 4;", ("$id", adopted.AttemptId)) > 0
+            && TaskRecords.GetAttempt(context.Transaction, adopted.AttemptId) is { } stopping)
+        {
+            context.Emit(EventTopic.Tasks, new NodeEvent { Attempt = new AttemptChanged { Attempt = stopping, PreviousState = AttemptState.Running } });
+        }
+
         context.Transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(reason, 500)), ("$id", key));
         _execution.EmitTask(context, key, TaskState.Running);
         Wake();
