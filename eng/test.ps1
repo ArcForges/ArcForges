@@ -12,7 +12,9 @@
   at 2 as at 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel).
   Each project's output goes to artifacts/test-logs/ and is printed when the project completes.
   -Parallel 1 runs the projects one after another with live output. A suite that selects
-  isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time.
+  isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time and
+  one test at a time (xUnit's --parallel none, so passing -- --parallel <x> to that suite fails with
+  exit code 5, a duplicate option).
   -Repeat <n> runs the selected suites n times, stops at the first failing iteration and prints the
   duration of every iteration (stress and flake hunting).
 .EXAMPLE
@@ -108,13 +110,18 @@ $work = @(foreach ($name in $Suite) {
     foreach ($project in $projects) {
       $path = Join-Path $repository "tests/$project/$project.csproj"
       if (-not (Test-Path -LiteralPath $path)) { throw "Suite '$name' names a missing project: $project." }
+      $exclusive = ($definition.Filters -join ' ') -match '--filter-trait isolation=exclusive'
       [pscustomobject]@{
         Suite = $name
         Project = $project
         Path = $path
         Filters = @($definition.Filters)
         Ignore = if ($definition.Filters.Count -gt 0) { @('--ignore-exit-code', '8') } else { @() }
-        Exclusive = ($definition.Filters -join ' ') -match '--filter-trait isolation=exclusive'
+        Exclusive = $exclusive
+        # DisableParallelization keeps a test away from the parallel tests but (observed with xunit.v3 4.0.1) not from the
+        # DisableParallelization tests of other test classes, so the exclusive suite turns xUnit's parallelization off: its tests run one
+        # at a time.
+        Alone = if ($exclusive) { @('--parallel', 'none') } else { @() }
         Log = Join-Path $repository "artifacts/test-logs/$name-$project.log"
       }
     }
@@ -138,7 +145,7 @@ for ($iteration = 1; $iteration -le $Repeat; $iteration++) {
     @($work | Where-Object { -not $_.Exclusive }) | ForEach-Object -ThrottleLimit $Parallel -Parallel {
       $item = $_
       $started = [System.Diagnostics.Stopwatch]::StartNew()
-      & dotnet test --project $item.Path -c $using:configuration --no-build @($item.Ignore) @($item.Filters) @($using:passThru) *> $item.Log
+      & dotnet test --project $item.Path -c $using:configuration --no-build @($item.Ignore) @($item.Alone) @($item.Filters) @($using:passThru) *> $item.Log
       [pscustomobject]@{ Item = $item; Exit = $LASTEXITCODE; Seconds = $started.Elapsed.TotalSeconds }
     } | ForEach-Object {
       $item = $_.Item
@@ -151,7 +158,7 @@ for ($iteration = 1; $iteration -le $Repeat; $iteration++) {
   # One after another with live output: everything with -Parallel 1, otherwise the exclusive suite after the others.
   foreach ($item in @($work | Where-Object { $Parallel -eq 1 -or $_.Exclusive })) {
     Write-Host "==> suite $($item.Suite) : $($item.Project) $($item.Filters -join ' ')"
-    dotnet test --project $item.Path -c $Configuration --no-build @($item.Ignore) @($item.Filters) @PassThru
+    dotnet test --project $item.Path -c $Configuration --no-build @($item.Ignore) @($item.Alone) @($item.Filters) @PassThru
     if ($LASTEXITCODE -ne 0) { $failures.Add("$($item.Suite)/$($item.Project) (exit $LASTEXITCODE)") }
   }
 
