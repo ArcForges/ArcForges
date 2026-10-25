@@ -255,6 +255,68 @@ public sealed class NodeServiceTests
         Assert.NotEmpty(newest);
     }
 
+    /// <summary>
+    /// MR-06: a real RPC received while the API is listening but recovery has not reached readiness returns a typed refusal.
+    /// The failed command stays failed on replay after readiness, and a new command then stops normally.
+    /// </summary>
+    [Fact(Timeout = 120_000)]
+    public async Task StopBeforeReadinessIsRefusedAndNeverBecomesADeferredStop()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var reached = new TaskCompletionSource<NodeRuntime>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var node = InProcessNode.Create();
+        node.BeforeReady = runtime =>
+        {
+            reached.TrySetResult(runtime);
+            return proceed.Task.WaitAsync(runtime.Stopping);
+        };
+        var starting = node.StartAsync();
+        try
+        {
+            Assert.Same(reached.Task, await Task.WhenAny(reached.Task, starting).WaitAsync(Tasks.Bound, ct));
+            var runtime = await reached.Task;
+            Assert.Equal(NodeLifecycleState.Recovering, runtime.Lifecycle.State);
+            await using (var channel = await node.ChannelAsync(helloAsHuman: true))
+            {
+                var request = new NodeServiceStopNodeRequest { Meta = InProcessNode.Command(), Reason = "before readiness" };
+                var refused = await channel.Node.StopNodeAsync(request, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+                var error = Assert.IsType<ArcError>(refused.Error);
+                Assert.Equal(ErrorCategory.State, error.Category);
+                Assert.Equal("invalid_state", error.Code);
+                Assert.Equal(EffectCertainty.DidNotHappen, error.Effect);
+                Assert.Equal(RetryMode.Never, error.Retry.Mode);
+                Assert.Equal("RECOVERING", error.Details.State.State);
+                Assert.Contains("READY", error.Details.State.Reason, StringComparison.Ordinal);
+                Assert.Equal(NodeLifecycleState.Recovering, runtime.Lifecycle.State);
+                Assert.False(runtime.Stopping.IsCancellationRequested);
+                Assert.False(node.Exit.IsCompleted);
+
+                proceed.TrySetResult();
+                await starting.WaitAsync(Tasks.Bound, ct);
+                Assert.Equal(InProcessNode.ExpectedState, runtime.Lifecycle.State);
+
+                var replay = await channel.Node.StopNodeAsync(request, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+                Assert.Equal(error, replay.Error);
+                Assert.Equal(InProcessNode.ExpectedState, runtime.Lifecycle.State);
+                Assert.False(runtime.Stopping.IsCancellationRequested);
+
+                var stop = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = InProcessNode.Command() },
+                    deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+                Assert.Null(stop.Error);
+                Assert.Equal(EffectCertainty.Happened, stop.Value.Receipt.Effect);
+            }
+
+            Assert.Equal(0, await node.Exit.WaitAsync(TimeSpan.FromSeconds(15), ct));
+            Assert.DoesNotContain("api.command.failed", Tasks.ReadShared(Path.Combine(node.DataRoot, "logs", "node", "node.log")), StringComparison.Ordinal);
+        }
+        finally
+        {
+            proceed.TrySetResult();
+            await starting.WaitAsync(Tasks.Bound, ct);
+        }
+    }
+
     [Fact(Timeout = 60_000)]
     public async Task StopNodeReturnsAReceiptAndTheNodeShutsDownCleanly()
     {

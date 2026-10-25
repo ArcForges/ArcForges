@@ -60,6 +60,12 @@ public sealed record NodeHostOptions
     public Action<NodeRuntime>? Ready { get; init; }
 
     /// <summary>
+    /// Test seam, set only by in-process component tests: awaited after the API listens in RECOVERING, before readiness.
+    /// A test can hold this startup boundary while using the real RPC endpoint; it must release the hold when the node stops.
+    /// </summary>
+    internal Func<NodeRuntime, Task>? BeforeReady { get; init; }
+
+    /// <summary>
     /// The secret store of the node data key for a data root. Null (the executable): <see cref="NodeSecretStores.ForNode(string, bool)"/>,
     /// the OS secret store in production and, with <see cref="TestMode"/>, the file-backed isolated store of the test data root unless
     /// the OS secret-store tier's opt-in is set (02-node-service section 4). Every in-process test node sets it to an isolated backend
@@ -397,6 +403,11 @@ public static class NodeHost
                 // Fault injection (test mode): the node listens and answers hellos in RECOVERING, but is not READY yet.
                 log.Warning("node.fault.slow_ready", new LogField("delayMs", (long)slowReady.TotalMilliseconds));
                 await Task.Delay(slowReady, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (options.BeforeReady is { } beforeReady)
+            {
+                await beforeReady(node).ConfigureAwait(false);
             }
 
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
