@@ -610,14 +610,23 @@ public sealed partial class LaunchFaultTests
             var pendingCalls = 0;
             RootProcess? startedBefore = null;
             var emptyBefore = false;
+            var secondRanBeforeSuspend = false;
             node.ForcedBeforeStart = _ => Interlocked.Increment(ref pendingCalls);
             node.ForcedPhase = (handle, terminated) =>
             {
                 if (!terminated && Interlocked.Increment(ref phases) == 1)
                 {
-                    // The second step enters the re-opened job and completes the start; it then ends with the holder suspended.
+                    // Started is a job-entry notification: it can precede the holder's Resume of the created-suspended step.
+                    // Wait for the step itself to execute before suspending its holder; go2 still holds it before the command.
                     Resume();
                     startedBefore = handle.Started.Wait(Tasks.Bound) ? handle.Started.Result : null;
+                    var ready = Stopwatch.StartNew();
+                    while (!Tasks.Marker(Dir("step2.txt")).Any(line => line.Event == "start") && ready.Elapsed < Tasks.Bound)
+                    {
+                        Thread.Sleep(20);
+                    }
+
+                    secondRanBeforeSuspend = Tasks.Marker(Dir("step2.txt")).Any(line => line.Event == "start");
                     Suspend();
                     File.WriteAllText(Dir("go2"), "go");
                     var watch = Stopwatch.StartNew();
@@ -641,6 +650,7 @@ public sealed partial class LaunchFaultTests
             Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
             Assert.Equal(1, Volatile.Read(ref phases));
             Assert.True(startedBefore is not null, "The second launch step did not complete the restarted node's start before its forced phase.");
+            Assert.True(secondRanBeforeSuspend, "The holder was suspended before its second launch step executed.");
             Assert.True(emptyBefore, "The second launch step had not ended when the forced phase terminated the job.");
             Assert.Equal(0, Volatile.Read(ref pendingCalls));
             AssertNeverRanPastTheStop(commandMarker);
