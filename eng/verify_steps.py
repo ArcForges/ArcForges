@@ -263,11 +263,16 @@ STEPS = [
     # security.yml, Secret scan (over the commits since the merge base) and Workflow lint (when a workflow changed)
     linux("secret-scan", SECRET_SCAN, 300, lane="scan", profiles=frozenset({"full", "docs"})),
     linux("actionlint", ACTIONLINT, 300, lane="actionlint", when=workflows_changed),
-    # Exclusive phase: timing-, CPU-share- and memory-sensitive tests and the startup gates, alone
-    win("win-exclusive", tests("exclusive"), 600, exclusive=True),
-    win("win-exclusive-native", tests("exclusive", native=True), 600, exclusive=True),
-    linux("linux-exclusive", linux_tests("exclusive"), 600, exclusive=True),
-    linux("linux-exclusive-native", linux_tests("exclusive", native=True), 600, exclusive=True),
+    # Exclusive phase: timing-, CPU-share- and memory-sensitive tests and the startup gates, alone.
+    # The exclusive suites are the exception to the rule above (five to ten times the measured cold duration): their tests run one at
+    # a time (eng/test.sh, eng/test.ps1; MR-96), so the duration is mostly the sum of the tests' own fixed periods (the 60 s headroom
+    # probe, the pressure and memory scenarios), not machine speed. Measured at e6ffb8e: linux-exclusive 432 s,
+    # linux-exclusive-native 406 s, win-exclusive 321 s, win-exclusive-native 306 s. 900 s is about twice the longest; a Windows step
+    # gets no grace beyond its timeout.
+    win("win-exclusive", tests("exclusive"), 900, exclusive=True),
+    win("win-exclusive-native", tests("exclusive", native=True), 900, exclusive=True),
+    linux("linux-exclusive", linux_tests("exclusive"), 900, exclusive=True),
+    linux("linux-exclusive-native", linux_tests("exclusive", native=True), 900, exclusive=True),
     win("win-startup-gate", pwsh(
         f"./eng/compare-startup.ps1 -RuntimeIdentifier {RID_WIN} "
         f"-BaselineExecutable (Join-Path {WIN_BASE} 'artifacts/publish/{RID_WIN}/host/arcforges.exe') "

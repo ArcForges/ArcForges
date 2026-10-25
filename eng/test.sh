@@ -12,7 +12,8 @@
 # --parallel N runs up to N test projects at once (default 2: measured on 18 logical processors, the ci suite takes as long at 2 as at
 # 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel); each project's output goes
 # to artifacts/test-logs/ and is printed when the project completes. --parallel 1 runs them one after another with live output.
-# A suite that selects isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time.
+# A suite that selects isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time and one test at a
+# time (xUnit's --parallel none, so passing -- --parallel <x> to that suite fails with exit code 5, a duplicate option).
 # --repeat N runs the selected suites N times, stops at the first failing iteration and prints every iteration's duration.
 set -euo pipefail
 set -f # trait filters contain '*', which must reach the test applications unexpanded
@@ -44,7 +45,8 @@ while [ $# -gt 0 ]; do
     --parallel) parallel="$2"; shift 2 ;;
     --repeat) repeat="$2"; shift 2 ;;
     --) shift; passthru=("$@"); break ;;
-    -h|--help) sed -n '3,16p' "$0"; exit 0 ;;
+    # The help is the header comment from line 3 to the first line that is not a comment, so it cannot drift from the header.
+    -h|--help) awk 'NR > 2 && !/^#/ { exit } NR > 2' "$0"; exit 0 ;;
     *) echo "test.sh: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -114,10 +116,14 @@ declare -A running=()
 # Runs one work item; with a log file its output goes there. Exit code 8 (no test ran) is accepted only where trait filters select a
 # subset of a project.
 run_item() {
-  local name="$1" project="$2" log="${3:-}" filters ignore=()
+  local name="$1" project="$2" log="${3:-}" filters ignore=() alone=()
   read -r -a filters <<< "${suite_filters[$name]}"
   if [ ${#filters[@]} -gt 0 ]; then ignore=(--ignore-exit-code 8); fi
-  local command=(dotnet test --project "$repository/tests/$project/$project.csproj" -c "$configuration" --no-build "${ignore[@]}" "${filters[@]}" "${passthru[@]}")
+  # DisableParallelization keeps a test away from the parallel tests but (observed with xunit.v3 4.0.1) not from the
+  # DisableParallelization tests of other test classes, so the exclusive suite turns xUnit's parallelization off: its tests run one
+  # at a time.
+  if exclusive "$name"; then alone=(--parallel none); fi
+  local command=(dotnet test --project "$repository/tests/$project/$project.csproj" -c "$configuration" --no-build "${ignore[@]}" "${alone[@]}" "${filters[@]}" "${passthru[@]}")
   if [ -n "$log" ]; then "${command[@]}" > "$log" 2>&1; else "${command[@]}"; fi
 }
 
