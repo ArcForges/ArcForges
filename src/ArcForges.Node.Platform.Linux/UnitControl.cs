@@ -57,9 +57,11 @@ public static class UnitControl
 
             for (var pass = 0; pass < 5; pass++)
             {
+                var currentMembers = Members();
                 if (ProcFs.Stat(mainPid) is { State: not ('Z' or 'X') } current && current.StartTicks == root.StartTicks)
                 {
-                    foreach (var member in Members())
+                    // Validate after the scan too: if the root exited during it, later helper PIDs must not enter the kill set.
+                    foreach (var member in currentMembers)
                     {
                         members.TryAdd(member.Key, member.Value);
                     }
