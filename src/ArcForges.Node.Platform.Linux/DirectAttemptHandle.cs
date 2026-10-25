@@ -197,7 +197,8 @@ public sealed class DirectAttemptHandle : IAttemptHandle
                 break;
             }
 
-            StepRunner.Run(step, _launch.Environment, _launch.WorkingDirectory, TimeSpan.FromMilliseconds(Math.Min(step.TimeoutMs, remaining.TotalMilliseconds)));
+            var timeout = step.TimeoutMs <= 0 ? remaining : TimeSpan.FromMilliseconds(Math.Min(step.TimeoutMs, remaining.TotalMilliseconds));
+            StepRunner.Run(step, _launch.Environment, _launch.WorkingDirectory, timeout);
         }
 
         var grace = Stopwatch.StartNew();
