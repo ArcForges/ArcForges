@@ -239,7 +239,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         NodeName = IdText.Format(_store.Metadata.NodeId.Span);
         var capacity = Platform?.Capacity ?? new MachineCapacity(Environment.ProcessorCount, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
         Capacity = capacity;
-        _settings = new ExecutionSettings(_store.Policies.Current().Document, capacity.LogicalProcessors, capacity.PhysicalMemoryBytes);
+        var initialPolicy = _store.Policies.Current();
+        _settings = new ExecutionSettings(initialPolicy.Document, capacity.LogicalProcessors, capacity.PhysicalMemoryBytes) { PolicyRevision = initialPolicy.Revision };
         _lastSettingsRead = _clock.GetTimestamp();
         _tailerMonitor = Heartbeat.AddMonitor("output-tailer", TimeSpan.FromSeconds(5));
         Tools = options.Tools;
@@ -297,7 +298,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                         Interlocked.Exchange(ref _lastSettingsRead, _clock.GetTimestamp());
                         try
                         {
-                            Volatile.Write(ref _settings, new ExecutionSettings(_store.Policies.Current().Document, Capacity.LogicalProcessors, Capacity.PhysicalMemoryBytes));
+                            var policy = _store.Policies.Current();
+                            Volatile.Write(ref _settings, new ExecutionSettings(policy.Document, Capacity.LogicalProcessors, Capacity.PhysicalMemoryBytes)
+                            {
+                                PolicyRevision = policy.Revision,
+                            });
                         }
                         catch (Microsoft.Data.Sqlite.SqliteException exception)
                         {
