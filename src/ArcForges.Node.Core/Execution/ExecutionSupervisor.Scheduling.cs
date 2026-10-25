@@ -885,12 +885,13 @@ public sealed partial class ExecutionSupervisor
 
             // A cancel committed between the admission and this registration found no running attempt to stop and only marked the attempt
             // STOPPING: it is taken over here, and the launch applies the forced phase once the handle exists (the stop is never lost).
-            if (_store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)), CultureInfo.InvariantCulture))
-                == (int)AttemptState.Stopping)
+            var registered = _store.Read(reader => TaskRecords.GetAttemptRow(reader, attemptId));
+            if (registered?.State == AttemptState.Stopping)
             {
                 lock (attempt)
                 {
-                    attempt.StopReason ??= TerminationReason.Cancelled;
+                    attempt.StopReason ??= registered.Reason ?? TerminationReason.Cancelled;
+                    attempt.StopDetail ??= registered.Detail;
                 }
             }
 
@@ -1232,7 +1233,8 @@ public sealed partial class ExecutionSupervisor
         {
             var transaction = context.Transaction;
             var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
-            if (transaction.Execute("UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);", ("$id", attempt.AttemptId)) == 1
+            if (transaction.Execute("UPDATE attempt SET state = 7, termination_reason = $cause, detail = $detail, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
+                ("$cause", (int)TerminationReason.Preempted), ("$detail", Truncate(detail)), ("$id", attempt.AttemptId)) == 1
                 && previous is not null)
             {
                 EmitAttempt(context, attempt.AttemptId, previous.State);

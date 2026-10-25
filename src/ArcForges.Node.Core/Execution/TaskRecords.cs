@@ -101,8 +101,11 @@ public sealed class AttemptRow
     /// <summary>Index records written.</summary>
     public long IndexOffset { get; init; }
 
-    /// <summary>The termination reason once finished.</summary>
+    /// <summary>The pending stop cause in STOPPING, or the final termination reason in FINISHED.</summary>
     public TerminationReason? Reason { get; init; }
+
+    /// <summary>The stored pending stop detail, or final result detail.</summary>
+    public string? Detail { get; init; }
 
     /// <summary>When it started (microseconds).</summary>
     public long? StartedAt { get; init; }
@@ -171,7 +174,7 @@ public static class TaskRecords
         ArgumentNullException.ThrowIfNull(reader);
         using var command = reader.CreateCommand(
             "SELECT attempt_id, task_id, number, state, container_name, root_pid, root_start, boot_identity, stdout_offset, stderr_offset, index_offset, " +
-            "termination_reason, started_at FROM attempt WHERE attempt_id = $id;");
+            "termination_reason, started_at, detail FROM attempt WHERE attempt_id = $id;");
         command.Parameters.AddWithValue("$id", attemptId.ToArray());
         using var rows = command.ExecuteReader();
         return rows.Read() ? ReadAttemptRow(rows) : null;
@@ -186,7 +189,7 @@ public static class TaskRecords
         ArgumentNullException.ThrowIfNull(reader);
         using var command = reader.CreateCommand(
             "SELECT attempt_id, task_id, number, state, container_name, root_pid, root_start, boot_identity, stdout_offset, stderr_offset, index_offset, " +
-            "termination_reason, started_at FROM attempt WHERE state BETWEEN 1 AND 8 AND kind <> 4 ORDER BY created_at;");
+            "termination_reason, started_at, detail FROM attempt WHERE state BETWEEN 1 AND 8 AND kind <> 4 ORDER BY created_at;");
         using var rows = command.ExecuteReader();
         var result = new List<AttemptRow>();
         while (rows.Read())
@@ -511,7 +514,7 @@ public static class TaskRecords
             attempt.LimitEnforcedBy = rows.GetString(36);
         }
 
-        if (!rows.IsDBNull(22))
+        if (attempt.State == AttemptState.Finished && !rows.IsDBNull(22))
         {
             var result = new AttemptResult
             {
@@ -570,6 +573,7 @@ public static class TaskRecords
         IndexOffset = rows.GetInt64(10),
         Reason = rows.IsDBNull(11) ? null : (TerminationReason)rows.GetInt32(11),
         StartedAt = rows.IsDBNull(12) ? null : rows.GetInt64(12),
+        Detail = rows.IsDBNull(13) ? null : rows.GetString(13),
     };
 
     private static Id? Id(SqliteDataReader rows, int column) =>

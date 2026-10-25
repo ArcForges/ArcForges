@@ -27,6 +27,8 @@ public interface ILaunchStepProvider
 /// <item><c>hang-probe-after=N</c>: a heartbeat probe stops answering N seconds after it started (a hung cache store).</item>
 /// <item><c>kill-before-ack=N</c>: the node kills itself N seconds after it recorded a finished attempt, before it acknowledges the exit
 /// record (a crash between the commit and the acknowledgement).</item>
+/// <item><c>hold-preempt-before-stop=N</c>: holds the first preemption before its platform stop for N seconds, so a test can kill the
+/// node after STOPPING committed while its command is still running (MR-100).</item>
 /// <item><c>finalize-throw=0</c>: the first finalization throws an exception no handler expects (NotSupportedException) before it
 /// records.</item>
 /// <item><c>escaped-record-queue-full=0</c>: the first write of escaped-process records finds the command queue full, as
