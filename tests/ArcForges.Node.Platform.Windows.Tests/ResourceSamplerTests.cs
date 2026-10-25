@@ -64,10 +64,16 @@ public sealed partial class ResourceSamplerTests
         File.WriteAllBytes(file, new byte[4 << 20]);
         _ = File.ReadAllBytes(file);
         File.Delete(file);
+        // Capture the reference identities before the table, then require every one still running afterwards. The PID alone is
+        // insufficient: short-lived processes can start or exit between reads, and a PID can be reused.
+        var toolhelp = ProcessInfo.Snapshot();
+        var references = toolhelp.Where(process => process.Pid != 0)
+            .Select(process => (Process: process, Identity: ArcForges.Tests.ProcessIdentity.Capture(process.Pid)))
+            .Where(reference => reference.Identity is not null).ToList();
+        Assert.Contains(references, reference => reference.Process.Pid == Environment.ProcessId);
         var (ioBefore, privateBefore) = (Io(), PrivateWorkingSet());
         var table = sampler.Processes();
         var (ioAfter, privateAfter) = (Io(), PrivateWorkingSet());
-        var toolhelp = ProcessInfo.Snapshot();
         using var self = Process.GetCurrentProcess();
         var entry = Assert.Single(table, process => process.Pid == Environment.ProcessId);
         var reference = toolhelp.Single(process => process.Pid == Environment.ProcessId);
@@ -88,10 +94,12 @@ public sealed partial class ResourceSamplerTests
         Assert.InRange((ulong)entry.IoReadBytes!.Value, ioBefore.ReadTransferCount, ioAfter.ReadTransferCount);
         Assert.InRange((ulong)entry.IoWriteBytes!.Value, ioBefore.WriteTransferCount, ioAfter.WriteTransferCount);
 
-        // Every process Toolhelp lists (but for the idle process, and those that started or exited between the two reads) is in the table.
+        // Queryable identities that existed before the table and still run afterwards must all be present, with no tolerance.
+        // Protected processes whose creation cannot be read cannot form a stable reference; System is checked explicitly below.
         var ids = table.Select(process => process.Pid).ToHashSet();
-        var missing = toolhelp.Where(process => process.Pid != 0 && !ids.Contains(process.Pid)).ToList();
-        Assert.True(missing.Count <= 5, $"missing from the table: {string.Join(", ", missing.Select(process => $"{process.Image} ({process.Pid})"))}");
+        var missing = references.Where(reference => reference.Identity is { } identity && identity.IsRunning() && !ids.Contains(identity.Pid))
+            .Select(reference => $"{reference.Process.Image} ({reference.Identity})").ToList();
+        Assert.Empty(missing);
         Assert.Contains(table, process => process.Pid == 4 && process.Image == "System");
 
         // VM workers, when a WSL VM runs, are found by name (A-L01).
