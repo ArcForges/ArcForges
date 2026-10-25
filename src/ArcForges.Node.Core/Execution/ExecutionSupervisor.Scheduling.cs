@@ -1227,7 +1227,7 @@ public sealed partial class ExecutionSupervisor
         }
 
         _log.Warning("execution.requeued", new LogField("attempt", attempt.Name), new LogField("priority", attempt.Priority), new LogField("trigger", state.PressureTrigger));
-        Stop(attempt.Name, TerminationReason.Preempted, null, graceful: true, detail);
+        _ = StopAsync(attempt.Name, TerminationReason.Preempted, null, graceful: true, detail);
     }
 
     /// <summary>

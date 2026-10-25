@@ -550,11 +550,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         foreach (var attempt in _running.Values.Where(attempt => attempt.KillWithNode))
         {
-            Stop(attempt.Name, TerminationReason.NodeShutdown, null, graceful: false);
-            if (attempt.StopRecording is { } stop)
-            {
-                await stop.ConfigureAwait(false);
-            }
+            await StopAsync(attempt.Name, TerminationReason.NodeShutdown, null, graceful: false).ConfigureAwait(false);
         }
 
         var deadline = _clock.GetTimestamp();
@@ -695,7 +691,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         _log.Warning("execution.preempted", new LogField("attempt", attempt.Name), new LogField("priority", attempt.Priority),
             new LogField("trigger", state.PressureTrigger), new LogField("availableBytes", state.AvailableMemory));
-        Stop(attempt.Name, TerminationReason.Preempted, null, graceful: false, detail);
+        _ = StopAsync(attempt.Name, TerminationReason.Preempted, null, graceful: false, detail);
         return true;
     }
 
@@ -981,31 +977,27 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// (<paramref name="graceful"/> false with <c>OUTPUT_LIMIT</c> or <c>DISK_LIMIT</c>) stop at once without the graceful phase; on Linux
     /// the unit is frozen before it is killed.
     /// </summary>
-    public void Stop(string attemptName, TerminationReason reason, TimeSpan? grace, bool graceful = true, string? detail = null)
+    /// <returns>Completes after STOPPING commits and the platform stop begins, before the caller replies; it does not await the final result.</returns>
+    public Task StopAsync(string attemptName, TerminationReason reason, TimeSpan? grace, bool graceful = true, string? detail = null)
     {
         if (!_running.TryGetValue(attemptName, out var attempt))
         {
-            return;
+            return Task.CompletedTask;
         }
 
         lock (attempt)
         {
             if (attempt.Finalizing)
             {
-                return;
+                return Task.CompletedTask;
             }
 
             if (attempt.StopRecording is { } pending)
             {
-                if (!graceful)
-                {
-                    _ = ForceAfterRecordingAsync(pending, attempt);
-                }
-
-                return;
+                return graceful ? pending : ForceAfterRecordingAsync(pending, attempt);
             }
 
-            attempt.StopRecording = RecordStopAndApplyAsync(attempt, reason, grace, graceful, detail ?? attempt.StopDetail);
+            return attempt.StopRecording = RecordStopAndApplyAsync(attempt, reason, grace, graceful, detail ?? attempt.StopDetail);
         }
     }
 
@@ -1435,7 +1427,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                     _bindings.TryRemove(task, out _);
                     if (stop is not null)
                     {
-                        Stop(stop, TerminationReason.Cancelled, null);
+                        await StopAsync(stop, TerminationReason.Cancelled, null).ConfigureAwait(false);
                     }
 
                     _log.Info("execution.caller_gone", new LogField("task", task), new LogField("cancelled", error is null));
@@ -1639,13 +1631,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 // The job is already terminated; the node records the guard's stop and lets the exit be collected.
                 attempt.LimitEnforcedBy = "GUARD";
                 attempt.StopDetail = $"stopped by the attempt's guard while the node was down ({guardStop.OutputBytes} bytes of output, limit {guardStop.LimitBytes})";
-                Stop(attempt.Name, guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, null, graceful: false);
+                _ = StopAsync(attempt.Name, guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, null, graceful: false);
             }
             else
             {
                 // TERMINATE: at once, without the graceful phase (04 section 6 step 4).
                 attempt.LimitEnforcedBy = "NODE";
-                Stop(attempt.Name, TerminationReason.OutputLimit, null, graceful: false);
+                _ = StopAsync(attempt.Name, TerminationReason.OutputLimit, null, graceful: false);
                 _log.Info("execution.output_limit", new LogField("attempt", attempt.Name), new LogField("outputBytes", attempt.OutputBytes),
                     new LogField("limitBytes", settings.MaxOutputBytes));
             }
@@ -1679,7 +1671,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             // Frozen time does not count toward the wall-clock timeout (a paused attempt makes no progress).
             if (attempt.TimeoutMs is { } timeout && _clock.GetElapsedTime(since) - attempt.PausedTime(_clock) >= TimeSpan.FromMilliseconds(timeout))
             {
-                Stop(attempt.Name, TerminationReason.TimedOut, null);
+                _ = StopAsync(attempt.Name, TerminationReason.TimedOut, null);
             }
             else if (attempt.CpuLimitMs is { } cpuLimit && (attempt.LastCpuCheck == long.MinValue || _clock.GetElapsedTime(attempt.LastCpuCheck) >= TimeSpan.FromSeconds(1)))
             {
@@ -1687,7 +1679,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 var accounting = handle.Accounting();
                 if ((ulong)(accounting.CpuUserMs + accounting.CpuKernelMs) >= cpuLimit)
                 {
-                    Stop(attempt.Name, TerminationReason.CpuTimeExceeded, null);
+                    _ = StopAsync(attempt.Name, TerminationReason.CpuTimeExceeded, null);
                 }
             }
         }
