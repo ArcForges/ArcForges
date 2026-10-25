@@ -105,6 +105,9 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>Awaited before the version check's mismatch finding is committed (the node's test seam; a test holds or fails the commit).</summary>
     public Func<Task>? VersionFindingCommitting { get; set; }
 
+    /// <summary>Holds startup while the real API listens in RECOVERING; the callback respects the runtime's stop token.</summary>
+    public Func<NodeRuntime, Task>? BeforeReady { get; set; }
+
     /// <summary>
     /// The supervisor's forced-phase seam (<c>NodeHostOptions.ForcedBeforeStart</c>), from the next start: called right after a stop's forced
     /// phase terminated an attempt whose start had not completed, so a fault-injection test completes the start exactly there.
@@ -191,6 +194,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             LinuxControllers = LinuxControllers,
             VersionDirectory = VersionDirectory,
             VersionFindingCommitting = VersionFindingCommitting,
+            BeforeReady = BeforeReady,
             IsolatedFromMachineLoad = !LiveMachine,
             WrapSampler = MachineScript is { } script ? sampler => new ScriptedMachineSampler(sampler, script) : null,
             ForcedBeforeStart = ForcedBeforeStart,

@@ -17,8 +17,8 @@ public sealed class NodeLifecycleTests
 {
     /// <summary>
     /// <c>node wait-ready</c> reports a node once it is READY or DEGRADED (02 section 2 step 9), not as soon as it listens (step 7): a node
-    /// that answers hellos in RECOVERING for 3 s (<c>slow-ready</c> fault) is not ready yet, and a <c>node stop</c> sent then failed with
-    /// INTERNAL (SM-NODE has no RECOVERING -> STOPPING). After wait-ready the node has logged <c>node.ready</c>, and the stop succeeds.
+    /// that answers hellos in RECOVERING for 3 s (<c>slow-ready</c> fault) is not ready yet; a <c>node stop</c> then is refused with
+    /// STATE/invalid_state (SM-NODE allows stopping only from READY or DEGRADED). After wait-ready the stop succeeds.
     /// </summary>
     [Fact(Timeout = 120_000)]
     public async Task WaitReadyReturnsOnlyOnceTheNodeIsReady()

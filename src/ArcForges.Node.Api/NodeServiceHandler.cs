@@ -301,6 +301,17 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "StopNode", NodeServiceStopNodeResponse.Parser,
             failure => new NodeServiceStopNodeResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
+            // Check in the writer, with the lifecycle transitions and command-id result: an early request is never deferred.
+            var state = _node.Lifecycle.State;
+            if (state is NodeLifecycleState.Starting or NodeLifecycleState.Recovering)
+            {
+                return new NodeServiceStopNodeResponse
+                {
+                    Meta = Meta(request.Meta),
+                    Error = NodeErrors.InvalidState(state.ToString().ToUpperInvariant(), "the node must be READY or DEGRADED before it can stop"),
+                };
+            }
+
             if (!_node.Lifecycle.IsStopping)
             {
                 _node.Lifecycle.MoveTo(NodeLifecycleState.Stopping, "stop_node");
