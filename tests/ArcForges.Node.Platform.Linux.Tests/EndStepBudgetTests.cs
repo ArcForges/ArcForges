@@ -83,6 +83,7 @@ public sealed class EndStepBudgetTests
             // The before-fix direct path may wait on its real 15-second child beyond the assertion bound. Let those exact children
             // finish and be reaped; never touch the user's systemd manager or another process group.
             LinuxHarness.WaitFor(() => children.All(child => !child.IsRunning()), Bound, "the fixture's end-step children to exit");
+            LinuxHarness.WaitExit(handle, Bound);
         }
     }
 
