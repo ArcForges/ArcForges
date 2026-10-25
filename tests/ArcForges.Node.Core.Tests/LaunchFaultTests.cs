@@ -90,6 +90,55 @@ public sealed partial class LaunchFaultTests
     }
 
     /// <summary>
+    /// MR-101: the forced stop of an attempt in its launch steps does not wait for the stopped step to run down. The termination empties the
+    /// step's job at once (the job reports no process and the step its termination code), but the step's process handle is signaled only once
+    /// its own threads have run down, at the job's below-normal priority: under CPU load in the parallel suites that took seconds (up to 12 s),
+    /// and the holder, which waited for that handle, wrote the stop's records only then, so the cancel above exceeded its bound. Here the step's
+    /// run-down is held without load or timing: a debugger attached to the step holds its exit (<see cref="ExitHold"/>), so the step cannot run
+    /// down before the test releases it, after the task ended. The task ends CANCELLED within the same bound before the step ran down, the
+    /// termination did reach the step (its exit came once released), and the command never starts.
+    /// </summary>
+    [Fact(Timeout = 180_000)]
+    [Trait("env", "windows-real")]
+    [SupportedOSPlatform("windows")]
+    public async Task ACancelDuringALaunchStepDoesNotWaitForTheStoppedStepToRunDownOnWindows()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "A terminated Windows job's processes run down after it reports them gone; on Linux the steps and the command are the unit's main process.");
+        string? launchMarker = null;
+        var steps = new Tasks.FixedSteps(_ => [Step("slow-launch", launchMarker!, 60_000)], _ => []);
+        await using var node = await InProcessNode.Create(steps: steps).StartAsync();
+        launchMarker = Path.Combine(node.Root, "launch.txt");
+        await using var channel = await node.ChannelAsync();
+        var commandMarker = Path.Combine(node.Root, "command.txt");
+        var id = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", commandMarker));
+
+        // The launch step runs; from now on it cannot run down until released (a failure-path bound of 30 s after its exit releases it, so an
+        // attempt that waits for the step's run-down ends only then).
+        await Tasks.WaitForAsync(() => Tasks.Marker(launchMarker).Any(line => line.Event == "ready"), Tasks.Bound, "the launch step to run");
+        using var hold = ExitHold.Attach(Tasks.Marker(launchMarker).First(line => line.Event == "ready").Pid, TimeSpan.FromSeconds(30));
+        var cancelled = Stopwatch.StartNew();
+        var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
+        Assert.Null(cancel.Error);
+
+        var task = await Tasks.WaitAsync(channel, id);
+        var toFinal = cancelled.Elapsed;
+        var ranDown = hold.RanDown;
+        hold.Release();
+        TestContext.Current.TestOutputHelper?.WriteLine($"{task.State} after {toFinal.TotalMilliseconds:F0} ms, step ran down by then: {ranDown}: {task.CurrentAttempt.Result}");
+        AssertCancelled(task);
+        Assert.Equal("stopped during launch step slow-launch; the command did not start", task.CurrentAttempt.Result.Detail);
+        Assert.False(ranDown, $"The task ended only after the stopped step had run down ({toFinal}): the stop waited for the step's run-down.");
+        Assert.True(toFinal < TimeSpan.FromSeconds(5), $"The cancel took {toFinal} to end the task while the step's run-down was held.");
+
+        // The step's exit comes from its own last thread, which load may starve: it is awaited (bounded), not assumed to have come already.
+        Assert.True(await Task.WhenAny(hold.Exit, Task.Delay(Tasks.Bound, Ct)) == hold.Exit,
+            $"The termination never reached the launch step: its exit did not come within {Tasks.Bound.TotalSeconds:0} s.");
+        Assert.Null(RootPid(node, id));
+        Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
+    }
+
+    /// <summary>
     /// Cancels racing the admission and the launch (16 section 1: cancellation during launch): tasks cancelled as soon as they are
     /// submitted, many at once, all end CANCELLED, whether the cancel found them queued, admitted but not yet supervised, being launched,
     /// or started; none runs on to its own end (a lost cancel left a task RUNNING for its whole 120 s hold).
@@ -862,6 +911,173 @@ public sealed partial class LaunchFaultTests
             Assert.True(process.WaitForExit(TimeSpan.FromSeconds(30)), "systemd-run did not finish within 30 s.");
             Assert.True(process.ExitCode == 0, $"systemd-run {string.Join(' ', arguments)} failed ({process.ExitCode}): {output.Result}{error.Result}");
         }
+    }
+
+    /// <summary>
+    /// Holds a process's run-down on Windows, without load or timing: a debugger attached to it continues every debug event but the process's
+    /// exit, which it holds until <see cref="Release"/> or a bound after the exit. A debugged process cannot finish exiting before its exit
+    /// event is continued, so a terminated one stays unsignaled until then (<see cref="RanDown"/>), as a starved one does, while its job
+    /// already reports it gone and its exit code is final (both observed on the workstation: 5 of 5 times within 2 ms of TerminateJobObject,
+    /// the handle signaled only after a 3 s hold). After <see cref="Release"/> the debugger lets the exit go on whenever it comes, until it is
+    /// disposed; detaching never kills the process.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private sealed partial class ExitHold : IDisposable
+    {
+        private const uint ExceptionEvent = 1;
+        private const uint CreateProcessEvent = 3;
+        private const uint ExitProcessEvent = 5;
+        private const uint LoadDllEvent = 6;
+        private const uint Continue = 0x00010002;
+        private const uint ExceptionNotHandled = 0x80010001;
+        private const uint Breakpoint = 0x80000003;
+        private const uint Synchronize = 0x00100000;
+        private readonly ManualResetEventSlim _release = new();
+        private readonly ManualResetEventSlim _detach = new();
+        private readonly TaskCompletionSource _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _exit = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly SafeProcessHandle _process;
+        private readonly Thread _debugger;
+
+        private ExitHold(int pid, TimeSpan bound)
+        {
+            _process = OpenProcess(Synchronize, inherit: false, pid);
+            if (_process.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastPInvokeError(), $"OpenProcess({pid}) failed.");
+            }
+
+            // Every debug call of a debuggee is made by the thread that attached.
+            _debugger = new Thread(() => Debug(pid, bound)) { IsBackground = true, Name = "exit-hold-" + pid };
+            _debugger.Start();
+        }
+
+        /// <summary>Completes once the process's exit reached the debugger.</summary>
+        public Task Exit => _exit.Task;
+
+        /// <summary>The process has run down (its handle is signaled).</summary>
+        public bool RanDown => WaitForSingleObject(_process, 0) == 0;
+
+        /// <summary>Attaches to <paramref name="pid"/> and returns once the attach completed (the debugger's initial breakpoint).</summary>
+        public static ExitHold Attach(int pid, TimeSpan bound)
+        {
+            var hold = new ExitHold(pid, bound);
+            Assert.True(hold._attached.Task.Wait(TimeSpan.FromSeconds(30)), $"The debugger did not attach to {pid} within 30 s.");
+            return hold;
+        }
+
+        /// <summary>Lets the process's exit go on, now or whenever it comes.</summary>
+        public void Release() => _release.Set();
+
+        public void Dispose()
+        {
+            _release.Set();
+            _detach.Set();
+            Assert.True(_debugger.Join(TimeSpan.FromSeconds(30)), "The exit hold's debugger did not end within 30 s.");
+            _release.Dispose();
+            _detach.Dispose();
+            _process.Dispose();
+        }
+
+        private void Debug(int pid, TimeSpan bound)
+        {
+            if (!DebugActiveProcess(pid))
+            {
+                _attached.TrySetException(new Win32Exception(Marshal.GetLastPInvokeError(), $"DebugActiveProcess({pid}) failed."));
+                return;
+            }
+
+            try
+            {
+                _ = DebugSetProcessKillOnExit(kill: false);
+                while (true)
+                {
+                    if (!WaitForDebugEvent(out var debugEvent, 100))
+                    {
+                        if (_detach.IsSet)
+                        {
+                            return;
+                        }
+
+                        continue;
+                    }
+
+                    var status = Continue;
+                    switch (debugEvent.Code)
+                    {
+                        case ExceptionEvent when (uint)debugEvent.Info == Breakpoint:
+                            _attached.TrySetResult();
+                            break;
+                        case ExceptionEvent:
+                            status = ExceptionNotHandled;
+                            break;
+                        case CreateProcessEvent or LoadDllEvent when debugEvent.Info != 0:
+                            _ = CloseHandle(debugEvent.Info);
+                            break;
+                        case ExitProcessEvent:
+                            _exit.TrySetResult();
+                            _release.Wait(bound);
+                            _ = ContinueDebugEvent(debugEvent.ProcessId, debugEvent.ThreadId, status);
+                            return;
+                    }
+
+                    _ = ContinueDebugEvent(debugEvent.ProcessId, debugEvent.ThreadId, status);
+                }
+            }
+            finally
+            {
+                _ = DebugActiveProcessStop(pid);
+                _attached.TrySetException(new InvalidOperationException($"The debugger detached from {pid} before its attach completed."));
+            }
+        }
+
+        /// <summary>DEBUG_EVENT (64-bit): the code, the process and thread, and the first field of the event's information.</summary>
+        [StructLayout(LayoutKind.Explicit, Size = 176)]
+        private struct DebugEvent
+        {
+            [FieldOffset(0)]
+            public uint Code;
+
+            [FieldOffset(4)]
+            public int ProcessId;
+
+            [FieldOffset(8)]
+            public int ThreadId;
+
+            /// <summary>The exception code (EXCEPTION_DEBUG_EVENT), or the image file handle (CREATE_PROCESS and LOAD_DLL).</summary>
+            [FieldOffset(16)]
+            public nint Info;
+        }
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool DebugActiveProcess(int processId);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool DebugActiveProcessStop(int processId);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool DebugSetProcessKillOnExit([MarshalAs(UnmanagedType.Bool)] bool kill);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool WaitForDebugEvent(out DebugEvent debugEvent, uint milliseconds);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool ContinueDebugEvent(int processId, int threadId, uint status);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool CloseHandle(nint handle);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        private static partial SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, int processId);
+
+        [LibraryImport("kernel32.dll")]
+        private static partial uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
     }
 
     /// <summary>Suspends and resumes a whole process (all its threads), for the Windows hold of an attempt's holder.</summary>
