@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Platform.Linux;
 using ArcForges.Node.Platform.Windows;
 using ArcForges.Node.Store;
 using ArcForges.Tests;
@@ -51,21 +50,21 @@ public sealed partial class LaunchFaultTests
         }
 
         await node.StopAsync();
-        if (startInGap)
-        {
-            hold.Release();
-            await Tasks.WaitForAsync(() => CommandInContainer(nodeName, attempt), Tasks.Bound, "the command to start while the node is down");
-            if (!cpu)
-            {
-                await Task.Delay(2_500, Ct); // The timeout is already spent before recovery, not a fresh budget afterwards.
-            }
-        }
-
-        var recoveryAt = StoreTime.ToMicroseconds(DateTimeOffset.UtcNow);
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
         try
         {
+            if (startInGap)
+            {
+                hold.Release();
+                await Tasks.WaitForAsync(() => CommandInContainer(nodeName, attempt), Tasks.Bound, "the command to start while the node is down");
+                if (!cpu)
+                {
+                    await Task.Delay(2_500, Ct); // The timeout is already spent before recovery, not a fresh budget afterwards.
+                }
+            }
+
+            var recoveryAt = StoreTime.ToMicroseconds(DateTimeOffset.UtcNow);
+            await node.StartAsync();
+            await using var after = await node.ChannelAsync();
             if (!startInGap)
             {
                 await Task.Delay(2_500, Ct);
@@ -92,8 +91,14 @@ public sealed partial class LaunchFaultTests
         finally
         {
             hold.Release();
-            _ = await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, GraceMs = 0 }, cancellationToken: Ct);
-            _ = await Tasks.WaitAsync(after, id);
+            if (node.Exit.IsCompleted)
+            {
+                await node.StartAsync();
+            }
+
+            await using var cleanup = await node.ChannelAsync();
+            _ = await cleanup.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, GraceMs = 0 }, cancellationToken: Ct);
+            _ = await Tasks.WaitAsync(cleanup, id);
         }
     }
 
@@ -207,7 +212,15 @@ public sealed partial class LaunchFaultTests
 
         if (OperatingSystem.IsLinux() && int.TryParse(SystemdTestEnvironment.Property(SystemdTestEnvironment.AttemptUnit(attempt), "MainPID"), out var pid) && pid > 0)
         {
-            return string.Equals(Path.GetFileNameWithoutExtension(ProcFs.Image(pid)), image, StringComparison.Ordinal);
+            try
+            {
+                // /proc/<pid>/comm truncates arcforges-testload to 15 characters; compare the executable in this unit instead.
+                return string.Equals(Path.GetFileNameWithoutExtension(File.ResolveLinkTarget($"/proc/{pid}/exe", returnFinalTarget: true)?.Name), image, StringComparison.Ordinal);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return false; // The root may have exited between the unit query and the link read.
+            }
         }
 
         return false;
