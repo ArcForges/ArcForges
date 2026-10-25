@@ -171,10 +171,17 @@ public sealed partial class ExecutionSupervisor
         }
     }
 
+    /// <summary>Test-only interleaving gate after the pass captures settings, before it reads queued work.</summary>
+    internal Func<Task>? BeforeAdmissionRead { get; set; }
+
     /// <summary>One admission pass: retries whose backoff elapsed and satisfied dependencies are queued, then the queued tasks are admitted.</summary>
     private async Task AdmitAsync()
     {
         var settings = Settings;
+        if (BeforeAdmissionRead is { } beforeRead)
+        {
+            await beforeRead().ConfigureAwait(false);
+        }
         var (waiting, retrying, retryDue) = _store.Read(reader =>
         {
             var now = reader.NowMicroseconds;
@@ -783,9 +790,19 @@ public sealed partial class ExecutionSupervisor
         RunningAttempt? attempt = null;
         try
         {
+            var stalePolicy = false;
             var admitted = await _processor.ExecuteAsync(context =>
             {
                 var transaction = context.Transaction;
+                // Policy writes use this same command queue. A pass may have captured settings before a new limit committed and
+                // read its queued tasks afterwards; no decision from that snapshot may become an attempt under the new revision.
+                if (Convert.ToInt64(transaction.Scalar("SELECT revision FROM policy_document WHERE is_current = 1;"), CultureInfo.InvariantCulture)
+                    != settings.PolicyRevision)
+                {
+                    stalePolicy = true;
+                    return null;
+                }
+
                 var row = TaskRecords.GetRow(transaction, taskId);
                 if (row is null || row.State != TaskState.Queued)
                 {
@@ -829,6 +846,12 @@ public sealed partial class ExecutionSupervisor
             }).ConfigureAwait(false);
             if (admitted is null)
             {
+                if (stalePolicy)
+                {
+                    // Refresh outside the writer transaction and retry against the committed policy.
+                    PolicyChanged();
+                }
+
                 return;
             }
 
