@@ -378,6 +378,41 @@ public sealed class UnitPlatformTests
     }
 
     [Fact(Timeout = 120_000)]
+    public async Task AForcedPhaseAfterTheRootExitsPreservesItsEndStepsAndExitRecord()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var rootGo = Path.Combine(harness.Root, "root-go");
+        var ending = Path.Combine(harness.Root, "ending");
+        var endGo = Path.Combine(harness.Root, "end-go");
+        var ended = Path.Combine(harness.Root, "ended");
+        var handle = (LinuxAttemptHandle)harness.Launch(
+            ["/bin/sh", "-c", "while [ ! -e \"$1\" ]; do sleep 0.02; done", "sh", rootGo],
+            endSteps: [LinuxHarness.Step("held-end", 30_000, "/bin/sh", "-c",
+                "touch \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.02; done; touch \"$3\"", "sh", ending, endGo, ended)]);
+        Assert.NotNull(await handle.Started.WaitAsync(Bound, Ct));
+        try
+        {
+            File.WriteAllText(rootGo, "go");
+            LinuxHarness.WaitFor(() => File.Exists(ending), Bound, "the real end step after the root exits");
+            // The graceful exit already won. A late forced phase must leave the bounded end-step/exit-record helpers to finish.
+            handle.Terminate();
+            File.WriteAllText(endGo, "go");
+            var exit = LinuxHarness.WaitExit(handle, Bound);
+            Assert.True(File.Exists(ended), "The forced phase killed the real end step after the command had exited.");
+            Assert.Equal("exit-record", exit.RecordedBy);
+            Assert.Equal(("exited", 0), (exit.ExitCodeKind, exit.ExitStatus));
+            Assert.False(handle.LastLimitStop!.Frozen);
+        }
+        finally
+        {
+            File.WriteAllText(rootGo, "go");
+            File.WriteAllText(endGo, "go");
+        }
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task TheGracefulPhaseSignalsEveryProcessAndTheForcedPhaseKillsATreeThatIgnoresIt()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

@@ -12,37 +12,62 @@ public static class UnitControl
     /// Freezes the unit (<c>FreezeUnit</c>), sends SIGKILL to every process of its cgroup (the main process last), and thaws the cgroup
     /// directly through its <c>cgroup.freeze</c> file before asking the user manager to thaw it: once the main process is gone the manager
     /// spawns the unit's <c>ExecStop</c> into the cgroup, and a spawn into a frozen cgroup blocks the manager until the cgroup is thawed, so
-    /// the thaw must not depend on the manager. A unit that cannot be frozen (already stopping) has its processes killed as they are, in
-    /// up to five passes. <c>ExecStop</c> and <c>ExecStopPost</c> then run as after any exit, so <c>exit.json</c> is written.
+    /// the thaw must not depend on the manager. A late forced phase leaves the bounded control helpers alone after the main command exits.
+    /// If the freeze fails, only known attempt members are killed, in up to five passes, and a timed-out freeze is still thawed directly.
+    /// <c>ExecStop</c> and <c>ExecStopPost</c> then run as after any exit, so <c>exit.json</c> is written.
     /// </summary>
     public static LimitStop FreezeAndKill(SystemdManager manager, string unit, string? cgroupDirectory, int mainPid)
     {
         ArgumentNullException.ThrowIfNull(manager);
+        // Once the main command has exited, systemd owns the bounded end steps and exit-record. Killing the unit's
+        // remaining processes then kills those helpers, loses exit.json and can strand the manager's spawn in a frozen cgroup.
+        var state = manager.State(unit);
+        if (state is null || state.MainPid == 0 || state.ControlPid != 0 || (mainPid != 0 && state.MainPid != mainPid))
+        {
+            return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
+        }
+
+        mainPid = (int)state.MainPid;
+        if (ProcFs.Stat(mainPid) is not { State: not ('Z' or 'X') } root)
+        {
+            return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
+        }
+
+        var members = Members();
+        if (ProcFs.Stat(mainPid) is not { State: not ('Z' or 'X') } captured || captured.StartTicks != root.StartTicks)
+        {
+            return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
+        }
+
         DateTimeOffset? frozenAt = null;
+        var killed = 0;
+        var killedAt = DateTimeOffset.UtcNow;
+        var thawed = false;
         try
         {
-            manager.FreezeUnit(unit);
-            frozenAt = DateTimeOffset.UtcNow;
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
-        {
-            // Not active (stopping, or gone): the processes are killed as they are.
-        }
+            try
+            {
+                manager.FreezeUnit(unit);
+                frozenAt = DateTimeOffset.UtcNow;
+            }
+            catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
+            {
+                // The root may have exited while FreezeUnit was in flight. Only the known members may be killed then.
+            }
 
-        var killed = 0;
-        if (cgroupDirectory is not null)
-        {
             for (var pass = 0; pass < 5; pass++)
             {
-                var pids = ProcFs.Procs(cgroupDirectory);
-                if (pids.Count == 0)
+                if (ProcFs.Stat(mainPid) is { State: not ('Z' or 'X') } current && current.StartTicks == root.StartTicks)
                 {
-                    break;
+                    foreach (var member in Members())
+                    {
+                        members.TryAdd(member.Key, member.Value);
+                    }
                 }
 
-                foreach (var pid in pids.Where(pid => pid != mainPid).Append(mainPid).Where(pid => pid != 0 && pids.Contains(pid)))
+                foreach (var (pid, start) in members.OrderBy(member => member.Key == mainPid))
                 {
-                    if (Libc.Kill(pid, Libc.SigKill) == 0)
+                    if (ProcFs.Stat(pid) is { State: not ('Z' or 'X') } live && live.StartTicks == start && Libc.Kill(pid, Libc.SigKill) == 0)
                     {
                         killed++;
                     }
@@ -50,30 +75,38 @@ public static class UnitControl
 
                 if (frozenAt is not null)
                 {
-                    // Frozen: nothing forked in between, every process got its signal.
                     break;
                 }
 
                 Thread.Sleep(10);
             }
-        }
 
-        var killedAt = DateTimeOffset.UtcNow;
-        var thawed = frozenAt is null || (cgroupDirectory is not null && ProcFs.WriteControl(Path.Combine(cgroupDirectory, "cgroup.freeze"), "0"));
-        if (frozenAt is not null)
+            killedAt = DateTimeOffset.UtcNow;
+        }
+        finally
         {
+            // A timed-out FreezeUnit can already have frozen the cgroup and blocked a control-process spawn. Thaw directly
+            // even when that call never returned success; the manager must not be needed to release its own blocked spawn.
+            thawed = cgroupDirectory is not null && ProcFs.WriteControl(Path.Combine(cgroupDirectory, "cgroup.freeze"), "0");
             try
             {
                 manager.ThawUnit(unit);
             }
             catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
             {
-                // Already stopping: the direct thaw above is what matters.
+                // Already stopping or collected: the direct thaw above is what matters.
             }
         }
 
         return new LimitStop(frozenAt is not null, killed, frozenAt, killedAt) { DirectThaw = thawed, ThawedAt = DateTimeOffset.UtcNow };
+
+        Dictionary<int, long> Members() => cgroupDirectory is null
+            ? []
+            : ProcFs.Procs(cgroupDirectory).Select(pid => (Pid: pid, Stat: ProcFs.Stat(pid)))
+                .Where(member => member.Stat is { State: not ('Z' or 'X') })
+                .ToDictionary(member => member.Pid, member => member.Stat!.Value.StartTicks);
     }
+
     /// <summary>
     /// Thaws attempt cgroups left frozen with nothing but the user manager's own spawn in them, without the user manager (it may be blocked
     /// in that state): a node or guard that died between killing the processes of a frozen unit and thawing it leaves the manager spawning

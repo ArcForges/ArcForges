@@ -76,8 +76,8 @@ public sealed partial class ResourceTests
             Assert.Null(submitted.Error);
             taskId = submitted.Value.TaskId;
             var attemptId = await RunningAttemptAsync(human, taskId);
-            await TestNode.WaitAsync(() => File.Exists(marker) && File.ReadAllLines(marker).Any(line => line.StartsWith("start ", StringComparison.Ordinal)), Bound, "the actual root marker");
-            var rootPid = int.Parse(File.ReadAllLines(marker).First(line => line.StartsWith("start ", StringComparison.Ordinal)).Split(' ')[1], CultureInfo.InvariantCulture);
+            await TestNode.WaitAsync(() => File.Exists(marker) && TestNode.ReadShared(marker).Split('\n').Any(line => line.StartsWith("start ", StringComparison.Ordinal)), Bound, "the actual root marker");
+            var rootPid = int.Parse(TestNode.ReadShared(marker).Split('\n').First(line => line.StartsWith("start ", StringComparison.Ordinal)).Split(' ')[1], CultureInfo.InvariantCulture);
             var root = Assert.IsType<ArcForges.Tests.ProcessIdentity>(ArcForges.Tests.ProcessIdentity.Capture(rootPid));
 
             await PreemptionPolicyAsync(human, document => document.Resources.Pressure = new PressureThresholds
@@ -125,7 +125,7 @@ public sealed partial class ResourceTests
                     return task.State == TaskState.Running && task.AttemptCount == 2 && task.CurrentAttempt.State == AttemptState.Running;
                 }, Bound, "the permitted retry's second real attempt to run");
                 Assert.NotEqual(IdText.Format(attemptId), IdText.Format(task.CurrentAttempt.AttemptId));
-                await TestNode.WaitAsync(() => File.ReadAllLines(marker).Count(line => line.StartsWith("start ", StringComparison.Ordinal)) == 2,
+                await TestNode.WaitAsync(() => TestNode.ReadShared(marker).Split('\n').Count(line => line.StartsWith("start ", StringComparison.Ordinal)) == 2,
                     Bound, "both actual command starts in the workload marker");
                 Assert.Contains(TestNode.LogEvents(node.NodeLog, "execution.retry.scheduled"), entry =>
                     entry.GetProperty("fields").GetProperty("task").GetString() == IdText.Format(taskId));
