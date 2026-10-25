@@ -134,7 +134,25 @@ public sealed class TaskLifecycleModelTests
     public void FinishedEdgesRequireTheirDeclaredTriggerAndEffect(AttemptState previous, TerminationReason reason, EffectCertainty effect, bool allowed) =>
         Assert.Equal(allowed, FinishedTrigger(previous, reason, effect));
 
-    private static bool FinishedTrigger(AttemptState previous, TerminationReason reason, EffectCertainty effect) =>
+    [Theory]
+    [InlineData(AttemptState.Running, TerminationReason.Cancelled, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Stopping, TerminationReason.Cancelled, EffectCertainty.Happened, true)]
+    [InlineData(AttemptState.Stopping, TerminationReason.Cancelled, EffectCertainty.Unknown, false)]
+    [InlineData(AttemptState.Running, TerminationReason.Lost, EffectCertainty.Unknown, true)]
+    [InlineData(AttemptState.Stopping, TerminationReason.Lost, EffectCertainty.Unknown, true)]
+    [InlineData(AttemptState.Running, TerminationReason.Lost, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Finalizing, TerminationReason.Exited, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Starting, TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, false)]
+    public void AdoptedFinishedEdgesRequireTheAdoptionTriggerAndEffect(AttemptState previous, TerminationReason reason, EffectCertainty effect, bool allowed) =>
+        Assert.Equal(allowed, FinishedTrigger(previous, reason, effect, AttemptKind.Adopted));
+
+    private static bool FinishedTrigger(AttemptState previous, TerminationReason reason, EffectCertainty effect, AttemptKind kind = AttemptKind.Local) =>
+        kind == AttemptKind.Adopted
+            ? (previous == AttemptState.Stopping && reason == TerminationReason.Cancelled && effect == EffectCertainty.Happened)
+                || (previous is AttemptState.Running or AttemptState.Stopping && reason == TerminationReason.Lost && effect == EffectCertainty.Unknown)
+            : ManagedFinishedTrigger(previous, reason, effect);
+
+    private static bool ManagedFinishedTrigger(AttemptState previous, TerminationReason reason, EffectCertainty effect) =>
         previous is AttemptState.Finalizing or AttemptState.Finished
         || (reason == TerminationReason.Lost && effect == EffectCertainty.Unknown)
         || (previous == AttemptState.Starting && reason is TerminationReason.SpawnFailed or TerminationReason.PolicyDenied && effect == EffectCertainty.DidNotHappen);
@@ -283,7 +301,7 @@ public sealed class TaskLifecycleModelTests
     private static async Task<TaskServiceCancelTaskResponse> CancelAsync(NodeChannel channel, Id id) =>
         await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "model" }, cancellationToken: Ct);
 
-    private static async Task<string> StartCursorAsync(NodeChannel channel)
+    internal static async Task<string> StartCursorAsync(NodeChannel channel)
     {
         using var call = channel.Events.Subscribe(new NodeEventServiceSubscribeRequest { Topics = { EventTopic.Tasks } }, cancellationToken: Ct);
         while (await call.ResponseStream.MoveNext(Ct))
@@ -297,7 +315,7 @@ public sealed class TaskLifecycleModelTests
         throw new InvalidOperationException("The subscription ended before its snapshot completed.");
     }
 
-    private static async Task<List<NodeEvent>> EventsSinceAsync(NodeChannel channel, string cursor)
+    internal static async Task<List<NodeEvent>> EventsSinceAsync(NodeChannel channel, string cursor)
     {
         var events = new List<NodeEvent>();
         while (true)
@@ -316,7 +334,7 @@ public sealed class TaskLifecycleModelTests
         }
     }
 
-    private static void AssertStateMachines(List<NodeEvent> events)
+    internal static void AssertStateMachines(List<NodeEvent> events)
     {
         Assert.Equal(events.Select(item => item.Seq).Order(), events.Select(item => item.Seq));
         Assert.Equal(events.Count, events.Select(item => item.Seq).Distinct().Count());
@@ -327,8 +345,10 @@ public sealed class TaskLifecycleModelTests
             if (item.Task is { } changed)
             {
                 var key = IdText.Format(changed.Task.TaskId);
-                Check(tasks, key, changed.HasPreviousState ? changed.PreviousState : (TaskState?)null, changed.Task.State, changed.Task.Revision.Value, TaskTransitions,
-                    [TaskState.Queued, TaskState.WaitingDependency], $"task {key} (seq {item.Seq})");
+                var adopted = changed.Task.CurrentAttempt?.Kind == AttemptKind.Adopted;
+                Check(tasks, key, changed.HasPreviousState ? changed.PreviousState : (TaskState?)null, changed.Task.State, changed.Task.Revision.Value,
+                    adopted ? Pairs(([TaskState.Running], TaskState.Cancelled), ([TaskState.Running], TaskState.Lost)) : TaskTransitions,
+                    adopted ? [TaskState.Running] : [TaskState.Queued, TaskState.WaitingDependency], $"task {key} (seq {item.Seq})");
             }
             else if (item.Attempt is { } attempt)
             {
@@ -336,12 +356,14 @@ public sealed class TaskLifecycleModelTests
                 if (attempt.Attempt.State == AttemptState.Finished)
                 {
                     Assert.NotNull(attempt.Attempt.Result);
-                    Assert.True(attempt.HasPreviousState && FinishedTrigger(attempt.PreviousState, attempt.Attempt.Result.TerminationReason, attempt.Attempt.Result.Effect),
+                    Assert.True(attempt.HasPreviousState && FinishedTrigger(attempt.PreviousState, attempt.Attempt.Result.TerminationReason, attempt.Attempt.Result.Effect, attempt.Attempt.Kind),
                         $"attempt {key} (seq {item.Seq}): {attempt.PreviousState} -> FINISHED has no matching trigger/effect: {attempt.Attempt.Result}");
                 }
 
-                Check(attempts, key, attempt.HasPreviousState ? attempt.PreviousState : (AttemptState?)null, attempt.Attempt.State, attempt.Attempt.Revision.Value, AttemptTransitions,
-                    [AttemptState.Created, AttemptState.Starting], $"attempt {key} (seq {item.Seq})");
+                var adopted = attempt.Attempt.Kind == AttemptKind.Adopted;
+                Check(attempts, key, attempt.HasPreviousState ? attempt.PreviousState : (AttemptState?)null, attempt.Attempt.State, attempt.Attempt.Revision.Value,
+                    adopted ? Pairs(([AttemptState.Running], AttemptState.Stopping), ([AttemptState.Running, AttemptState.Stopping], AttemptState.Finished)) : AttemptTransitions,
+                    adopted ? [AttemptState.Running] : [AttemptState.Created, AttemptState.Starting], $"attempt {key} (seq {item.Seq})");
             }
         }
     }
