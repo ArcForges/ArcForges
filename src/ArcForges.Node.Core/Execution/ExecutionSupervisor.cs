@@ -356,7 +356,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             // The node was stopping it: the stop continues below, and a launch the node no longer controls may still start the command, so the
             // platform awaits that start (only then: any other recovered attempt completes its start at once, and a forced phase that stops it
             // later watches such a launch, TerminateEachLaunchProcess).
-            var stopping = row.State == AttemptState.Stopping && row.Reason is null;
+            var stopping = row.State == AttemptState.Stopping;
             IAttemptHandle? handle = null;
             try
             {
@@ -438,7 +438,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed). The node may have
                 // stopped in the middle of the launch: a start that completes after the forced phase is terminated again (Enforce).
-                running.StopReason = TerminationReason.Cancelled;
+                running.StopReason = row.Reason ?? TerminationReason.Cancelled;
+                running.StopDetail = row.Detail;
                 running.GraceDeadline = _clock.GetTimestamp();
             }
 
@@ -697,7 +698,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         {
             var transaction = context.Transaction;
             var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
-            if (transaction.Execute("UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);", ("$id", attempt.AttemptId)) == 1
+            if (transaction.Execute("UPDATE attempt SET state = 7, termination_reason = $cause, detail = $detail, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
+                ("$cause", (int)TerminationReason.Preempted), ("$detail", Truncate(detail)), ("$id", attempt.AttemptId)) == 1
                 && previous is not null)
             {
                 EmitAttempt(context, attempt.AttemptId, previous.State);
@@ -835,8 +837,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var attemptState = (AttemptState)Convert.ToInt32(transaction.Scalar("SELECT state FROM attempt WHERE attempt_id = $id;", ("$id", attemptId)),
                 CultureInfo.InvariantCulture);
             var stopping = transaction.Execute(
-                "UPDATE attempt SET state = 7, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
-                ("$id", attemptId));
+                "UPDATE attempt SET state = 7, termination_reason = $cause, detail = $detail, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
+                ("$cause", (int)TerminationReason.Cancelled), ("$detail", Truncate(reason)), ("$id", attemptId));
             transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(reason)), ("$id", taskId.ToArray()));
             if (stopping == 1)
             {
@@ -1019,6 +1021,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 // Still being launched: there is nothing to stop yet, and the launch applies the forced phase once the handle exists.
                 // Marking it forced here would skip that, and the command would run on past the stop (TERMINATION_INCOMPLETE).
                 return;
+            }
+
+            if (reason == TerminationReason.Preempted && _faults.Take("hold-preempt-before-stop") is { } hold)
+            {
+                _log.Warning("node.fault.hold_preempt_before_stop", new LogField("attempt", attempt.Name));
+                Thread.Sleep(hold);
             }
 
             // The escaped processes as the stop begins: once the root has exited, a scan may no longer find them (on Linux they are

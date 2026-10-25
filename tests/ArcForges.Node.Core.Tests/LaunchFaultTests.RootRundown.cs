@@ -101,8 +101,21 @@ public sealed partial class LaunchFaultTests
         Assert.False(File.Exists(endMarker), "The end step started before the successful root finished running down.");
         Assert.False(File.Exists(files.ExitPath), "The holder recorded success before the root finished running down.");
         Assert.Equal(TaskState.Running, (await Tasks.GetAsync(channel, id)).State);
-        hold.Release();
-        await hold.WaitForRundownAsync();
+        // The test's TerminateJobObject also blocks new assignments until every terminated process has run down. Only after
+        // the early-completion guards above, hold this fixture's holder while releasing the root and resetting the now-empty job.
+        // Otherwise that artificial termination can reject the real end step, independently of the successful-root wait under test.
+        var holder = ExecutionCleanup.Holders([IdText.Format(attempt.AttemptId)]).Single();
+        Suspension.Suspend(holder);
+        try
+        {
+            hold.Release();
+            await hold.WaitForRundownAsync();
+            job.Terminate(AttemptRunner.TerminatedExitCode);
+        }
+        finally
+        {
+            Suspension.Resume(holder);
+        }
         Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, id)).State);
         Assert.Contains(Tasks.Marker(endMarker), line => line.Event == "ready");
     }

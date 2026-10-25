@@ -377,6 +377,68 @@ public sealed class UnitPlatformTests
         Assert.Equal(9, LinuxHarness.WaitExit(handle, Bound).ExitStatus);
     }
 
+    [Theory(Timeout = 120_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AForcedPhaseAfterTheRootExitsPreservesItsEndStepsAndExitRecord(bool withLeftover)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireUnits();
+        using var harness = LinuxHarness.Start();
+        var rootGo = Path.Combine(harness.Root, "root-go");
+        var ending = Path.Combine(harness.Root, "ending");
+        var endGo = Path.Combine(harness.Root, "end-go");
+        var ended = Path.Combine(harness.Root, "ended");
+        var childFile = Path.Combine(harness.Root, "child");
+        var command = withLeftover
+            ? "/bin/sh -c 'trap \"\" TERM; echo $$ > \"$1\"; while :; do sleep 1; done' sh \"$2\" & while [ ! -e \"$1\" ]; do sleep 0.02; done"
+            : "while [ ! -e \"$1\" ]; do sleep 0.02; done";
+        var handle = (LinuxAttemptHandle)harness.Launch(
+            ["/bin/sh", "-c", command, "sh", rootGo, childFile],
+            endSteps: [LinuxHarness.Step("held-end", 30_000, "/bin/sh", "-c",
+                "touch \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.02; done; touch \"$3\"", "sh", ending, endGo, ended)]);
+        Assert.NotNull(await handle.Started.WaitAsync(Bound, Ct));
+        try
+        {
+            ArcForges.Tests.ProcessIdentity? child = null;
+            if (withLeftover)
+            {
+                LinuxHarness.WaitFor(() => File.Exists(childFile) && File.ReadAllText(childFile).Trim().Length > 0, Bound, "the real workload descendant to start");
+                child = ArcForges.Tests.ProcessIdentity.Capture(int.Parse(File.ReadAllText(childFile).Trim(), CultureInfo.InvariantCulture));
+                Assert.NotNull(child);
+            }
+
+            File.WriteAllText(rootGo, "go");
+            LinuxHarness.WaitFor(() => File.Exists(ending), Bound, "the real end step after the root exits");
+            if (child is { } running)
+            {
+                Assert.True(running.IsRunning(), "The workload descendant must still be alive when the late forced phase starts.");
+            }
+
+            // The graceful exit already won. A late forced phase must leave the bounded end-step/exit-record helpers to finish.
+            handle.Terminate();
+            if (child is { } leftover)
+            {
+                LinuxHarness.WaitFor(() => !leftover.IsRunning(), TimeSpan.FromSeconds(5), "the forced phase to kill the workload descendant while preserving the held end step");
+                Assert.False(File.Exists(ended));
+                Assert.Null(handle.TryReadExit());
+            }
+
+            File.WriteAllText(endGo, "go");
+            var exit = LinuxHarness.WaitExit(handle, Bound);
+            Assert.True(File.Exists(ended), "The forced phase killed the real end step after the command had exited.");
+            Assert.Equal("exit-record", exit.RecordedBy);
+            Assert.Equal(("exited", 0), (exit.ExitCodeKind, exit.ExitStatus));
+            Assert.False(handle.LastLimitStop!.Frozen);
+        }
+        finally
+        {
+            File.WriteAllText(rootGo, "go");
+            File.WriteAllText(endGo, "go");
+            _ = LinuxHarness.WaitExit(handle, Bound);
+        }
+    }
+
     [Fact(Timeout = 120_000)]
     public async Task TheGracefulPhaseSignalsEveryProcessAndTheForcedPhaseKillsATreeThatIgnoresIt()
     {
