@@ -28,6 +28,7 @@ public sealed class AdoptionLifecycleTests
         RequirePlatform();
         await using var node = await InProcessNode.Create().StartAsync();
         await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var cursor = await TaskLifecycleModelTests.StartCursorAsync(human);
         var pid = StartOutsideAnyContainer();
         try
         {
@@ -45,6 +46,10 @@ public sealed class AdoptionLifecycleTests
             Kill(pid);
             var ended = await Tasks.WaitAsync(human, taskId);
             Assert.Equal((TaskState.Lost, Adoptions.NoExitStatus), (ended.State, ended.StateReason));
+            AssertAdoptedResult(ended, TerminationReason.Lost, EffectCertainty.Unknown);
+            var events = await TaskLifecycleModelTests.EventsSinceAsync(human, cursor);
+            TaskLifecycleModelTests.AssertStateMachines(events);
+            AssertAdoptedChanges(events, taskId, cancelled: false);
         }
         finally
         {
@@ -62,8 +67,10 @@ public sealed class AdoptionLifecycleTests
         try
         {
             Id taskId;
+            string cursor;
             await using (var human = await node.ChannelAsync(helloAsHuman: true))
             {
+                cursor = await TaskLifecycleModelTests.StartCursorAsync(human);
                 taskId = await AdoptAsync(human, pid);
                 Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, taskId)).State);
             }
@@ -80,6 +87,15 @@ public sealed class AdoptionLifecycleTests
             var ended = await Tasks.WaitAsync(channel, taskId);
             Assert.Equal(TaskState.Lost, ended.State);
             Assert.StartsWith(Adoptions.ContainerMissing + ":", ended.StateReason, StringComparison.Ordinal);
+            AssertAdoptedResult(ended, TerminationReason.Lost, EffectCertainty.Unknown);
+            var reset = await channel.Events.ListEventsAsync(new NodeEventServiceListEventsRequest { Topics = { EventTopic.Tasks }, Cursor = cursor, Limit = 1000 },
+                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
+            Assert.Null(reset.Error);
+            Assert.True(reset.Value.ResetRequired, "A node restart starts a new stream generation.");
+            var events = PersistedTaskEvents(node);
+            Assert.Equal(2, events.Select(item => item.Generation).Distinct().Count());
+            TaskLifecycleModelTests.AssertStateMachines(events);
+            AssertAdoptedChanges(events, taskId, cancelled: false);
         }
         finally
         {
@@ -120,6 +136,91 @@ public sealed class AdoptionLifecycleTests
         finally
         {
             Kill(pid);
+        }
+    }
+
+    [Fact(Timeout = 180_000)]
+    public async Task CancellingAnAdoptionJournalsStoppingBeforeItsFinalResult()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequirePlatform();
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var cursor = await TaskLifecycleModelTests.StartCursorAsync(human);
+        var pid = StartOutsideAnyContainer();
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            var id = await AdoptAsync(human, pid);
+            // Both kinds share the same real event journal; adoption must not relax the managed execution guards.
+            var managed = await Tasks.SubmitAsync(human, OperatingSystem.IsWindows()
+                ? Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0")
+                : Tasks.Argv(node.Root, "/bin/sh", "-c", "exit 0"));
+            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "adoption model" };
+            Assert.Null((await human.Tasks.CancelTaskAsync(request, cancellationToken: Ct)).Error);
+            request.Meta = Tasks.Meta();
+            Assert.Null((await human.Tasks.CancelTaskAsync(request, cancellationToken: Ct)).Error);
+            var ended = await Tasks.WaitAsync(human, id);
+            Assert.Equal(TaskState.Cancelled, ended.State);
+            AssertAdoptedResult(ended, TerminationReason.Cancelled, EffectCertainty.Happened);
+            Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(human, managed)).State);
+            Assert.True(process.WaitForExit(10_000), "The cancelled adoption's owned process must exit.");
+            var events = await TaskLifecycleModelTests.EventsSinceAsync(human, cursor);
+            TaskLifecycleModelTests.AssertStateMachines(events);
+            AssertAdoptedChanges(events, id, cancelled: true);
+        }
+        finally
+        {
+            Kill(pid);
+        }
+    }
+
+    // A restart resets API cursors; the persisted journal retains the real events from both generations.
+    private static List<NodeEvent> PersistedTaskEvents(InProcessNode node) => node.Runtime.Store.Read(reader =>
+    {
+        using var command = reader.CreateCommand("SELECT payload FROM event_journal WHERE topic = $topic ORDER BY seq;");
+        command.Parameters.AddWithValue("$topic", (int)EventTopic.Tasks);
+        using var rows = command.ExecuteReader();
+        var events = new List<NodeEvent>();
+        while (rows.Read())
+        {
+            events.Add(NodeEvent.Parser.ParseFrom((byte[])rows.GetValue(0)));
+        }
+
+        return events;
+    });
+
+    private static void AssertAdoptedResult(ManagedTask task, TerminationReason reason, EffectCertainty effect)
+    {
+        Assert.Equal(1U, task.AttemptCount);
+        Assert.Equal(AttemptKind.Adopted, task.CurrentAttempt.Kind);
+        Assert.Equal(AttemptState.Finished, task.CurrentAttempt.State);
+        Assert.Equal((reason, effect), (task.CurrentAttempt.Result.TerminationReason, task.CurrentAttempt.Result.Effect));
+        Assert.False(task.CurrentAttempt.Result.HasExitCode);
+    }
+
+    private static void AssertAdoptedChanges(List<NodeEvent> events, Id id, bool cancelled)
+    {
+        var tasks = events.Where(item => item.Task?.Task.TaskId.Equals(id) == true).Select(item => item.Task).ToArray();
+        Assert.NotEmpty(tasks);
+        Assert.Equal(TaskState.Running, tasks[0].Task.State);
+        Assert.False(tasks[0].HasPreviousState);
+        var changes = events.Where(item => item.Attempt?.Attempt.TaskId.Equals(id) == true).Select(item => item.Attempt).ToArray();
+        Assert.NotEmpty(changes);
+        Assert.Equal(AttemptState.Running, changes[0].Attempt.State);
+        Assert.False(changes[0].HasPreviousState);
+        Assert.DoesNotContain(changes, change => change.Attempt.State == AttemptState.Finalizing);
+        Assert.Equal(AttemptState.Finished, changes[^1].Attempt.State);
+        Assert.Equal(cancelled ? AttemptState.Stopping : AttemptState.Running, changes[^1].PreviousState);
+        if (cancelled)
+        {
+            var stopping = Assert.Single(changes, change => change.Attempt.State == AttemptState.Stopping);
+            Assert.Equal(AttemptState.Running, stopping.PreviousState);
+            Assert.Null(stopping.Attempt.Result);
+        }
+        else
+        {
+            Assert.DoesNotContain(changes, change => change.Attempt.State == AttemptState.Stopping);
         }
     }
 
