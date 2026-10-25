@@ -43,6 +43,9 @@ public sealed class ExecutionSettings
     private const long GiB = 1024L * 1024 * 1024;
     private const long MiB = 1024L * 1024;
 
+    /// <summary>The stored policy revision from which this immutable admission snapshot was read.</summary>
+    internal long PolicyRevision { get; init; }
+
     /// <summary>Builds the settings.</summary>
     public ExecutionSettings(PolicyDocument policy, int logicalProcessors, long physicalMemory)
     {
