@@ -689,7 +689,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }, gate).ConfigureAwait(false);
         if (!replayed && stopAttempt is not null)
         {
-            Execution.Stop(stopAttempt, TerminationReason.Cancelled, request.HasGraceMs ? TimeSpan.FromMilliseconds(request.GraceMs) : null);
+            await Execution.StopAsync(stopAttempt, TerminationReason.Cancelled, request.HasGraceMs ? TimeSpan.FromMilliseconds(request.GraceMs) : null).ConfigureAwait(false);
         }
 
         if (!replayed && result.OutcomeCase == TaskServiceCancelTaskResponse.OutcomeOneofCase.Value)

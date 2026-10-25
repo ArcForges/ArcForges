@@ -29,6 +29,8 @@ public interface ILaunchStepProvider
 /// record (a crash between the commit and the acknowledgement).</item>
 /// <item><c>hold-preempt-before-stop=N</c>: holds the first preemption before its platform stop for N seconds, so a test can kill the
 /// node after STOPPING committed while its command is still running (MR-100).</item>
+/// <item><c>hold-stop-before-stop=N</c>: holds a non-pressure stop after STOPPING commits, before platform action (MR-99).</item>
+/// <item><c>hold-finalizing=N</c>: holds finalization after FINALIZING commits, before final output/accounting/result work (MR-99).</item>
 /// <item><c>finalize-throw=0</c>: the first finalization throws an exception no handler expects (NotSupportedException) before it
 /// records.</item>
 /// <item><c>escaped-record-queue-full=0</c>: the first write of escaped-process records finds the command queue full, as
@@ -72,6 +74,17 @@ public sealed class ExecutionFaults
         }
 
         return new ExecutionFaults(faults, Path.Combine(dataRoot, "run"));
+    }
+
+    /// <summary>Holds a test-mode fault up to its bound, or until its fixture writes the named release file in this data root.</summary>
+    public void Hold(string name, TimeSpan maximum)
+    {
+        var release = Path.Combine(_runDirectory, "fault-" + name + ".release");
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        while (elapsed.Elapsed < maximum && !File.Exists(release))
+        {
+            Thread.Sleep(20);
+        }
     }
 
     /// <summary>The delay of a fault that has not fired yet, marking it fired; <see langword="null"/> when absent or fired.</summary>

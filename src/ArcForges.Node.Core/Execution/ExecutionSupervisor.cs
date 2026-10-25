@@ -356,7 +356,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             // The node was stopping it: the stop continues below, and a launch the node no longer controls may still start the command, so the
             // platform awaits that start (only then: any other recovered attempt completes its start at once, and a forced phase that stops it
             // later watches such a launch, TerminateEachLaunchProcess).
-            var stopping = row.State == AttemptState.Stopping;
+            var stopping = row.State is AttemptState.Stopping or AttemptState.Finalizing;
             IAttemptHandle? handle = null;
             try
             {
@@ -438,7 +438,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed). The node may have
                 // stopped in the middle of the launch: a start that completes after the forced phase is terminated again (Enforce).
-                running.StopReason = row.Reason ?? TerminationReason.Cancelled;
+                running.StopReason = row.Reason ?? (row.State == AttemptState.Stopping ? TerminationReason.Cancelled : null);
                 running.StopDetail = row.Detail;
                 running.GraceDeadline = _clock.GetTimestamp();
             }
@@ -550,8 +550,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         foreach (var attempt in _running.Values.Where(attempt => attempt.KillWithNode))
         {
-            attempt.StopReason ??= TerminationReason.NodeShutdown;
-            attempt.Handle?.Terminate();
+            await StopAsync(attempt.Name, TerminationReason.NodeShutdown, null, graceful: false).ConfigureAwait(false);
         }
 
         var deadline = _clock.GetTimestamp();
@@ -622,9 +621,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var candidates = _running.Values.ToList();
             var chosen = CriticalShedding.Victim(candidates.Select(attempt =>
             {
-                var eligible = attempt.Preemptible && attempt.Handle is not null && !attempt.Finalizing && attempt.StopReason is null;
+                var eligible = attempt.Preemptible && attempt.Handle is not null && !attempt.Finalizing && attempt.StopReason is null && attempt.StopRecording is null;
                 return new ShedCandidate(attempt.Name, attempt.Priority, attempt.StartedTimestamp, attempt.Preemptible, attempt.Handle is not null,
-                    attempt.Finalizing, attempt.StopReason is not null, eligible && OomKilled(attempt.Handle!));
+                    attempt.Finalizing, attempt.StopReason is not null || attempt.StopRecording is not null, eligible && OomKilled(attempt.Handle!));
             }));
             victim = chosen is null ? null : candidates.First(attempt => attempt.Name == chosen.Name);
         }
@@ -684,32 +683,15 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             $"preempted at critical memory pressure ({state.PressureTrigger}; {state.AvailableMemory} of {state.CapacityMemory} bytes available); stopped without the graceful phase");
         lock (attempt)
         {
-            if (attempt.StopReason is not null)
+            if (attempt.StopReason is not null || attempt.StopRecording is not null)
             {
                 return false;
             }
-
-            attempt.StopDetail = detail;
         }
 
         _log.Warning("execution.preempted", new LogField("attempt", attempt.Name), new LogField("priority", attempt.Priority),
             new LogField("trigger", state.PressureTrigger), new LogField("availableBytes", state.AvailableMemory));
-        _ = RecordAsync(context =>
-        {
-            var transaction = context.Transaction;
-            var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
-            if (transaction.Execute("UPDATE attempt SET state = 7, termination_reason = $cause, detail = $detail, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
-                ("$cause", (int)TerminationReason.Preempted), ("$detail", Truncate(detail)), ("$id", attempt.AttemptId)) == 1
-                && previous is not null)
-            {
-                EmitAttempt(context, attempt.AttemptId, previous.State);
-            }
-
-            transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(detail)), ("$id", attempt.TaskId));
-            EmitTask(context, attempt.TaskId, null);
-            return 0;
-        });
-        Stop(attempt.Name, TerminationReason.Preempted, null, graceful: false);
+        _ = StopAsync(attempt.Name, TerminationReason.Preempted, null, graceful: false, detail);
         return true;
     }
 
@@ -995,13 +977,127 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// (<paramref name="graceful"/> false with <c>OUTPUT_LIMIT</c> or <c>DISK_LIMIT</c>) stop at once without the graceful phase; on Linux
     /// the unit is frozen before it is killed.
     /// </summary>
-    public void Stop(string attemptName, TerminationReason reason, TimeSpan? grace, bool graceful = true)
+    /// <returns>Completes after STOPPING commits and the platform stop begins, before the caller replies; it does not await the final result.</returns>
+    public Task StopAsync(string attemptName, TerminationReason reason, TimeSpan? grace, bool graceful = true, string? detail = null)
     {
         if (!_running.TryGetValue(attemptName, out var attempt))
         {
-            return;
+            return Task.CompletedTask;
         }
 
+        lock (attempt)
+        {
+            if (attempt.Finalizing)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (attempt.StopRecording is { } pending)
+            {
+                return graceful ? pending : ForceAfterRecordingAsync(pending, attempt);
+            }
+
+            return attempt.StopRecording = RecordStopAndApplyAsync(attempt, reason, grace, graceful, detail ?? attempt.StopDetail);
+        }
+    }
+
+    private async Task ForceAfterRecordingAsync(Task pending, RunningAttempt attempt)
+    {
+        await pending.ConfigureAwait(false);
+        if (attempt.StopReason is { } reason)
+        {
+            ApplyRecordedStop(attempt, reason, null, graceful: false);
+        }
+    }
+
+    private async Task RecordStopAndApplyAsync(RunningAttempt attempt, TerminationReason reason, TimeSpan? grace, bool graceful, string? detail)
+    {
+        for (var tries = 0; ; tries++)
+        {
+            try
+            {
+                var stop = await _processor.ExecuteAsync(context =>
+                {
+                    var transaction = context.Transaction;
+                    var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
+                    if (previous is null || previous.State is AttemptState.Finalizing or AttemptState.Finished)
+                    {
+                        return (Apply: false, Cause: reason, Detail: (string?)null);
+                    }
+
+                    if (previous.State == AttemptState.Stopping)
+                    {
+                        return (Apply: true, Cause: previous.Reason ?? TerminationReason.Cancelled, Detail: previous.Detail);
+                    }
+
+                    if (transaction.Execute(
+                        "UPDATE attempt SET state = 7, termination_reason = $cause, detail = $detail, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
+                        ("$cause", (int)reason), ("$detail", detail is null ? null : Truncate(detail)), ("$id", attempt.AttemptId)) != 1)
+                    {
+                        return (Apply: false, Cause: reason, Detail: (string?)null);
+                    }
+
+                    EmitAttempt(context, attempt.AttemptId, previous.State);
+                    if (detail is not null)
+                    {
+                        transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;",
+                            ("$reason", Truncate(detail)), ("$id", attempt.TaskId));
+                        EmitTask(context, attempt.TaskId, null);
+                    }
+
+                    return (Apply: true, Cause: reason, Detail: detail);
+                }).ConfigureAwait(false);
+                if (stop.Apply)
+                {
+                    lock (attempt)
+                    {
+                        attempt.StopDetail ??= stop.Detail;
+                    }
+
+                    ApplyRecordedStop(attempt, stop.Cause, grace, graceful);
+                }
+
+                return;
+            }
+            catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException or IOException)
+            {
+                _log.Warning("execution.stop.record_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+                // The stop remains pending; it is never applied ahead of its durable cause. Shutdown leaves an unrecorded holder
+                // unacknowledged for recovery rather than declaring a successful result.
+                if (_stop.IsCancellationRequested && tries >= 10)
+                {
+                    throw;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(200 * (tries + 1), 1_000))).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private void ApplyRecordedStop(RunningAttempt attempt, TerminationReason reason, TimeSpan? grace, bool graceful)
+    {
+        try
+        {
+            ApplyStop(attempt, reason, grace, graceful);
+        }
+        catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or TimeoutException)
+        {
+            _log.Warning("execution.stop.apply_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+            lock (attempt)
+            {
+                // The durable intent survives a failed platform call; the enforcement loop retries the forced phase.
+                attempt.StopReason ??= reason;
+                attempt.Forced = false;
+                attempt.GraceDeadline = _clock.GetTimestamp();
+            }
+
+            _loopWake.Pulse();
+        }
+    }
+
+    private void ApplyStop(RunningAttempt attempt, TerminationReason reason, TimeSpan? grace, bool graceful)
+    {
+        var attemptName = attempt.Name;
         lock (attempt)
         {
             if (attempt.StopReason is not null)
@@ -1023,10 +1119,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 return;
             }
 
-            if (reason == TerminationReason.Preempted && _faults.Take("hold-preempt-before-stop") is { } hold)
+            if ((reason == TerminationReason.Preempted ? _faults.Take("hold-preempt-before-stop") : _faults.Take("hold-stop-before-stop")) is { } hold)
             {
-                _log.Warning("node.fault.hold_preempt_before_stop", new LogField("attempt", attempt.Name));
-                Thread.Sleep(hold);
+                _log.Warning(reason == TerminationReason.Preempted ? "node.fault.hold_preempt_before_stop" : "node.fault.hold_stop_before_stop",
+                    new LogField("attempt", attempt.Name));
+                _faults.Hold(reason == TerminationReason.Preempted ? "hold-preempt-before-stop" : "hold-stop-before-stop", hold);
             }
 
             // The escaped processes as the stop begins: once the root has exited, a scan may no longer find them (on Linux they are
@@ -1330,7 +1427,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                     _bindings.TryRemove(task, out _);
                     if (stop is not null)
                     {
-                        Stop(stop, TerminationReason.Cancelled, null);
+                        await StopAsync(stop, TerminationReason.Cancelled, null).ConfigureAwait(false);
                     }
 
                     _log.Info("execution.caller_gone", new LogField("task", task), new LogField("cancelled", error is null));
@@ -1534,13 +1631,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 // The job is already terminated; the node records the guard's stop and lets the exit be collected.
                 attempt.LimitEnforcedBy = "GUARD";
                 attempt.StopDetail = $"stopped by the attempt's guard while the node was down ({guardStop.OutputBytes} bytes of output, limit {guardStop.LimitBytes})";
-                Stop(attempt.Name, guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, null, graceful: false);
+                _ = StopAsync(attempt.Name, guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, null, graceful: false);
             }
             else
             {
                 // TERMINATE: at once, without the graceful phase (04 section 6 step 4).
                 attempt.LimitEnforcedBy = "NODE";
-                Stop(attempt.Name, TerminationReason.OutputLimit, null, graceful: false);
+                _ = StopAsync(attempt.Name, TerminationReason.OutputLimit, null, graceful: false);
                 _log.Info("execution.output_limit", new LogField("attempt", attempt.Name), new LogField("outputBytes", attempt.OutputBytes),
                     new LogField("limitBytes", settings.MaxOutputBytes));
             }
@@ -1574,7 +1671,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             // Frozen time does not count toward the wall-clock timeout (a paused attempt makes no progress).
             if (attempt.TimeoutMs is { } timeout && _clock.GetElapsedTime(since) - attempt.PausedTime(_clock) >= TimeSpan.FromMilliseconds(timeout))
             {
-                Stop(attempt.Name, TerminationReason.TimedOut, null);
+                _ = StopAsync(attempt.Name, TerminationReason.TimedOut, null);
             }
             else if (attempt.CpuLimitMs is { } cpuLimit && (attempt.LastCpuCheck == long.MinValue || _clock.GetElapsedTime(attempt.LastCpuCheck) >= TimeSpan.FromSeconds(1)))
             {
@@ -1582,7 +1679,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 var accounting = handle.Accounting();
                 if ((ulong)(accounting.CpuUserMs + accounting.CpuKernelMs) >= cpuLimit)
                 {
-                    Stop(attempt.Name, TerminationReason.CpuTimeExceeded, null);
+                    _ = StopAsync(attempt.Name, TerminationReason.CpuTimeExceeded, null);
                 }
             }
         }
@@ -2068,6 +2165,57 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     // ------------------------------------------------------------------------------------------------------------- finalization
 
+    private async Task RecordFinalizingAsync(RunningAttempt attempt)
+    {
+        Task? stopping;
+        lock (attempt)
+        {
+            stopping = attempt.StopRecording;
+        }
+
+        if (stopping is not null)
+        {
+            await stopping.ConfigureAwait(false);
+        }
+
+        for (var tries = 0; ; tries++)
+        {
+            try
+            {
+                var pending = await _processor.ExecuteAsync(context =>
+                {
+                    var transaction = context.Transaction;
+                    var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
+                    if (previous is not null && transaction.Execute(
+                        "UPDATE attempt SET state = 8, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6, 7);",
+                        ("$id", attempt.AttemptId)) == 1)
+                    {
+                        EmitAttempt(context, attempt.AttemptId, previous.State);
+                        EmitTask(context, attempt.TaskId, null);
+                    }
+
+                    return previous;
+                }).ConfigureAwait(false);
+                if (pending is { State: AttemptState.Stopping or AttemptState.Finalizing })
+                {
+                    lock (attempt)
+                    {
+                        // A cancellation may win the writer immediately before FINALIZING, after BeginFinalize took its lock.
+                        // The live path must use the same committed intent that a crash and recovery would restore.
+                        attempt.StopReason ??= pending.Reason ?? (pending.State == AttemptState.Stopping ? TerminationReason.Cancelled : null);
+                        attempt.StopDetail ??= pending.Detail;
+                    }
+                }
+
+                return;
+            }
+            catch (CommandQueueFullException) when (!_stop.IsCancellationRequested || tries < 10)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(200 * (tries + 1), 1_000))).ConfigureAwait(false);
+            }
+        }
+    }
+
     private void BeginFinalize(RunningAttempt attempt, bool incomplete)
     {
         lock (attempt)
@@ -2096,6 +2244,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         var recorded = false;
         try
         {
+            await RecordFinalizingAsync(attempt).ConfigureAwait(false);
+            if (_faults.Take("hold-finalizing") is { } finalizingHold)
+            {
+                await Task.Delay(finalizingHold).ConfigureAwait(false);
+            }
+
             attempt.Tail((_clock.GetUtcNow().UtcTicks - DateTime.UnixEpoch.Ticks) * 100);
             if (_faults.Take("finalize-throw") is not null)
             {
@@ -2334,6 +2488,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return 0;
         }
 
+        if (previous.State != AttemptState.Finalizing)
+        {
+            throw new InvalidOperationException("A completed attempt must commit FINALIZING before its final record.");
+        }
+
         uint? windowsStatus = OperatingSystem.IsWindows() && outcome.ExitCode is { } code && unchecked((uint)code) >= 0xC0000000 ? unchecked((uint)code) : null;
         var leftovers = exit?.LeftoversTerminated ?? [];
         var cpu = exit is not null ? exit.CpuUserMs + exit.CpuKernelMs : (accounting?.CpuUserMs ?? 0) + (accounting?.CpuKernelMs ?? 0);
@@ -2420,26 +2579,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         attempt.Finalizing = true;
         try
         {
-            await _processor.ExecuteAsync(context =>
-            {
-                var transaction = context.Transaction;
-                var now = transaction.NowMicroseconds;
-                var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
-                transaction.Execute(
-                    "UPDATE attempt SET state = 9, finished_at = $now, termination_reason = 9, effect = 1, detail = $detail, rev = rev + 1 WHERE attempt_id = $id;",
-                    ("$now", now), ("$detail", detail), ("$id", attempt.AttemptId));
-                var task = TaskRecords.GetRow(transaction, attempt.TaskId);
-                if (task is null || !ScheduleRetry(context, task, attempt.Number, TerminationReason.SpawnFailed, succeeded: false, peak: 0))
-                {
-                    transaction.Execute(
-                        "UPDATE task SET state = 8, state_reason = 'SPAWN_FAILED', finished_at = $now, rev = rev + 1 WHERE task_id = $id;",
-                        ("$now", now), ("$id", attempt.TaskId));
-                    TaskSecrets.SchedulePurge(transaction, attempt.TaskId, now, Settings.SecretRetention);
-                }
-                EmitAttempt(context, attempt.AttemptId, previous?.State);
-                EmitTask(context, attempt.TaskId, TaskState.Running);
-                return 0;
-            }).ConfigureAwait(false);
+            await RecordFinalizingAsync(attempt).ConfigureAwait(false);
+            var reason = attempt.StopReason ?? TerminationReason.SpawnFailed;
+            var outcome = new AttemptOutcome(reason,
+                reason == TerminationReason.SpawnFailed ? EffectCertainty.DidNotHappen : EffectCertainty.Happened, null, detail, null);
+            await _processor.ExecuteAsync(context => RecordFinished(context, attempt, null, null, outcome, [], Settings, attempt.Handle?.Root))
+                .ConfigureAwait(false);
         }
         finally
         {
