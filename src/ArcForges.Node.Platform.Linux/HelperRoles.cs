@@ -235,7 +235,7 @@ public static class ExecStopRole
                 continue;
             }
 
-            var timeout = TimeSpan.FromMilliseconds(Math.Min(step.TimeoutMs, remaining.TotalMilliseconds));
+            var timeout = step.TimeoutMs <= 0 ? remaining : TimeSpan.FromMilliseconds(Math.Min(step.TimeoutMs, remaining.TotalMilliseconds));
             var result = StepRunner.Run(step, environment, Environment.CurrentDirectory, timeout);
             record.EndSteps.Add(new StepOutcome { Name = step.Name, Outcome = result.Outcome, ExitCode = result.ExitCode, ElapsedMs = result.ElapsedMs });
         }

@@ -245,7 +245,8 @@ public sealed class AttemptRunner
             }
 
             // A failing or slow end step never changes the attempt's result (04 section 3).
-            RunStep(step, remaining < TimeSpan.FromMilliseconds(step.TimeoutMs) ? remaining : TimeSpan.FromMilliseconds(step.TimeoutMs));
+            var timeout = step.TimeoutMs <= 0 ? remaining : TimeSpan.FromMilliseconds(step.TimeoutMs);
+            RunStep(step, remaining < timeout ? remaining : timeout);
         }
     }
 

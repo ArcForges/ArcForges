@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
@@ -141,6 +142,56 @@ public sealed class HolderTests
         Assert.Equal("command", launch.Step);
         // ERROR_BAD_EXE_FORMAT or ERROR_EXE_MACHINE_TYPE_MISMATCH, as the OS judges the file.
         Assert.Contains(launch.OsError, (int?[])[193, 216]);
+    }
+
+    // Timing-sensitive: four seconds are spent by the first step; every second-step timeout shares the remaining six seconds.
+    [Theory(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(-2)]
+    [InlineData(30_000)]
+    public void EndStepsShareTheirTotalBudgetForNonpositiveAndLongTimeouts(int timeoutMs)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows holder end steps.");
+        using var harness = PlatformHarness.Start();
+        var firstMarker = Path.Combine(harness.Root, "first-end.txt");
+        var secondMarker = Path.Combine(harness.Root, "second-end.txt");
+        var lateMarker = Path.Combine(harness.Root, "late-end.txt");
+        var first = PlatformHarness.Step("consume-budget", TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--marker", firstMarker);
+        first.TimeoutMs = 4_000;
+        var second = PlatformHarness.Step("remaining-budget", TestPrograms.TestLoad, "signal", "--hold-ms", "60000", "--marker", secondMarker);
+        second.TimeoutMs = timeoutMs;
+        var late = PlatformHarness.Step("must-not-start", TestPrograms.TestLoad, "signal", "--hold-ms", "100", "--marker", lateMarker);
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var handle = harness.Launch([cmd, "/d", "/c", "exit 0"], endSteps: [first, second, late], leftoverGraceMs: 0);
+
+        PlatformHarness.WaitFor(() => PlatformHarness.Marker(firstMarker).Any(line => line.Event == "ready"), Bound, "the first real end step");
+        var firstReady = Assert.Single(PlatformHarness.Marker(firstMarker), line => line.Event == "ready");
+        var firstProcess = Assert.IsType<ArcForges.Tests.ProcessIdentity>(ArcForges.Tests.ProcessIdentity.Capture(firstReady.Pid));
+        harness.Track(handle);
+        var elapsed = Stopwatch.StartNew();
+        var completionBound = TimeSpan.FromSeconds(12); // The real 10-second budget, plus two seconds for scheduling and recording.
+        PlatformHarness.WaitFor(() => PlatformHarness.Marker(secondMarker).Any(line => line.Event == "ready") || handle.TryReadExit() is not null,
+            completionBound, "the second end step or an incorrectly early completion");
+        var secondReady = Assert.Single(PlatformHarness.Marker(secondMarker), line => line.Event == "ready");
+        var secondProcess = Assert.IsType<ArcForges.Tests.ProcessIdentity>(ArcForges.Tests.ProcessIdentity.Capture(secondReady.Pid));
+        harness.Track(handle);
+        var remaining = completionBound - elapsed.Elapsed;
+        Assert.True(remaining > TimeSpan.Zero, "The second step already exceeded the total end-step budget.");
+        var exit = harness.WaitExit(handle, remaining);
+
+        Assert.True(elapsed.Elapsed >= TimeSpan.FromSeconds(8), "A nonpositive timeout must let the second step use the remaining budget.");
+        Assert.True(elapsed.Elapsed < completionBound, $"The end steps took {elapsed.Elapsed}; the shared budget is 10 seconds.");
+        Assert.Equal(0, exit.ExitStatus);
+        Assert.Equal("success", exit.ServiceResult);
+        Assert.Null(handle.TryReadLaunchFailure());
+        Assert.False(File.Exists(lateMarker), "No later end step may start after the total budget is consumed.");
+        Assert.Empty(handle.Processes());
+
+        // Recording is bounded independently of a terminated Windows process's later thread rundown (MR-101).
+        PlatformHarness.WaitFor(() => !firstProcess.IsRunning() && !secondProcess.IsRunning(), Bound, "the timed-out steps to run down");
     }
 
     [Fact(Timeout = 120_000)]
