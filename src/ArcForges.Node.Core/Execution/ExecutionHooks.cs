@@ -76,6 +76,17 @@ public sealed class ExecutionFaults
         return new ExecutionFaults(faults, Path.Combine(dataRoot, "run"));
     }
 
+    /// <summary>Holds a test-mode fault up to its bound, or until its fixture writes the named release file in this data root.</summary>
+    public void Hold(string name, TimeSpan maximum)
+    {
+        var release = Path.Combine(_runDirectory, "fault-" + name + ".release");
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        while (elapsed.Elapsed < maximum && !File.Exists(release))
+        {
+            Thread.Sleep(20);
+        }
+    }
+
     /// <summary>The delay of a fault that has not fired yet, marking it fired; <see langword="null"/> when absent or fired.</summary>
     public TimeSpan? Take(string name)
     {

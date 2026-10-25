@@ -44,6 +44,69 @@ public sealed class AttemptPhaseRecoveryTests
         await CrashAtPhaseAsync(timeout, finalizing);
     }
 
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task ACancelReplyWaitsUntilTheCommittedStopHasBegun()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
+        }
+
+        await using var node = TestNode.Create();
+        node.Environment["ARCFORGES_TEST_FAULT"] = "hold-stop-before-stop=60";
+        await node.StartNodeAsync();
+        var release = Path.Combine(node.DataRoot, "run", "fault-hold-stop-before-stop.release");
+        try
+        {
+            await using var channel = await node.HumanChannelAsync();
+            var marker = Path.Combine(node.Root, "cancel-reply-root.txt");
+            var argv = new ArgvCommand();
+            argv.Argv.Add([TestNode.TestLoad, "hold", "--hold-ms", "180000", "--marker", marker]);
+            var submitted = await channel.Tasks.SubmitTaskAsync(new TaskServiceSubmitTaskRequest
+            {
+                Meta = Meta(),
+                Spec = new TaskSpec
+                {
+                    Command = new CommandSpec { Argv = argv },
+                    WorkingDirectory = node.Root,
+                    Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node },
+                    Resources = new ResourceSpec { CancelGraceMs = 0 },
+                },
+            }, cancellationToken: Ct);
+            Assert.Null(submitted.Error);
+            await TestNode.WaitAsync(() => TestNode.ReadShared(marker).Split('\n').Any(line => line.StartsWith("start ", StringComparison.Ordinal)),
+                Bound, "the actual command before cancellation");
+            var cancelled = channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest
+            {
+                Meta = Meta(),
+                TaskId = submitted.Value.TaskId,
+                GraceMs = 0,
+            }, cancellationToken: Ct).ResponseAsync;
+            await TestNode.WaitAsync(() => File.Exists(Path.Combine(node.DataRoot, "run", "fault-hold-stop-before-stop.done")),
+                Bound, "the committed stop before platform action");
+            Assert.False(cancelled.IsCompleted, "CancelTask replied before the durable stop's platform phase began.");
+            var pending = await TaskAsync(channel, submitted.Value.TaskId);
+            Assert.Equal(AttemptState.Stopping, pending.CurrentAttempt.State);
+            Assert.Null(pending.CurrentAttempt.Result);
+            await File.WriteAllTextAsync(release, "release", Ct);
+            Assert.Null((await cancelled.WaitAsync(Bound, Ct)).Error);
+            ManagedTask ended = new();
+            await TestNode.WaitAsync(async () =>
+            {
+                ended = await TaskAsync(channel, submitted.Value.TaskId);
+                return ended.State == TaskState.Cancelled;
+            }, Bound, "the acknowledged stop to finish");
+            Assert.Equal(TerminationReason.Cancelled, ended.CurrentAttempt.Result.TerminationReason);
+            Assert.Equal(EffectCertainty.Happened, ended.CurrentAttempt.Result.Effect);
+        }
+        finally
+        {
+            await File.WriteAllTextAsync(release, "release", CancellationToken.None);
+        }
+    }
+
     private static async Task CrashAtPhaseAsync(bool timeout, bool finalizing)
     {
         // A normal exit uses FINALIZING; timeout covers both the pre-stop barrier and the pre-result barrier.

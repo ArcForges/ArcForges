@@ -1123,7 +1123,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 _log.Warning(reason == TerminationReason.Preempted ? "node.fault.hold_preempt_before_stop" : "node.fault.hold_stop_before_stop",
                     new LogField("attempt", attempt.Name));
-                Thread.Sleep(hold);
+                _faults.Hold(reason == TerminationReason.Preempted ? "hold-preempt-before-stop" : "hold-stop-before-stop", hold);
             }
 
             // The escaped processes as the stop begins: once the root has exited, a scan may no longer find them (on Linux they are
