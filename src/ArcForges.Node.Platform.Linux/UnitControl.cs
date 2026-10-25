@@ -12,8 +12,9 @@ public static class UnitControl
     /// Freezes the unit (<c>FreezeUnit</c>), sends SIGKILL to every process of its cgroup (the main process last), and thaws the cgroup
     /// directly through its <c>cgroup.freeze</c> file before asking the user manager to thaw it: once the main process is gone the manager
     /// spawns the unit's <c>ExecStop</c> into the cgroup, and a spawn into a frozen cgroup blocks the manager until the cgroup is thawed, so
-    /// the thaw must not depend on the manager. A late forced phase leaves the bounded control helpers alone after the main command exits.
-    /// If the freeze fails, only known attempt members are killed, in up to five passes, and a timed-out freeze is still thawed directly.
+    /// the thaw must not depend on the manager. After the main command exits, a late forced phase kills remaining workload members
+    /// without freezing or killing systemd's bounded control helpers and their descendants.
+    /// If the freeze fails, known workload members are killed in bounded passes, and a timed-out freeze is still thawed directly.
     /// <c>ExecStop</c> and <c>ExecStopPost</c> then run as after any exit, so <c>exit.json</c> is written.
     /// </summary>
     public static LimitStop FreezeAndKill(SystemdManager manager, string unit, string? cgroupDirectory, int mainPid)
@@ -22,21 +23,26 @@ public static class UnitControl
         // Once the main command has exited, systemd owns the bounded end steps and exit-record. Killing the unit's
         // remaining processes then kills those helpers, loses exit.json and can strand the manager's spawn in a frozen cgroup.
         var state = manager.State(unit);
-        if (state is null || state.MainPid == 0 || state.ControlPid != 0 || (mainPid != 0 && state.MainPid != mainPid))
+        if (state is null || (mainPid != 0 && state.MainPid != 0 && state.MainPid != mainPid))
         {
             return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
+        }
+
+        if (state.MainPid == 0 || state.ControlPid != 0)
+        {
+            return KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
         }
 
         mainPid = (int)state.MainPid;
         if (ProcFs.Stat(mainPid) is not { State: not ('Z' or 'X') } root)
         {
-            return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
+            return KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
         }
 
         var members = Members();
         if (ProcFs.Stat(mainPid) is not { State: not ('Z' or 'X') } captured || captured.StartTicks != root.StartTicks)
         {
-            return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
+            return KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
         }
 
         DateTimeOffset? frozenAt = null;
@@ -100,6 +106,17 @@ public static class UnitControl
             }
         }
 
+        if (frozenAt is null)
+        {
+            // A failed freeze can race the root's exit and later forks. Recheck workload membership while leaving new controls alone.
+            var remaining = KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
+            killed += remaining.Killed;
+            if (remaining.Killed > 0)
+            {
+                killedAt = remaining.KilledAt;
+            }
+        }
+
         return new LimitStop(frozenAt is not null, killed, frozenAt, killedAt) { DirectThaw = thawed, ThawedAt = DateTimeOffset.UtcNow };
 
         Dictionary<int, long> Members() => cgroupDirectory is null
@@ -107,6 +124,70 @@ public static class UnitControl
             : ProcFs.Procs(cgroupDirectory).Select(pid => (Pid: pid, Stat: ProcFs.Stat(pid)))
                 .Where(member => member.Stat is { State: not ('Z' or 'X') })
                 .ToDictionary(member => member.Pid, member => member.Stat!.Value.StartTicks);
+    }
+
+    /// <summary>Kills remaining workload members after the root exits, without freezing or killing systemd's bounded control tree.</summary>
+    private static LimitStop KillOutsideControls(SystemdManager manager, string unit, string? directory, int mainPid)
+    {
+        var killed = 0;
+        for (var pass = 0; directory is not null && pass < 5; pass++)
+        {
+            var before = manager.State(unit);
+            if (before is null)
+            {
+                break;
+            }
+
+            var members = ProcFs.Procs(directory).Select(pid => (Pid: pid, Stat: ProcFs.Stat(pid)))
+                .Where(member => member.Stat is { State: not ('Z' or 'X') })
+                .ToDictionary(member => member.Pid, member => (Parent: member.Stat!.Value.ParentPid, Start: member.Stat!.Value.StartTicks));
+            var after = manager.State(unit);
+            if (after is null)
+            {
+                break;
+            }
+
+            // A control can change from exec-stop to exit-record during the scan. Both snapshots' control trees are protected;
+            // a control started after the scan has no PID in it and cannot be a kill candidate.
+            var controls = new HashSet<int> { (int)before.ControlPid, (int)after.ControlPid };
+            bool IsControl(int pid)
+            {
+                for (var depth = 0; depth < 64 && pid > 1; depth++)
+                {
+                    if (controls.Contains(pid))
+                    {
+                        return true;
+                    }
+
+                    if (!members.TryGetValue(pid, out var member))
+                    {
+                        break;
+                    }
+
+                    pid = member.Parent;
+                }
+
+                return false;
+            }
+
+            var workload = members.Where(member => !IsControl(member.Key)).OrderBy(member => member.Key == mainPid).ToArray();
+            if (workload.Length == 0)
+            {
+                break;
+            }
+
+            foreach (var (pid, identity) in workload)
+            {
+                if (ProcFs.Stat(pid) is { State: not ('Z' or 'X') } live && live.StartTicks == identity.Start && Libc.Kill(pid, Libc.SigKill) == 0)
+                {
+                    killed++;
+                }
+            }
+
+            Thread.Sleep(10);
+        }
+
+        return new LimitStop(false, killed, null, DateTimeOffset.UtcNow);
     }
 
     /// <summary>
