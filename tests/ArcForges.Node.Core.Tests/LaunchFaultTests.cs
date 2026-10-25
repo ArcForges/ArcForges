@@ -58,7 +58,10 @@ public sealed partial class LaunchFaultTests
             : Tasks.Argv(node.Root, "/bin/sh", "-c", "echo ran > \"$1\"; exec sleep 60", "sh", commandMarker));
 
         // The launch step is running: the attempt is being launched, its command has not started.
-        await Tasks.WaitForAsync(() => File.Exists(launchMarker), Tasks.Bound, "the launch step to run");
+        await Tasks.WaitForAsync(() => OperatingSystem.IsWindows()
+            ? Tasks.Marker(launchMarker).Any(line => line.Event == "ready")
+            : File.Exists(launchMarker), Tasks.Bound, "the launch step to run");
+        using var stepProcess = OperatingSystem.IsWindows() ? OpenWindowsStep(launchMarker) : null;
         var cancelled = System.Diagnostics.Stopwatch.StartNew();
         var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
         Assert.Null(cancel.Error);
@@ -87,7 +90,29 @@ public sealed partial class LaunchFaultTests
         // the termination; the fixture fails the test on any leftover, so waiting out its hold proves nothing more).
         await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, Math.Min(stepHoldMs + 1_000, 5_000) - cancelled.Elapsed.TotalMilliseconds)), Ct);
         Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
+        if (OperatingSystem.IsWindows() && stepProcess is not null)
+        {
+            // MR-101 deliberately records a stopped task before its terminated step finishes running down. Await the exact process
+            // object before fixture cleanup: under real AOT load it still held the working directory beyond the fixture's retries.
+            // This is after the unchanged 5 s cancel assertion, and the fixture still fails on every leftover.
+            await WaitForWindowsRundownAsync(stepProcess);
+        }
     }
+
+    [SupportedOSPlatform("windows")]
+    private static SafeKernelHandle OpenWindowsStep(string marker)
+    {
+        var pid = Tasks.Marker(marker).First(line => line.Event == "ready").Pid;
+        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
+        Assert.True(identity is not null, $"The launch step {pid} ended before cancellation.");
+        var handle = ProcessInfo.OpenIdentified(pid, new DateTime(identity.Value.StartKey, DateTimeKind.Utc).ToFileTimeUtc());
+        Assert.NotNull(handle);
+        return handle;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static Task WaitForWindowsRundownAsync(SafeHandle process) =>
+        Tasks.WaitForAsync(() => !ProcessInfo.IsRunning(process), Tasks.Bound, "the stopped launch step to finish running down before fixture cleanup");
 
     /// <summary>
     /// MR-101: the forced stop of an attempt in its launch steps does not wait for the stopped step to run down. The termination empties the
@@ -124,6 +149,8 @@ public sealed partial class LaunchFaultTests
         var task = await Tasks.WaitAsync(channel, id);
         var toFinal = cancelled.Elapsed;
         var ranDown = hold.RanDown;
+        var rundown = hold.WaitForRundownAsync();
+        Assert.False(rundown.IsCompleted, "The cleanup wait completed while the debugger still held the step's run-down.");
         hold.Release();
         TestContext.Current.TestOutputHelper?.WriteLine($"{task.State} after {toFinal.TotalMilliseconds:F0} ms, step ran down by then: {ranDown}: {task.CurrentAttempt.Result}");
         AssertCancelled(task);
@@ -134,6 +161,8 @@ public sealed partial class LaunchFaultTests
         // The step's exit comes from its own last thread, which load may starve: it is awaited (bounded), not assumed to have come already.
         Assert.True(await Task.WhenAny(hold.Exit, Task.Delay(Tasks.Bound, Ct)) == hold.Exit,
             $"The termination never reached the launch step: its exit did not come within {Tasks.Bound.TotalSeconds:0} s.");
+        await rundown;
+        Assert.True(hold.RanDown, "The stopped step still holds its process resources before fixture cleanup.");
         Assert.Null(RootPid(node, id));
         Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
     }
@@ -959,6 +988,9 @@ public sealed partial class LaunchFaultTests
 
         /// <summary>The process has run down (its handle is signaled).</summary>
         public bool RanDown => WaitForSingleObject(_process, 0) == 0;
+
+        /// <summary>Waits for the exact process object to be signaled before fixture cleanup.</summary>
+        public Task WaitForRundownAsync() => WaitForWindowsRundownAsync(_process);
 
         /// <summary>Attaches to <paramref name="pid"/> and returns once the attach completed (the debugger's initial breakpoint).</summary>
         public static ExitHold Attach(int pid, TimeSpan bound)
