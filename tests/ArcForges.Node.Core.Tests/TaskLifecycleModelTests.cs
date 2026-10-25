@@ -50,8 +50,7 @@ public sealed class TaskLifecycleModelTests
         ([AttemptState.Paused], AttemptState.Running),
         ([AttemptState.Running, AttemptState.Pausing, AttemptState.Paused], AttemptState.Stopping),
 
-        // Not in machines.json (an open Design question): a cancel while the attempt is being launched moves it from STARTING to STOPPING,
-        // which persists the cancel across a node restart (the recovery continues a STOPPING attempt's stop).
+        // A cancel or preemption while the attempt is being launched: STOPPING is persisted, so a node restart continues the stop.
         ([AttemptState.Starting], AttemptState.Stopping),
         ([AttemptState.Running], AttemptState.Finalizing),
         ([AttemptState.Stopping], AttemptState.Finalizing),
