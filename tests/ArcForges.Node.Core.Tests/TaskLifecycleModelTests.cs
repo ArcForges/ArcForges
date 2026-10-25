@@ -52,10 +52,11 @@ public sealed class TaskLifecycleModelTests
 
         // A cancel or preemption while the attempt is being launched: STOPPING is persisted, so a node restart continues the stop.
         ([AttemptState.Starting], AttemptState.Stopping),
-        ([AttemptState.Running], AttemptState.Finalizing),
+        ([AttemptState.Starting, AttemptState.Running, AttemptState.Pausing, AttemptState.Paused], AttemptState.Finalizing),
         ([AttemptState.Stopping], AttemptState.Finalizing),
         ([AttemptState.Created], AttemptState.Finalizing),
         ([AttemptState.Finalizing], AttemptState.Finished),
+        // The broad recovery edge is guarded by its LOST/UNKNOWN trigger below, never a normal-finish shortcut.
         ([AttemptState.Created, AttemptState.Transferring, AttemptState.Starting, AttemptState.Running, AttemptState.Pausing, AttemptState.Paused,
             AttemptState.Stopping, AttemptState.Finalizing], AttemptState.Finished));
 
@@ -93,6 +94,50 @@ public sealed class TaskLifecycleModelTests
         await AnyOperation.Array[3, 9].SampleAsync(RunAsync, iter: PropertyRuns.Iter(4), threads: 1,
             print: operations => string.Join(", ", operations.Select(operation => operation.ToString())));
     }
+
+    [Fact(Timeout = 120_000)]
+    public async Task ALocalExitCommitsItsRealInitialStateAndFinalizingBeforeTheResult()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
+        }
+
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var channel = await node.ChannelAsync();
+        var cursor = await StartCursorAsync(channel);
+        var id = await Tasks.SubmitAsync(channel, Exiting(node, 0));
+        var task = await Tasks.WaitAsync(channel, id);
+        Assert.Equal(TaskState.Succeeded, task.State);
+        var events = await EventsSinceAsync(channel, cursor);
+        var changes = events.Where(item => item.Attempt is not null).Select(item => item.Attempt).ToArray();
+        Assert.NotEmpty(changes);
+        Assert.Equal(AttemptState.Starting, changes[0].Attempt.State);
+        Assert.False(changes[0].HasPreviousState, "Local admission must not invent a prior CREATED row.");
+        var finalizing = Assert.Single(changes, change => change.Attempt.State == AttemptState.Finalizing);
+        Assert.Null(finalizing.Attempt.Result);
+        Assert.Equal(AttemptState.Finalizing, changes[^1].PreviousState);
+        Assert.Equal(AttemptState.Finished, changes[^1].Attempt.State);
+        AssertStateMachines(events);
+    }
+
+    [Theory]
+    [InlineData(AttemptState.Running, TerminationReason.Exited, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Stopping, TerminationReason.Cancelled, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Starting, TerminationReason.SpawnFailed, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Starting, TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen, true)]
+    [InlineData(AttemptState.Starting, TerminationReason.PolicyDenied, EffectCertainty.DidNotHappen, true)]
+    [InlineData(AttemptState.Running, TerminationReason.Lost, EffectCertainty.Happened, false)]
+    [InlineData(AttemptState.Running, TerminationReason.Lost, EffectCertainty.Unknown, true)]
+    [InlineData(AttemptState.Finalizing, TerminationReason.Exited, EffectCertainty.Happened, true)]
+    public void FinishedEdgesRequireTheirDeclaredTriggerAndEffect(AttemptState previous, TerminationReason reason, EffectCertainty effect, bool allowed) =>
+        Assert.Equal(allowed, FinishedTrigger(previous, reason, effect));
+
+    private static bool FinishedTrigger(AttemptState previous, TerminationReason reason, EffectCertainty effect) =>
+        previous is AttemptState.Finalizing or AttemptState.Finished
+        || (reason == TerminationReason.Lost && effect == EffectCertainty.Unknown)
+        || (previous == AttemptState.Starting && reason is TerminationReason.SpawnFailed or TerminationReason.PolicyDenied && effect == EffectCertainty.DidNotHappen);
 
     private static async Task RunAsync(Operation[] operations)
     {
@@ -288,8 +333,15 @@ public sealed class TaskLifecycleModelTests
             else if (item.Attempt is { } attempt)
             {
                 var key = IdText.Format(attempt.Attempt.AttemptId);
+                if (attempt.Attempt.State == AttemptState.Finished)
+                {
+                    Assert.NotNull(attempt.Attempt.Result);
+                    Assert.True(attempt.HasPreviousState && FinishedTrigger(attempt.PreviousState, attempt.Attempt.Result.TerminationReason, attempt.Attempt.Result.Effect),
+                        $"attempt {key} (seq {item.Seq}): {attempt.PreviousState} -> FINISHED has no matching trigger/effect: {attempt.Attempt.Result}");
+                }
+
                 Check(attempts, key, attempt.HasPreviousState ? attempt.PreviousState : (AttemptState?)null, attempt.Attempt.State, attempt.Attempt.Revision.Value, AttemptTransitions,
-                    [AttemptState.Created], $"attempt {key} (seq {item.Seq})");
+                    [AttemptState.Created, AttemptState.Starting], $"attempt {key} (seq {item.Seq})");
             }
         }
     }
@@ -312,7 +364,7 @@ public sealed class TaskLifecycleModelTests
         }
         else
         {
-            Assert.True(initial.Contains(state) || (previous is { } reported && allowed.Contains((reported, state))), $"{what}: first reported in {state}.");
+            Assert.True(initial.Contains(state) && previous is null, $"{what}: first reported in {state}.");
         }
 
         seen[key] = (state, revision);

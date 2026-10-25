@@ -29,6 +29,8 @@ public interface ILaunchStepProvider
 /// record (a crash between the commit and the acknowledgement).</item>
 /// <item><c>hold-preempt-before-stop=N</c>: holds the first preemption before its platform stop for N seconds, so a test can kill the
 /// node after STOPPING committed while its command is still running (MR-100).</item>
+/// <item><c>hold-stop-before-stop=N</c>: holds a non-pressure stop after STOPPING commits, before platform action (MR-99).</item>
+/// <item><c>hold-finalizing=N</c>: holds finalization after FINALIZING commits, before final output/accounting/result work (MR-99).</item>
 /// <item><c>finalize-throw=0</c>: the first finalization throws an exception no handler expects (NotSupportedException) before it
 /// records.</item>
 /// <item><c>escaped-record-queue-full=0</c>: the first write of escaped-process records finds the command queue full, as

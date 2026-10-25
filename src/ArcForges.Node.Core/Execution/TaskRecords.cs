@@ -101,7 +101,7 @@ public sealed class AttemptRow
     /// <summary>Index records written.</summary>
     public long IndexOffset { get; init; }
 
-    /// <summary>The pending stop cause in STOPPING, or the final termination reason in FINISHED.</summary>
+    /// <summary>The pending stop cause in STOPPING or FINALIZING, or the final termination reason in FINISHED.</summary>
     public TerminationReason? Reason { get; init; }
 
     /// <summary>The stored pending stop detail, or final result detail.</summary>

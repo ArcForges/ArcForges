@@ -132,6 +132,9 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>The graceful phase of the stop (the console signal or <c>KillUnit</c>, and its detail), once it was started.</summary>
     internal Task? GracefulPhase { get; set; }
 
+    /// <summary>The durable stop request, completed after STOPPING commits and the platform stop begins.</summary>
+    internal Task? StopRecording { get; set; }
+
     /// <summary>Why the node stops the attempt.</summary>
     internal TerminationReason? StopReason { get; set; }
 

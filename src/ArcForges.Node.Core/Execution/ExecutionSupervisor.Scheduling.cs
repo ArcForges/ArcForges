@@ -840,7 +840,7 @@ public sealed partial class ExecutionSupervisor
                     WHERE task_id = $id;
                     """,
                     ("$attempt", attemptId), ("$number", number), ("$now", now), ("$id", taskId));
-                EmitAttempt(context, attemptId, AttemptState.Created);
+                EmitAttempt(context, attemptId, null);
                 EmitTask(context, taskId, TaskState.Queued);
                 return new Admitted(row, number, request.Expected, request.Ceiling);
             }).ConfigureAwait(false);
@@ -1220,31 +1220,14 @@ public sealed partial class ExecutionSupervisor
             $"requeued at memory pressure ({state.PressureTrigger}; {state.AvailableMemory} of {state.CapacityMemory} bytes available)");
         lock (attempt)
         {
-            if (attempt.StopReason is not null)
+            if (attempt.StopReason is not null || attempt.StopRecording is not null)
             {
                 return;
             }
-
-            attempt.StopDetail = detail;
         }
 
         _log.Warning("execution.requeued", new LogField("attempt", attempt.Name), new LogField("priority", attempt.Priority), new LogField("trigger", state.PressureTrigger));
-        _ = RecordAsync(context =>
-        {
-            var transaction = context.Transaction;
-            var previous = TaskRecords.GetAttemptRow(transaction, attempt.AttemptId);
-            if (transaction.Execute("UPDATE attempt SET state = 7, termination_reason = $cause, detail = $detail, rev = rev + 1 WHERE attempt_id = $id AND state IN (3, 4, 5, 6);",
-                ("$cause", (int)TerminationReason.Preempted), ("$detail", Truncate(detail)), ("$id", attempt.AttemptId)) == 1
-                && previous is not null)
-            {
-                EmitAttempt(context, attempt.AttemptId, previous.State);
-            }
-
-            transaction.Execute("UPDATE task SET state_reason = $reason, rev = rev + 1 WHERE task_id = $id;", ("$reason", Truncate(detail)), ("$id", attempt.TaskId));
-            EmitTask(context, attempt.TaskId, null);
-            return 0;
-        });
-        _ = Task.Run(() => Stop(attempt.Name, TerminationReason.Preempted, null, graceful: true));
+        Stop(attempt.Name, TerminationReason.Preempted, null, graceful: true, detail);
     }
 
     /// <summary>
