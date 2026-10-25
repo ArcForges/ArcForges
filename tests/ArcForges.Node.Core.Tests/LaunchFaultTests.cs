@@ -932,8 +932,8 @@ public sealed partial class LaunchFaultTests
         private const uint ExceptionNotHandled = 0x80010001;
         private const uint Breakpoint = 0x80000003;
         private const uint Synchronize = 0x00100000;
-        private const int AccessDenied = 5;
-        private const int InvalidParameter = 87;
+        private const uint QueryLimitedInformation = 0x00001000;
+        private const uint StillActive = 259;
         private readonly ManualResetEventSlim _release = new();
         private readonly ManualResetEventSlim _detach = new();
         private readonly TaskCompletionSource _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -943,7 +943,7 @@ public sealed partial class LaunchFaultTests
 
         private ExitHold(int pid, TimeSpan bound)
         {
-            _process = OpenProcess(Synchronize, inherit: false, pid);
+            _process = OpenProcess(Synchronize | QueryLimitedInformation, inherit: false, pid);
             if (_process.IsInvalid)
             {
                 throw new Win32Exception(Marshal.GetLastPInvokeError(), $"OpenProcess({pid}) failed.");
@@ -970,12 +970,13 @@ public sealed partial class LaunchFaultTests
                 Assert.True(hold._attached.Task.Wait(TimeSpan.FromSeconds(30)), $"The debugger did not attach to {pid} within 30 s.");
                 return hold;
             }
-            catch (AggregateException exception) when (exception.InnerException is Win32Exception { NativeErrorCode: AccessDenied or InvalidParameter } refused)
+            catch (AggregateException exception) when (exception.InnerException is Win32Exception failed)
             {
-                // Refused, not failed: a host policy (or an endpoint agent) forbids debugging the step, or another debugger is attached to it
-                // (STATUS_PORT_ALREADY_SET reads as ERROR_INVALID_PARAMETER).
+                // Never a skip: a step that has exited or is being terminated refuses a debugger too (STATUS_PROCESS_IS_TERMINATING reads as
+                // ERROR_ACCESS_DENIED), so a launch that ends the step early would otherwise hide here. A host that forbids debugging fails clearly.
+                var state = hold.State();
                 hold.Dispose();
-                Assert.Skip($"Attaching a debugger to the launch step was refused: Win32 error {refused.NativeErrorCode} ({refused.Message}).");
+                Assert.Fail($"Attaching a debugger to the launch step ({pid}) failed: Win32 error {failed.NativeErrorCode} ({failed.Message}); the step {state}.");
                 throw;
             }
             catch
@@ -983,6 +984,13 @@ public sealed partial class LaunchFaultTests
                 hold.Dispose();
                 throw;
             }
+        }
+
+        /// <summary>The process's state, for a failure message: alive, terminating (its exit code known, not run down yet) or exited.</summary>
+        public string State()
+        {
+            var code = GetExitCodeProcess(_process, out var exitCode) ? exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unreadable";
+            return RanDown ? $"has exited with code {code}" : exitCode == StillActive ? "is alive" : $"is terminating (exit code {code})";
         }
 
         /// <summary>Lets the process's exit go on, now or whenever it comes.</summary>
@@ -1097,6 +1105,10 @@ public sealed partial class LaunchFaultTests
 
         [LibraryImport("kernel32.dll")]
         private static partial uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetExitCodeProcess(SafeProcessHandle process, out uint exitCode);
     }
 
     /// <summary>Suspends and resumes a whole process (all its threads), for the Windows hold of an attempt's holder.</summary>
