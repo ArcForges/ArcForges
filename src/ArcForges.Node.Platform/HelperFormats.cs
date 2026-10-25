@@ -115,6 +115,53 @@ public sealed class LaunchRecord
     public static LaunchRecord? TryRead(string path) => HelperFiles.TryRead(path, Parse);
 }
 
+/// <summary>The holder's durable command-root start evidence (04 section 3, MR-95); no command line or environment.</summary>
+public sealed class StartedRecord
+{
+    /// <summary>The additive internal format version.</summary>
+    public int Schema { get; set; } = 1;
+
+    /// <summary>The attempt ID (base32).</summary>
+    public string AttemptId { get; set; } = string.Empty;
+
+    /// <summary>The resumed command root's process ID.</summary>
+    public int RootPid { get; set; }
+
+    /// <summary>The root's exact creation FILETIME, paired with its PID.</summary>
+    public long RootStartFileTime { get; set; }
+
+    /// <summary>The UTC resume time (RFC 3339).</summary>
+    public string StartedAt { get; set; } = string.Empty;
+
+    /// <summary>The validated resume time.</summary>
+    [JsonIgnore]
+    public DateTimeOffset StartTime => DateTimeOffset.Parse(StartedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+
+    /// <summary>Serializes the record.</summary>
+    public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.StartedRecord);
+
+    /// <summary>Reads complete, valid evidence for this attempt only; unknown evidence never names a root.</summary>
+    public static StartedRecord? TryRead(string path, string attemptId) => HelperFiles.TryRead(path, json =>
+    {
+        var record = JsonSerializer.Deserialize(json, HelperJsonContext.Default.StartedRecord);
+        if (record is not { Schema: 1, RootPid: > 0, RootStartFileTime: > 0 } || record.AttemptId != attemptId
+            || !DateTimeOffset.TryParse(record.StartedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out _))
+        {
+            return null;
+        }
+
+        try
+        {
+            _ = DateTimeOffset.FromFileTime(record.RootStartFileTime);
+            return record;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    });
+}
+
 /// <summary>
 /// <c>logs/&lt;attempt&gt;/guard.json</c>, schema 1 (06 section 5): written by the node before the attempt starts, so the attempt's guard
 /// knows what to enforce while the node is down: the output files, the temporary directory, the volumes it writes to, the limits and
@@ -500,7 +547,7 @@ public sealed class HolderReport
     /// <summary>The root exit code (exited).</summary>
     public int ExitCode { get; set; }
 
-    /// <summary>What failed (spawn_failed).</summary>
+    /// <summary>Spawn failure, or optional durable-evidence write failure on an otherwise successful start.</summary>
     public string? Error { get; set; }
 
     /// <summary>Serializes the report as one line.</summary>
@@ -563,6 +610,7 @@ public static class HelperFiles
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(ExitRecord))]
 [JsonSerializable(typeof(LaunchRecord))]
+[JsonSerializable(typeof(StartedRecord))]
 [JsonSerializable(typeof(GuardSpec))]
 [JsonSerializable(typeof(GuardEvent))]
 [JsonSerializable(typeof(NodeHeartbeat))]

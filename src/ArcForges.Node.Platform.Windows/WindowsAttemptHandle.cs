@@ -23,6 +23,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     private volatile bool _rootExited;
     private volatile bool _memoryLimit;
     private RootProcess? _root;
+    private DateTimeOffset? _startedAt;
     private volatile HashSet<(int Pid, long Created)>? _beforeReopen;
     private volatile bool _launchAwaited;
     private SafeKernelHandle? _rootHandle;
@@ -70,6 +71,9 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
 
     /// <inheritdoc />
     public Task<RootProcess?> Started => _started.Task;
+
+    /// <inheritdoc />
+    public DateTimeOffset? StartedAt => _startedAt ?? Root?.StartTime;
 
     /// <inheritdoc />
     public Stream? StdinWriter { get; }
@@ -244,6 +248,19 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         _started.TrySetResult(Root);
     }
 
+    /// <inheritdoc />
+    public void Refresh()
+    {
+        if (_disposed || !Reopened || Root is not null || StartedRecord.TryRead(Files.StartedPath, Files.AttemptName) is not { } started)
+        {
+            return;
+        }
+
+        // A job entry can be another launch step; only the holder's command-start record identifies the actual root.
+        _startedAt = started.StartTime;
+        Volatile.Write(ref _root, new RootProcess(started.RootPid, ProcessInfo.FromFileTime(started.RootStartFileTime)));
+    }
+
     internal void MarkReopened()
     {
         Reopened = true;
@@ -255,7 +272,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     }
 
     /// <inheritdoc />
-    public bool WatchLaunch() => _beforeReopen is not null && !_launchAwaited && !File.Exists(Files.LaunchPath) && !File.Exists(Files.ExitPath);
+    public bool WatchLaunch() => Root is null && _beforeReopen is not null && !_launchAwaited && !File.Exists(Files.LaunchPath) && !File.Exists(Files.ExitPath);
 
     /// <summary>
     /// An attempt re-opened whose launch may still go on (no root recorded, no launch or exit record): the restarted node no longer receives

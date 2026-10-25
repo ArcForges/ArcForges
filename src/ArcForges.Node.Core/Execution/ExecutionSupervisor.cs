@@ -1554,6 +1554,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return;
         }
 
+        if (attempt.NodeGap && attempt.StartedTimestamp is null && attempt.StopReason is null && handle.Root is { } recoveredRoot)
+        {
+            // The start may have completed while this node was down or after its re-open. Keep the known start clock, never recovery time.
+            _ = OnStartedAsync(attempt, recoveredRoot, handle.StartedAt ?? recoveredRoot.StartTime);
+        }
+
         CheckReadiness(attempt, handle);
         if (attempt.StopReason is null && attempt.StartedTimestamp is { } since)
         {
@@ -1944,7 +1950,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _ = handle.Started.ContinueWith(started => OnStartedAsync(attempt, started.IsCompletedSuccessfully ? started.Result : null), TaskScheduler.Default).Unwrap();
     }
 
-    private async Task OnStartedAsync(RunningAttempt attempt, RootProcess? root)
+    private async Task OnStartedAsync(RunningAttempt attempt, RootProcess? root, DateTimeOffset? recoveredStart = null)
     {
         if (root is null)
         {
@@ -1953,14 +1959,21 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return;
         }
 
-        attempt.StartedTimestamp = _clock.GetTimestamp();
+        if (OperatingSystem.IsWindows() && recoveredStart is null && StartedRecord.TryRead(attempt.Files.StartedPath, attempt.Name) is null)
+        {
+            _log.Warning("execution.started.evidence_unavailable", new LogField("attempt", attempt.Name));
+        }
+
+        var elapsed = recoveredStart is { } start ? Math.Max(0, (_clock.GetUtcNow() - start).TotalSeconds) : 0;
+        attempt.StartedTimestamp = _clock.GetTimestamp() - (long)(elapsed * TimeProvider.System.TimestampFrequency);
         try
         {
             await _processor.ExecuteAsync(context =>
             {
                 var changed = context.Transaction.Execute(
                     "UPDATE attempt SET state = 4, root_pid = $pid, root_start = $start, started_at = $now, rev = rev + 1 WHERE attempt_id = $id AND state = 3;",
-                    ("$pid", root.Pid), ("$start", StoreTime.ToMicroseconds(root.StartTime)), ("$now", context.Transaction.NowMicroseconds), ("$id", attempt.AttemptId));
+                    ("$pid", root.Pid), ("$start", StoreTime.ToMicroseconds(root.StartTime)),
+                    ("$now", recoveredStart is { } startedAt ? StoreTime.ToMicroseconds(startedAt) : context.Transaction.NowMicroseconds), ("$id", attempt.AttemptId));
                 if (changed == 1)
                 {
                     EmitAttempt(context, attempt.AttemptId, AttemptState.Starting);

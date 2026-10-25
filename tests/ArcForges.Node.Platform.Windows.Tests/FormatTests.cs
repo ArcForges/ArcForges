@@ -80,6 +80,37 @@ public sealed class FormatTests
     }
 
     [Fact]
+    public void StartedRecordsKeepIdentityAndResumeTimeAndRejectUnknownEvidence()
+    {
+        var root = Directory.CreateTempSubdirectory("arcforges-start-formats-");
+        var path = Path.Combine(root.FullName, "started.json");
+        var start = DateTimeOffset.Parse("2026-10-25T12:00:00.000Z", System.Globalization.CultureInfo.InvariantCulture);
+        var record = new StartedRecord { AttemptId = "attempt", RootPid = 123, RootStartFileTime = start.ToFileTime(), StartedAt = "2026-10-25T12:00:00.000Z" };
+        try
+        {
+            Assert.Null(StartedRecord.TryRead(path, "attempt"));
+            using var json = JsonDocument.Parse(record.ToJson());
+            Assert.Equal(["schema", "attempt_id", "root_pid", "root_start_file_time", "started_at"], json.RootElement.EnumerateObject().Select(property => property.Name));
+            HelperFiles.WriteAtomically(path, record.ToJson());
+            Assert.Equal(start, StartedRecord.TryRead(path, "attempt")!.StartTime);
+            Assert.Equal(record.RootStartFileTime, StartedRecord.TryRead(path, "attempt")!.RootStartFileTime);
+            Assert.Null(StartedRecord.TryRead(path, "another-attempt"));
+            foreach (var invalid in new[] { "{", "null", "{}", record.ToJson().Replace("\"schema\":1", "\"schema\":2", StringComparison.Ordinal),
+                record.ToJson().Replace("\"root_pid\":123", "\"root_pid\":0", StringComparison.Ordinal),
+                record.ToJson().Replace(record.RootStartFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture), long.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal),
+                record.ToJson().Replace(record.StartedAt, "not-a-time", StringComparison.Ordinal) })
+            {
+                File.WriteAllText(path, invalid);
+                Assert.Null(StartedRecord.TryRead(path, "attempt"));
+            }
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void ReadersIgnoreAbsentAndTornFiles()
     {
         var root = Directory.CreateTempSubdirectory("arcforges-formats-").FullName;
