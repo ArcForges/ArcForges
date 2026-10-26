@@ -74,11 +74,6 @@ public sealed class BackupSecretRetentionTests
 
             Assert.Equal(backups, StoreBackups.List(root.Path));
             Assert.Equal("synthetic unrelated file", File.ReadAllText(unrelated));
-            foreach (var backup in backups)
-            {
-                AssertBackup(backup, backend, taskId, ciphertext);
-            }
-
             var sealer = new TaskSecrets(store, keys);
             if (immediate)
             {
@@ -178,6 +173,19 @@ public sealed class BackupSecretRetentionTests
 
     private static void AssertBackup(string backup, IsolatedSecretStore backend, byte[] taskId, byte[] ciphertext)
     {
+        // Restore a real backup to a second isolated root with the original key backend still available.
+        using var restoredRoot = new TemporaryDataRoot();
+        StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(restoredRoot.Database)!);
+        File.Copy(backup, restoredRoot.Database);
+        using var restored = restoredRoot.Open(new ManualClock());
+        using var restoredKeys = new NodeDataKeyRing(restored, backend.Selection);
+        var unsealed = new TaskSecrets(restored, restoredKeys).Unseal(taskId);
+        Assert.Equal(UnsealStatus.Unavailable, unsealed.Status);
+        Assert.Null(unsealed.Values);
+        Assert.Equal("secrets_unavailable", unsealed.Error?.Code);
+        Assert.Equal(["GITHUB_TOKEN"], unsealed.Names);
+        Assert.Null(restored.Opening.MigratedFrom);
+
         using (var connection = StoreCreationTests.Open(backup))
         {
             Assert.Equal(["ok"], StoreCreationTests.Query(connection, "PRAGMA integrity_check;"));
@@ -194,17 +202,6 @@ public sealed class BackupSecretRetentionTests
             Assert.Equal(-1, bytes.AsSpan().IndexOf(ciphertext.AsSpan(offset, 16)));
         }
 
-        // Restore a real backup to a second isolated root with the original key backend still available.
-        using var restoredRoot = new TemporaryDataRoot();
-        StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(restoredRoot.Database)!);
-        File.Copy(backup, restoredRoot.Database);
-        using var restored = restoredRoot.Open(new ManualClock());
-        using var restoredKeys = new NodeDataKeyRing(restored, backend.Selection);
-        var unsealed = new TaskSecrets(restored, restoredKeys).Unseal(taskId);
-        Assert.Equal(UnsealStatus.Unavailable, unsealed.Status);
-        Assert.Null(unsealed.Values);
-        Assert.Equal("secrets_unavailable", unsealed.Error?.Code);
-        Assert.Equal(["GITHUB_TOKEN"], unsealed.Names);
-        Assert.Null(restored.Opening.MigratedFrom);
+
     }
 }
