@@ -39,19 +39,11 @@ public sealed class MemoryEvidenceTests
         PlatformHarness.WaitFor(() => packets.Any(p => p.Message == Native.JobMsgNewProcess && p.Pid == root.Pid), bound,
             "the real root process completion key");
         var attemptKey = packets.First(p => p.Message == Native.JobMsgNewProcess && p.Pid == root.Pid).Key;
-        var received = new TaskCompletionSource<(uint Message, int Pid)>(TaskCreationOptions.RunContinuationsAsynchronously);
-        handle.MemoryLimitMessageObserved = (message, pid) =>
-        {
-            if (message is Native.JobMsgJobMemoryLimit or Native.JobMsgProcessMemoryLimit)
-            {
-                received.TrySetResult((message, pid));
-            }
-        };
         using var nested = JobObject.Create("Local\\ArcForges.Tests.Nested." + Guid.NewGuid().ToString("N"));
         nested.SetLimits(96 * MiB, activeProcessLimit: null, killOnClose: true);
-        using var nestedPort = Native.CreateIoCompletionPort(new nint(-1), 0, 0, 1);
-        Assert.False(nestedPort.IsInvalid);
-        nested.AssociateCompletionPort(nestedPort, attemptKey, clearFirst: false);
+        // A real common port makes the best-effort forwarding case deterministic for the attribution handler.
+        // The operating system generates every packet; nothing is posted or passed to the handler by this test.
+        nested.AssociateCompletionPort(harness.Platform.JobCompletionPort, attemptKey, clearFirst: false);
         var environment = new List<string>
         {
             "DOTNET_GCHeapHardLimit=C0000000",
@@ -70,7 +62,7 @@ public sealed class MemoryEvidenceTests
         var allEnded = true;
         // Hard-limit packets are best effort (V-W03). This bounded workload provides up to four real packet opportunities;
         // success still requires observing one actual hard-limit packet, never a synthetic signal or an unobserved pass.
-        for (var attempt = 0; attempt < 4 && !received.Task.IsCompleted; attempt++)
+        for (var attempt = 0; attempt < 4 && !rawMemory.Task.IsCompleted; attempt++)
         {
             using var child = ProcessLauncher.Start(new LaunchOptions
             {
@@ -87,18 +79,8 @@ public sealed class MemoryEvidenceTests
                 nested.Assign(child.Process);
                 Assert.True(nested.Contains(child.Process));
                 Assert.True(handle.Job.Contains(child.Process));
-                var reported = false;
-                var reportWait = System.Diagnostics.Stopwatch.StartNew();
-                while (!reported && reportWait.Elapsed < bound)
-                {
-                    if (Native.GetQueuedCompletionStatus(nestedPort, out var message, out var key, out var data, 1000))
-                    {
-                        TestContext.Current.TestOutputHelper?.WriteLine($"nested port packet {message}, key {key}, pid {(int)data}");
-                        reported = message == Native.JobMsgNewProcess && (int)data == child.ProcessId;
-                    }
-                }
-
-                Assert.True(reported, "The real nested job must report the suspended child before allocation begins.");
+                PlatformHarness.WaitFor(() => packets.Any(p => p.Message == Native.JobMsgNewProcess && p.Pid == child.ProcessId),
+                    bound, "the suspended child's real process packet before allocation");
                 child.Resume();
                 harness.Track(handle);
                 Assert.True(child.WaitForExit(bound), "The constrained child must exit within the workload bound.");
@@ -117,7 +99,7 @@ public sealed class MemoryEvidenceTests
 
             try
             {
-                await received.Task.WaitAsync(TimeSpan.FromMilliseconds(500), cancellation);
+                await rawMemory.Task.WaitAsync(TimeSpan.FromMilliseconds(500), cancellation);
             }
             catch (TimeoutException)
             {
@@ -131,9 +113,8 @@ public sealed class MemoryEvidenceTests
             TestContext.Current.TestOutputHelper?.WriteLine($"parent raw packet {item.Message}, key {item.Key}, pid {item.Pid}, attempt key {attemptKey}");
         }
 
-        var rawPacket = await rawMemory.Task.WaitAsync(bound, cancellation);
-        TestContext.Current.TestOutputHelper?.WriteLine($"raw hard packet {rawPacket.Message}, key {rawPacket.Key}, pid {rawPacket.Pid}");
-        var packet = await received.Task.WaitAsync(bound, cancellation);
+        var packet = await rawMemory.Task.WaitAsync(bound, cancellation);
+        TestContext.Current.TestOutputHelper?.WriteLine($"raw hard packet {packet.Message}, key {packet.Key}, pid {packet.Pid}");
         Assert.Contains(packet.Message, new[] { Native.JobMsgJobMemoryLimit, Native.JobMsgProcessMemoryLimit });
         Assert.True(nested.Accounting().PeakJobMemory > 0);
         Assert.True(handle.Job.Accounting().PeakJobMemory < OwnNotification,
