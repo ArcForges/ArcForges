@@ -38,7 +38,9 @@ public sealed class SecretPageErasureTests
 
             using var snapshot = new SqliteConnection(new SqliteConnectionStringBuilder
             {
-                DataSource = root.Database, Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+                DataSource = root.Database,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
             }.ToString());
             snapshot.Open();
             using var transaction = snapshot.BeginTransaction(deferred: true);

@@ -228,18 +228,19 @@ public sealed class TaskSecrets
             ("$purged", PurgedKeyId)) == 1;
     }
 
-    /// <summary>Housekeeping: purges every sealed value whose <c>purge_after</c> has passed. Returns the number purged.</summary>
+    /// <summary>
+    /// Housekeeping: purges every sealed value whose <c>purge_after</c> has passed and attempts a truncating checkpoint,
+    /// also when no new value is due. Returns the number logically purged; an older reader can defer physical erasure to a later pass.
+    /// </summary>
     public int PurgeDue()
     {
         var purged = _store.Write(transaction => transaction.Execute(
             $"UPDATE task_secret SET {Tombstone} WHERE purge_after IS NOT NULL AND purge_after <= $now AND key_id <> $purged;",
             ("$now", transaction.NowMicroseconds),
             ("$purged", PurgedKeyId)));
-        if (purged > 0)
-        {
-            // Old page images with the values leave the WAL as well.
-            _store.Checkpoint();
-        }
+        // Retry even with no newly purged row: a previous pass (or manual purge) may have been blocked by
+        // an older read snapshot. No in-memory pending flag is needed, so a restart cannot lose the retry.
+        _store.Checkpoint();
 
         return purged;
     }

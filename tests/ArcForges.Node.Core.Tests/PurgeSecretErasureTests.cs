@@ -54,7 +54,9 @@ public sealed class PurgeSecretErasureTests
 
         using var snapshot = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = store.DatabasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+            DataSource = store.DatabasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
         }.ToString());
         snapshot.Open();
         using var transaction = holdSnapshot ? snapshot.BeginTransaction(deferred: true) : null;
