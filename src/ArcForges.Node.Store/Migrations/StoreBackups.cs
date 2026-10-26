@@ -8,7 +8,7 @@ namespace ArcForges.Node.Store.Migrations;
 /// <summary>
 /// Pre-migration backups (13-distribution-updates section 6): before migrating, the store is checkpointed
 /// (<c>wal_checkpoint(TRUNCATE)</c>) and copied to <c>records/backups/store-&lt;from&gt;-&lt;to&gt;-&lt;timestamp&gt;.db</c>;
-/// the last three backups are kept.
+/// the last three backups are kept. Retained copies preserve records and names, but never sealed task values (MR-13).
 /// </summary>
 public static partial class StoreBackups
 {
@@ -33,6 +33,15 @@ public static partial class StoreBackups
             .OrderBy(item => item.Match.Groups["at"].Value, StringComparer.Ordinal)
             .ThenBy(item => item.Path, StringComparer.Ordinal)
             .Select(item => item.Path)];
+    }
+
+    /// <summary>Excludes sealed values from all older retained copies before the node store is opened.</summary>
+    internal static void SanitizeRetained(string dataRoot, TimeProvider clock)
+    {
+        foreach (var path in List(dataRoot))
+        {
+            Sanitize(path, clock);
+        }
     }
 
     /// <summary>
@@ -67,18 +76,7 @@ public static partial class StoreBackups
                 connection.BackupDatabase(destination);
             }
 
-            using (var check = new SqliteConnection(StorePaths.ConnectionString(temporary, SqliteOpenMode.ReadOnly)))
-            {
-                check.Open();
-                using var command = check.CreateCommand();
-                command.CommandText = "PRAGMA integrity_check;";
-                var result = command.ExecuteScalar() as string;
-                if (!string.Equals(result, "ok", StringComparison.Ordinal))
-                {
-                    throw new StoreBackupException($"The pre-migration backup failed its integrity check: {result}.");
-                }
-            }
-
+            Sanitize(temporary, clock);
             File.Move(temporary, path);
         }
         finally
@@ -92,6 +90,49 @@ public static partial class StoreBackups
         }
 
         return path;
+    }
+
+    private static void Sanitize(string path, TimeProvider clock)
+    {
+        try
+        {
+            using var copy = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWrite));
+            copy.Open();
+            using var command = copy.CreateCommand();
+            command.CommandText = "PRAGMA secure_delete=ON;";
+            command.ExecuteNonQuery();
+            command.CommandText = "PRAGMA journal_mode=DELETE;";
+            if (!string.Equals(command.ExecuteScalar() as string, "delete", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new StoreBackupException("The retained backup could not leave WAL mode before sanitization.");
+            }
+
+            // An older schema may predate task_secret; never migrate the copy or add tables to it.
+            command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'task_secret';";
+            if (Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 0)
+            {
+                command.CommandText = $"UPDATE task_secret SET {TaskSecrets.Tombstone}, purge_after = $now WHERE key_id <> $purged;";
+                command.Parameters.AddWithValue("$now", StoreTime.NowMicroseconds(clock));
+                command.Parameters.AddWithValue("$purged", TaskSecrets.PurgedKeyId);
+                command.ExecuteNonQuery();
+                command.Parameters.Clear();
+            }
+
+            // Rebuild the copy, including older free pages, so it cannot retain the old encrypted payloads.
+            command.CommandText = "VACUUM;";
+            command.ExecuteNonQuery();
+            command.CommandText = "PRAGMA integrity_check;";
+            var result = command.ExecuteScalar() as string;
+            if (!string.Equals(result, "ok", StringComparison.Ordinal))
+            {
+                throw new StoreBackupException($"The retained backup failed its integrity check: {result}.");
+            }
+        }
+        catch (Exception exception) when (exception is not StoreBackupException
+            && (exception is SqliteException or IOException or UnauthorizedAccessException))
+        {
+            throw new StoreBackupException($"The backup {Path.GetFileName(path)} could not exclude sealed task values.", exception);
+        }
     }
 
     [GeneratedRegex(@"^store-(?<from>\d+)-(?<to>\d+)-(?<at>\d{8}T\d{9}Z)(\.\d+)?\.db$", RegexOptions.CultureInvariant)]

@@ -187,6 +187,9 @@ public sealed class NodeStore : IDisposable
             // Deleted and overwritten content (purged task secrets) is zeroed in the database pages.
             Pragma(writer, "PRAGMA secure_delete=ON;");
 
+            // Retained snapshots must not extend the lifetime of a task's sealed input.
+            StoreBackups.SanitizeRetained(dataRoot, options.Clock);
+
             StoreOpening opening;
             if (existing is null)
             {
