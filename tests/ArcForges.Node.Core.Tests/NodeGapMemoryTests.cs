@@ -34,18 +34,24 @@ public sealed class NodeGapMemoryTests
         var go = Path.Combine(node.Root, "memory-go");
         var ready = Path.Combine(node.Root, "memory-ready");
         var release = Path.Combine(node.Root, "memory-release");
+        var released = Path.Combine(node.Root, "memory-released");
         var script = Path.Combine(node.Root, "memory.cmd");
         var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
             "WindowsPowerShell", "v1.0", "powershell.exe");
         var wait = string.Create(CultureInfo.InvariantCulture,
             $"[System.IO.File]::WriteAllText('{Escape(ready)}','ready'); while (-not [System.IO.File]::Exists('{Escape(go)}')) {{ Start-Sleep -Milliseconds 20 }}");
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(wait));
+        var afterRamp = string.Create(CultureInfo.InvariantCulture,
+            $"[System.IO.File]::WriteAllText('{Escape(released)}','released'); while (-not [System.IO.File]::Exists('{Escape(release)}')) {{ Start-Sleep -Milliseconds 20 }}");
+        var afterEncoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(afterRamp));
         File.WriteAllText(script, "@echo off\r\n"
             + WindowsCommandLine.Build([powershell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]) + "\r\n"
             + "if errorlevel 1 exit /b 98\r\n"
             + WindowsCommandLine.Build([Tasks.TestLoad, "mem-ramp", "--target-mb", targetMiB.ToString(CultureInfo.InvariantCulture),
-                "--step-mb", "16", "--hold-ms", "60000", "--until-file", release]) + "\r\n"
+                "--step-mb", "16"]) + "\r\n"
             + "if errorlevel 1 exit /b 99\r\n"
+            + WindowsCommandLine.Build([powershell, "-NoProfile", "-NonInteractive", "-EncodedCommand", afterEncoded]) + "\r\n"
+            + "if errorlevel 1 exit /b 97\r\n"
             + string.Create(CultureInfo.InvariantCulture, $"exit /b {exitCode}\r\n"));
         Id taskId, attemptId;
         await using (var channel = await node.ChannelAsync())
@@ -71,17 +77,16 @@ public sealed class NodeGapMemoryTests
         // Exercise the actual current job limit, including a changed value; no holder-spec copy can answer this case.
         job.SetMemoryNotification(notificationMiB * MiB);
         File.WriteAllText(go, "go");
-        if (crossed)
+        await Tasks.WaitForAsync(() => File.Exists(released), Tasks.Bound, "the allocation process to finish before root exit");
+        Assert.Equal(crossed, job.Accounting().PeakJobMemory > notificationMiB * MiB);
+        if (observeCommit)
         {
-            await Tasks.WaitForAsync(() => job.Accounting().PeakJobMemory > notificationMiB * MiB,
-                Tasks.Bound, "the held ramp to cross its notification threshold");
-            if (observeCommit)
-            {
-                // A real accounting query can consume notification information before the holder records the exit.
-                var committed = job.CurrentCommit();
-                Assert.True(committed > notificationMiB * MiB, "The reader must observe the real held allocation.");
-                TestContext.Current.TestOutputHelper?.WriteLine($"observed committed {committed} bytes before release");
-            }
+            // Query only after the allocator exited: a new allocation above the threshold cannot recreate the notification.
+            var first = job.CurrentCommit();
+            var second = job.CurrentCommit();
+            Assert.True(second < notificationMiB * MiB, "The observer must read released, below-threshold memory.");
+            Assert.DoesNotContain("job_memory", job.LimitViolations());
+            TestContext.Current.TestOutputHelper?.WriteLine($"post-release queries {first}, {second} bytes before root exit");
         }
 
         File.WriteAllText(release, "release");
