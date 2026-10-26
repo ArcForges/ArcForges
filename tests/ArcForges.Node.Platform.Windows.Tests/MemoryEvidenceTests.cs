@@ -34,6 +34,9 @@ public sealed class MemoryEvidenceTests
         };
         using var nested = JobObject.Create("Local\\ArcForges.Tests.Nested." + Guid.NewGuid().ToString("N"));
         nested.SetLimits(96 * MiB, activeProcessLimit: null, killOnClose: true);
+        using var nestedPort = Native.CreateIoCompletionPort(new nint(-1), 0, 0, 1);
+        Assert.False(nestedPort.IsInvalid);
+        nested.AssociateCompletionPort(nestedPort, 1, clearFirst: false);
         var environment = new List<string>
         {
             "DOTNET_GCHeapHardLimit=C0000000",
@@ -69,6 +72,18 @@ public sealed class MemoryEvidenceTests
                 nested.Assign(child.Process);
                 Assert.True(nested.Contains(child.Process));
                 Assert.True(handle.Job.Contains(child.Process));
+                var reported = false;
+                var reportWait = System.Diagnostics.Stopwatch.StartNew();
+                while (!reported && reportWait.Elapsed < bound)
+                {
+                    if (Native.GetQueuedCompletionStatus(nestedPort, out var message, out var key, out var data, 1000))
+                    {
+                        TestContext.Current.TestOutputHelper?.WriteLine($"nested port packet {message}, key {key}, pid {(int)data}");
+                        reported = message == Native.JobMsgNewProcess && (int)data == child.ProcessId;
+                    }
+                }
+
+                Assert.True(reported, "The real nested job must report the suspended child before allocation begins.");
                 child.Resume();
                 harness.Track(handle);
                 Assert.True(child.WaitForExit(bound), "The constrained child must exit within the workload bound.");
