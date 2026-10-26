@@ -329,6 +329,14 @@ public sealed class AttemptRunner
     {
         var accounting = _child.Accounting();
         var violations = _child.LimitViolations();
+        var notificationLimit = _child.MemoryNotificationLimit();
+        if (notificationLimit > 0 && accounting.PeakJobMemory > notificationLimit && !violations.Contains("job_memory"))
+        {
+            // Other notification queries and released memory must not erase a crossing while the node was down.
+            // This records the job's own notification threshold, not proof that the higher hard cap refused an allocation.
+            violations.Add("job_memory");
+        }
+
         if (accounting.JobMemoryLimit > 0 && accounting.PeakJobMemory >= accounting.JobMemoryLimit - (64 * 1024) && !violations.Contains("job_memory"))
         {
             // The commit limit was reached (allocations at the limit fail); the violation query does not always report it.
