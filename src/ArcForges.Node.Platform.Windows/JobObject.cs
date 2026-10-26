@@ -122,6 +122,14 @@ public sealed unsafe class JobObject : IDisposable
         Set(Native.JobObjectNotificationLimitInformationClass, &info, sizeof(Native.JobObjectNotificationLimitInformation));
     }
 
+    /// <summary>The enabled memory-notification threshold in force for this job, or zero when none is set.</summary>
+    public long MemoryNotificationLimit()
+    {
+        var info = default(Native.JobObjectNotificationLimitInformation);
+        Query(Native.JobObjectNotificationLimitInformationClass, &info, sizeof(Native.JobObjectNotificationLimitInformation));
+        return (info.LimitFlags & Native.JobObjectLimitJobMemory) != 0 ? (long)info.JobMemoryLimit : 0;
+    }
+
     /// <summary>Weight-based CPU rate control (1-9; V-W04).</summary>
     public void SetCpuWeight(int weight)
     {
