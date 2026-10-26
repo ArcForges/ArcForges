@@ -2463,7 +2463,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         if (exit is not null && exit.ExitStatus != 0 && (memoryHit || exit.LimitViolations.Contains("job_memory")))
         {
-            return new AttemptOutcome(TerminationReason.MemoryLimit, EffectCertainty.Happened, exitCode, "the attempt reached its commit limit", null, signal, coreDumped);
+            return new AttemptOutcome(TerminationReason.MemoryLimit, EffectCertainty.Happened, exitCode, "the attempt exited nonzero with memory-limit evidence from its own job; allocation refusal is not proven", null, signal, coreDumped);
         }
 
         return new AttemptOutcome(TerminationReason.Exited, EffectCertainty.Happened, exitCode, null, null, signal, coreDumped);

@@ -130,6 +130,15 @@ public sealed unsafe class JobObject : IDisposable
         return (info.LimitFlags & Native.JobObjectLimitJobMemory) != 0 ? (long)info.JobMemoryLimit : 0;
     }
 
+    /// <summary>Whether this job's own peak has notification or hard-limit evidence; the snapshot belongs to this job.</summary>
+    internal bool HasOwnMemoryLimitEvidence(JobAccounting accounting)
+    {
+        ArgumentNullException.ThrowIfNull(accounting);
+        var notification = MemoryNotificationLimit();
+        return (notification > 0 && accounting.PeakJobMemory > notification)
+            || (accounting.JobMemoryLimit > 0 && accounting.PeakJobMemory >= accounting.JobMemoryLimit - (64 * 1024));
+    }
+
     /// <summary>Weight-based CPU rate control (1-9; V-W04).</summary>
     public void SetCpuWeight(int weight)
     {

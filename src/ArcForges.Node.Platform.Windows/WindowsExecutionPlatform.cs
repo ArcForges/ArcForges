@@ -75,6 +75,12 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     /// <summary>The root job (after <see cref="Start"/>).</summary>
     public JobObject? RootJob => _root;
 
+    /// <summary>Read-only observation of real completion packets after routing, used to prove a test's event provenance.</summary>
+    internal Action<uint, nuint, int>? JobMessageObserved { get; set; }
+
+    /// <summary>The real port for a native job-composition test; tests associate jobs, never post simulated packets.</summary>
+    internal SafeHandle JobCompletionPort => _port;
+
     /// <summary>The priority class every attempt's job enforces on its processes: <c>BELOW_NORMAL_PRIORITY_CLASS</c> (03 section 5.2, amended).</summary>
     public const uint AttemptPriorityClass = Native.BelowNormalPriorityClass;
 
@@ -749,6 +755,8 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             {
                 handle.OnJobMessage(message, (int)data);
             }
+
+            JobMessageObserved?.Invoke(message, key, (int)data);
         }
     }
 

@@ -119,6 +119,8 @@ public sealed class NodeGapMemoryTests
         if (expected == TerminationReason.MemoryLimit)
         {
             Assert.Contains("job_memory", exit.LimitViolations);
+            Assert.Contains("own job", finished.CurrentAttempt.Result.Detail, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("not proven", finished.CurrentAttempt.Result.Detail, StringComparison.OrdinalIgnoreCase);
         }
         else if (!crossed)
         {

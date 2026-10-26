@@ -122,8 +122,8 @@ public sealed class ContainerLimits
 
     /// <summary>
     /// The commit notification limit (<c>mem_ceiling</c>): crossing it is reported (and recorded as the <c>job_memory</c> violation), never
-    /// enforced; an attempt that crossed it and exits non-zero ended at its memory limit (04 section 7 <c>MEMORY_LIMIT</c>). 0 uses the
-    /// commit limit.
+    /// enforced. A crossing and nonzero exit are <c>MEMORY_LIMIT</c> evidence (04 section 7), not proof that a hard cap refused an
+    /// allocation. Zero uses the commit limit.
     /// </summary>
     public long CommitNotificationBytes { get; init; }
 
@@ -287,7 +287,7 @@ public interface IAttemptHandle : IDisposable
     /// <summary>True while the root process (or, without one yet, the launch) has not finished.</summary>
     bool RootRunning { get; }
 
-    /// <summary>True once the container reported a commit-limit (memory) event.</summary>
+    /// <summary>Memory-limit evidence reported by the platform; Windows confirms its own job, never a nested job packet alone.</summary>
     bool MemoryLimitHit { get; }
 
     /// <summary>Raised on a platform thread when the attempt changed (started, root exited, record written, a limit event).</summary>
