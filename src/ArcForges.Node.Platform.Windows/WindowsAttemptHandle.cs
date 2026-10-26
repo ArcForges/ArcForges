@@ -403,10 +403,9 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         {
             case Native.JobMsgJobMemoryLimit:
             case Native.JobMsgProcessMemoryLimit:
-                _memoryLimit = true;
-                break;
             case Native.JobMsgNotificationLimit:
-                if (_job.LimitViolations().Contains("job_memory"))
+                // A nested job can deliver its packet through this port. Its lower limit is not our attempt's limit.
+                if (!_memoryLimit && OwnMemoryLimitEvidence())
                 {
                     _memoryLimit = true;
                 }
@@ -437,6 +436,22 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
         }
 
         Changed?.Invoke();
+    }
+
+    private bool OwnMemoryLimitEvidence()
+    {
+        try
+        {
+            return !_disposed && _job.HasOwnMemoryLimitEvidence(_job.Accounting());
+        }
+        catch (ObjectDisposedException)
+        {
+            return false; // A queued packet can outlive its handle.
+        }
+        catch (System.ComponentModel.Win32Exception) when (_disposed)
+        {
+            return false;
+        }
     }
 
     private SafeKernelHandle? RootHandle(RootProcess root)
