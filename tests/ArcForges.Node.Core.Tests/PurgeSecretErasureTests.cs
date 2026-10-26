@@ -17,6 +17,7 @@ public sealed class PurgeSecretErasureTests
     [InlineData(8192, true)]
     public async Task AManualPurgeCheckpointsOrReportsItsCommittedEffectAndReplaysOnWindows(int valueLength, bool holdSnapshot)
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
         await PurgeAsync(valueLength, holdSnapshot);
     }
@@ -29,6 +30,7 @@ public sealed class PurgeSecretErasureTests
     [InlineData(8192, true)]
     public async Task AManualPurgeCheckpointsOrReportsItsCommittedEffectAndReplaysOnLinux(int valueLength, bool holdSnapshot)
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsLinux(), "The Linux execution platform.");
         await PurgeAsync(valueLength, holdSnapshot);
     }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Node.Store.Proto;
 using ArcForges.Tests;
 using Microsoft.Data.Sqlite;
 
@@ -12,6 +13,7 @@ public sealed class SecretPageErasureTests
     [InlineData(131072)]
     public void RetentionPurgeRetriesABusyCheckpointWhenNoNewRowIsDue(int valueLength)
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         using var store = root.Open(clock);
@@ -23,9 +25,9 @@ public sealed class SecretPageErasureTests
             var taskId = store.Write(transaction =>
             {
                 var id = Rows.InsertTask(transaction);
-                secrets.Seal(transaction, id, new Dictionary<string, string>(StringComparer.Ordinal)
+                secrets.Seal(transaction, id, new SecretEnvironment
                 {
-                    ["API_TOKEN"] = new string('s', valueLength),
+                    Set = { new EnvEntry { Name = "API_TOKEN", Value = new string('s', valueLength) } },
                 });
                 TaskSecrets.SchedulePurge(transaction, id, transaction.NowMicroseconds, TimeSpan.Zero);
                 return id;
