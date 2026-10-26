@@ -1087,6 +1087,31 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             }
         }
 
+        if (result.Value is not null)
+        {
+            // The transaction and dedup result are already committed. Include the checkpoint in success, even on replay;
+            // if an older reader or SQLite failure blocks it, report the known effect rather than implying a rollback.
+            var failure = "busy";
+            try
+            {
+                if (_node.Store.Checkpoint())
+                {
+                    return result;
+                }
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException exception)
+            {
+                failure = exception.GetType().Name;
+            }
+
+            _node.Log.Warning("api.task.purge_checkpoint_pending",
+                new LogField("commandId", IdText.Format(request.Meta.CommandId)),
+                new LogField("correlationId", request.Meta.CorrelationId is { Value.Length: 16 } correlation ? IdText.Format(correlation) : string.Empty),
+                new LogField("errorType", failure));
+            result.Error = NodeErrors.Internal(_node.Clock.GetUtcNow());
+            result.Error.Effect = EffectCertainty.Happened;
+        }
+
         return result;
     }
 
