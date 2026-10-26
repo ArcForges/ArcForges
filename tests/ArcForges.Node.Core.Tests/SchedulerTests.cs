@@ -130,7 +130,8 @@ public sealed class SchedulerTests
         await OnLinuxAsync(ParallelismAsync);
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [Trait("env", "windows-real")]
     public async Task TwoSessionsShareAdmissionsEquallyOnWindows()
     {
@@ -138,7 +139,8 @@ public sealed class SchedulerTests
         await OnWindowsAsync(FairnessAsync);
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [Trait("env", "linux-real")]
     public async Task TwoSessionsShareAdmissionsEquallyOnLinux()
     {
@@ -839,8 +841,8 @@ public sealed class SchedulerTests
             Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, id)).State);
         }
 
-        // The node's records (when admission started each task and when it ended): what the deficit round robin decides, independent of
-        // how soon each below-normal process runs under load.
+        // Slot occupancy includes process launch and finalization delays. This time-share assertion is exclusive under the testing
+        // policy; machine-isolated admission budgets do not isolate the below-normal processes from other projects' CPU load.
         var windows = new List<((long Start, long End) Window, bool First)>();
         foreach (var (id, _, isFirst) in tasks)
         {
