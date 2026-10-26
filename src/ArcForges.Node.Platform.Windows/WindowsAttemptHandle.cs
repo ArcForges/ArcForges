@@ -104,6 +104,9 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     /// <inheritdoc />
     public bool MemoryLimitHit => _memoryLimit;
 
+    /// <summary>Observes a real memory-limit packet after processing; a test records delivery, never supplies a packet.</summary>
+    internal Action<uint, int>? MemoryLimitMessageObserved { get; set; }
+
     /// <summary>The holder process, while the node launched it.</summary>
     internal LaunchedProcess? Holder { get; set; }
 
@@ -433,6 +436,11 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
                 }
 
                 break;
+        }
+
+        if (message is Native.JobMsgJobMemoryLimit or Native.JobMsgProcessMemoryLimit or Native.JobMsgNotificationLimit)
+        {
+            MemoryLimitMessageObserved?.Invoke(message, data);
         }
 
         Changed?.Invoke();
