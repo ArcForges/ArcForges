@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Collections.Concurrent;
 using System.Runtime.Versioning;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
@@ -21,9 +22,23 @@ public sealed class MemoryEvidenceTests
         const long MiB = 1024 * 1024;
         const long OwnNotification = 256 * MiB;
         using var harness = PlatformHarness.Start();
+        var packets = new ConcurrentQueue<(uint Message, nuint Key, int Pid)>();
+        var rawMemory = new TaskCompletionSource<(uint Message, nuint Key, int Pid)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Platform.JobMessageObserved = (message, key, pid) =>
+        {
+            packets.Enqueue((message, key, pid));
+            if (message is Native.JobMsgJobMemoryLimit or Native.JobMsgProcessMemoryLimit)
+            {
+                rawMemory.TrySetResult((message, key, pid));
+            }
+        };
         var handle = harness.Launch([TestPrograms.TestLoad, "hold", "--hold-ms", "120000"],
             new ContainerLimits { CommitLimitBytes = 384 * MiB, CommitNotificationBytes = OwnNotification });
-        await handle.Started.WaitAsync(bound, cancellation);
+        var root = await handle.Started.WaitAsync(bound, cancellation);
+        Assert.NotNull(root);
+        PlatformHarness.WaitFor(() => packets.Any(p => p.Message == Native.JobMsgNewProcess && p.Pid == root.Pid), bound,
+            "the real root process completion key");
+        var attemptKey = packets.First(p => p.Message == Native.JobMsgNewProcess && p.Pid == root.Pid).Key;
         var received = new TaskCompletionSource<(uint Message, int Pid)>(TaskCreationOptions.RunContinuationsAsynchronously);
         handle.MemoryLimitMessageObserved = (message, pid) =>
         {
@@ -36,7 +51,7 @@ public sealed class MemoryEvidenceTests
         nested.SetLimits(96 * MiB, activeProcessLimit: null, killOnClose: true);
         using var nestedPort = Native.CreateIoCompletionPort(new nint(-1), 0, 0, 1);
         Assert.False(nestedPort.IsInvalid);
-        nested.AssociateCompletionPort(nestedPort, 1, clearFirst: false);
+        nested.AssociateCompletionPort(nestedPort, attemptKey, clearFirst: false);
         var environment = new List<string>
         {
             "DOTNET_GCHeapHardLimit=C0000000",
@@ -111,6 +126,13 @@ public sealed class MemoryEvidenceTests
         }
 
         Assert.True(allEnded, "The test's own child process was left running.");
+        foreach (var item in packets)
+        {
+            TestContext.Current.TestOutputHelper?.WriteLine($"parent raw packet {item.Message}, key {item.Key}, pid {item.Pid}, attempt key {attemptKey}");
+        }
+
+        var rawPacket = await rawMemory.Task.WaitAsync(bound, cancellation);
+        TestContext.Current.TestOutputHelper?.WriteLine($"raw hard packet {rawPacket.Message}, key {rawPacket.Key}, pid {rawPacket.Pid}");
         var packet = await received.Task.WaitAsync(bound, cancellation);
         Assert.Contains(packet.Message, new[] { Native.JobMsgJobMemoryLimit, Native.JobMsgProcessMemoryLimit });
         Assert.True(nested.Accounting().PeakJobMemory > 0);
