@@ -17,12 +17,13 @@ public sealed class NodeGapMemoryTests
 {
     [Theory(Timeout = 180_000, DisableParallelization = true)]
     [Trait("isolation", "exclusive")]
-    [InlineData(272, 17, 256, true)]
-    [InlineData(272, 0, 256, true)]
-    [InlineData(16, 17, 256, false)]
-    [InlineData(192, 17, 160, true)]
+    [InlineData(272, 17, 256, true, true)]
+    [InlineData(272, 17, 256, true, false)]
+    [InlineData(272, 0, 256, true, true)]
+    [InlineData(16, 17, 256, false, false)]
+    [InlineData(192, 17, 160, true, true)]
     public async Task ANotificationCrossedWhileTheNodeIsDownIsRecoveredWithItsExitCondition(
-        int targetMiB, int exitCode, int notificationMiB, bool crossed)
+        int targetMiB, int exitCode, int notificationMiB, bool crossed, bool observeCommit)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job accounting and memory notification limits.");
@@ -32,6 +33,7 @@ public sealed class NodeGapMemoryTests
         await using var node = await InProcessNode.Create().StartAsync();
         var go = Path.Combine(node.Root, "memory-go");
         var ready = Path.Combine(node.Root, "memory-ready");
+        var release = Path.Combine(node.Root, "memory-release");
         var script = Path.Combine(node.Root, "memory.cmd");
         var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
             "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -42,7 +44,7 @@ public sealed class NodeGapMemoryTests
             + WindowsCommandLine.Build([powershell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]) + "\r\n"
             + "if errorlevel 1 exit /b 98\r\n"
             + WindowsCommandLine.Build([Tasks.TestLoad, "mem-ramp", "--target-mb", targetMiB.ToString(CultureInfo.InvariantCulture),
-                "--step-mb", "16"]) + "\r\n"
+                "--step-mb", "16", "--hold-ms", "60000", "--until-file", release]) + "\r\n"
             + "if errorlevel 1 exit /b 99\r\n"
             + string.Create(CultureInfo.InvariantCulture, $"exit /b {exitCode}\r\n"));
         Id taskId, attemptId;
@@ -69,6 +71,20 @@ public sealed class NodeGapMemoryTests
         // Exercise the actual current job limit, including a changed value; no holder-spec copy can answer this case.
         job.SetMemoryNotification(notificationMiB * MiB);
         File.WriteAllText(go, "go");
+        if (crossed)
+        {
+            await Tasks.WaitForAsync(() => job.Accounting().PeakJobMemory > notificationMiB * MiB,
+                Tasks.Bound, "the held ramp to cross its notification threshold");
+            if (observeCommit)
+            {
+                // A real accounting query can consume notification information before the holder records the exit.
+                var committed = job.CurrentCommit();
+                Assert.True(committed > notificationMiB * MiB, "The reader must observe the real held allocation.");
+                TestContext.Current.TestOutputHelper?.WriteLine($"observed committed {committed} bytes before release");
+            }
+        }
+
+        File.WriteAllText(release, "release");
         var files = Tasks.Files(node, attemptId);
         await Tasks.WaitForAsync(() => File.Exists(files.ExitPath), Tasks.Bound, "the holder's exit record while the node is down");
         var exit = Assert.IsType<ExitRecord>(ExitRecord.TryRead(files.ExitPath));
@@ -84,6 +100,8 @@ public sealed class NodeGapMemoryTests
             Assert.True(exit.MemPeakBytes < InitialNotification, "The changed-limit case must stay below the startup threshold.");
         }
 
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"holder peak {exit.MemPeakBytes}, job hard limit {job.Accounting().JobMemoryLimit}, violations [{string.Join(",", exit.LimitViolations)}], observed {observeCommit}");
         await node.StartAsync();
         await using var after = await node.ChannelAsync();
         var finished = await Tasks.WaitAsync(after, taskId);
