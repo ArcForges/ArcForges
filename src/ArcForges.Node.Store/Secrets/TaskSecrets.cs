@@ -244,7 +244,7 @@ public sealed class TaskSecrets
         return purged;
     }
 
-    private const string Tombstone = "key_id = 'purged', nonce = zeroblob(12), ciphertext = x'00', tag = zeroblob(16)";
+    internal const string Tombstone = "key_id = 'purged', nonce = zeroblob(12), ciphertext = x'00', tag = zeroblob(16)";
 }
 
 [System.Text.Json.Serialization.JsonSerializable(typeof(List<string>))]
