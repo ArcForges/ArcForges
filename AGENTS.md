@@ -12,7 +12,7 @@ any change. They are binding; this file summarizes them and adds the repository 
 
 - One Plan task at a time, and only inside a range the user authorized with the Plan's
   execution prompt. Work only on the active task, within its write scope.
-- One delegated worker or reviewer at a time, Opus 5.5 only, never Haiku.
+- One delegated worker or reviewer at a time, without a required provider or model.
 - Work in a worktree, `.worktree/<task-id>` on branch `task/<task-id>`, never in the main checkout.
 - Delegates work locally only. The coordinator alone pushes, opens PRs, posts review records,
   merges at the reviewed head and updates the Plan's records.
@@ -44,8 +44,7 @@ any change. They are binding; this file summarizes them and adds the repository 
   not be installed; no WSL distribution, `ArcForgesTest` included, is a test venue. No SSH.
 - Never touch Dependabot PRs, never enable auto-merge, never change repository security settings.
 - Diagnose before rerunning; bounded backoff; read hosted CI (external PRs) through the PR tools, never by polling loops.
-- Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; PR bodies
-  end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- Any commit co-author trailer or PR footer must identify the actual contributors and tools used.
 
 ## 4. Repository rules
 
