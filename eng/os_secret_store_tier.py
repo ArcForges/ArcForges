@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """The local runner of ArcForges's OS secret-store integration tier (ArcForges-Design docs/architecture/16-testing-strategy.md section 1).
 
-The tier (tests/ArcForges.OsSecretStoreTier: the node data key through NodeDataKeyRing against the real Windows Credential Manager)
+The tier (tests/ArcForges.OsSecretStoreTier, three tests: the node data key through NodeDataKeyRing and the node credential record
+through the cloud link's credential store against the real Windows Credential Manager, and the node key in the real CNG user key store)
 is the only suite of this repository that reaches a real OS secret store. Its evidence is the hosted run
 (.github/workflows/os-secret-store-tier.yml); a local run is weaker evidence, because the workstation's store is shared with the
 user's applications, and it happens only on the user's explicit opt-in, from a checkout:
@@ -11,9 +12,10 @@ user's applications, and it happens only on the user's explicit opt-in, from a c
 
 Without the opt-in nothing runs and the tier is reported as not run, with the reason (exit code 3). The runner never sets the opt-in
 itself and passes it only to the one `dotnet test` of the tier project, which runs alone (no other test or node process of the run),
-sequentially, under the tier fixture's limits (4 entries at once, 32 store calls, 10 s per call, 5 minutes). The run's name list is
-written to artifacts/evidence/os-secret-store-tier/ and is kept with the run's evidence. A run in which the tier's test did not run
-(skipped, or none found) fails (--fail-skips on, --minimum-expected-tests 1). The node binding's Linux Secret Service tier (on the
+sequentially, each test class under its own tier fixture's limits (4 entries at once, 32 store calls, 10 s per call, 5 minutes per
+class), and the whole process under PROCESS_TIMEOUT. The run's name list is written to artifacts/evidence/os-secret-store-tier/ and is
+kept with the run's evidence. A run in which any of the tier's three tests did not run (skipped, or fewer found) fails (--fail-skips on,
+--minimum-expected-tests 3). The node binding's Linux Secret Service tier (on the
 isolated Linux secret-store test host behind the Linux MCP server, ArcForges-Design AD-0019 section 6) is not delivered yet,
 so on Linux the tier is reported as not run.
 """
@@ -30,8 +32,9 @@ OPT_IN = "ARCFORGES_OS_SECRET_STORE_TESTS"
 PROJECT = "tests/ArcForges.OsSecretStoreTier/ArcForges.OsSecretStoreTier.csproj"
 EVIDENCE = ROOT / "artifacts/evidence/os-secret-store-tier"
 NOT_RUN = 3
-# The fixture bounds the tier to five minutes; the process bound adds the cleanup allowance after a failed run (8 calls of at
-# most 10 s) and the test host's start-up, so a failing run is never killed mid-cleanup.
+# Each class's fixture bounds that class to five minutes; the three classes share this one process bound, which is kept (the hosted
+# job stays bounded): it covers one class's five minutes plus the cleanup allowance after a failed run (8 calls of at most 10 s) and the
+# test host's start-up. A run whose classes together used more than that is stopped here and fails; a passing run takes seconds.
 PROCESS_TIMEOUT = 420
 
 
@@ -54,7 +57,7 @@ def build_command() -> list[str]:
 
 def test_command() -> list[str]:
     # A skipped-only or empty run fails: the tier's evidence is a test that ran.
-    return ["dotnet", "test", "--project", PROJECT, "-c", "Release", "--no-build", "--minimum-expected-tests", "1", "--fail-skips", "on",
+    return ["dotnet", "test", "--project", PROJECT, "-c", "Release", "--no-build", "--minimum-expected-tests", "3", "--fail-skips", "on",
             "--results-directory", str(EVIDENCE), "--report-xunit-trx", "--report-xunit-trx-filename", "os-secret-store-tier.trx"]
 
 

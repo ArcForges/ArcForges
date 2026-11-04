@@ -31,7 +31,10 @@ public sealed class NodeKeyCngTierTests(OsSecretStoreTier tier) : IClassFixture<
             var store = new NodeKeyStore(root, counted);
             var nodeId = RandomNumberGenerator.GetBytes(16);
             const string origin = "https://os-secret-store-tier.invalid";
-            var name = tier.NewEntry(NodeKeyStore.KeyName(nodeId, origin), counted);
+            // The fixture's listing, read-back and cleanup go to the backend itself: the fixture counts its own calls, so a counted
+            // wrapper there would count each of them twice (and be refused during the cleanup of a failed run).
+            var entries = new KeyEntries(production.Backend);
+            var name = tier.NewEntry(NodeKeyStore.KeyName(nodeId, origin), entries);
 
             byte[] publicKey;
             using (var key = store.Create(nodeId, origin, TimeProvider.System))
@@ -61,7 +64,7 @@ public sealed class NodeKeyCngTierTests(OsSecretStoreTier tier) : IClassFixture<
             }
 
             Assert.True(store.Delete());
-            tier.VerifyAbsent(name, counted);
+            tier.VerifyAbsent(name, entries);
         }
         finally
         {
@@ -69,13 +72,11 @@ public sealed class NodeKeyCngTierTests(OsSecretStoreTier tier) : IClassFixture<
         }
     }
 
-    /// <summary>The CNG backend with every operation counted by the tier, as an entry store for the fixture's listing and cleanup.</summary>
+    /// <summary>The CNG backend with every operation of the node's own path counted by the tier.</summary>
     [SupportedOSPlatform("windows")]
-    private sealed class CountedKeys(OsSecretStoreTier tier, INodeKeyBackend backend) : INodeKeyBackend, ISecretBackingStore
+    private sealed class CountedKeys(OsSecretStoreTier tier, INodeKeyBackend backend) : INodeKeyBackend
     {
         public string Kind => backend.Kind;
-
-        public SecretStoreIsolation Isolation => SecretStoreIsolation.SameUserShared;
 
         public INodeKey? Open(string name) => tier.Call("open " + name, () => backend.Open(name));
 
@@ -93,14 +94,6 @@ public sealed class NodeKeyCngTierTests(OsSecretStoreTier tier) : IClassFixture<
 
         public IReadOnlyList<string> Names() => [];
 
-        public void Write(string opaqueTarget, ReadOnlySpan<byte> secret) => throw new NotSupportedException("A node key is created, not written.");
-
-        public byte[]? Read(string opaqueTarget)
-        {
-            using var key = Open(opaqueTarget);
-            return key?.PublicKey;
-        }
-
         private void RequireListed(string name)
         {
             if (!tier.IsListed(name))
@@ -109,6 +102,23 @@ public sealed class NodeKeyCngTierTests(OsSecretStoreTier tier) : IClassFixture<
             }
         }
     }
+}
+
+/// <summary>The CNG backend as the fixture's entry store (its read-back and cleanup), uncounted: the fixture counts those calls itself.</summary>
+[SupportedOSPlatform("windows")]
+internal sealed class KeyEntries(INodeKeyBackend backend) : ISecretBackingStore
+{
+    public SecretStoreIsolation Isolation => SecretStoreIsolation.SameUserShared;
+
+    public void Write(string opaqueTarget, ReadOnlySpan<byte> secret) => throw new NotSupportedException("A node key is created, not written.");
+
+    public byte[]? Read(string opaqueTarget)
+    {
+        using var key = backend.Open(opaqueTarget);
+        return key?.PublicKey;
+    }
+
+    public bool Delete(string opaqueTarget) => backend.Delete(opaqueTarget);
 }
 
 /// <summary>
@@ -134,7 +144,9 @@ public sealed class NodeCredentialTierTests(OsSecretStoreTier tier) : IClassFixt
             var storage = new CloudCredentialStore(root, new NodeSecretStore(counted, selected.Backend, selected.Protection, selected.FallbackReason));
             var nodeId = RandomNumberGenerator.GetBytes(16);
             var center = CenterEndpoint.Parse("https://os-secret-store-tier.invalid/api");
-            var target = tier.NewEntry(CloudCredentialStore.Target(nodeId, center.Origin), counted);
+            // The fixture's entry store is the selected store itself: the fixture counts its read-back once; the counted wrapper there
+            // counted that read a second time (the 7th of 6 calls in hosted run 41866320548).
+            var target = tier.NewEntry(CloudCredentialStore.Target(nodeId, center.Origin), selected.Store);
             var record = new CloudCredentialRecord
             {
                 NodeId = Convert.ToHexStringLower(nodeId),
@@ -151,7 +163,9 @@ public sealed class NodeCredentialTierTests(OsSecretStoreTier tier) : IClassFixt
             storage.WriteRecord(target, rotated);
             Assert.Equal(rotated.RefreshToken, storage.ReadRecord(target)!.RefreshToken);
             Assert.True(storage.DeleteRecord(target));
-            tier.VerifyAbsent(target, counted);
+            tier.VerifyAbsent(target, selected.Store);
+
+            // Write, read, write, read, delete (the node's path) and the fixture's read-back.
             Assert.Equal(6, tier.Calls);
         }
         finally

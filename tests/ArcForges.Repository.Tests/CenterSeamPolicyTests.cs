@@ -110,6 +110,20 @@ public sealed partial class CenterSeamPolicyTests
         var callers = Files("src").Where(path => path.EndsWith(".cs", StringComparison.Ordinal)
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\.AdoptAsync\(")).ToList();
         Assert.Empty(callers);
+
+        // Nothing else in src/ builds, names or writes a credential record or its link file: the link is the only writer, and its only new
+        // record is the one AdoptAsync builds from NodeCredentials (a rotation clones the record it holds).
+        var writers = Files("src").Where(path => path.EndsWith(".cs", StringComparison.Ordinal)
+            && CredentialWriting().IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)))).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(["src/ArcForges.Node.CloudLink/CloudLinkService.cs"], writers);
+        var service = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/CloudLinkService.cs"));
+        Assert.Single(Regex.Matches(service, @"\bnew\s+CloudCredentialRecord\b"));
+        Assert.Single(Regex.Matches(service, @"\bnew\s+CloudLinkFile\b"));
+        var adopt = service[service.IndexOf("public async Task AdoptAsync(NodeCredentials credentials, CenterEndpoint center)", StringComparison.Ordinal)..];
+        adopt = adopt[..adopt.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Assert.Contains("new CloudCredentialRecord", adopt, StringComparison.Ordinal);
+        Assert.Contains("new CloudLinkFile", adopt, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(service, @"\bNodeCredentials\b(?!\.)"));
         var hooks = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/CloudLinkTestHooks.cs"));
         Assert.Equal(["ARCFORGES_TEST_CENTER_URL", "ARCFORGES_TEST_CONNECT_LOG", "ARCFORGES_TEST_CLOUDLINK_REFRESH_SECONDS"],
             Regex.Matches(hooks, "\"(ARCFORGES_TEST_[A-Z_]+)\"").Select(match => match.Groups[1].Value));
@@ -126,4 +140,8 @@ public sealed partial class CenterSeamPolicyTests
 
     [GeneratedRegex(@"\bnew\s+Socket\([^)]*\)")]
     private static partial Regex SocketConstruction();
+
+    // A credential record or link file built, a credential target named, or a record or link written (outside the store class itself).
+    [GeneratedRegex(@"\bnew\s+(?:CloudCredentialStore|CloudCredentialRecord|CloudLinkFile)\b|\bCloudCredentialStore\.Target\(|\.Write(?:Record|Link)\(")]
+    private static partial Regex CredentialWriting();
 }

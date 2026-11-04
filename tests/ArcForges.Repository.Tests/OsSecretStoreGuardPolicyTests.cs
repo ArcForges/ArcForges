@@ -108,6 +108,14 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     [InlineData("var ecdsa = new System.Security.Cryptography.ECDsaCng(key);")]
     [InlineData("Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,")]
     [InlineData("new CngKeyCreationParameters { ExportPolicy = CngExportPolicies.AllowPlaintextExport }")]
+    [InlineData("var container = new CspParameters { KeyContainerName = name };")]
+    [InlineData("using var rsa = new RSACryptoServiceProvider(parameters);")]
+    [InlineData("[LibraryImport(\"ncrypt.dll\")] private static partial int NCryptOpenStorageProvider(out nint provider, string name, int flags);")]
+    [InlineData("int status = NCryptDeleteKey(handle, 0);")]
+    [InlineData("using var rsa = new RSACng(key);")]
+    [InlineData("using var dh = new ECDiffieHellmanCng(key);")]
+    [InlineData("CngKey.Open(name, provider, CngKeyOpenOptions.UserKey)")]
+    [InlineData("key.Export(CngKeyBlobFormat.EccPrivateBlob)")]
     public void TheCngCheckCatchesTheKeyStoreTypes(string source) =>
         Assert.Matches(CngReference(), source);
 
@@ -174,6 +182,9 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         Assert.Matches(new Regex(@"OperatingSystem\.IsWindows\(\)\s*&&\s*NodeSecretStores\.UsesOsSecretStore\(testMode, optIn\)\s*\?\s*new CngNodeKeyBackend\(\)\s*:\s*new FileNodeKeyBackend\(dataRoot\)"), keys);
         Assert.Equal(3, Regex.Count(keys, @"OsSecretStoreGuard\.ThrowIfDenied\(""a CNG user key store""\);"));
         Assert.Contains("ExportPolicy = CngExportPolicies.None,", keys, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(keys, @"\bCngKey\.Create\("));
+        Assert.Contains("CngKey.Create(CngAlgorithm.ECDsaP256, name, CngCreationParameters())", keys, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(keys, @"\bnew\(\)\s*\{\s*Provider = CngProvider\.MicrosoftSoftwareKeyStorageProvider,\s*ExportPolicy = CngExportPolicies\.None,\s*KeyUsage = CngKeyUsages\.Signing,\s*\}"));
         Assert.Contains("options.NodeKeys?.Invoke(dataRoot) ?? NodeKeyStores.ForNode(dataRoot, options.TestMode)", host, StringComparison.Ordinal);
 
         // Every --test-mode process of the arcforges host and the supervisor sets the runtime tripwire at startup unless the exact opt-in
@@ -363,8 +374,8 @@ public sealed partial class OsSecretStoreGuardPolicyTests
             || (Indent(lines[index]) < 6 && lines[index].Trim().Length > 0), lines.Length);
         Assert.Contains("dotnet test --project " + TierProject, string.Join('\n', lines[step..next]), StringComparison.Ordinal);
         Assert.Contains(lines[step..next], line => line.Trim() == "timeout-minutes: 7");
-        Assert.Contains("--no-build --minimum-expected-tests 1 --fail-skips on ", string.Join('\n', lines[step..next]), StringComparison.Ordinal);
-        Assert.Contains("\"--minimum-expected-tests\", \"1\", \"--fail-skips\", \"on\"", File.ReadAllText(Path.Combine(Root, TierRunner)),
+        Assert.Contains("--no-build --minimum-expected-tests 3 --fail-skips on ", string.Join('\n', lines[step..next]), StringComparison.Ordinal);
+        Assert.Contains("\"--minimum-expected-tests\", \"3\", \"--fail-skips\", \"on\"", File.ReadAllText(Path.Combine(Root, TierRunner)),
             StringComparison.Ordinal);
 
         // Triggers and the job condition of the AD-0016 amendment: external PRs, merge_group, dispatch and a weekly schedule; never a
@@ -535,8 +546,11 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         RegexOptions.IgnoreCase)]
     private static partial Regex DirectStoreAccess();
 
-    // The CNG key store by its types (AF-CTR-04: the node key); only the key composition root and the tier name them.
-    [GeneratedRegex(@"\b(?:CngKey|ECDsaCng|CngProvider|CngAlgorithm|CngKeyCreationParameters|CngExportPolicies)\b")]
+    // The OS key stores (AF-CTR-04: the node key): the CNG types, the CryptoAPI key containers and the NCrypt API; only the key composition
+    // root and the tier name them.
+    [GeneratedRegex(@"\b(?:CngKey|ECDsaCng|CngProvider|CngAlgorithm|CngKeyCreationParameters|CngExportPolicies|CngKeyUsages|CngKeyOpenOptions"
+        + @"|CngKeyCreationOptions|CngKeyBlobFormat|CngUIPolicy|RSACng|DSACng|ECDiffieHellmanCng|AesCng|TripleDESCng|CspParameters|CspKeyContainerInfo"
+        + @"|RSACryptoServiceProvider|DSACryptoServiceProvider)\b|(?i:\bncrypt)")]
     private static partial Regex CngReference();
 
     [GeneratedRegex(@"\[Trait\(\s*""env""\s*,\s*""os-secret-store""\s*\)\]")]
