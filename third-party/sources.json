@@ -19,8 +19,8 @@
   },
   {
     "File": "dotnet.LICENSE.txt",
-    "Package": ".NET 10.0.12",
-    "Source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+    "Package": ".NET 10.0.14",
+    "Source": "https://raw.githubusercontent.com/dotnet/dotnet/0427b9abbead3fa64c6655eb4290c537397131fa/LICENSE.TXT",
     "Sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310"
   }
 ]

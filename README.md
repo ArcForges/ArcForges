@@ -39,7 +39,7 @@ delivery plan: [Plan](https://github.com/ArcForges/Plan).
 
 ## Build and test
 
-Use the .NET SDK in `global.json` (10.0.401) on Windows 11 or Linux.
+Use the .NET SDK in `global.json` (10.0.403) on Windows 11 or Linux.
 
 ```sh
 dotnet restore ArcForges.slnx --locked-mode
