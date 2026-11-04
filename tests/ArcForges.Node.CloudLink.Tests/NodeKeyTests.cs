@@ -138,6 +138,23 @@ public sealed class NodeKeyTests : IDisposable
     }
 
     [Fact]
+    public void AKeyStoreThatCannotListItsKeysStillDeletesTheKeyByItsDerivedName()
+    {
+        // The CNG store is not enumerated: without run/node-key.json the name derived from the node ID and the origin finds the key.
+        var files = new FileNodeKeyBackend(_root);
+        var store = new NodeKeyStore(_root, new NotListed(files));
+        using (store.Create(_nodeId, Center.Origin, TimeProvider.System))
+        {
+        }
+
+        File.Delete(Path.Combine(_root, "run", "node-key.json"));
+        Assert.Equal(NodeKeyDeletion.None, store.Delete(_nodeId, []));
+        Assert.Single(Directory.GetFiles(files.Directory));
+        Assert.Equal(NodeKeyDeletion.Deleted, store.Delete(_nodeId, [Center.Origin]));
+        Assert.Empty(Directory.GetFiles(files.Directory));
+    }
+
+    [Fact]
     public void ARecordOfAnotherBackendIsKeptAndReportedNotDeletedBlindly()
     {
         var store = NodeKeyStores.ForTestDataRoot(_root);
@@ -293,5 +310,19 @@ public sealed class NodeKeyTests : IDisposable
         var fingerprint = CloudIdentity.Fingerprint(der);
         Assert.Matches("^[0-9A-F]{4}(-[0-9A-F]{4}){4}$", fingerprint);
         Assert.Equal(hex, fingerprint.Replace("-", string.Empty, StringComparison.Ordinal));
+    }
+
+    /// <summary>A key backend that cannot list its keys (as the CNG store).</summary>
+    private sealed class NotListed(INodeKeyBackend inner) : INodeKeyBackend
+    {
+        public string Kind => inner.Kind;
+
+        public INodeKey? Open(string name) => inner.Open(name);
+
+        public INodeKey Create(string name) => inner.Create(name);
+
+        public bool Delete(string name) => inner.Delete(name);
+
+        public IReadOnlyList<string> Names() => [];
     }
 }
