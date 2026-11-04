@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using ArcForges.Client;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using ArcForges.Contracts.Fleet.V1;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
@@ -72,6 +74,13 @@ public sealed record NodeHostOptions
     /// (16-testing-strategy section 2; ArcForges.Repository.Tests checks this).
     /// </summary>
     internal Func<string, NodeSecretStore>? SecretStore { get; init; }
+
+    /// <summary>
+    /// The node key store for a data root (AF-CTR-04). Null (the executable): <see cref="NodeKeyStores.ForNode(string, bool)"/>, a CNG user
+    /// key on Windows in production, else an owner-only file; with <see cref="TestMode"/> the file-backed key of the test data root. Every
+    /// in-process test node sets it to the file-backed store (ArcForges.Repository.Tests checks this).
+    /// </summary>
+    internal Func<string, NodeKeyStore>? NodeKeys { get; init; }
 
     /// <summary>
     /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
@@ -257,10 +266,12 @@ public static class NodeHost
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         var processor = new CommandProcessor(store, journal, hub);
-        var settings = new NodeSettingsManager(configPath, dataRoot, log);
+        var testCenter = CloudLinkTestHooks.Center(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.CenterUrl));
+        var settings = new NodeSettingsManager(configPath, dataRoot, log) { TestMode = options.TestMode, CenterOverride = testCenter };
 
         // The node data key loads at startup, outside the writer (secret-store I/O must never run under the writer lock).
-        var keys = new NodeDataKeyRing(store, options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode));
+        var secretStore = options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode);
+        var keys = new NodeDataKeyRing(store, secretStore);
         var keyLoad = Task.Run(() =>
         {
             var keyId = keys.Prepare(out var reason);
@@ -336,6 +347,38 @@ public static class NodeHost
             ?? AppContext.BaseDirectory;
         node.SetFact(VersionIntegrity.FactName, VersionIntegrity.InitialFact(versionDirectory));
 
+        // 02 section 2 step 8, the cloud link (AF-CTR-04): the node credential in the same secret store as the data key, the node key from
+        // its composition root; state changes are journaled on topic ACCOUNT.
+        var cloud = new CloudLinkService(new CloudLinkOptions
+        {
+            DataRoot = dataRoot,
+            NodeId = node.NodeId,
+            Secrets = secretStore,
+            Keys = options.NodeKeys?.Invoke(dataRoot) ?? NodeKeyStores.ForNode(dataRoot, options.TestMode),
+            Center = settings.Center,
+            Log = log,
+            Clock = clock,
+            NodeInfo = () => store.Read(reader => DescribeNode(node, reader)),
+            Publish = publication => processor.ExecuteAsync(context =>
+            {
+                context.Emit(EventTopic.Account, new NodeEvent { Account = publication.Status });
+                if (publication.Notice is { } notice)
+                {
+                    Notifications.Add(context, notice.Kind, Severity.Warning, notice.Title, notice.Body);
+                }
+
+                return 0;
+            }),
+            ConnectLog = CloudLinkTestHooks.Connections(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.ConnectLog)),
+            RefreshInterval = CloudLinkTestHooks.Refresh(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.RefreshSeconds)),
+        });
+        await using var cloudScope = cloud.ConfigureAwait(false);
+        node.CloudLink = cloud;
+        if (testCenter is not null)
+        {
+            log.Info("node.test_center", new LogField("center", testCenter.Url));
+        }
+
         // The capability report's root_* facts follow the root limits the scheduler applies from the measured budgets (03 section 5.1).
         execution.RootLimitsApplied = _ => node.Reevaluate();
         using var stopSignals = RegisterSignals(node);
@@ -373,7 +416,8 @@ public static class NodeHost
                 Opened = session => execution.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
                 Closed = session => execution.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
             };
-            server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(ClientImages.TestHookApplies(options.TestMode, endpoint.Address, configPath, dataRoot)));
+            server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(ClientImages.TestHookApplies(options.TestMode, endpoint.Address, configPath, dataRoot)),
+                cloud);
             try
             {
                 await server.StartAsync(node.Stopping).ConfigureAwait(false);
@@ -411,6 +455,7 @@ public static class NodeHost
             }
 
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
+            await cloud.StartAsync().ConfigureAwait(false);
             if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
             {
                 // 06 section 5: arcforges-guard.service guards the attempt units while the node is down; started when installed.
@@ -456,7 +501,7 @@ public static class NodeHost
             {
             }
 
-            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, keyLoad, versionCheck]).ConfigureAwait(false);
+            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, keyLoad, versionCheck], cloud).ConfigureAwait(false);
         }
         finally
         {
@@ -473,7 +518,7 @@ public static class NodeHost
     }
 
     private static async Task<int> ShutdownAsync(NodeRuntime node, LocalRpcServer server, WindowsReadyEvent? ready, SystemdNotifier notifier,
-        CommandProcessor processor, string dataRoot, CancellationTokenSource loops, Task[] background)
+        CommandProcessor processor, string dataRoot, CancellationTokenSource loops, Task[] background, CloudLinkService cloud)
     {
         var started = node.Clock.GetTimestamp();
         using var overrun = new Timer(_ =>
@@ -508,6 +553,9 @@ public static class NodeHost
 
         await loops.CancelAsync().ConfigureAwait(false);
         await Task.WhenAny(Task.WhenAll(background), Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+
+        // The cloud link stops and flushes a rotated credential whose write failed (AF-CTR-04 CTR4-NODE-05).
+        await cloud.DisposeAsync().ConfigureAwait(false);
 
         // Running attempts stay with their holders (their guards take over the disk limits); kill_with_node attempts end here.
         if (node.Execution is { } execution)
@@ -583,6 +631,21 @@ public static class NodeHost
         catch (OperationCanceledException)
         {
         }
+    }
+
+    /// <summary>The node as it describes itself to its center (fleet.proto <c>EnrollingNodeInfo</c>; AF-CTR-04 CTR4-NODE-09).</summary>
+    private static EnrollingNodeInfo DescribeNode(NodeRuntime node, StoreReader reader)
+    {
+        var info = node.Info(reader).Node;
+        return new EnrollingNodeInfo
+        {
+            NodeId = info.NodeId,
+            Name = info.Name,
+            Os = info.Os,
+            Arch = info.Arch,
+            Version = NodeContract.ProductVersion,
+            Role = info.Role == NodeRole.Host ? NodeRole.Host : NodeRole.Unspecified,
+        };
     }
 
     /// <summary>The observation sources of 03 section 1 (independent of enforcement: an observe-only node still observes).</summary>

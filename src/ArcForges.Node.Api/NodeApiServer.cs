@@ -26,7 +26,9 @@ public static class NodeApiServer
     /// <param name="sessions">The client sessions.</param>
     /// <param name="streamBuffer">The per-subscriber buffer (default 2,048, 02 section 1).</param>
     /// <param name="images">The executables that verify each client kind (default: the node's own, <see cref="ClientImages.ForNode"/>).</param>
-    public static LocalRpcServer Build(LocalRpcEndpoint endpoint, NodeRuntime node, ClientSessions sessions, int streamBuffer = 2048, ClientImages? images = null)
+    /// <param name="cloud">The cloud link (AF-CTR-04): <c>AccountService</c> is served when it is given.</param>
+    internal static LocalRpcServer Build(LocalRpcEndpoint endpoint, NodeRuntime node, ClientSessions sessions, int streamBuffer = 2048, ClientImages? images = null,
+        ArcForges.Node.CloudLink.CloudLinkService? cloud = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(node);
@@ -44,6 +46,14 @@ public static class NodeApiServer
         builder.AddService(new QueueServiceHandler(node, sessions, executors));
         builder.AddService(new PolicyServiceHandler(node, sessions, executors));
         builder.AddService(approvals);
+        if (cloud is not null)
+        {
+            // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s; the methods of later parts and tasks answer UNIMPLEMENTED.
+            builder.AddService(new AccountServiceHandler(node, sessions, cloud));
+            builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetAccountStatus", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+            builder.RegisterMethod(AccountServiceHandler.ServiceName, "SignOut", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
+        }
+
         node.ResumeApprovals = approvals.ResumeAsync;
         builder.AuthorizeConnections(connection =>
         {

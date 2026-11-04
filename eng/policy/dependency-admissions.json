@@ -40,36 +40,52 @@
       "reviewedOn": "2026-10-15"
     },
     {
-      "id": "ArcForges.Contracts.Foundation",
-      "version": "1.0.0-ci.375.1",
-      "contentHash": "v6kJFsDVjpdmii/UHu6hVoT6u3q7eYEfqrvwYD8WAd8vJS8DpTkh/dOkoHAYornz4Ih5oijK9ZBl94Cb2Zsl+g==",
-      "nuspecSha256": "1ee94935433c8d198323a4f4cf4b85a46ddd672064a17dbce14edeadcb336d2d",
+      "id": "ArcForges.Contracts.Fleet",
+      "version": "1.0.0-ci.424.1",
+      "contentHash": "mDAdQnY9DNnlkzhKvEAHuwJtdtXt1Jfs8vNhHN52oym6LGfVyRt9YZ2XG4yI4lXGGqIK1b/ObUIVXb93L93LgQ==",
+      "nuspecSha256": "8c42bafed2848f04ff7bff55b886f0674445b01437bbfd301239f7248818df06",
       "licence": "Apache-2.0",
       "class": "runtime",
-      "usedBy": "src/ArcForges.Node.Store (ArcError, RetryAdvice, Id), src/ArcForges.Node.Core and src/ArcForges.Node.Api (RequestMeta, ResponseMeta, ArcError, Receipt, Revision, Instant, PageRequest), src/ArcForges.Client and src/ArcForges.CommandLine (command IDs, errors), and through them arcforges, tools/ArcForges.Bench and the tests; pinned directly so the whole graph resolves the cohort of ArcForges.Contracts.Node.",
+      "usedBy": "src/ArcForges.Node.CloudLink (the generated NodeEnrollmentService client and the fleet messages) and through it src/ArcForges.Node.Api, arcforges and the cloud-link tests.",
       "source": "https://github.com/ArcForges/Contracts",
-      "sourceCommit": "dea4cd831ce74dbf7ed8f875a68fcf0a74cbe04e",
-      "provenance": "nuget.org; nuspec repository commit dea4cd8, the AF-CON-01 merge on Contracts main (publication run 38675685268, cohort 1.0.0-ci.375.1), an ancestor of Contracts main (e2b0346 on 2026-10-15). Not the rolled-back 1.0.0-ci.350.1.",
+      "sourceCommit": "a5bc52fd66505a1b5b0f767a6a4c6ec70167eaab",
+      "provenance": "nuget.org; nuspec repository commit a5bc52f, the AF-CTR-04 C0 merge on Contracts main (#125; cohort 1.0.0-ci.424.1), an ancestor of Contracts main. Depends on ArcForges.Contracts.Foundation and ArcForges.Contracts.Node 1.0.0-ci.424.1, Google.Protobuf 3.36.1 and Grpc.Core.Api 2.84.0, all already in the graph.",
+      "aot": "IsAotCompatible generated code (protobuf messages and the gRPC client stub); part of the zero-warning Native AOT publish of arcforges on linux-x64 (AF-CTR-04 N1; win-x64 by the Windows leg).",
+      "reason": "arcforges.fleet.v1: the node-facing NodeEnrollmentService (RefreshNodeSession, ReportNodeInfo, SignOutNode; the sign-in methods for part N2) that the cloud link calls (AF-CTR-04 B.6).",
+      "admittedBy": "AF-CTR-04 N1",
+      "reviewedOn": "2026-11-04"
+    },
+    {
+      "id": "ArcForges.Contracts.Foundation",
+      "version": "1.0.0-ci.424.1",
+      "contentHash": "PHevLdFSyMeQHmU6E8Nuyj9Ev0jhByoYtAaQ1XWkm+mBdbbLlATrb17gFXQ/E9SH7TFwLUE0A4KUyOUbxZTjmA==",
+      "nuspecSha256": "5fc086095810b38712a2f8bcde77db960f550243c2a1ee5465e077ed7ce3fad9",
+      "licence": "Apache-2.0",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.Store (ArcError, RetryAdvice, Id), src/ArcForges.Node.Core and src/ArcForges.Node.Api (RequestMeta, ResponseMeta, ArcError, Receipt, Revision, Instant, PageRequest), src/ArcForges.Client and src/ArcForges.CommandLine (command IDs, errors), src/ArcForges.Node.CloudLink (the fleet requests and replies), and through them arcforges, tools/ArcForges.Bench and the tests; pinned directly so the whole graph resolves the cohort of ArcForges.Contracts.Node.",
+      "source": "https://github.com/ArcForges/Contracts",
+      "sourceCommit": "a5bc52fd66505a1b5b0f767a6a4c6ec70167eaab",
+      "provenance": "nuget.org; nuspec repository commit a5bc52f, the AF-CTR-04 C0 merge on Contracts main (#125; cohort 1.0.0-ci.424.1), an ancestor of Contracts main. The ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, 2026-11-04). Not the rolled-back 1.0.0-ci.350.1.",
       "aot": "Generated protobuf code (Google.Protobuf 3.36.1, IsAotCompatible); part of the zero-warning Native AOT publish of arcforges-bench on win-x64 and linux-x64 (AF-NODE-02).",
-      "reason": "Foundation contract types of the node API and store at the AF-CON-01 cohort. Overrides the exact 1.0.0-ci.216.1 constraint of the DesktopPlatform 1.0.0-ci.138.1 packages (Security.Secrets, Security, Foundation, Observability, Capabilities): see nugetWarningExceptions NU1608.",
-      "admittedBy": "AF-NODE-02",
-      "reviewedOn": "2026-10-15"
+      "reason": "Foundation contract types of the node API, the store and the cloud link at the AF-CTR-04 C0 cohort (the cohort of ArcForges.Contracts.Node and ArcForges.Contracts.Fleet). Overrides the exact 1.0.0-ci.216.1 constraint of the DesktopPlatform 1.0.0-ci.141.1 packages (Security.Secrets, Security, Foundation, Observability, Capabilities): see nugetWarningExceptions NU1608.",
+      "admittedBy": "AF-NODE-02; moved to 1.0.0-ci.424.1 by AF-CTR-04 N1",
+      "reviewedOn": "2026-11-04"
     },
     {
       "id": "ArcForges.Contracts.Node",
-      "version": "1.0.0-ci.375.1",
-      "contentHash": "dS9y7TQcsIAcLtEKqErtUfRTL4/lKnaVFo9sRMjfqhmSi8IJG9ai5Rtp0G00ACU57XHM7nNuOhlxPICpT/Oo2A==",
-      "nuspecSha256": "51543c17d2b3b6c40ed7a5065b847e19eac1059173b0743e1fb67d2d8c3a5de8",
+      "version": "1.0.0-ci.424.1",
+      "contentHash": "eD0RFfcgU3p5oB1Z978BR7KPoag06QjfJu+mMeTn9wNdmzmGOIVr2v6NHvlcpxOe6PJtNSry3/lvqm0Pg533Qg==",
+      "nuspecSha256": "32b520f7dd7a2ac221ba1077aaba8779edc6295ff434df37c50412406ce63557",
       "licence": "Apache-2.0",
       "class": "runtime",
       "usedBy": "src/ArcForges.Node.Store, src/ArcForges.Node.Core, src/ArcForges.Node.Api (NodeService and NodeEventService bases), src/ArcForges.Client (the generated clients, NodeEvent, ClientHello) and src/ArcForges.CommandLine, and through them arcforges, tools/ArcForges.Bench and the tests.",
       "source": "https://github.com/ArcForges/Contracts",
-      "sourceCommit": "dea4cd831ce74dbf7ed8f875a68fcf0a74cbe04e",
-      "provenance": "nuget.org; the published Contracts cohort of AF-CON-01 (1.0.0-ci.375.1, run 38675685268) from Contracts main dea4cd8, an ancestor of Contracts main. Transitive Google.Protobuf 3.36.1 (BSD-3-Clause) and Grpc.Core.Api 2.84.0 (Apache-2.0) are pinned by the locks.",
+      "sourceCommit": "a5bc52fd66505a1b5b0f767a6a4c6ec70167eaab",
+      "provenance": "nuget.org; the published Contracts cohort of AF-CTR-04 C0 (1.0.0-ci.424.1) from Contracts main a5bc52f (#125), an ancestor of Contracts main. Transitive Google.Protobuf 3.36.1 (BSD-3-Clause) and Grpc.Core.Api 2.84.0 (Apache-2.0) are pinned by the locks, unchanged.",
       "aot": "IsAotCompatible generated code; arcforges (node and CLI, gRPC server and client stubs) publishes Native AOT with zero warnings on win-x64 and linux-x64 (AF-NODE-01), as does arcforges-bench (AF-NODE-02).",
-      "reason": "arcforges.node.v1, the node contract the store serializes (enums as proto numbers, protobuf columns as contract messages; node-store.md section 1). AF-NODE-02 scope: pin the published Contracts cohort of AF-CON-01.",
-      "admittedBy": "AF-NODE-02",
-      "reviewedOn": "2026-10-15"
+      "reason": "arcforges.node.v1, the node contract the store serializes and the API serves; AF-CTR-04 C0 adds AccountStatus fields, NodeSettings.center_url and UpdateNodeSettings.center_url, which part N1 serves.",
+      "admittedBy": "AF-NODE-02; moved to 1.0.0-ci.424.1 by AF-CTR-04 N1",
+      "reviewedOn": "2026-11-04"
     },
     {
       "id": "ArcForges.LocalRpc",
@@ -185,6 +201,39 @@
       "reviewedOn": "2026-10-16"
     },
     {
+      "id": "Grpc.Net.Client",
+      "version": "2.84.0",
+      "contentHash": "My6Fms2YCyAbihTBZZ3kLS39iTY2pkMAzGDBTC6XhPOujg70eB07AEJ7tPiW3tZ70bhFzHcc3+d4j3DaIPF3aA==",
+      "nuspecSha256": "32a43f3448ab90bb71c946533db4d5135cef4728a3ee29bf88d9a0cbf1e67413",
+      "licence": "Apache-2.0",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.CloudLink (GrpcChannel over the one HTTP seam, CenterHttpClient); already in the graph through ArcForges.LocalRpc, which pins it exactly at 2.84.0.",
+      "source": "https://github.com/grpc/grpc-dotnet",
+      "sourceCommit": "4c6997a214601422dd66c5c74c1969db749479e9",
+      "provenance": "nuget.org; nuspec repository commit 4c6997a (grpc-dotnet v2.84.0). Transitive Grpc.Net.Common 2.84.0 and Microsoft.Extensions.Logging.Abstractions 8.0.1 are pinned by the locks and already in the graph through ArcForges.LocalRpc.",
+      "aot": "Published Native AOT with zero warnings in DesktopPlatform PRF.05 (tests/ReleaseArtifactTests/GrpcWeb, e02ebe4) with Grpc.Net.Client.Web and a generated client; arcforges publishes it without warnings on linux-x64 (AF-CTR-04 N1).",
+      "reason": "The cloud link uses GrpcChannel directly (AF-CTR-04 Q12: admit Grpc.Net.Client directly); the same version as the LocalRpc graph.",
+      "admittedBy": "AF-CTR-04 N1",
+      "reviewedOn": "2026-11-04"
+    },
+    {
+      "id": "Grpc.Net.Client.Web",
+      "version": "2.84.0",
+      "contentHash": "6KB6IFGx+KfGMaN06nATBVgvgsOEVf12/nJHvdAPsY2mULmWCSn4moFUT8UnCnQ19C3tpGbc2CnB1/e0hVUmaA==",
+      "nuspecSha256": "da47ce027ddbbbf7c0b1f242b1efe64a5aeaa2959da54716a100fcc6e4520efb",
+      "licence": "Apache-2.0",
+      "class": "runtime",
+      "usedBy": "src/ArcForges.Node.CloudLink (GrpcWebHandler in GrpcWebMode.GrpcWeb, binary gRPC-Web over HTTP/1.1 to the center).",
+      "source": "https://github.com/grpc/grpc-dotnet",
+      "sourceCommit": "4c6997a214601422dd66c5c74c1969db749479e9",
+      "provenance": "nuget.org; nuspec repository commit 4c6997a (grpc-dotnet v2.84.0). No package dependency for net10.0.",
+      "aot": "IsTrimmable; DesktopPlatform PRF.05 published it Native AOT with zero warnings (binary GrpcWeb mode, a generated client, a path-base handler); arcforges publishes it without warnings on linux-x64 (AF-CTR-04 N1).",
+      "reason": "The center is reached over binary gRPC-Web through its ingress (fleet.proto: \"binary gRPC-Web through the Worker ingress\"); AF-CTR-04 Q12: use Grpc.Net.Client.Web, no hand-written framing.",
+      "removeWhen": "The center offers the node another transport that the node adopts.",
+      "admittedBy": "AF-CTR-04 N1",
+      "reviewedOn": "2026-11-04"
+    },
+    {
       "id": "Grpc.Tools",
       "version": "2.84.0",
       "contentHash": "SarjdfpQYU/mmdu/fWgSW8kEHQ54jiyG2+I4THu9eubtAud+QJf+1iJdGtoKTJ/ZRaI0qAG+7ttsK2WUTao2OQ==",
@@ -270,64 +319,82 @@
       "code": "NU1608",
       "project": "src/ArcForges.Node.Store/ArcForges.Node.Store.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",
-      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Foundation, ArcForges.Security and ArcForges.Security.Secrets 1.0.0-ci.138.1 (152 references) against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-02 PR evidence); the Secrets selection, Windows Credential Manager and owner-only file paths run in the store tests on Windows and WSL2 Debian and in the Native AOT store benchmark. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose Security.Secrets depends on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Foundation, ArcForges.Security and ArcForges.Security.Secrets 1.0.0-ci.138.1 (152 references) against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-02 PR evidence); the Secrets selection, Windows Credential Manager and owner-only file paths run in the store tests on Windows and WSL2 Debian and in the Native AOT store benchmark. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose Security.Secrets depends on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     },
     {
       "code": "NU1608",
       "project": "src/ArcForges.Node.Core/ArcForges.Node.Core.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",
-      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     },
     {
       "code": "NU1608",
       "project": "src/ArcForges.Host/ArcForges.Host.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",
-      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     },
     {
       "code": "NU1608",
       "project": "tests/ArcForges.Node.Platform.Linux.Tests/ArcForges.Node.Platform.Linux.Tests.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins. The project references the arcforges host (its exec-launch, exec-stop, exit-record and guard roles run in the tests), so it carries the host's graph.",
-      "evidence": "The same graph as tests/ArcForges.Node.Platform.Windows.Tests (AF-EXEC-02 adds Tmds.DBus.Protocol 0.94.1 as a direct reference of the Linux platform, already resolved transitively at the same version): the 436-reference System.Reflection.Metadata comparison recorded for AF-NODE-01 applies unchanged. The Linux platform tests (transient units, freeze, guard) run against it in WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins. The project references the arcforges host (its exec-launch, exec-stop, exit-record and guard roles run in the tests), so it carries the host's graph.",
+      "evidence": "The same graph as tests/ArcForges.Node.Platform.Windows.Tests (AF-EXEC-02 adds Tmds.DBus.Protocol 0.94.1 as a direct reference of the Linux platform, already resolved transitively at the same version): the 436-reference System.Reflection.Metadata comparison recorded for AF-NODE-01 applies unchanged. The Linux platform tests (transient units, freeze, guard) run against it in WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     },
     {
       "code": "NU1608",
       "project": "tests/ArcForges.Node.Platform.Windows.Tests/ArcForges.Node.Platform.Windows.Tests.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins. The project references the arcforges host (its holder and signal roles run in the tests), so it carries the host's graph.",
-      "evidence": "The same graph as tests/ArcForges.Node.Core.Tests (AF-EXEC-01 adds or changes no package): the 436-reference System.Reflection.Metadata comparison recorded for AF-NODE-01 applies unchanged. The Windows platform tests (jobs, holders, signals, builds) run against it on Windows, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins. The project references the arcforges host (its holder and signal roles run in the tests), so it carries the host's graph.",
+      "evidence": "The same graph as tests/ArcForges.Node.Core.Tests (AF-EXEC-01 adds or changes no package): the 436-reference System.Reflection.Metadata comparison recorded for AF-NODE-01 applies unchanged. The Windows platform tests (jobs, holders, signals, builds) run against it on Windows, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     },
     {
       "code": "NU1608",
       "project": "tests/ArcForges.Node.Core.Tests/ArcForges.Node.Core.Tests.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",
-      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     },
     {
       "code": "NU1608",
       "project": "tests/ArcForges.ClosedLoop.Tests/ArcForges.ClosedLoop.Tests.csproj",
       "reference": "ArcForges.Contracts.Foundation",
-      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.375.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.375.1, which this repository pins.",
-      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18).",
-      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.375.1 or later is admitted here.",
-      "reviewedOn": "2026-10-18"
+      "constraint": "ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "A System.Reflection.Metadata comparison of every ArcForges.Contracts.Foundation type and member reference in ArcForges.Observability (11), ArcForges.Capabilities (157), ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13) 1.0.0-ci.138.1 and in the transitive ArcForges.Sdk.Contracts (38) and ArcForges.Contracts.PublicApi (78) 1.0.0-ci.216.1 - 436 references - against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 found all of them with identical signatures (AF-NODE-01 PR evidence; the Foundation/Security/Secrets part repeats AF-NODE-02's 152). The redaction and reason-code paths run in the node's log tests and the node's closed-loop tests on Windows and WSL2 Debian, JIT and Native AOT. For the 1.0.0-ci.141.1 cohort (DesktopPlatform a099ec5) the same System.Reflection.Metadata listing, with decoded signatures, finds the identical ArcForges.Contracts.Foundation type and member references in ArcForges.Foundation (97), ArcForges.Security (42), ArcForges.Security.Secrets (13), ArcForges.Capabilities (157) and ArcForges.Observability (11) as in 1.0.0-ci.138.1, so the comparison against ArcForges.Contracts.Foundation 1.0.0-ci.375.1 applies unchanged (2026-10-18). For the AF-CTR-04 C0 cohort 1.0.0-ci.424.1 (Contracts a5bc52f) the ArcForges.Contracts.Foundation source is identical to the 1.0.0-ci.375.1 source (Contracts dea4cd8): git diff dea4cd8 a5bc52f -- public/proto/arcforges/foundation src/public/dotnet/ArcForges.Contracts.Foundation is empty, so the comparison applies unchanged (2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose packages depend on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
+    },
+    {
+      "code": "NU1608",
+      "project": "src/ArcForges.Node.CloudLink/ArcForges.Node.CloudLink.csproj",
+      "reference": "ArcForges.Contracts.Foundation",
+      "constraint": "ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "As for src/ArcForges.Node.Store: the cloud link references ArcForges.Contracts.Foundation directly and carries the DesktopPlatform 1.0.0-ci.141.1 packages through ArcForges.Node.Core and ArcForges.Node.Store; the same reference comparison applies (the 1.0.0-ci.424.1 Foundation source is identical to 1.0.0-ci.375.1: git diff dea4cd8 a5bc52f is empty for it, 2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose Security.Secrets depends on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
+    },
+    {
+      "code": "NU1608",
+      "project": "tests/ArcForges.Node.CloudLink.Tests/ArcForges.Node.CloudLink.Tests.csproj",
+      "reference": "ArcForges.Contracts.Foundation",
+      "constraint": "ArcForges.Security.Secrets, ArcForges.Security and ArcForges.Foundation 1.0.0-ci.141.1 (DesktopPlatform a099ec5) depend on ArcForges.Contracts.Foundation = 1.0.0-ci.216.1 exactly; the node contracts (ArcForges.Contracts.Node 1.0.0-ci.424.1) need ArcForges.Contracts.Foundation >= 1.0.0-ci.424.1, which this repository pins.",
+      "evidence": "As for src/ArcForges.Node.Store: the cloud-link tests references ArcForges.Contracts.Foundation directly and carries the DesktopPlatform 1.0.0-ci.141.1 packages through ArcForges.Node.Core and ArcForges.Node.Store; the same reference comparison applies (the 1.0.0-ci.424.1 Foundation source is identical to 1.0.0-ci.375.1: git diff dea4cd8 a5bc52f is empty for it, 2026-11-04).",
+      "removeWhen": "A DesktopPlatform cohort whose Security.Secrets depends on ArcForges.Contracts.Foundation 1.0.0-ci.424.1 or later is admitted here.",
+      "reviewedOn": "2026-11-04"
     }
   ]
 }

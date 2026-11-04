@@ -184,7 +184,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }
 
         // Review round 1: a privileged action (not ALLOW for every origin) is audited with its outcome.
-        return (await _api.IdempotentAsync(request, request.Meta, caller, "RenameNode", NodeServiceRenameNodeResponse.Parser,
+        var renamed = (await _api.IdempotentAsync(request, request.Meta, caller, "RenameNode", NodeServiceRenameNodeResponse.Parser,
             failure => new NodeServiceRenameNodeResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
             NodeName.Set(command.Transaction, request.Name);
@@ -195,6 +195,13 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
                 Value = new NodeServiceRenameNodeValue { Node = _node.Info(command.Transaction) },
             };
         }, gate).ConfigureAwait(false)).Response;
+        if (renamed.Error is null)
+        {
+            // AF-CTR-04 CTR4-NODE-09: the center learns the new name (debounced; it never blocks the rename).
+            _node.CloudLink.NodeInfoChanged();
+        }
+
+        return renamed;
     }
 
     /// <inheritdoc />
@@ -238,6 +245,12 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             refused = NodeErrors.PermissionDenied("UpdateNodeSettings.telemetry_opt_in (HUMAN only)");
         }
 
+        if (refused is null && request.HasCenterUrl && caller.Origin != Origin.Human)
+        {
+            // node.proto: center_url "validate: HUMAN only" and "center_url is HUMAN only (no approval path)".
+            refused = NodeErrors.PermissionDenied("UpdateNodeSettings.center_url (HUMAN only)");
+        }
+
         // node.proto: HUMAN=A SCRIPT=P AGENT=D.
         var gate = new GateRequest(PermissionMatrix.NodeSettings, "NodeService.UpdateNodeSettings",
             "change node settings" + (request.HasLogLevel ? " (log level " + request.LogLevel.ToString().ToLowerInvariant() + ")" : string.Empty), "node");
@@ -249,11 +262,43 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }
 
         long? expected = request.Meta.ExpectedRev is { HasValue: true } revision ? revision.Value : null;
+        if (!request.HasCenterUrl)
+        {
+            return await ApplySettingsAsync(request, caller, gate, expected).ConfigureAwait(false);
+        }
+
+        // AF-CTR-04 CTR4-NODE-02: a center change is decided under the cloud link's gate, so no sign-in completes meanwhile. node.proto:
+        // "refused while the node is signed in or signing in: STATE/invalid_state (state.state signed_in or signing_in, state.reason
+        // center_url)".
+        NodeServiceUpdateNodeSettingsResponse applied;
+        using (await _node.CloudLink.EnterAsync(_node.Stopping).ConfigureAwait(false))
+        {
+            var phase = _node.CloudLink.Phase;
+            if (phase != CloudLinkPhase.SignedOut && !_api.Recorded("NodeService.UpdateNodeSettings", request, request.Meta))
+            {
+                response.Error = NodeErrors.InvalidState(phase == CloudLinkPhase.SignedIn ? "signed_in" : "signing_in", "center_url");
+                return response;
+            }
+
+            applied = await ApplySettingsAsync(request, caller, gate, expected).ConfigureAwait(false);
+        }
+
+        if (applied.Error is null)
+        {
+            await _node.CloudLink.CenterChangedAsync().ConfigureAwait(false);
+        }
+
+        return applied;
+    }
+
+    private async Task<NodeServiceUpdateNodeSettingsResponse> ApplySettingsAsync(NodeServiceUpdateNodeSettingsRequest request, Caller caller, GateRequest gate,
+        long? expected)
+    {
         return (await _api.IdempotentAsync(request, request.Meta, caller, "UpdateNodeSettings", NodeServiceUpdateNodeSettingsResponse.Parser,
             failure => new NodeServiceUpdateNodeSettingsResponse { Meta = Meta(request.Meta), Error = failure }, _ =>
         {
             var (settings, restart, error) = _node.Settings.Update(expected, request.HasLogLevel ? request.LogLevel : LogLevel.Unspecified,
-                request.HasTelemetryOptIn ? request.TelemetryOptIn : null);
+                request.HasTelemetryOptIn ? request.TelemetryOptIn : null, request.HasCenterUrl ? request.CenterUrl : null);
             var result = new NodeServiceUpdateNodeSettingsResponse { Meta = Meta(request.Meta) };
             if (error is not null)
             {

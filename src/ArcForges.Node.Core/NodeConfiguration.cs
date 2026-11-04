@@ -6,7 +6,7 @@ using ArcForges.Contracts.Node.V1;
 namespace ArcForges.Node.Core;
 
 /// <summary>
-/// <c>node.json</c> (architecture 02 section 4): the data root, the log level and the telemetry consent, with the settings revision
+/// <c>node.json</c> (architecture 02 section 4): the data root, the log level, the telemetry consent and the center, with the settings revision
 /// that <c>UpdateNodeSettings</c> checks against <c>meta.expected_rev</c>. Behavioural policy lives in the store, not here.
 /// </summary>
 public sealed class NodeConfigurationFile
@@ -19,6 +19,12 @@ public sealed class NodeConfigurationFile
 
     /// <summary>Anonymous aggregate counters opt-in (R-OPS-003; default off).</summary>
     public bool? TelemetryOptIn { get; set; }
+
+    /// <summary>
+    /// The center (AF-CTR-04 CTR4-NODE-01): a canonical URL (<see cref="CenterEndpoint"/>); absent means the official default, except under
+    /// <c>--test-mode</c>, which has no default. Changed only by a HUMAN <c>UpdateNodeSettings.center_url</c>.
+    /// </summary>
+    public string? CenterUrl { get; set; }
 
     /// <summary>The settings revision; every accepted update increments it.</summary>
     public long Revision { get; set; }
@@ -100,6 +106,11 @@ public static class NodeConfiguration
         if (ParseLogLevel(file.LogLevel) == LogLevel.Unspecified)
         {
             throw new NodeConfigurationException($"{path}: logLevel must be error, warning, info or debug.");
+        }
+
+        if (file.CenterUrl is { } center && !CenterEndpoint.TryParse(center, out _, out var reason))
+        {
+            throw new NodeConfigurationException($"{path}: centerUrl is not a canonical center URL ({reason}).");
         }
 
         if (file.Revision < 0)

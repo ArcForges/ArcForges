@@ -92,6 +92,9 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>A snapshot of the API server's counters (set by the API layer).</summary>
     public Func<IReadOnlyList<HealthMetric>>? ServerMetrics { get; set; }
 
+    /// <summary>The cloud link (AF-CTR-04; set by the host at startup step 8, else a node without one).</summary>
+    public ICloudLinkView CloudLink { get; set; } = NoCloudLink.Instance;
+
     /// <summary>Executes the approvals a node stop left APPROVED (set by the API layer; run once the execution supervisor runs).</summary>
     public Func<Task>? ResumeApprovals { get; set; }
 
@@ -203,7 +206,7 @@ public sealed class NodeRuntime : IDisposable
             StartedAt = ProtoTime.ToInstant(StartedAt),
             StoreBytes = StoreBytes(),
             Capabilities = Capabilities,
-            AccountLinked = false,
+            AccountLinked = CloudLink.AccountLinked,
             LanEnabled = false,
             Edition = Edition.Free,
             State = Lifecycle.State,
