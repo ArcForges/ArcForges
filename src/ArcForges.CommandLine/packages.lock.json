@@ -82,16 +82,16 @@
       "arcforges.client": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.375.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.424.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.375.1, )",
           "ArcForges.LocalRpc": "[1.0.0-ci.138.1, )"
         }
       },
       "ArcForges.Contracts.Foundation": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.375.1, )",
-        "resolved": "1.0.0-ci.375.1",
-        "contentHash": "v6kJFsDVjpdmii/UHu6hVoT6u3q7eYEfqrvwYD8WAd8vJS8DpTkh/dOkoHAYornz4Ih5oijK9ZBl94Cb2Zsl+g==",
+        "requested": "[1.0.0-ci.424.1, )",
+        "resolved": "1.0.0-ci.424.1",
+        "contentHash": "PHevLdFSyMeQHmU6E8Nuyj9Ev0jhByoYtAaQ1XWkm+mBdbbLlATrb17gFXQ/E9SH7TFwLUE0A4KUyOUbxZTjmA==",
         "dependencies": {
           "Google.Protobuf": "3.36.1"
         }
