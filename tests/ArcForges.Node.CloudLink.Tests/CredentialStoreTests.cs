@@ -273,6 +273,44 @@ public sealed class CredentialStoreTests
     }
 
     [Fact]
+    public void TheRecordInATestNodesFileStoreIsOwnerOnly()
+    {
+        // N1-3 over the store a --test-mode node selects (REAL files): the record file is 0600 in a 0700 directory on Unix.
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix file modes: on Windows the files inherit the data root's access list.");
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = Directory.CreateTempSubdirectory("arcforges-credential-modes-").FullName;
+        try
+        {
+            var secrets = NodeSecretStores.ForTestDataRoot(root);
+            var storage = new CloudCredentialStore(root, secrets);
+            var nodeId = RandomNumberGenerator.GetBytes(16);
+            var target = CloudCredentialStore.Target(nodeId, "https://center.example.test");
+            storage.WriteRecord(target, new CloudCredentialRecord
+            {
+                NodeId = Convert.ToHexStringLower(nodeId),
+                CenterUrl = "https://center.example.test/api",
+                InstallationId = new string('0', 32),
+                AccessToken = "afa1.access",
+                RefreshToken = "afr1.refresh",
+            });
+            var file = Path.Combine(root, "run", "test-secrets", target);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(Path.GetDirectoryName(file)!));
+            Assert.Equal("afr1.refresh", storage.ReadRecord(target)!.RefreshToken);
+            Assert.True(storage.DeleteRecord(target));
+            Assert.False(File.Exists(file));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TheRecordIsBoundedByTheSecretStoreLimit()
     {
         var record = new CloudCredentialRecord

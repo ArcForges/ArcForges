@@ -7,7 +7,7 @@ public enum CloudLinkPhase
     /// <summary>No usable credential for the configured center (also after a revocation, with its reason).</summary>
     SignedOut,
 
-    /// <summary>A sign-in flow is active (part N2).</summary>
+    /// <summary>A sign-in flow is active (reached only with part N2's flows).</summary>
     SigningIn,
 
     /// <summary>The node holds a credential of the configured center.</summary>
@@ -32,7 +32,10 @@ public interface ICloudLinkView
     /// <summary>Takes the link's gate (the one async gate of refresh, sign-out and sign-in completion); dispose to release it.</summary>
     Task<IDisposable> EnterAsync(CancellationToken cancellationToken);
 
-    /// <summary>Called after a successful <c>center_url</c> change (outside the single writer): deletes the old center's key cache and key.</summary>
+    /// <summary>
+    /// Called after a successful <c>center_url</c> change (outside the single writer): ends every credential of another center than the one
+    /// now configured (a held rejected one included) and deletes the old center's key sets and node key.
+    /// </summary>
     Task CenterChangedAsync();
 
     /// <summary>Called after the node's name changed: <c>ReportNodeInfo</c> follows (debounced).</summary>

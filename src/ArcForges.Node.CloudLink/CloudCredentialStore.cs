@@ -215,7 +215,10 @@ internal sealed class CloudCredentialStore
         return NodeSecretStores.TargetPrefix + Convert.ToHexString(SHA256.HashData(identity));
     }
 
-    /// <summary>The link file, or <see langword="null"/> when there is none (an unreadable file reads as none and is logged by the caller).</summary>
+    /// <summary>
+    /// The link file, or <see langword="null"/> when there is none. A file that cannot be read or parsed throws (an <see cref="IOException"/>
+    /// or <see cref="InvalidDataException"/>): it is never read as "absent", which would leave the record without its pointer.
+    /// </summary>
     public CloudLinkFile? ReadLink()
     {
         var bytes = PrivateFiles.ReadOrNull(_linkPath);
@@ -226,11 +229,12 @@ internal sealed class CloudCredentialStore
 
         try
         {
-            return JsonSerializer.Deserialize(bytes, CloudLinkJsonContext.Default.CloudLinkFile);
+            return JsonSerializer.Deserialize(bytes, CloudLinkJsonContext.Default.CloudLinkFile)
+                ?? throw new InvalidDataException("run/cloud-link.json holds no link.");
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
-            return null;
+            throw new InvalidDataException("run/cloud-link.json is not a link file.", exception);
         }
     }
 

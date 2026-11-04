@@ -236,6 +236,33 @@ public sealed class RefreshSchedulerTests
     }
 
     [Fact]
+    public async Task ASignOutCancelsACenterCallThatOutlastsItsWaitAndStillEndsLocally()
+    {
+        // R-5: a sign-out waits for the center call in flight only as long as its budget allows, then cancels it (its outcome becomes
+        // unknown, which the ending makes moot) and a remote part without time left is skipped as not confirmed.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await link.SignInAsync();
+        await Eventually.TrueAsync(() => link.Center.CallsOf("ReportNodeInfo").Count == 1, "the first report");
+        var release = new TaskCompletionSource();
+        link.Center.Script(Refresh, new FakeFault.Hold(release));
+        var refresh = link.Service.RefreshAsync(link.Service.Generation, CancellationToken.None);
+        await Eventually.TrueAsync(() => link.Center.CallsOf(Refresh).Count == 1, "the refresh in flight");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using (await link.Service.EnterForSignOutAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None))
+        {
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), "the gate came after " + watch.Elapsed);
+            Assert.Equal(SignOutResult.RemoteUnconfirmed, await link.Service.SignOutHeldAsync(revokeRemote: true, remoteBudget: TimeSpan.FromMilliseconds(500)));
+        }
+
+        release.SetResult();
+        await refresh;
+        Assert.False(link.Service.AccountLinked);
+        Assert.Empty(link.Secrets.Names());
+        Assert.Empty(link.Center.CallsOf("SignOutNode"));
+    }
+
+    [Fact]
     public async Task TheExpiryWarningFollowsTheCentersValuesNotTheWallClock()
     {
         await using var link = await LinkFixture.CreateAsync();

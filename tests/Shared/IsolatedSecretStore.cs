@@ -62,6 +62,9 @@ internal sealed class IsolatedSecretStore : ISecretBackingStore
         }
     }
 
+    /// <summary>Every delete takes this long before it acts (a slow keyring), outside the store's lock.</summary>
+    public TimeSpan DeleteDelay { get; set; }
+
     /// <summary>The next <paramref name="count"/> writes fail with <see cref="IOException"/>.</summary>
     public void FailWrites(int count)
     {
@@ -127,6 +130,11 @@ internal sealed class IsolatedSecretStore : ISecretBackingStore
     public bool Delete(string opaqueTarget)
     {
         NodeSecretStores.ValidateTarget(opaqueTarget);
+        if (DeleteDelay > TimeSpan.Zero)
+        {
+            Thread.Sleep(DeleteDelay);
+        }
+
         lock (_gate)
         {
             Deletes++;

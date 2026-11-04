@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.CloudLink;
@@ -15,6 +16,8 @@ namespace ArcForges.Node.Api;
 /// <para><c>SignOut</c> follows the I/O rule of node-3: the permission gate and the replay check, then the cloud link's gate and the replay
 /// check again, then the center and secret-store I/O outside the single writer, then one short idempotent command that only records the
 /// outcome. The state change is journaled on topic ACCOUNT by the link afterwards.</para>
+/// <para><c>SignOut</c> fits its 15 s deadline (N1 decision R-5): one budget from the handler's entry; the wait for a center call in flight,
+/// the remote part and the local ending all come out of it, and the local ending keeps <see cref="CloudLinkService.SignOutLocalReserve"/>.</para>
 /// </summary>
 internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
 {
@@ -60,6 +63,10 @@ internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
+        var entered = Stopwatch.GetTimestamp();
+        var left = context.Deadline == DateTime.MaxValue ? CloudLinkService.SignOutDeadline : context.Deadline - DateTime.UtcNow;
+        var budget = left < CloudLinkService.SignOutDeadline ? left : CloudLinkService.SignOutDeadline;
+        TimeSpan Remote() => budget - Stopwatch.GetElapsedTime(entered) - CloudLinkService.SignOutLocalReserve;
         var response = new AccountServiceSignOutResponse { Meta = ApiCommands.Meta(request.Meta) };
         var caller = _api.CallerOf(context);
         var refused = _api.Stopping() ?? Validation.CommandId(request.Meta);
@@ -74,7 +81,7 @@ internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
         }
 
         AccountServiceSignOutResponse outcome;
-        using (await _cloud.EnterAsync(_node.Stopping).ConfigureAwait(false))
+        using (await _cloud.EnterForSignOutAsync(Remote(), _node.Stopping).ConfigureAwait(false))
         {
             // A second request with the same command ID that waited on the gate is a replay: no center call (node-3 addition 1).
             SignOutResult? result = null;
@@ -84,7 +91,7 @@ internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
             }
             else
             {
-                result = await _cloud.SignOutHeldAsync(!request.HasRevokeRemote || request.RevokeRemote).ConfigureAwait(false);
+                result = await _cloud.SignOutHeldAsync(!request.HasRevokeRemote || request.RevokeRemote, Remote()).ConfigureAwait(false);
             }
 
             outcome = (await _api.IdempotentAsync(request, request.Meta, caller, "SignOut", AccountServiceSignOutResponse.Parser,

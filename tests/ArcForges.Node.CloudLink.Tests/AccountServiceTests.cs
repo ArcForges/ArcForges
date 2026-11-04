@@ -227,12 +227,63 @@ public sealed class AccountServiceTests
     }
 
     [Fact]
+    public async Task SignOutAnswersWithinItsDeadlineWhileASlowRefreshIsInFlight()
+    {
+        // R-5 (proto finding 3): a refresh meets a cold start (8 s), the sign-out's remote part is slow (9 s); one 15 s budget from the
+        // handler's entry covers the wait for the refresh, the remote part and the local ending.
+        await using var center = await FakeCenter.StartAsync();
+        await using var node = CloudNode.Create(center.Endpoint.Url);
+        await node.StartAsync();
+        var issued = center.Issue(node.Runtime.NodeId.Span);
+        await node.Cloud.AdoptAsync(issued, center.Endpoint);
+        await Eventually.TrueAsync(() => center.CallsOf("ReportNodeInfo").Count == 1, "the first report");
+        center.Script("RefreshNodeSession", new FakeFault.Delay(TimeSpan.FromSeconds(8)));
+        center.Script("SignOutNode", new FakeFault.Delay(TimeSpan.FromSeconds(9)));
+        var refresh = node.Cloud.RefreshAsync(node.Cloud.Generation, CancellationToken.None);
+        await Eventually.TrueAsync(() => center.CallsOf("RefreshNodeSession").Count == 1, "the refresh in flight");
+        await using var human = await node.ChannelAsync(Origin.Human);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var response = await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), "the sign-out answered after " + watch.Elapsed);
+        Assert.Null(response.Error);
+        Assert.Contains(AccountServiceHandlerWarning, response.Meta.Warnings);
+        Assert.False(node.Cloud.AccountLinked);
+        Assert.DoesNotContain(CredentialTarget(node, center), node.Secrets.Names());
+        Assert.False(File.Exists(node.Cloud.Storage.LinkPath));
+        await refresh;
+    }
+
+    [Fact]
+    public async Task ANodeJsonEditedWhileSignedInSendsTheCredentialNowhere()
+    {
+        // Proto probe E through the real host: node.json is rewritten to another center while the node is signed in.
+        await using var center = await FakeCenter.StartAsync();
+        await using var other = await FakeCenter.StartAsync("/other");
+        await using var node = CloudNode.Create(center.Endpoint.Url);
+        await node.StartAsync();
+        var issued = center.Issue(node.Runtime.NodeId.Span);
+        await node.Cloud.AdoptAsync(issued, center.Endpoint);
+        await Eventually.TrueAsync(() => center.CallsOf("ReportNodeInfo").Count == 1, "the first report");
+        File.WriteAllText(node.ConfigPath, File.ReadAllText(node.ConfigPath).Replace(center.Endpoint.Url, other.Endpoint.Url, StringComparison.Ordinal));
+        await node.Cloud.RefreshAsync(node.Cloud.Generation, CancellationToken.None);
+        Assert.Empty(other.Calls);
+        Assert.Empty(center.CallsOf("RefreshNodeSession"));
+        Assert.False(node.Cloud.AccountLinked);
+        Assert.Contains("credential_for_other_center", node.Cloud.Status().Warnings);
+        Assert.Contains(CredentialTarget(node, center), node.Secrets.Names());
+        Assert.True(center.IsLive(issued.RefreshToken));
+    }
+
+    [Fact]
     public async Task TestSignOutInFlightDoesNotBlockTheWriter()
     {
         await using var center = await FakeCenter.StartAsync();
         await using var node = CloudNode.Create(center.Endpoint.Url);
         await node.StartAsync();
         await node.Cloud.AdoptAsync(center.Issue(node.Runtime.NodeId.Span), center.Endpoint);
+
+        // A slow center (8 s) and a slow keyring (2 s per delete): the sign-out's I/O runs outside the single writer.
+        node.Secrets.DeleteDelay = TimeSpan.FromSeconds(2);
         center.Script("SignOutNode", new FakeFault.Delay(TimeSpan.FromSeconds(8)));
         await using var human = await node.ChannelAsync(Origin.Human);
         var signOut = human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync;
@@ -247,8 +298,12 @@ public sealed class AccountServiceTests
 
     [Theory]
     [InlineData("BeginSignIn")]
+    [InlineData("GetSignInFlow")]
+    [InlineData("CancelSignIn")]
     [InlineData("SetCloudLink")]
     [InlineData("CreatePhonePairing")]
+    [InlineData("GetPhonePairing")]
+    [InlineData("ConfirmPhonePairing")]
     [InlineData("RefreshEntitlement")]
     public async Task TheMethodsOfLaterPartsAnswerUnimplemented(string method)
     {
@@ -261,6 +316,10 @@ public sealed class AccountServiceTests
             "BeginSignIn" => human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "SetCloudLink" => human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "CreatePhonePairing" => human.Account.CreatePhonePairingAsync(new AccountServiceCreatePhonePairingRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
+            "GetSignInFlow" => human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest(), cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
+            "CancelSignIn" => human.Account.CancelSignInAsync(new AccountServiceCancelSignInRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
+            "GetPhonePairing" => human.Account.GetPhonePairingAsync(new AccountServiceGetPhonePairingRequest(), cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
+            "ConfirmPhonePairing" => human.Account.ConfirmPhonePairingAsync(new AccountServiceConfirmPhonePairingRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             _ => (Task)human.Account.RefreshEntitlementAsync(new AccountServiceRefreshEntitlementRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
         };
         var failed = await Assert.ThrowsAsync<RpcException>(() => call);
@@ -328,11 +387,39 @@ public sealed class AccountServiceTests
         {
         }
 
+        node.Cloud.Storage.WriteKeys(new CloudKeySetFile { CenterUrl = center.Endpoint.Url, InstallationId = new string('0', 32) });
         await using var human = await node.ChannelAsync(Origin.Human);
         var updated = await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = CloudNode.Command(), CenterUrl = "https://other.example.test" }, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Null(updated.Error);
         Assert.Null(NodeKeyStores.ForTestDataRoot(node.DataRoot).Recorded());
+        Assert.False(File.Exists(node.Cloud.Storage.KeysPath));
     }
+
+    [Fact]
+    public async Task ACenterChangeEndsARejectedCredentialAndTheNewCenterReceivesNothing()
+    {
+        await using var center = await FakeCenter.StartAsync();
+        await using var other = await FakeCenter.StartAsync("/other");
+        await using var node = CloudNode.Create(center.Endpoint.Url);
+        await node.StartAsync();
+        await node.Cloud.AdoptAsync(center.Issue(node.Runtime.NodeId.Span), center.Endpoint);
+        await Eventually.TrueAsync(() => center.CallsOf("ReportNodeInfo").Count == 1, "the first report");
+        center.Forget();
+        await node.Cloud.RefreshAsync(node.Cloud.Generation, CancellationToken.None);
+        Assert.Contains("center_rejected_credential", node.Cloud.Status().Warnings);
+
+        // A rejected credential is held signed out, so a HUMAN may change the center: the change ends it (record, key sets, link file).
+        await using var human = await node.ChannelAsync(Origin.Human);
+        var updated = await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = CloudNode.Command(), CenterUrl = other.Endpoint.Url }, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(updated.Error);
+        Assert.DoesNotContain(CredentialTarget(node, center), node.Secrets.Names());
+        Assert.False(File.Exists(node.Cloud.Storage.LinkPath));
+        Assert.False(File.Exists(node.Cloud.Storage.KeysPath));
+        await node.Cloud.RefreshAsync(node.Cloud.Generation, CancellationToken.None);
+        Assert.Empty(other.Calls);
+    }
+
+    private const string AccountServiceHandlerWarning = "remote_sign_out_unconfirmed";
 
     private static string CredentialTarget(CloudNode node, FakeCenter center) => CloudCredentialStore.Target(node.Runtime.NodeId.Span, center.Endpoint.Origin);
 }

@@ -35,6 +35,12 @@ internal abstract record FakeFault
     /// <summary>Answers an HTTP status without gRPC (a proxy, an edge or a wrong path).</summary>
     public sealed record HttpStatus(int Status) : FakeFault;
 
+    /// <summary>The call is executed (a refresh commits), but its reply is replaced by an ingress or Worker trailer (a lost reply).</summary>
+    public sealed record ReplacedReply(int Status, string Code) : FakeFault;
+
+    /// <summary>An HTTP redirect (a 3xx with <c>Location</c>) instead of a gRPC-Web reply.</summary>
+    public sealed record Redirect(int Status, string Location) : FakeFault;
+
     /// <summary>Answers a trailers-only ingress refusal (<c>grpc-status</c> and the code, percent-encoded as the ingress sends it).</summary>
     public sealed record Transport(int Status, string Code) : FakeFault;
 
@@ -326,6 +332,14 @@ internal sealed class FakeCenter : IAsyncDisposable
                     return;
                 case FakeFault.HttpStatus status:
                     context.Response.StatusCode = status.Status;
+                    return;
+                case FakeFault.ReplacedReply replaced:
+                    _ = Reply(method, authorization.Length == 0 ? null : authorization, body);
+                    await WriteAsync(context, TrailerFrame(replaced.Status, replaced.Code));
+                    return;
+                case FakeFault.Redirect redirect:
+                    context.Response.StatusCode = redirect.Status;
+                    context.Response.Headers.Location = redirect.Location;
                     return;
                 case FakeFault.Transport transport:
                     await WriteAsync(context, TrailerFrame(transport.Status, transport.Code));
@@ -678,6 +692,17 @@ internal sealed class FakeCenter : IAsyncDisposable
     {
         var text = "grpc-status: " + status + "\r\n" + (message is null ? string.Empty : "grpc-message: " + Uri.EscapeDataString(message).Replace("%2E", ".", StringComparison.Ordinal).Replace("%5F", "_", StringComparison.Ordinal) + "\r\n");
         var bytes = Encoding.ASCII.GetBytes(text);
+        var frame = new byte[5 + bytes.Length];
+        frame[0] = 0x80;
+        BinaryPrimitives.WriteUInt32BigEndian(frame.AsSpan(1), (uint)bytes.Length);
+        bytes.CopyTo(frame, 5);
+        return frame;
+    }
+
+    /// <summary>A trailer frame (flag 0x80) with <paramref name="trailers"/> exactly as given (each line ends with CR LF).</summary>
+    public static byte[] RawTrailerFrame(string trailers)
+    {
+        var bytes = Encoding.ASCII.GetBytes(trailers);
         var frame = new byte[5 + bytes.Length];
         frame[0] = 0x80;
         BinaryPrimitives.WriteUInt32BigEndian(frame.AsSpan(1), (uint)bytes.Length);

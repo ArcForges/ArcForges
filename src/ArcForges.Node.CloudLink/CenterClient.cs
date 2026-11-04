@@ -100,7 +100,7 @@ internal sealed class CenterClient(CenterHttpClient http, TimeProvider clock)
             return (response.Value, response.Error, response.OutcomeCase == NodeEnrollmentServiceSignOutNodeResponse.OutcomeOneofCase.None);
         }, TimeSpan.FromSeconds(10), accessToken, cancellationToken);
 
-    /// <summary>BeginNodeSignIn (anonymous; deadline 10 s). Used by the sign-in flows (N2) and the protocol probe against a real center.</summary>
+    /// <summary>BeginNodeSignIn (anonymous; deadline 10 s). For the sign-in flows of part N2; the protocol probe against a real center uses it now.</summary>
     public Task<CenterReply<NodeEnrollmentServiceBeginNodeSignInValue>> BeginNodeSignInAsync(NodeEnrollmentServiceBeginNodeSignInRequest request,
         CancellationToken cancellationToken)
     {
@@ -113,7 +113,7 @@ internal sealed class CenterClient(CenterHttpClient http, TimeProvider clock)
         }, TimeSpan.FromSeconds(10), bearer: null, cancellationToken);
     }
 
-    /// <summary>CompleteNodeSignIn (anonymous, flow-bound proof; deadline 15 s). Used by the browser sign-in (N2).</summary>
+    /// <summary>CompleteNodeSignIn (anonymous, flow-bound proof; deadline 15 s). For the browser sign-in of part N2.</summary>
     public Task<CenterReply<NodeEnrollmentServiceCompleteNodeSignInValue>> CompleteNodeSignInAsync(NodeEnrollmentServiceCompleteNodeSignInRequest request,
         CancellationToken cancellationToken)
     {
@@ -168,9 +168,16 @@ internal sealed class CenterClient(CenterHttpClient http, TimeProvider clock)
             return (CenterOutcome.ProtocolMismatch, MismatchCodes.Contains(code) ? code : null, false, "the center refused the call's shape (" + status + ")");
         }
 
-        if (code is "state.stale_generation" or "dependency.unavailable")
+        if (code == "state.stale_generation")
         {
             return (CenterOutcome.Unreachable, code, false, "the center is not ready (" + code + ")");
+        }
+
+        if (code == "dependency.unavailable")
+        {
+            // The Go ingress sends it before any handler runs, but the hosted Worker also sends it when the container's reply ends without a
+            // status or the upstream aborts, after the request reached the center: the effect is unknown.
+            return (CenterOutcome.Unreachable, code, true, "the center is not ready (" + code + ")");
         }
 
         // An HTTP status from something in between (a proxy's 401/403, a 404 of the wrong path, 5xx) maps to a gRPC status whose detail is

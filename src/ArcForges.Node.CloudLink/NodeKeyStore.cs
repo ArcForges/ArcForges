@@ -36,6 +36,19 @@ internal interface INodeKeyBackend
     IReadOnlyList<string> Names();
 }
 
+/// <summary>What a node key deletion found.</summary>
+internal enum NodeKeyDeletion
+{
+    /// <summary>No key and no record.</summary>
+    None,
+
+    /// <summary>Keys or the record were deleted.</summary>
+    Deleted,
+
+    /// <summary>The record names a key in another backend than this store's, which this run cannot reach: the record is kept.</summary>
+    OtherBackend,
+}
+
 /// <summary>What <c>run/node-key.json</c> records about the node key (non-secret).</summary>
 internal sealed class NodeKeyRecord
 {
@@ -165,24 +178,69 @@ internal sealed class NodeKeyStore
     }
 
     /// <summary>Deletes the recorded key (by its exact name) and the record; false when there was none.</summary>
-    public bool Delete()
+    public bool Delete() => Delete(ReadOnlySpan<byte>.Empty, []) == NodeKeyDeletion.Deleted;
+
+    /// <summary>
+    /// Deletes the node key wherever this store can find it (sec NB-8): the recorded name, the names derived from
+    /// <paramref name="nodeId"/> and each of <paramref name="origins"/> (so a missing or unparsable <c>run/node-key.json</c> leaves no key
+    /// behind), and every key file of the data root; then the record. Only names of the node key's shape are ever deleted. A record that
+    /// names another backend is kept and reported (<see cref="NodeKeyDeletion.OtherBackend"/>). A failed deletion throws, leaving the record.
+    /// </summary>
+    public NodeKeyDeletion Delete(ReadOnlySpan<byte> nodeId, IEnumerable<string> origins)
     {
+        ArgumentNullException.ThrowIfNull(origins);
         lock (_gate)
         {
-            if (ReadRecord() is not { } record)
+            var bytes = PrivateFiles.ReadOrNull(_recordPath);
+            NodeKeyRecord? record = null;
+            if (bytes is not null)
             {
-                return false;
+                try
+                {
+                    record = JsonSerializer.Deserialize(bytes, CloudLinkJsonContext.Default.NodeKeyRecord);
+                }
+                catch (JsonException)
+                {
+                    // Unparsable: the derived names below still find the key.
+                }
             }
 
-            if (record.Backend == Backend.Kind)
+            var otherBackend = record is not null && record.Backend != Backend.Kind;
+            var names = new List<string>();
+            if (record is not null && !otherBackend && IsKeyName(record.Name))
             {
-                Backend.Delete(record.Name);
+                names.Add(record.Name);
             }
 
-            PrivateFiles.Delete(_recordPath);
-            return true;
+            if (nodeId.Length == 16)
+            {
+                foreach (var origin in origins)
+                {
+                    names.Add(KeyName(nodeId, origin));
+                }
+            }
+
+            names.AddRange(Backend.Names());
+            var deleted = false;
+            foreach (var name in names.Distinct(StringComparer.Ordinal))
+            {
+                deleted |= Backend.Delete(name);
+            }
+
+            if (bytes is not null && !otherBackend)
+            {
+                PrivateFiles.Delete(_recordPath);
+                deleted = true;
+            }
+
+            return otherBackend ? NodeKeyDeletion.OtherBackend : deleted ? NodeKeyDeletion.Deleted : NodeKeyDeletion.None;
         }
     }
+
+    /// <summary>Whether <paramref name="name"/> has the node key's shape: the prefix and 64 upper-case hexadecimal digits.</summary>
+    public static bool IsKeyName(string? name) =>
+        name is not null && name.Length == NamePrefix.Length + 64 && name.StartsWith(NamePrefix, StringComparison.Ordinal)
+        && name[NamePrefix.Length..].All(char.IsAsciiHexDigitUpper);
 
     private NodeKeyRecord? ReadRecord()
     {
@@ -282,8 +340,7 @@ internal sealed class FileNodeKeyBackend : INodeKeyBackend
 
     private string PathOf(string name)
     {
-        if (!name.StartsWith(NodeKeyStore.NamePrefix, StringComparison.Ordinal) || name.Length != NodeKeyStore.NamePrefix.Length + 64
-            || !name[NodeKeyStore.NamePrefix.Length..].All(char.IsAsciiHexDigitUpper))
+        if (!NodeKeyStore.IsKeyName(name))
         {
             throw new ArgumentException("A node key name is 'ArcForges.NodeKey.v1.' and 64 upper-case hexadecimal digits.", nameof(name));
         }

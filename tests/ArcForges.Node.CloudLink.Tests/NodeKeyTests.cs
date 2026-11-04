@@ -111,17 +111,78 @@ public sealed class NodeKeyTests : IDisposable
         Assert.False(store.Delete());
     }
 
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("unparsable")]
+    public void AKeyWhoseRecordIsMissingOrDamagedIsStillDeletedByItsDerivedName(string damage)
+    {
+        var store = NodeKeyStores.ForTestDataRoot(_root);
+        using (store.Create(_nodeId, Center.Origin, TimeProvider.System))
+        {
+        }
+
+        var record = Path.Combine(_root, "run", "node-key.json");
+        if (damage == "missing")
+        {
+            File.Delete(record);
+        }
+        else
+        {
+            File.WriteAllText(record, "{ not json");
+        }
+
+        // The key file of another name (a stale one) goes too: every key file of the data root belongs to this node's data root.
+        Assert.Equal(NodeKeyDeletion.Deleted, store.Delete(_nodeId, [Center.Origin]));
+        Assert.Empty(Directory.GetFiles(((FileNodeKeyBackend)store.Backend).Directory));
+        Assert.False(File.Exists(record));
+    }
+
     [Fact]
-    public void TestModeNeverReachesCngAndTheCngPathTripsTheGuard()
+    public void ARecordOfAnotherBackendIsKeptAndReportedNotDeletedBlindly()
+    {
+        var store = NodeKeyStores.ForTestDataRoot(_root);
+        var record = Path.Combine(_root, "run", "node-key.json");
+        var cng = "{\"backend\":\"cng\",\"name\":\"" + NodeKeyStore.KeyName(_nodeId, Center.Origin) + "\",\"nodeId\":\"" + Convert.ToHexStringLower(_nodeId)
+            + "\",\"origin\":\"" + Center.Origin + "\",\"fingerprint\":\"0000-0000-0000-0000-0000\",\"createdAtMs\":1}";
+        Directory.CreateDirectory(Path.GetDirectoryName(record)!);
+        File.WriteAllText(record, cng);
+        Assert.Equal(NodeKeyDeletion.OtherBackend, store.Delete(_nodeId, [Center.Origin]));
+        Assert.Equal(cng, File.ReadAllText(record));
+    }
+
+    [Theory]
+    [InlineData("ArcForges.NodeKey.v1.")]
+    [InlineData("ArcForges.Secrets.v1.0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("ArcForges.NodeKey.v1.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("Microsoft Something Else")]
+    public void OnlyNamesOfTheNodeKeyShapeAreEverDeleted(string name)
+    {
+        Assert.False(NodeKeyStore.IsKeyName(name));
+        var store = NodeKeyStores.ForTestDataRoot(_root);
+        var record = Path.Combine(_root, "run", "node-key.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(record)!);
+        File.WriteAllText(record, "{\"backend\":\"file\",\"name\":\"" + name + "\",\"nodeId\":\"00\",\"origin\":\"x\",\"fingerprint\":\"x\",\"createdAtMs\":1}");
+        Assert.Equal(NodeKeyDeletion.Deleted, store.Delete(_nodeId, []));
+        Assert.Throws<ArgumentException>(() => store.Backend.Delete(name));
+    }
+
+    [Fact]
+    public void TestModeNeverReachesCngOnEitherSystem()
     {
         // Under --test-mode without the tier's opt-in the key is file-backed on both systems.
         Assert.IsType<FileNodeKeyBackend>(NodeKeyStores.ForNode(_root, testMode: true, optIn: null).Backend);
         Assert.IsType<FileNodeKeyBackend>(NodeKeyStores.ForNode(_root, testMode: true, optIn: "0").Backend);
         if (!OperatingSystem.IsWindows())
         {
+            // Linux production: the owner-only key file.
             Assert.IsType<FileNodeKeyBackend>(NodeKeyStores.ForNode(_root, testMode: false, optIn: null).Backend);
-            return;
         }
+    }
+
+    [Fact]
+    public void TheWindowsProductionCngPathTripsTheGuardBeforeAnyCngCall()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only: the CNG key store exists only there; the Windows leg runs this test.");
 
         // Windows production selects CNG; this test process denies the OS stores, so the CNG path refuses before any CNG call.
         var store = NodeKeyStores.ForNode(_root, testMode: false, optIn: null);
@@ -131,8 +192,16 @@ public sealed class NodeKeyTests : IDisposable
     }
 
     [Fact]
-    public void TheCngKeyIsCreatedNonExportableForSigningInTheSoftwareProvider() =>
-        Assert.Equal(("Microsoft Software Key Storage Provider", false, "signing"), NodeKeyStores.CngCreationParameters);
+    public void TheCngKeyIsCreatedWithoutAnyExportPolicyForSigningInTheSoftwareProvider()
+    {
+        // The parameters the CNG backend's Create passes to the key store (it calls this function; ArcForges.Repository.Tests pins the
+        // call). Read as plain values: building them touches no key store, and no test outside the tier names the CNG types.
+        var parameters = NodeKeyStores.CngCreationParameters();
+        Assert.Equal("None", parameters.ExportPolicy.ToString());
+        Assert.Equal("Signing", parameters.KeyUsage.ToString());
+        Assert.Equal("Microsoft Software Key Storage Provider", parameters.Provider?.Provider);
+        Assert.Equal("None", parameters.KeyCreationOptions.ToString());
+    }
 
     [Fact]
     public void TheProofPreimageIsTheContractLayout()

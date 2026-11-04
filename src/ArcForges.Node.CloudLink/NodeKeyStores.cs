@@ -32,10 +32,15 @@ internal static class NodeKeyStores
     public static NodeKeyStore ForTestDataRoot(string dataRoot) => new(dataRoot, new FileNodeKeyBackend(dataRoot));
 
     /// <summary>
-    /// The creation parameters of a CNG node key, as plain values (so a routine test on any host can assert them without naming CNG):
-    /// provider, export policy and usage.
+    /// The creation parameters of every CNG node key: <see cref="CngNodeKeyBackend.Create"/> creates with exactly these (the Software Key
+    /// Storage Provider, no export policy at all, signing only), and a routine test asserts them on every host.
     /// </summary>
-    public static (string Provider, bool Exportable, string Usage) CngCreationParameters => ("Microsoft Software Key Storage Provider", false, "signing");
+    internal static CngKeyCreationParameters CngCreationParameters() => new()
+    {
+        Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
+        ExportPolicy = CngExportPolicies.None,
+        KeyUsage = CngKeyUsages.Signing,
+    };
 
     /// <summary>A CNG user key store (Windows production; the OS secret-store tier creates its keys through this type).</summary>
     [SupportedOSPlatform("windows")]
@@ -60,19 +65,18 @@ internal static class NodeKeyStores
         public INodeKey Create(string name)
         {
             OsSecretStoreGuard.ThrowIfDenied("a CNG user key store");
-            var parameters = new CngKeyCreationParameters
-            {
-                Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
-                ExportPolicy = CngExportPolicies.None,
-                KeyUsage = CngKeyUsages.Signing,
-            };
-            return new CngNodeKey(CngKey.Create(CngAlgorithm.ECDsaP256, name, parameters));
+            return new CngNodeKey(CngKey.Create(CngAlgorithm.ECDsaP256, name, CngCreationParameters()));
         }
 
         /// <inheritdoc />
         public bool Delete(string name)
         {
             OsSecretStoreGuard.ThrowIfDenied("a CNG user key store");
+            if (!NodeKeyStore.IsKeyName(name))
+            {
+                throw new ArgumentException("A node key name is 'ArcForges.NodeKey.v1.' and 64 upper-case hexadecimal digits.", nameof(name));
+            }
+
             if (!CngKey.Exists(name, CngProvider.MicrosoftSoftwareKeyStorageProvider))
             {
                 return false;

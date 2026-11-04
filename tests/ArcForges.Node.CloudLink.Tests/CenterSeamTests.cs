@@ -70,7 +70,8 @@ public sealed class CenterSeamTests
         {
             using var http = new CenterHttpClient(center.Endpoint, log);
 
-            // The guard refuses another authority below the gRPC-Web handler (as a redirect or a rewritten URI would reach it).
+            // The guard refuses a request URI of another authority (a rewritten URI). It does not see redirects: the socket handler would
+            // follow them below it, so the transport follows none (AllowAutoRedirect false), which the redirect case below proves.
             var guard = new CenterHttpClient.AuthorityGuardHandler(center.Endpoint, log) { InnerHandler = new SocketsHttpHandler() };
             using var invoker = new HttpMessageInvoker(guard);
             foreach (var foreign in new[] { "http://127.0.0.2:" + center.Endpoint.Port + "/api/x", "https://127.0.0.1:" + center.Endpoint.Port + "/api/x",
@@ -89,11 +90,15 @@ public sealed class CenterSeamTests
             Assert.All(lines, line => Assert.Matches("^[^ /]+:[0-9]+ (sent|refused)$", line));
             Assert.Single(center.Calls);
 
-            // A 307 to another server is not followed.
+            // A 307 and a 308 with a Location on another server are not followed: that server receives nothing (it would answer a value).
             await using var elsewhere = await FakeCenter.StartAsync();
-            center.Script("RefreshNodeSession", new FakeFault.HttpStatus(307));
-            var reply = await new CenterClient(http, TimeProvider.System).RefreshAsync("afr1.unknown", CancellationToken.None);
-            Assert.NotEqual(CenterOutcome.Value, reply.Outcome);
+            foreach (var status in new[] { 307, 308 })
+            {
+                center.Script("RefreshNodeSession", new FakeFault.Redirect(status, elsewhere.Endpoint.Url + "/arcforges.fleet.v1.NodeEnrollmentService/RefreshNodeSession"));
+                var reply = await new CenterClient(http, TimeProvider.System).RefreshAsync("afr1.unknown", CancellationToken.None);
+                Assert.NotEqual(CenterOutcome.Value, reply.Outcome);
+            }
+
             Assert.Empty(elsewhere.Calls);
         }
         finally
@@ -144,20 +149,23 @@ public sealed class CenterSeamTests
         Assert.False(reply.MaybeApplied && expected != CenterOutcome.Unreachable);
     }
 
-    [Fact]
-    public async Task TheIngressCodeIsReadPercentDecoded()
+    [Theory]
+    [InlineData("auth%2Etoken_expired", "auth.token_expired")]
+    [InlineData("auth%2Ecredential%5Frevoked", "auth.credential_revoked")]
+    [InlineData("auth.unauthenticated", "auth.unauthenticated")]
+    public async Task TheIngressCodeIsReadPercentDecoded(string onTheWire, string code)
     {
         await using var center = await FakeCenter.StartAsync();
         using var http = new CenterHttpClient(center.Endpoint);
 
-        // The ingress percent-encodes grpc-message (Design errors.md); an encoded period still names the code.
-        center.Script("SignOutNode", new FakeFault.Transport(16, "auth.credential_revoked"));
-        var raw = FakeCenter.TrailerFrame(16, "auth.credential_revoked");
-        Assert.Contains("auth.credential_revoked", Encoding.ASCII.GetString(raw), StringComparison.Ordinal);
+        // The ingress percent-encodes grpc-message (Design errors.md): a trailer with encoded characters, exactly as written here, reaches
+        // the real client, which decodes it before the node classifies it.
+        var trailer = FakeCenter.RawTrailerFrame("grpc-status: 16\r\ngrpc-message: " + onTheWire + "\r\n");
+        Assert.Contains(onTheWire, Encoding.ASCII.GetString(trailer), StringComparison.Ordinal);
+        center.Script("SignOutNode", new FakeFault.Raw(trailer));
         var reply = await new CenterClient(http, TimeProvider.System).SignOutNodeAsync("afa1.x", CommandIds.New(), CancellationToken.None);
-        Assert.Equal("auth.credential_revoked", reply.TransportCode);
-        var encoded = new RpcException(new Status(StatusCode.Unauthenticated, Uri.UnescapeDataString("auth%2Etoken_expired")));
-        Assert.Equal(CenterOutcome.Transport, CenterClient.Classify(encoded).Outcome);
+        Assert.Equal(CenterOutcome.Transport, reply.Outcome);
+        Assert.Equal(code, reply.TransportCode);
     }
 
     [Theory]

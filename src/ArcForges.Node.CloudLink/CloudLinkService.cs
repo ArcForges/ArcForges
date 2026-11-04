@@ -53,7 +53,10 @@ internal sealed record CloudLinkOptions
     /// <summary>The node key store (<see cref="NodeKeyStores"/>).</summary>
     public required NodeKeyStore Keys { get; init; }
 
-    /// <summary>The effective center now (node.json, the official default, or the test hook); <see langword="null"/> when there is none.</summary>
+    /// <summary>
+    /// The effective center now (node.json, the official default, or the test hook); <see langword="null"/> when there is none. It may throw
+    /// <see cref="NodeConfigurationException"/> (an invalid <c>node.json</c>); the link then sends nothing and keeps answering.
+    /// </summary>
     public required Func<CenterEndpoint?> Center { get; init; }
 
     /// <summary>The node log.</summary>
@@ -98,8 +101,23 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <summary>The delay before the first refresh after a start (jittered up to twice this).</summary>
     public static readonly TimeSpan StartRefreshDelay = TimeSpan.FromSeconds(15);
 
-    /// <summary>The longest a SignOut's remote part may take (account.proto SignOut: 15 s; the rest is the local ending).</summary>
-    public static readonly TimeSpan SignOutRemoteBudget = TimeSpan.FromSeconds(12);
+    /// <summary>The SignOut deadline (account.proto SignOut: 15 s), counted from the handler's entry (N1 decision R-5).</summary>
+    public static readonly TimeSpan SignOutDeadline = TimeSpan.FromSeconds(15);
+
+    /// <summary>What a SignOut keeps of its deadline for the local ending and the recorded outcome.</summary>
+    public static readonly TimeSpan SignOutLocalReserve = TimeSpan.FromSeconds(3);
+
+    /// <summary>The longest a SignOut's remote part may take: the deadline less the local reserve.</summary>
+    public static readonly TimeSpan SignOutRemoteBudget = SignOutDeadline - SignOutLocalReserve;
+
+    /// <summary>A remote part with less time than this left is skipped and answered as not confirmed.</summary>
+    public static readonly TimeSpan SignOutRemoteMinimum = TimeSpan.FromSeconds(1);
+
+    /// <summary>The longest wait a refresh's <c>retry_at</c> can ask for: the probe cadence of a held credential (an hour).</summary>
+    public static readonly TimeSpan RefreshRetryCap = TimeSpan.FromHours(1);
+
+    /// <summary>The shortest and longest wait a report's <c>retry_at</c> can ask for (<c>node_report_installation</c>: 12 per hour).</summary>
+    public static readonly (TimeSpan Floor, TimeSpan Cap) ReportRetryBounds = (TimeSpan.FromMinutes(1), TimeSpan.FromHours(1));
 
     private static readonly TimeSpan SkewTolerance = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ReportDebounce = TimeSpan.FromSeconds(30);
@@ -120,7 +138,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private string? _lastError;
     private bool _rejected;
     private bool _pendingWrite;
-    private bool _storeUnavailable;
+    private bool _reload;
+    private int _configurationInvalid;
+    private TimeSpan _centerOffset;
+    private CancellationTokenSource? _work;
     private string? _ambiguousToken;
     private long _generation;
     private long _receipt;
@@ -185,6 +206,41 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         return new Held(_gate);
     }
 
+    /// <summary>
+    /// The gate for a sign-out (N1 decision R-5): waits at most <paramref name="wait"/> for the center call in flight (the loop releases the
+    /// gate between a refresh and a report, so that is one call of at most its 10 s deadline); a call that outlasts it is cancelled (its
+    /// outcome becomes unknown, which the ending makes moot), then the gate is taken.
+    /// </summary>
+    public async Task<IDisposable> EnterForSignOutAsync(TimeSpan wait, CancellationToken cancellationToken)
+    {
+        if (wait > TimeSpan.Zero && await _gate.WaitAsync(wait, cancellationToken).ConfigureAwait(false))
+        {
+            return new Held(_gate);
+        }
+
+        CancellationTokenSource? work;
+        lock (_stateLock)
+        {
+            work = _work;
+        }
+
+        try
+        {
+            if (work is not null)
+            {
+                await work.CancelAsync().ConfigureAwait(false);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // The call ended meanwhile.
+        }
+
+        _options.Log.Info("cloud.sign_out.cancelled_call_in_flight");
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return new Held(_gate);
+    }
+
     /// <inheritdoc />
     public void NodeInfoChanged()
     {
@@ -197,19 +253,40 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// N1 decision G-1 in both directions: every credential record of another center than the one now configured ends, two-phase (record,
+    /// key sets, node key, link file), a held <c>center_rejected_credential</c> included; nothing of it is sent anywhere. A stored credential
+    /// of the center now configured (a <c>credential_for_other_center</c> link whose center is configured again) is signed in as at start.
+    /// A record the node cannot reach here (another node ID, another backend, an unavailable store) is left alone and stays reported. Without
+    /// a credential, the old center's key sets and node key go.
+    /// </remarks>
     public async Task CenterChangedAsync()
     {
         using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
         {
-            if (Phase != CloudLinkPhase.SignedIn)
+            var center = Configured();
+            CloudCredentialRecord? held;
+            lock (_stateLock)
             {
-                _store.DeleteKeys();
-                TryDeleteKey();
+                held = _phase == CloudLinkPhase.SignedIn ? _record : null;
+            }
+
+            if (held is null || center?.Url != held.CenterUrl)
+            {
                 _http?.Dispose();
                 _http = null;
-                lock (_stateLock)
+                Load();
+                if (HasWarning(Warnings.OtherCenter))
                 {
-                    _warnings.Remove(Warnings.OtherCenter);
+                    EndCredential("center_changed", notice: null, _link);
+                }
+                else if (Phase != CloudLinkPhase.SignedIn)
+                {
+                    TryDeleteKeySets();
+                    if (_link is null)
+                    {
+                        TryDeleteKey(null);
+                    }
                 }
             }
         }
@@ -230,7 +307,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 RelayReason = "not_delivered",
                 CloudLinkEnabled = false,
             };
-            var center = _options.Center();
+            var center = Configured();
             if (_phase == CloudLinkPhase.SignedIn && _record is { } record)
             {
                 status.CenterUrl = record.CenterUrl;
@@ -289,9 +366,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     }
 
     /// <summary>
-    /// Adopts credentials a sign-in delivered (part N2's flows; tests seed with it in process): two-phase, <c>run/cloud-link.json</c>
-    /// <c>committing</c> first, then the record, the key sets, then <c>signed_in</c>. Takes the gate.
+    /// Adopts credentials a sign-in delivered (for part N2's flows; tests seed with it in process): two-phase, <c>run/cloud-link.json</c>
+    /// <c>committing</c> first, then the record, the key sets, then <c>signed_in</c>. Takes the gate. It never replaces another credential's
+    /// link (another center or node, or one being ended): that credential is ended first, or it would be left without a pointer.
     /// </summary>
+    /// <exception cref="InvalidOperationException">A link of another credential, or one being ended, exists.</exception>
     public async Task AdoptAsync(NodeCredentials credentials, CenterEndpoint center)
     {
         ArgumentNullException.ThrowIfNull(credentials);
@@ -319,6 +398,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 WrittenAtMs = now.ToUnixTimeMilliseconds(),
             };
             var target = CloudCredentialStore.Target(_options.NodeId.Span, center.Origin);
+            if (_store.ReadLink() is { } existing && (existing.Target != target || existing.State == LinkStates.Ending))
+            {
+                throw new InvalidOperationException("The node holds the link of another credential (" + existing.State + "); it is ended first.");
+            }
+
             var link = new CloudLinkFile
             {
                 State = LinkStates.Committing,
@@ -348,6 +432,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 _receipt = _options.Clock.GetTimestamp();
                 _nextRefresh = _receipt + Ticks(RefreshDelay(record));
                 _nextReport = _options.Clock.GetTimestamp();
+                _centerOffset = CenterOffset(record, now);
                 Interlocked.Increment(ref _generation);
             }
 
@@ -372,7 +457,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 return;
             }
 
-            changed = await RefreshCoreAsync(cancellationToken).ConfigureAwait(false);
+            using var work = BeginWork(cancellationToken);
+            changed = await RefreshCoreAsync(work.Token).ConfigureAwait(false);
         }
 
         if (changed)
@@ -382,12 +468,14 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     }
 
     /// <summary>
-    /// Signs the node out (AF-CTR-04 CTR4-NODE-11 as amended; N1 decision R-5) while the caller holds the gate (<see cref="EnterAsync"/>):
-    /// an in-flight refresh has ended by then (it runs under the same gate). With <paramref name="revokeRemote"/>, SignOutNode with the
-    /// current access token, within <see cref="SignOutRemoteBudget"/>; whatever the answer, the local credential, key sets, link file and
-    /// node key are deleted (the ending is two-phase, R-1).
+    /// Signs the node out (AF-CTR-04 CTR4-NODE-11 as amended; N1 decision R-5) while the caller holds the gate
+    /// (<see cref="EnterForSignOutAsync"/>): the center call in flight has ended by then. With <paramref name="revokeRemote"/>, SignOutNode
+    /// with the current access token, to the credential's own center only, within <paramref name="remoteBudget"/> (real time, as the
+    /// caller's deadline; default <see cref="SignOutRemoteBudget"/>; less than <see cref="SignOutRemoteMinimum"/> skips it). Whatever the
+    /// answer, the credential ends locally, two-phase (R-1). A link this node cannot end here (another node ID or secret-store backend, an
+    /// unreadable or inconsistent file) is left alone: <see cref="SignOutResult.NotSignedIn"/>, and the status keeps reporting it.
     /// </summary>
-    public async Task<SignOutResult> SignOutHeldAsync(bool revokeRemote)
+    public async Task<SignOutResult> SignOutHeldAsync(bool revokeRemote, TimeSpan? remoteBudget = null)
     {
         CloudCredentialRecord? record;
         CloudLinkFile? link;
@@ -397,26 +485,46 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             link = _link;
         }
 
-        if (record is null && link is null && _store.ReadLink() is null)
+        if (link is null)
+        {
+            try
+            {
+                link = _store.ReadLink();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                return SignOutResult.NotSignedIn;
+            }
+        }
+
+        if (link is null || Unowned(link) is not null)
         {
             return SignOutResult.NotSignedIn;
         }
 
         var result = !revokeRemote ? SignOutResult.LocalOnly : SignOutResult.RemoteUnconfirmed;
-        if (revokeRemote && record is not null && Phase == CloudLinkPhase.SignedIn && Client() is { } client)
+        var budget = remoteBudget ?? SignOutRemoteBudget;
+        if (revokeRemote && record is not null && Phase == CloudLinkPhase.SignedIn)
         {
-            using var budget = new CancellationTokenSource(SignOutRemoteBudget, _options.Clock);
-            try
+            if (budget < SignOutRemoteMinimum)
             {
-                result = await RemoteSignOutAsync(client, record, budget.Token).ConfigureAwait(false) ? SignOutResult.RemoteConfirmed : SignOutResult.RemoteUnconfirmed;
+                _options.Log.Warning("cloud.sign_out.remote_skipped", new LogField("budgetMs", (long)budget.TotalMilliseconds));
             }
-            catch (OperationCanceledException) when (budget.IsCancellationRequested)
+            else if (BoundClient(record, strand: false, out _) is { } client)
             {
-                result = SignOutResult.RemoteUnconfirmed;
+                using var cancel = new CancellationTokenSource(budget);
+                try
+                {
+                    result = await RemoteSignOutAsync(client, record, cancel.Token).ConfigureAwait(false) ? SignOutResult.RemoteConfirmed : SignOutResult.RemoteUnconfirmed;
+                }
+                catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+                {
+                    result = SignOutResult.RemoteUnconfirmed;
+                }
             }
         }
 
-        EndCredential("signed_out", notice: null, link ?? _store.ReadLink());
+        EndCredential("signed_out", notice: null, link);
         _options.Log.Info("cloud.signed_out", new LogField("revokeRemote", revokeRemote), new LogField("result", result));
         return result;
     }
@@ -519,10 +627,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
                 Interlocked.CompareExchange(ref _wake, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), _wake);
                 var changed = false;
+                var now = _options.Clock.GetTimestamp();
                 using (await EnterAsync(stop).ConfigureAwait(false))
+                using (var work = BeginWork(stop))
                 {
-                    var now = _options.Clock.GetTimestamp();
-                    if (_storeUnavailable || (_link?.State == LinkStates.Ending))
+                    if (_reload || (_link?.State == LinkStates.Ending))
                     {
                         Load();
                         changed = true;
@@ -535,12 +644,20 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
                     if ((Phase == CloudLinkPhase.SignedIn || _rejected) && now >= Interlocked.Read(ref _nextRefresh))
                     {
-                        changed |= await RefreshCoreAsync(stop).ConfigureAwait(false);
+                        changed |= await RefreshCoreAsync(work.Token).ConfigureAwait(false);
                     }
+                }
 
-                    if (Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
+                // The gate is released between the refresh and the report, so a sign-out waits for one center call at most (R-5).
+                if (Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
+                {
+                    using (await EnterAsync(stop).ConfigureAwait(false))
+                    using (var work = BeginWork(stop))
                     {
-                        changed |= await ReportCoreAsync(stop).ConfigureAwait(false);
+                        if (Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
+                        {
+                            changed |= await ReportCoreAsync(work.Token).ConfigureAwait(false);
+                        }
                     }
                 }
 
@@ -552,6 +669,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
                 return;
+            }
+            catch (OperationCanceledException)
+            {
+                // A sign-out cancelled the call in flight (EnterForSignOutAsync); its ending decides what follows.
             }
             catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
             {
@@ -583,7 +704,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         lock (_stateLock)
         {
             next = _phase == CloudLinkPhase.SignedIn || _rejected ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
-            if (_storeUnavailable || _pendingWrite)
+            if (_reload || _pendingWrite)
             {
                 next = Math.Min(next, now + Ticks(TimeSpan.FromSeconds(60)));
             }
@@ -598,21 +719,27 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         return remaining > TimeSpan.FromHours(1) ? TimeSpan.FromHours(1) : remaining;
     }
 
-    /// <summary>Loads the stored link (N1 decision R-1 and node-10): nothing is deleted on an absent record or a store failure.</summary>
+    /// <summary>
+    /// Loads the stored link (N1 decision R-1 and node-10): nothing is deleted on an absent record, a store failure, an unreadable link file
+    /// or a link this node cannot end here. A link is this node's to use or end only when its node ID, its secret-store backend pair and its
+    /// target (recomputed from the node ID and the link's center) match; only then is an interrupted ending finished, in the backend that
+    /// holds the record.
+    /// </summary>
     private void Load()
     {
-        var center = _options.Center();
+        var center = Configured(out var configurationInvalid);
         CloudLinkFile? link;
         try
         {
             link = _store.ReadLink();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
+            // An unreadable or unparsable link file is never read as "absent": reported, retried, nothing deleted.
             SetStranded(Warnings.StoreUnavailable, "the link file cannot be read: " + exception.GetType().Name);
             lock (_stateLock)
             {
-                _storeUnavailable = true;
+                _reload = true;
             }
 
             return;
@@ -620,38 +747,38 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
         lock (_stateLock)
         {
-            _storeUnavailable = false;
+            _reload = false;
             _link = link;
             _record = null;
+            _rejected = false;
+            _rejectedRecord = null;
             _phase = CloudLinkPhase.SignedOut;
+            _nextRefresh = long.MaxValue;
+            _nextReport = long.MaxValue;
+            _centerOffset = TimeSpan.Zero;
             _warnings.Remove(Warnings.StoreUnavailable);
             _warnings.Remove(Warnings.BackendChanged);
             _warnings.Remove(Warnings.OtherCenter);
             _warnings.Remove(Warnings.OtherNode);
+            _warnings.Remove(Warnings.Rejected);
         }
 
         if (link is null)
         {
             // Key sets without a link belong to no credential.
-            _store.DeleteKeys();
+            TryDeleteKeySets();
+            return;
+        }
+
+        if (Unowned(link) is { } unowned)
+        {
+            SetStranded(unowned.Warning, unowned.Reason);
             return;
         }
 
         if (link.State == LinkStates.Ending)
         {
             EndCredential(LastError ?? "signed_out", notice: null, link);
-            return;
-        }
-
-        if (link.NodeId != _nodeHex)
-        {
-            SetStranded(Warnings.OtherNode, "the link file belongs to another node ID");
-            return;
-        }
-
-        if (link.Backend != _options.Secrets.Backend.ToString() || link.Isolated != _options.Secrets.Isolated)
-        {
-            SetStranded(Warnings.BackendChanged, "the credential is in another secret-store backend (" + link.Backend + ")");
             return;
         }
 
@@ -666,7 +793,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             SetStranded(Warnings.StoreUnavailable, "the secret store failed: " + exception.GetType().Name);
             lock (_stateLock)
             {
-                _storeUnavailable = true;
+                _reload = true;
             }
 
             return;
@@ -674,6 +801,13 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
         if (record is null)
         {
+            if (link.State == LinkStates.Committing)
+            {
+                // A sign-in that never wrote its record (the crash points of the amendments' storage table): signed out, files removed.
+                EndCredential("sign_in_not_completed", notice: null, link);
+                return;
+            }
+
             SetStranded(Warnings.BackendChanged, "the selected secret store holds no credential for the link file");
             return;
         }
@@ -681,6 +815,24 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         if (record.NodeId != _nodeHex)
         {
             SetStranded(Warnings.OtherNode, "the credential belongs to another node ID");
+            return;
+        }
+
+        if (record.CenterUrl != link.CenterUrl)
+        {
+            SetStranded(Warnings.StoreUnavailable, "the record and the link file name different centers");
+            return;
+        }
+
+        if (configurationInvalid)
+        {
+            // node.json cannot be read, so the record's center is not confirmed: nothing is sent; retried every minute.
+            lock (_stateLock)
+            {
+                _reload = true;
+                _lastError = "center_configuration_invalid";
+            }
+
             return;
         }
 
@@ -738,9 +890,20 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             record = _record ?? (_rejected ? _rejectedRecord : null);
         }
 
-        if (record is null || Client() is not { } client)
+        if (record is null)
         {
             return false;
+        }
+
+        if (BoundClient(record, strand: true, out var stranded) is not { } client)
+        {
+            // Another center is configured (stranded: nothing is sent) or node.json cannot be read (retried in a minute).
+            if (!stranded)
+            {
+                Interlocked.Exchange(ref _nextRefresh, _options.Clock.GetTimestamp() + Ticks(TimeSpan.FromMinutes(1)));
+            }
+
+            return stranded;
         }
 
         var token = record.RefreshToken;
@@ -764,7 +927,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 return Rejected(record, reply.Code!);
             case CenterOutcome.Refused when reply.Error!.Code is "rate_limited" or "overloaded":
                 Contact(true);
-                ScheduleAt(reply.Error.Retry?.RetryAt, TimeSpan.FromSeconds(30));
+                var wait = RetryWait(reply.Error.Retry?.RetryAt, TimeSpan.FromSeconds(30), RefreshFloor(record), RefreshRetryCap);
+                Interlocked.Exchange(ref _nextRefresh, now + Ticks(wait + Jitter(TimeSpan.FromSeconds(2))));
                 return false;
             case CenterOutcome.Refused when reply.Error!.Code == "not_activated":
                 Contact(true);
@@ -784,7 +948,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 Backoff();
                 return true;
             default:
-                Contact(false);
+                // An ingress answer (stale generation, dependency unavailable) still reached the center's front (d.2 cloud_reachable).
+                Contact(reply.TransportCode is not null);
                 if (reply.MaybeApplied)
                 {
                     _ambiguousToken = token;
@@ -843,6 +1008,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _receipt = now;
             _nextRefresh = now + Ticks(RefreshDelay(record));
             _lastError = null;
+            _centerOffset = CenterOffset(record, wall);
             Interlocked.Increment(ref _generation);
             var lifetime = Lifetime(record);
             var skew = (DateTimeOffset.FromUnixTimeMilliseconds(record.AccessExpiresAtMs) - wall - lifetime).Duration();
@@ -894,9 +1060,19 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _nextReport = long.MaxValue;
         }
 
-        if (record is null || _link is not { } link || Client() is not { } client)
+        if (record is null || _link is not { } link)
         {
             return false;
+        }
+
+        if (BoundClient(record, strand: true, out var stranded) is not { } client)
+        {
+            if (!stranded)
+            {
+                Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(TimeSpan.FromMinutes(1)));
+            }
+
+            return stranded;
         }
 
         var info = _options.NodeInfo();
@@ -945,48 +1121,70 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(TimeSpan.FromHours(24)));
                 return AddWarning(Warnings.Restricted);
             case CenterOutcome.Refused when reply.Error!.Code is "rate_limited" or "overloaded":
-                var retry = ProtoTime.ToDateTimeOffset(reply.Error.Retry?.RetryAt) is { } at ? at - _options.Clock.GetUtcNow() : TimeSpan.FromMinutes(5);
-                Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(retry < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : retry));
+                var retry = RetryWait(reply.Error.Retry?.RetryAt, TimeSpan.FromMinutes(5), ReportRetryBounds.Floor, ReportRetryBounds.Cap);
+                Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(retry));
                 return false;
             default:
                 // Unreachable or unknown: the same command ID later (a committed report replays its receipt).
                 Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(TimeSpan.FromMinutes(1) + Jitter(TimeSpan.FromMinutes(1))));
-                Contact(reply.Outcome != CenterOutcome.Unreachable);
+                Contact(reply.Outcome != CenterOutcome.Unreachable || reply.TransportCode is not null);
                 return false;
         }
     }
 
-    /// <summary>Ends the credential, two-phase (N1 decision R-1): <c>ending</c> first, then record, key sets, node key, link file.</summary>
+    /// <summary>
+    /// Ends the credential, two-phase (N1 decision R-1): <c>ending</c> first, then the record (in the backend that holds it), the key sets,
+    /// the node key, and last the link file, the only pointer to the record. A step that fails keeps the ending recorded and reported
+    /// (<c>credential_store_unavailable</c>); the loop retries it every minute and every start resumes it. A link this node cannot end
+    /// here (<see cref="Unowned"/>) is not touched at all.
+    /// </summary>
     private void EndCredential(string reason, CloudNotice? notice, CloudLinkFile? link)
     {
-        if (link is not null && link.State != LinkStates.Ending)
+        var finished = true;
+        string? blocked = null;
+        if (link is not null)
         {
-            link.State = LinkStates.Ending;
-            _store.WriteLink(link);
+            if (Unowned(link) is { } unowned)
+            {
+                finished = false;
+                blocked = unowned.Warning;
+                _options.Log.Warning("cloud.ending.not_here", new LogField("warning", unowned.Warning), new LogField("reason", unowned.Reason));
+            }
+            else
+            {
+                try
+                {
+                    if (link.State != LinkStates.Ending)
+                    {
+                        link.State = LinkStates.Ending;
+                        _store.WriteLink(link);
+                    }
+
+                    _store.DeleteRecord(link.Target);
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+                {
+                    finished = false;
+                    _options.Log.Warning("cloud.ending.record_delete_failed", new LogField("errorType", exception.GetType().Name));
+                }
+            }
         }
 
-        var finished = true;
-        if (link is not null)
+        finished = finished && TryDeleteKeySets() && TryDeleteKey(link);
+        if (finished)
         {
             try
             {
-                _store.DeleteRecord(link.Target);
+                _store.DeleteLink();
             }
-            catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                // The ending stays recorded; the loop and the next start finish it.
                 finished = false;
-                _options.Log.Warning("cloud.ending.record_delete_failed", new LogField("errorType", exception.GetType().Name));
+                _options.Log.Warning("cloud.ending.link_delete_failed", new LogField("errorType", exception.GetType().Name));
             }
         }
 
-        if (finished)
-        {
-            _store.DeleteKeys();
-            TryDeleteKey();
-            _store.DeleteLink();
-        }
-
+        blocked ??= finished ? null : Warnings.StoreUnavailable;
         lock (_stateLock)
         {
             _phase = CloudLinkPhase.SignedOut;
@@ -996,9 +1194,14 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _pendingWrite = false;
             _ambiguousToken = null;
             _link = finished ? null : link;
-            _storeUnavailable = !finished;
+            _reload = blocked == Warnings.StoreUnavailable;
             _lastError = reason;
             _warnings.Clear();
+            if (blocked is not null)
+            {
+                _warnings.Add(blocked);
+            }
+
             _notice = notice;
             _nextRefresh = long.MaxValue;
             _nextReport = long.MaxValue;
@@ -1007,15 +1210,96 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         _options.Log.Info("cloud.credential_ended", new LogField("reason", reason), new LogField("finished", finished));
     }
 
-    private void TryDeleteKey()
+    /// <summary>
+    /// Why <paramref name="link"/> is not this node's to use or end here, or <see langword="null"/>: another node ID, another secret-store
+    /// backend pair (the record lives there: deleting here would delete nothing and lose the pointer), or a target that is not the one the
+    /// node derives from its node ID and the link's center (a damaged or edited file never names another entry to delete).
+    /// </summary>
+    private (string Warning, string Reason)? Unowned(CloudLinkFile link)
+    {
+        if (link.NodeId != _nodeHex)
+        {
+            return (Warnings.OtherNode, "the link file belongs to another node ID");
+        }
+
+        if (link.Backend != _options.Secrets.Backend.ToString() || link.Isolated != _options.Secrets.Isolated)
+        {
+            return (Warnings.BackendChanged, "the credential is in another secret-store backend (" + link.Backend + ")");
+        }
+
+        if (!CenterEndpoint.TryParse(link.CenterUrl, out var center, out _) || link.Target != CloudCredentialStore.Target(_options.NodeId.Span, center.Origin))
+        {
+            return (Warnings.StoreUnavailable, "the link file names a credential this node does not derive");
+        }
+
+        return null;
+    }
+
+    /// <summary>A credential of another center than the configured one: nothing is sent; the record is kept (node-10), as at start.</summary>
+    private void StrandOtherCenter(CloudCredentialRecord record)
+    {
+        lock (_stateLock)
+        {
+            _phase = CloudLinkPhase.SignedOut;
+            _record = null;
+            _rejected = false;
+            _rejectedRecord = null;
+            _warnings.Remove(Warnings.Rejected);
+            _warnings.Add(Warnings.OtherCenter);
+            _lastError = Warnings.OtherCenter;
+            _nextRefresh = long.MaxValue;
+            _nextReport = long.MaxValue;
+        }
+
+        _options.Log.Warning("cloud.credential_unusable", new LogField("warning", Warnings.OtherCenter),
+            new LogField("reason", "the credential belongs to " + record.CenterUrl));
+    }
+
+    private bool TryDeleteKeySets()
     {
         try
         {
-            _options.Keys.Delete();
+            _store.DeleteKeys();
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _options.Log.Warning("cloud.key_sets.delete_failed", new LogField("errorType", exception.GetType().Name));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Deletes the node key (N1 decision G-1): the recorded one, and by its derived name for the link's center and the configured one, so a
+    /// missing or damaged <c>run/node-key.json</c> leaves no key behind. False when a deletion failed (the ending then stays recorded).
+    /// </summary>
+    private bool TryDeleteKey(CloudLinkFile? link)
+    {
+        var origins = new HashSet<string>(StringComparer.Ordinal);
+        if (link is not null && CenterEndpoint.TryParse(link.CenterUrl, out var linked, out _))
+        {
+            origins.Add(linked.Origin);
+        }
+
+        if (Configured() is { } center)
+        {
+            origins.Add(center.Origin);
+        }
+
+        try
+        {
+            if (_options.Keys.Delete(_options.NodeId.Span, origins) == NodeKeyDeletion.OtherBackend)
+            {
+                // Recorded in a key store this run does not use (a --test-mode run over a production data root): reported, kept recorded.
+                _options.Log.Warning("cloud.node_key.orphaned", new LogField("backend", _options.Keys.Recorded()?.Backend ?? "unknown"));
+            }
+
+            return true;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
         {
             _options.Log.Warning("cloud.node_key.delete_failed", new LogField("errorType", exception.GetType().Name));
+            return false;
         }
     }
 
@@ -1063,22 +1347,91 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }).Where(key => key.NotAfterMs == 0 || DateTimeOffset.FromUnixTimeMilliseconds(key.NotAfterMs) + KeyPruneAge >= now),
     ];
 
-    private CenterClient? Client()
+    /// <summary>
+    /// The client of <paramref name="record"/>'s own center (CTR4-SEC-19): built from the URL the record is bound to, and only while that is
+    /// the configured center. Otherwise nothing is sent: with <paramref name="strand"/> the credential is held as
+    /// <c>credential_for_other_center</c> (<paramref name="stranded"/>), as at start; an unreadable node.json strands nothing.
+    /// </summary>
+    private CenterClient? BoundClient(CloudCredentialRecord record, bool strand, out bool stranded)
     {
-        var center = _options.Center();
-        if (center is null)
+        stranded = false;
+        var configured = Configured(out var invalid);
+        if (invalid)
         {
             return null;
         }
 
-        if (_http is null || !_http.Center.Equals(center))
+        if (configured is null || configured.Url != record.CenterUrl || !CenterEndpoint.TryParse(record.CenterUrl, out var bound, out _))
+        {
+            if (strand)
+            {
+                StrandOtherCenter(record);
+                stranded = true;
+            }
+
+            return null;
+        }
+
+        if (_http is null || !_http.Center.Equals(bound))
         {
             _http?.Dispose();
-            _http = new CenterHttpClient(center, _options.ConnectLog);
+            _http = new CenterHttpClient(bound, _options.ConnectLog);
         }
 
         return new CenterClient(_http, _options.Clock);
     }
+
+    /// <summary>The configured center, or <see langword="null"/> (none, or an invalid node.json, which is logged once per occurrence).</summary>
+    private CenterEndpoint? Configured() => Configured(out _);
+
+    private CenterEndpoint? Configured(out bool invalid)
+    {
+        try
+        {
+            var center = _options.Center();
+            invalid = false;
+            Interlocked.Exchange(ref _configurationInvalid, 0);
+            return center;
+        }
+        catch (Exception exception) when (exception is NodeConfigurationException or IOException or UnauthorizedAccessException)
+        {
+            invalid = true;
+            if (Interlocked.Exchange(ref _configurationInvalid, 1) == 0)
+            {
+                _options.Log.Warning("cloud.center_configuration_invalid", new LogField("errorType", exception.GetType().Name));
+            }
+
+            return null;
+        }
+    }
+
+    private bool HasWarning(string warning)
+    {
+        lock (_stateLock)
+        {
+            return _warnings.Contains(warning);
+        }
+    }
+
+    private WorkScope BeginWork(CancellationToken outer)
+    {
+        var work = CancellationTokenSource.CreateLinkedTokenSource(outer);
+        lock (_stateLock)
+        {
+            _work = work;
+        }
+
+        return new WorkScope(this, work);
+    }
+
+    /// <summary>
+    /// The center's clock less the node's wall clock, from the last receipt: <c>access_expires_at</c> less the stated lifetime is the center's
+    /// time of issue (zero when the lifetime is not stated).
+    /// </summary>
+    private static TimeSpan CenterOffset(CloudCredentialRecord record, DateTimeOffset wall) =>
+        record.AccessExpiresAtMs > 0 && record.AccessLifetimeMs > 0
+            ? DateTimeOffset.FromUnixTimeMilliseconds(record.AccessExpiresAtMs - record.AccessLifetimeMs) - wall
+            : TimeSpan.Zero;
 
     /// <summary>The delay to the next refresh: two thirds of the issued lifetime, less up to a tenth of jitter, at least min(60 s, L/2).</summary>
     internal TimeSpan RefreshDelay(CloudCredentialRecord record)
@@ -1089,10 +1442,14 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         var lifetime = Lifetime(record);
-        var floor = TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(60).Ticks, lifetime.Ticks / 2));
+        var floor = RefreshFloor(record);
         var delay = lifetime * 2 / 3 - Jitter(lifetime / 10);
         return delay < floor ? floor : delay > lifetime ? lifetime : delay;
     }
+
+    /// <summary>The shortest wait between two refreshes: min(60 s, L/2).</summary>
+    internal static TimeSpan RefreshFloor(CloudCredentialRecord record) =>
+        TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(60).Ticks, Lifetime(record).Ticks / 2));
 
     private static TimeSpan Lifetime(CloudCredentialRecord record) =>
         record.AccessLifetimeMs > 0 ? TimeSpan.FromMilliseconds(record.AccessLifetimeMs) : FallbackAccessLifetime;
@@ -1105,15 +1462,21 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         Interlocked.Exchange(ref _nextRefresh, _options.Clock.GetTimestamp() + Ticks(delay));
     }
 
-    private void ScheduleAt(Instant? retryAt, TimeSpan fallback)
+    /// <summary>
+    /// The wait for a center's <c>retry_at</c> (CTR4-SEC-15): converted to the node's clock with the center-time offset measured at the last
+    /// receipt, then held within [<paramref name="floor"/>, <paramref name="cap"/>], so a node clock ahead never retries in a loop and one
+    /// behind never waits past the limit's window.
+    /// </summary>
+    private TimeSpan RetryWait(Instant? retryAt, TimeSpan fallback, TimeSpan floor, TimeSpan cap)
     {
-        var wait = ProtoTime.ToDateTimeOffset(retryAt) is { } at ? at - _options.Clock.GetUtcNow() : fallback;
-        if (wait < TimeSpan.FromSeconds(1))
+        TimeSpan offset;
+        lock (_stateLock)
         {
-            wait = TimeSpan.FromSeconds(1);
+            offset = _centerOffset;
         }
 
-        Interlocked.Exchange(ref _nextRefresh, _options.Clock.GetTimestamp() + Ticks(wait + Jitter(TimeSpan.FromSeconds(2))));
+        var wait = ProtoTime.ToDateTimeOffset(retryAt) is { } at ? at - (_options.Clock.GetUtcNow() + offset) : fallback;
+        return wait < floor ? floor : wait > cap ? cap : wait;
     }
 
     private void Contact(bool reached)
@@ -1196,6 +1559,25 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * _options.Clock.TimestampFrequency);
 
     private static TimeSpan Jitter(TimeSpan range) => range <= TimeSpan.Zero ? TimeSpan.Zero : TimeSpan.FromTicks(Random.Shared.NextInt64(range.Ticks + 1));
+
+    /// <summary>A center call in flight under the gate, which a sign-out can cancel (<see cref="EnterForSignOutAsync"/>).</summary>
+    private readonly struct WorkScope(CloudLinkService owner, CancellationTokenSource work) : IDisposable
+    {
+        public CancellationToken Token => work.Token;
+
+        public void Dispose()
+        {
+            lock (owner._stateLock)
+            {
+                if (owner._work == work)
+                {
+                    owner._work = null;
+                }
+            }
+
+            work.Dispose();
+        }
+    }
 
     private sealed class Held(SemaphoreSlim gate) : IDisposable
     {

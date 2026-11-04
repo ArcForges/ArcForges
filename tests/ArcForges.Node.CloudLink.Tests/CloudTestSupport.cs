@@ -161,6 +161,7 @@ internal sealed class LinkFixture : IAsyncDisposable
         Directory.CreateDirectory(Path.Combine(DataRoot, "run"));
         Log = new NodeLog(Path.Combine(root, "logs"), LogLevel.Debug, clock);
         Keys = NodeKeyStores.ForTestDataRoot(DataRoot);
+        KeyFiles = (FileNodeKeyBackend)Keys.Backend;
         ConfiguredCenter = center.Endpoint;
     }
 
@@ -174,7 +175,13 @@ internal sealed class LinkFixture : IAsyncDisposable
 
     public NodeLog Log { get; }
 
-    public NodeKeyStore Keys { get; }
+    public NodeKeyStore Keys { get; set; }
+
+    /// <summary>The file-backed key backend of the data root.</summary>
+    public FileNodeKeyBackend KeyFiles { get; }
+
+    /// <summary>When set, reading the configured center throws it (an invalid <c>node.json</c>).</summary>
+    public Exception? CenterFailure { get; set; }
 
     public IsolatedSecretStore Secrets { get; set; } = new();
 
@@ -210,7 +217,7 @@ internal sealed class LinkFixture : IAsyncDisposable
             NodeId = NodeId,
             Secrets = Secrets.Selection,
             Keys = Keys,
-            Center = () => ConfiguredCenter,
+            Center = () => CenterFailure is { } failure ? throw failure : ConfiguredCenter,
             Log = Log,
             Clock = Clock,
             NodeInfo = () => new EnrollingNodeInfo
