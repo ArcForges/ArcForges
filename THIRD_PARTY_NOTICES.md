@@ -13,7 +13,7 @@ and the committed `packages.lock.json` files.
 | Microsoft.Data.Sqlite | [dotnet/efcore](https://github.com/dotnet/efcore) (built in [dotnet/dotnet](https://github.com/dotnet/dotnet)), MIT |
 | SQLitePCLRaw and the bundled SQLite (`e_sqlite3`) | [SQLitePCL.raw](https://github.com/ericsink/SQLitePCL.raw), Apache-2.0; [SQLite](https://sqlite.org/copyright.html), public domain |
 | Google.Protobuf | [protobuf](https://github.com/protocolbuffers/protobuf), BSD-3-Clause |
-| Grpc.Core.Api, Grpc.Net.Client, Grpc.Net.Common, Grpc.AspNetCore.Server | [grpc-dotnet](https://github.com/grpc/grpc-dotnet), Apache-2.0 |
+| Grpc.Core.Api, Grpc.Net.Client, Grpc.Net.Client.Web, Grpc.Net.Common, Grpc.AspNetCore.Server | [grpc-dotnet](https://github.com/grpc/grpc-dotnet), Apache-2.0 |
 | ASP.NET Core (Kestrel, the `Microsoft.AspNetCore.App` shared framework) and Microsoft.Extensions.* abstractions | [dotnet/aspnetcore](https://github.com/dotnet/aspnetcore) and [dotnet/runtime](https://github.com/dotnet/runtime), MIT |
 | System.CommandLine | [dotnet/command-line-api](https://github.com/dotnet/command-line-api), MIT |
 | ArcForges.Contracts.*, ArcForges.Sdk.Contracts | [ArcForges Contracts](https://github.com/ArcForges/Contracts), Apache-2.0 |

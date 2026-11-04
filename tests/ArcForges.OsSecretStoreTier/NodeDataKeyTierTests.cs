@@ -12,9 +12,12 @@ using Google.Protobuf;
 
 namespace ArcForges.Tests.SecretStoreTier;
 
-/// <summary>The single, non-parallel collection of every tier test; the tier fixture is shared by all of them.</summary>
+/// <summary>
+/// The single, non-parallel collection of every tier test. Each test class has its own tier fixture and so its own budget (at most 4 entries,
+/// 32 calls, 10 s per call, 5 minutes; AF-CTR-04 decision G-12).
+/// </summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class OsSecretStoreTierDefinition : ICollectionFixture<OsSecretStoreTier>
+public sealed class OsSecretStoreTierDefinition
 {
     public const string Name = "os-secret-store tier";
 }
@@ -31,7 +34,7 @@ public sealed class OsSecretStoreTierDefinition : ICollectionFixture<OsSecretSto
 /// </summary>
 [Collection(OsSecretStoreTierDefinition.Name)]
 [Trait("env", "os-secret-store")]
-public sealed class NodeDataKeyTierTests(OsSecretStoreTier tier)
+public sealed class NodeDataKeyTierTests(OsSecretStoreTier tier) : IClassFixture<OsSecretStoreTier>
 {
     [Fact(Skip = OsSecretStoreTier.WindowsTierReason, SkipUnless = nameof(OsSecretStoreTier.WindowsTier), SkipType = typeof(OsSecretStoreTier))]
     [SupportedOSPlatform("windows")]

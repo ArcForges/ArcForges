@@ -277,14 +277,6 @@ internal sealed class LinkFixture : IAsyncDisposable
         await StopAsync();
         Log.Dispose();
         await Center.DisposeAsync();
-        if (Environment.GetEnvironmentVariable("N1_DEBUG_LOGS") is { Length: > 0 } keep)
-        {
-            foreach (var file in Directory.GetFiles(Path.Combine(Root, "logs")))
-            {
-                File.Copy(file, Path.Combine(keep, Path.GetFileName(Root) + "-" + Path.GetFileName(file)));
-            }
-        }
-
         try
         {
             Directory.Delete(Root, recursive: true);

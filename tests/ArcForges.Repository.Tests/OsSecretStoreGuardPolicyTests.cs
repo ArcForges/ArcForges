@@ -172,7 +172,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         Assert.Matches(CngReference(), keys);
         Assert.Contains("Environment.GetEnvironmentVariable(OsSecretStoreGuard.OptInVariable)", keys, StringComparison.Ordinal);
         Assert.Matches(new Regex(@"OperatingSystem\.IsWindows\(\)\s*&&\s*NodeSecretStores\.UsesOsSecretStore\(testMode, optIn\)\s*\?\s*new CngNodeKeyBackend\(\)\s*:\s*new FileNodeKeyBackend\(dataRoot\)"), keys);
-        Assert.Equal(3, Regex.Matches(keys, @"OsSecretStoreGuard\.ThrowIfDenied\(""a CNG user key store""\);").Count);
+        Assert.Equal(3, Regex.Count(keys, @"OsSecretStoreGuard\.ThrowIfDenied\(""a CNG user key store""\);"));
         Assert.Contains("ExportPolicy = CngExportPolicies.None,", keys, StringComparison.Ordinal);
         Assert.Contains("options.NodeKeys?.Invoke(dataRoot) ?? NodeKeyStores.ForNode(dataRoot, options.TestMode)", host, StringComparison.Ordinal);
 

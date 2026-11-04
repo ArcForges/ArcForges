@@ -36,6 +36,9 @@ public sealed class OsSecretStoreTier : IDisposable
     public const int MaximumCalls = 32;
     public const int CleanupAllowance = 8;
     public const string NamePrefix = "ArcForges.Secrets.v1.";
+
+    /// <summary>The prefix of a CNG node key's name (AF-CTR-04: the node key tier test lists its key like an entry).</summary>
+    public const string KeyNamePrefix = "ArcForges.NodeKey.v1.";
     public const string NameDomain = "arcforges.os-secret-store-test.v1";
     public const string DeletedAbsent = "DELETED-ABSENT";
     public const string WindowsTierReason =
@@ -110,10 +113,12 @@ public sealed class OsSecretStoreTier : IDisposable
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(store);
-        if (name.Length != NamePrefix.Length + 64 || !name.StartsWith(NamePrefix, StringComparison.Ordinal)
-            || !name[NamePrefix.Length..].All(character => char.IsAsciiDigit(character) || character is >= 'A' and <= 'F'))
+        var prefix = name.StartsWith(KeyNamePrefix, StringComparison.Ordinal) ? KeyNamePrefix : NamePrefix;
+        if (name.Length != prefix.Length + 64 || !name.StartsWith(prefix, StringComparison.Ordinal)
+            || !name[prefix.Length..].All(character => char.IsAsciiDigit(character) || character is >= 'A' and <= 'F'))
         {
-            throw new ArgumentException("A tier entry name is canonical: " + NamePrefix + " and 64 uppercase hexadecimal digits.", nameof(name));
+            throw new ArgumentException("A tier entry name is canonical: " + NamePrefix + " (a secret) or " + KeyNamePrefix
+                + " (a CNG node key) and 64 uppercase hexadecimal digits.", nameof(name));
         }
 
         return List(name, store);

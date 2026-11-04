@@ -38,7 +38,7 @@ internal enum SignOutResult
     RemoteUnconfirmed,
 }
 
-/// <summary>The cloud link's inputs (the host builds them at startup step 8; tests give a temporary data root and a FakeCenter URL).</summary>
+/// <summary>The cloud link's inputs (the host builds them at startup step 8; tests give a temporary data root and a test center).</summary>
 internal sealed record CloudLinkOptions
 {
     /// <summary>The data root.</summary>
