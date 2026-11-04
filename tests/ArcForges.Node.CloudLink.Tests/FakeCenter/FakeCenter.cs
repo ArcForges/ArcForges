@@ -105,6 +105,24 @@ internal sealed class FakeCenter : IAsyncDisposable
     /// <summary>As <see cref="NextTokens"/>, the next correlation IDs.</summary>
     public Queue<byte[]> NextCorrelations { get; } = new();
 
+    /// <summary>
+    /// The refreshes one session may make in a 10-minute window (the center's <c>node_refresh_session</c> bucket; its policy default is 60), or
+    /// <see langword="null"/> for no limit.
+    /// </summary>
+    public int? RefreshSessionLimit { get; set; }
+
+    /// <summary>Marks the session of <paramref name="refreshOrAccess"/> as a Restricted account's (ReportNodeInfo is refused).</summary>
+    public void Restrict(string refreshOrAccess)
+    {
+        lock (_gate)
+        {
+            if ((_byRefresh.GetValueOrDefault(refreshOrAccess) ?? _byAccess.GetValueOrDefault(refreshOrAccess)) is { } session)
+            {
+                session.Restricted = true;
+            }
+        }
+    }
+
     /// <summary>Refresh tokens of account sessions (not node credentials): RefreshNodeSession refuses them.</summary>
     public HashSet<string> AccountTokens { get; } = new(StringComparer.Ordinal);
 
@@ -165,19 +183,27 @@ internal sealed class FakeCenter : IAsyncDisposable
     [
         ("RefreshNodeSession", "ok"), ("RefreshNodeSession", "AUTHENTICATION/credential_revoked"), ("RefreshNodeSession", "AUTHENTICATION/unauthenticated"),
         ("RefreshNodeSession", "AUTHORIZATION/permission_denied"), ("RefreshNodeSession", "AUTHENTICATION/token_expired"),
-        ("RefreshNodeSession", "VALIDATION/invalid_argument"),
+        ("RefreshNodeSession", "VALIDATION/invalid_argument"), ("RefreshNodeSession", "RESOURCE/rate_limited"),
         ("ReportNodeInfo", "ok"), ("ReportNodeInfo", "CONFLICT/command_id_reused"), ("ReportNodeInfo", "VALIDATION/invalid_argument"),
+        ("ReportNodeInfo", "AUTHORIZATION/permission_denied"), ("ReportNodeInfo", "AUTHENTICATION/unauthenticated"),
         ("ReportNodeInfo", "transport:auth.unauthenticated"), ("ReportNodeInfo", "transport:auth.credential_revoked"), ("ReportNodeInfo", "transport:auth.token_expired"),
         ("SignOutNode", "ok"), ("SignOutNode", "transport:auth.credential_revoked"), ("SignOutNode", "transport:auth.unauthenticated"),
-        ("SignOutNode", "transport:auth.token_expired"), ("SignOutNode", "CONFLICT/command_id_reused"),
+        ("SignOutNode", "transport:auth.token_expired"), ("SignOutNode", "CONFLICT/command_id_reused"), ("SignOutNode", "AUTHENTICATION/unauthenticated"),
     ];
 
     /// <summary>Seeds a live session with given tokens (the conformance test puts FakeCenter in a capture's state).</summary>
-    public void Seed(ReadOnlySpan<byte> nodeId, string access, string refresh, bool revoked = false)
+    public void Seed(ReadOnlySpan<byte> nodeId, string access, string refresh, bool revoked = false, bool restricted = false, bool nodeLive = true,
+        bool accessExpired = false, bool familyExpired = false, int refreshesUsed = 0)
     {
-        var session = new Session(nodeId.ToArray(), new byte[16], access, refresh, Clock.GetUtcNow() + AccessLifetime, Clock.GetUtcNow() + FamilyLifetime)
+        var now = Clock.GetUtcNow();
+        var session = new Session(nodeId.ToArray(), new byte[16], access, refresh, accessExpired ? now : now + AccessLifetime,
+            familyExpired ? now - TimeSpan.FromSeconds(1) : now + FamilyLifetime)
         {
             Revoked = revoked,
+            Restricted = restricted,
+            NodeLive = nodeLive,
+            Refreshes = refreshesUsed,
+            WindowStart = now,
         };
         lock (_gate)
         {
@@ -393,9 +419,10 @@ internal sealed class FakeCenter : IAsyncDisposable
             return response;
         }
 
-        if (session.Revoked || session.Spent.Contains(token))
+        if (session.Revoked || session.Spent.Contains(token) || !session.NodeLive)
         {
-            // Strict rotation: a spent token (also a retry whose reply was lost) revokes the family.
+            // Strict rotation: a spent token (also a retry whose reply was lost) revokes the family; a revoked device or a node row that is
+            // not live is credential_revoked too.
             session.Revoked = true;
             response.Error = Error(ErrorCategory.Authentication, "credential_revoked", response.Meta, null);
             return response;
@@ -404,8 +431,29 @@ internal sealed class FakeCenter : IAsyncDisposable
         if (session.SessionExpires <= Clock.GetUtcNow())
         {
             response.Error = Error(ErrorCategory.Authentication, "token_expired", response.Meta, null);
+            response.Error.Retry.Mode = RetryMode.SameCommand;
             return response;
         }
+
+        if (Clock.GetUtcNow() - session.WindowStart >= TimeSpan.FromMinutes(10))
+        {
+            session.WindowStart = Clock.GetUtcNow();
+            session.Refreshes = 0;
+        }
+
+        if (RefreshSessionLimit is { } limit && session.Refreshes >= limit)
+        {
+            var recovery = ProtoTime.ToInstant(session.WindowStart + TimeSpan.FromMinutes(10));
+            response.Error = Error(ErrorCategory.Resource, "rate_limited", response.Meta, null);
+            response.Error.Retry = new RetryAdvice { Mode = RetryMode.AfterTime, RetryAt = recovery };
+            response.Error.Details = new ErrorDetails
+            {
+                Limit = new LimitFailure { LimitName = "node_refresh_session", Maximum = new ArcForges.Contracts.Foundation.V1.Decimal { Value = limit.ToString(System.Globalization.CultureInfo.InvariantCulture) }, RecoveryAt = recovery },
+            };
+            return response;
+        }
+
+        session.Refreshes++;
 
         session.Spent.Add(token);
         _byAccess.Remove(session.Access);
@@ -435,6 +483,19 @@ internal sealed class FakeCenter : IAsyncDisposable
             return replayed ?? With(response, Error(ErrorCategory.Conflict, "command_id_reused", response.Meta, null));
         }
 
+        if (!session.NodeLive)
+        {
+            response.Error = Error(ErrorCategory.Authentication, "unauthenticated", response.Meta, null);
+            return response;
+        }
+
+        if (session.Restricted)
+        {
+            response.Error = Error(ErrorCategory.Authorization, "permission_denied", response.Meta,
+                new StateFailure { State = "operation", Reason = "fleet.reportNodeInfo" });
+            return response;
+        }
+
         if (!request.Node.NodeId.Value.Span.SequenceEqual(session.NodeId))
         {
             response.Error = Error(ErrorCategory.Validation, "invalid_argument", response.Meta, new StateFailure { State = "node.node_id", Reason = "node.node_id: mismatch" });
@@ -455,6 +516,12 @@ internal sealed class FakeCenter : IAsyncDisposable
         if (Replay(request.Meta, payload, NodeEnrollmentServiceSignOutNodeResponse.Parser, out var replayed, out _))
         {
             return replayed ?? With(response, Error(ErrorCategory.Conflict, "command_id_reused", response.Meta, null));
+        }
+
+        if (!session.NodeLive)
+        {
+            response.Error = Error(ErrorCategory.Authentication, "unauthenticated", response.Meta, null);
+            return response;
         }
 
         session.Revoked = true;
@@ -551,6 +618,40 @@ internal sealed class FakeCenter : IAsyncDisposable
         return prefix + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
+    /// <summary>
+    /// FakeCenter's own node key proof verifier (node-13 item 4: independent of the node's builder; the sign-in methods of part N2 use it),
+    /// pinned to the Go center's verdicts by the vendored proof vectors: a 91-byte P-256 PKIX key, a 64-byte P1363 signature with r in
+    /// [1, n-1] and s in [1, n/2], ES256 over SHA-256 of the message.
+    /// </summary>
+    public static bool VerifyNodeKeyProof(byte[] publicKey, byte[] message, byte[] proof)
+    {
+        if (proof.Length != 64 || publicKey.Length != 91)
+        {
+            return false;
+        }
+
+        using var key = ECDsa.Create();
+        try
+        {
+            key.ImportSubjectPublicKeyInfo(publicKey, out var read);
+            if (read != publicKey.Length || key.ExportParameters(false).Curve.Oid.Value != "1.2.840.10045.3.1.7")
+            {
+                return false;
+            }
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+
+        var order = System.Numerics.BigInteger.Parse("0FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+            System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture);
+        var r = new System.Numerics.BigInteger(proof.AsSpan(0, 32), isUnsigned: true, isBigEndian: true);
+        var low = new System.Numerics.BigInteger(proof.AsSpan(32), isUnsigned: true, isBigEndian: true);
+        return r.Sign > 0 && r < order && low.Sign > 0 && low <= order >> 1
+            && key.VerifyData(message, proof, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+    }
+
     /// <summary>The message of a gRPC-Web request body (one uncompressed data frame).</summary>
     public static byte[] Payload(byte[] body)
     {
@@ -603,6 +704,14 @@ internal sealed class FakeCenter : IAsyncDisposable
         public HashSet<string> Spent { get; } = new(StringComparer.Ordinal);
 
         public bool Revoked { get; set; }
+
+        public bool Restricted { get; set; }
+
+        public bool NodeLive { get; set; } = true;
+
+        public int Refreshes { get; set; }
+
+        public DateTimeOffset WindowStart { get; set; } = DateTimeOffset.MinValue;
 
         public string? ReportedName { get; set; }
     }

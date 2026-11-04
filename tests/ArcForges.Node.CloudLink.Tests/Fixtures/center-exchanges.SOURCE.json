@@ -1,13 +1,13 @@
 {
   "source": "https://github.com/ArcForges/Cloud",
-  "sourceCommit": "2686a73a6d735445e737d375655d81bffaf7b4e7",
+  "sourceCommit": "41c8a72dbbd63efdb6967f71c23610ae2f73fae1",
   "sourcePath": "center/internal/fleetapi/testdata/exchanges",
   "producer": "center/internal/fleetapi/capture_integration_test.go TestFleetExchangeCapture (REAL PostgreSQL, the REAL Go center behind its ingress; normalized placeholders)",
-  "centerCommit": "3ab4fe0",
+  "centerCommit": "3ab4fe0 (the 46 captures of Cloud 2686a73, byte-identical) and 2686a73 (the 7 added by Cloud #136)",
   "contractsCohort": "1.0.0-ci.424.1",
   "schemaVersion": 2,
   "licence": "AGPL-3.0-only (Cloud and ArcForges alike); data files copied byte for byte, no Cloud source is built or referenced",
-  "listingSha256": "f2f0e1d48deee96095d07115590f042be6f751fcc37a3c7a712b863356d33ef5",
+  "listingSha256": "0803c8e674a3ec31fb940724c2ddf8114670c4059ca9d28ca0bb56749ab39d99",
   "files": [
     {
       "file": "BeginNodeSignIn-invalid-redirect.json",
@@ -175,14 +175,29 @@
       "sha256": "6933cdcf89c8e335072f11701d82702755a76271b48ccd74a65be7555bc6ed1e"
     },
     {
+      "file": "RefreshNodeSession-device-revoked.json",
+      "gitBlob": "8931c239e61e7d22f4859ee2ff99e0ae93e7a0e4",
+      "sha256": "f3f083edef28b7e9fd7f9a27904dd0e29902629376132e015ac2dbe005a0dae2"
+    },
+    {
       "file": "RefreshNodeSession-ok.json",
       "gitBlob": "5a19375ce568a825d7f4e8e32601f30fa812d553",
       "sha256": "1d3dfde10df9acb532b534cd196b335eabebb6b1eaee447d55ccd104097256ed"
     },
     {
+      "file": "RefreshNodeSession-rate-limited.json",
+      "gitBlob": "254938bb8ac6decc7195ced9a085a4955b92d3e9",
+      "sha256": "a0d2cc293e617c905ccbf93b68b07b680b4c2ea6e22a346f589396403c1db1b0"
+    },
+    {
       "file": "RefreshNodeSession-spent-token.json",
       "gitBlob": "28f5efa91dcb3fe86196c43fad464173f3ec42a4",
       "sha256": "57d91e032d35029717950b15df021b997df4b8f4f40864a9b4c1f6ca6cbaf058"
+    },
+    {
+      "file": "RefreshNodeSession-token-expired.json",
+      "gitBlob": "90d64314a134487d24506568d8e46b7706e9e5e5",
+      "sha256": "94a465f634e4801a976f74b0d86f132c00b63058a564348791d2b26ff44843bc"
     },
     {
       "file": "RefreshNodeSession-unknown-token.json",
@@ -195,6 +210,11 @@
       "sha256": "73aaf77a6ec79ef57f3a89e9849ca589ba7a1822365884126a148fea4e727c9c"
     },
     {
+      "file": "ReportNodeInfo-credential-revoked.json",
+      "gitBlob": "fc8c9fe88d58dc48bd47951b1cdf5e3a36358cb6",
+      "sha256": "69e89e122ac1a9a67ecc81193bd0ded0c77082f41ab391cfe8c7e48b1a74da54"
+    },
+    {
       "file": "ReportNodeInfo-node-id-mismatch.json",
       "gitBlob": "2c2daa68c93f71e0c2d715e5c8ac3eccf811971b",
       "sha256": "7084786f587256169df429d93fed13c0a5c80901538152349051960349e29bd7"
@@ -203,6 +223,21 @@
       "file": "ReportNodeInfo-ok.json",
       "gitBlob": "5fa67049310051b942d829595d4dbffb08c11787",
       "sha256": "eab981655932b3ca17f581669083926ac07372476cee5b823297209156c6693a"
+    },
+    {
+      "file": "ReportNodeInfo-restricted-account.json",
+      "gitBlob": "9c0c21385dbb67a74f20be38fdbe0866028f8f41",
+      "sha256": "24575ebaf82f25c4b8e284c95070268e76bda7f7d6ef14a93c418442e7330e69"
+    },
+    {
+      "file": "ReportNodeInfo-token-expired.json",
+      "gitBlob": "6418678247fa158349ee855299f85694c1ed60c6",
+      "sha256": "54afcd65f8c3481065a48ba3e821326c6cc32bd3848db7706cfa005e72ee9b3a"
+    },
+    {
+      "file": "SignOutNode-node-not-live.json",
+      "gitBlob": "0d49d1716902cd0b0c1ce63b96aaec984b66595e",
+      "sha256": "f96a526bb801367a24481c75e044201ff587b18a8ec1fb2c0590b114243a6fea"
     },
     {
       "file": "SignOutNode-ok.json",

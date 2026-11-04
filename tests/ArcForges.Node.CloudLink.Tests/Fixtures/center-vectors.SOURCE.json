@@ -1,0 +1,20 @@
+{
+  "source": "https://github.com/ArcForges/Cloud",
+  "sourceCommit": "41c8a72dbbd63efdb6967f71c23610ae2f73fae1",
+  "sourcePath": "center/internal/fleet/testdata",
+  "producer": "center/internal/fleet/vectors_test.go TestFleetVectorFiles (from the production functions config.ParsePublicBaseURL, config.Load, fleet.ProofMessage, fleet.VerifyNodeKeyProof, fleet.Fingerprint; a committed file that differs fails the Cloud test)",
+  "licence": "AGPL-3.0-only (Cloud and ArcForges alike); data files copied byte for byte, no Cloud source is built or referenced",
+  "listingSha256": "c7f41e1bea3ae4c7a00888d25418dba129066657fbae4e561771070ad397564f",
+  "files": [
+    {
+      "file": "node-key-proof-vectors.json",
+      "gitBlob": "94644d0d5d017f20ec0bc02ac9424a5332543520",
+      "sha256": "02c4300986818cae2fce3c2657025e52738a6f6802cfe6c91dec35b3fafdec2d"
+    },
+    {
+      "file": "url-vectors.json",
+      "gitBlob": "a50c3c88cb208467480de5111f27fd658390ffeb",
+      "sha256": "6f4e8cd4551b3823f50cd0ea2e9d6245b4c13b199f0f0eeedc22f500b2320d72"
+    }
+  ]
+}

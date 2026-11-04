@@ -12,9 +12,9 @@ using Google.Protobuf;
 namespace ArcForges.Node.CloudLink.Tests;
 
 /// <summary>
-/// N1-10: FakeCenter (MOCKED center) proven against REAL captures (CTR4-TST-03; delivery-5; N1 decision R-6). The 46 exchanges the Cloud
-/// integration test <c>TestFleetExchangeCapture</c> captured from the real Go center behind its ingress on real PostgreSQL (center
-/// <c>3ab4fe0</c>, cohort <c>1.0.0-ci.424.1</c>) are vendored byte for byte with a manifest. They pin message shapes and the center's refusals;
+/// N1-10: FakeCenter (MOCKED center) proven against REAL captures (CTR4-TST-03; delivery-5; N1 decisions R-6, G-5). The 53 exchanges the
+/// Cloud integration test <c>TestFleetExchangeCapture</c> captured from the real Go center behind its ingress on real PostgreSQL (cohort
+/// <c>1.0.0-ci.424.1</c>; Cloud 41c8a72, #136) are vendored byte for byte with a manifest. They pin message shapes and the center's refusals;
 /// their proofs, tokens and IDs are normalized placeholders, so they pin no cryptography. The captures are the Go center's ingress, not the
 /// hosted Worker: Worker replies stay contract-modelled.
 /// </summary>
@@ -28,11 +28,9 @@ public sealed class FakeCenterConformanceTests
     /// </summary>
     private static readonly Dictionary<(string Method, string Outcome), string> ContractModelled = new()
     {
-        [("RefreshNodeSession", "AUTHENTICATION/token_expired")] = "fleet.proto RefreshNodeSession errors; center-fleet.md: an expired family",
         [("RefreshNodeSession", "VALIDATION/invalid_argument")] = "center-fleet.md: an empty token or one over 8,192 bytes",
         [("ReportNodeInfo", "transport:auth.unauthenticated")] = "Design errors.md, the ingress table",
-        [("ReportNodeInfo", "transport:auth.credential_revoked")] = "Design errors.md, the ingress table",
-        [("ReportNodeInfo", "transport:auth.token_expired")] = "Design errors.md, the ingress table",
+        [("ReportNodeInfo", "AUTHENTICATION/unauthenticated")] = "c0-decisions E-14; center-fleet.md: no live node row (captured for SignOutNode)",
         [("SignOutNode", "transport:auth.unauthenticated")] = "Design errors.md, the ingress table",
         [("SignOutNode", "transport:auth.token_expired")] = "Design errors.md, the ingress table",
         [("SignOutNode", "CONFLICT/command_id_reused")] = "fleet.proto SignOutNode idempotency: command_id",
@@ -44,32 +42,42 @@ public sealed class FakeCenterConformanceTests
     [Fact]
     public void TheVendoredCapturesAreTheManifestsBytesOfTheCohortThisRepositoryUses()
     {
-        using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Fixtures, "center-exchanges.SOURCE.json")));
-        var root = manifest.RootElement;
-        Assert.Equal("2686a73a6d735445e737d375655d81bffaf7b4e7", root.GetProperty("sourceCommit").GetString());
-        var files = root.GetProperty("files").EnumerateArray().ToList();
-        Assert.Equal(46, files.Count);
-        var listing = new StringBuilder();
-        var onDisk = Directory.EnumerateFiles(Path.Combine(Fixtures, "center-exchanges"), "*.json").Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(files.Select(file => file.GetProperty("file").GetString()), onDisk);
-        foreach (var file in files)
-        {
-            var name = file.GetProperty("file").GetString()!;
-            var sha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Fixtures, "center-exchanges", name))));
-            Assert.Equal(file.GetProperty("sha256").GetString(), sha);
-            listing.Append(name).Append(' ').Append(sha).Append('\n');
-        }
-
-        Assert.Equal(root.GetProperty("listingSha256").GetString(), Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(listing.ToString()))));
+        var root = VendoredManifest("center-exchanges", 53);
 
         // A cohort bump without a re-vendor fails: the captures name the cohort of the generated types this repository builds with.
         var cohort = root.GetProperty("contractsCohort").GetString()!;
         var version = typeof(NodeEnrollmentService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
         Assert.StartsWith(cohort, version, StringComparison.Ordinal);
-        foreach (var name in onDisk)
+        foreach (var file in root.GetProperty("files").EnumerateArray())
         {
-            Assert.Equal(cohort, Capture.Load(name![..^5]).Cohort);
+            Assert.Equal(cohort, Capture.Load(file.GetProperty("file").GetString()![..^5]).Cohort);
         }
+    }
+
+    /// <summary>
+    /// Checks a vendored directory against its manifest (the Cloud source commit of Cloud #136, each file's SHA-256, the listing digest) and
+    /// returns the manifest; a drifted, missing or extra file fails.
+    /// </summary>
+    internal static JsonElement VendoredManifest(string directory, int count)
+    {
+        using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Fixtures, directory + ".SOURCE.json")));
+        var root = manifest.RootElement.Clone();
+        Assert.Equal("41c8a72dbbd63efdb6967f71c23610ae2f73fae1", root.GetProperty("sourceCommit").GetString());
+        var files = root.GetProperty("files").EnumerateArray().ToList();
+        Assert.Equal(count, files.Count);
+        var listing = new StringBuilder();
+        var onDisk = Directory.EnumerateFiles(Path.Combine(Fixtures, directory), "*.json").Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(files.Select(file => file.GetProperty("file").GetString()), onDisk);
+        foreach (var file in files)
+        {
+            var name = file.GetProperty("file").GetString()!;
+            var sha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Fixtures, directory, name))));
+            Assert.Equal(file.GetProperty("sha256").GetString(), sha);
+            listing.Append(name).Append(' ').Append(sha).Append('\n');
+        }
+
+        Assert.Equal(root.GetProperty("listingSha256").GetString(), Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(listing.ToString()))));
+        return root;
     }
 
     [Theory]
@@ -105,6 +113,13 @@ public sealed class FakeCenterConformanceTests
     [InlineData("ReportNodeInfo-node-id-mismatch")]
     [InlineData("SignOutNode-ok")]
     [InlineData("SignOutNode-retry-after-revocation")]
+    [InlineData("RefreshNodeSession-token-expired")]
+    [InlineData("RefreshNodeSession-rate-limited")]
+    [InlineData("RefreshNodeSession-device-revoked")]
+    [InlineData("ReportNodeInfo-token-expired")]
+    [InlineData("ReportNodeInfo-credential-revoked")]
+    [InlineData("ReportNodeInfo-restricted-account")]
+    [InlineData("SignOutNode-node-not-live")]
     public async Task TheRealClientBuildsTheCapturedRequests(string name)
     {
         var capture = Capture.Load(name);
@@ -145,6 +160,13 @@ public sealed class FakeCenterConformanceTests
     [InlineData("ReportNodeInfo-node-id-mismatch")]
     [InlineData("SignOutNode-ok")]
     [InlineData("SignOutNode-retry-after-revocation")]
+    [InlineData("RefreshNodeSession-token-expired")]
+    [InlineData("RefreshNodeSession-rate-limited")]
+    [InlineData("RefreshNodeSession-device-revoked")]
+    [InlineData("ReportNodeInfo-token-expired")]
+    [InlineData("ReportNodeInfo-credential-revoked")]
+    [InlineData("ReportNodeInfo-restricted-account")]
+    [InlineData("SignOutNode-node-not-live")]
     public async Task FakeCenterAnswersTheCapturedRequestsWithTheCapturedBytes(string name)
     {
         var capture = Capture.Load(name);
@@ -192,7 +214,27 @@ public sealed class FakeCenterConformanceTests
                 center.Seed(new byte[16], bearer!, "afr1.seeded");
                 break;
             case "SignOutNode-retry-after-revocation":
+            case "ReportNodeInfo-credential-revoked":
                 center.Seed(new byte[16], bearer!, "afr1.seeded", revoked: true);
+                break;
+            case "RefreshNodeSession-token-expired":
+                center.Seed(new byte[16], "afa1.seeded", NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(payload).RefreshToken, familyExpired: true);
+                break;
+            case "RefreshNodeSession-rate-limited":
+                center.RefreshSessionLimit = 2;
+                center.Seed(new byte[16], "afa1.seeded", NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(payload).RefreshToken, refreshesUsed: 2);
+                break;
+            case "RefreshNodeSession-device-revoked":
+                center.Seed(new byte[16], "afa1.seeded", NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(payload).RefreshToken, revoked: true);
+                break;
+            case "ReportNodeInfo-token-expired":
+                center.Seed(new byte[16], bearer!, "afr1.seeded", accessExpired: true);
+                break;
+            case "ReportNodeInfo-restricted-account":
+                center.Seed(NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(payload).Node.NodeId.Value.Span, bearer!, "afr1.seeded", restricted: true);
+                break;
+            case "SignOutNode-node-not-live":
+                center.Seed(new byte[16], bearer!, "afr1.seeded", nodeLive: false);
                 break;
             default:
                 break;

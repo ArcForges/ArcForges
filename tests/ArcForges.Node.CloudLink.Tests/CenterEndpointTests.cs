@@ -6,7 +6,7 @@ namespace ArcForges.Node.CloudLink.Tests;
 /// <summary>
 /// N1-1 (unit): the center URL (CTR4-NODE-01 as amended; SEC-11/19). The node's narrower rules (its http host set, the 512 bound, the fleet
 /// base warning) are pinned here; the rules it shares with the center's <c>ParsePublicBaseURL</c> are pinned by the vendored Cloud vector file
-/// (<c>CenterUrlVectorTests</c>, N1 decision R-2).
+/// (<c>CenterVectorTests</c>, N1 decision R-2).
 /// </summary>
 public sealed class CenterEndpointTests
 {
