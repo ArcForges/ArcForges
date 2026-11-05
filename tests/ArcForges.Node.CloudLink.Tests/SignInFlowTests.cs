@@ -615,8 +615,8 @@ public sealed class SignInFlowTests
     /// <summary>
     /// Advances the manual clock a second at a time until <paramref name="condition"/> holds, at most <paramref name="limit"/> of the clock,
     /// and only while the flow waits on the clock (N2 review tests N-4): a poll or a Complete over the real HTTP seam runs in real time, so
-    /// the clock stands still until the flow waits again. After a step the next one comes only when the wait it saw is still pending or a
-    /// new wait began, so no simulated time passes while a woken flow runs.
+    /// the clock stands still until the flow waits again. After a step the next one comes only once the timers that fired have run and the
+    /// wait it saw is still pending or a new wait began, so no simulated time passes while a woken flow runs.
     /// </summary>
     internal static async Task Advance(LinkFixture link, TimeSpan limit, Func<bool> condition, string what)
     {
@@ -626,7 +626,9 @@ public sealed class SignInFlowTests
         {
             if (moved >= limit)
             {
-                await Eventually.TrueAsync(condition, what);
+                var (waits, last, blocked) = flows.ClockWait;
+                await Eventually.TrueAsync(condition, what + $" (clock moved {moved}; {waits} clock waits, the last {(last is null ? "none" : last.IsCompleted ? "completed" : "pending")}, blocked {blocked}; clock: {link.Clock.Describe()}; center calls: "
+                    + string.Join(",", link.Center.Calls.Select(call => call.Method)) + ")");
                 return;
             }
 
@@ -644,6 +646,9 @@ public sealed class SignInFlowTests
             var (count, wait, _) = flows.ClockWait;
             link.Clock.Advance(TimeSpan.FromSeconds(1));
             moved += TimeSpan.FromSeconds(1);
+
+            // The timers that fired run on the thread pool: the wait is judged only once they have run.
+            await Until(() => link.Clock.Firing == 0);
             if (wait is not { IsCompleted: false })
             {
                 // The wait ended: the flow runs on in real time until it is blocked in the next wait or reaches the condition.

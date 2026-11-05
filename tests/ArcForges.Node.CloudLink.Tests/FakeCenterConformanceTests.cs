@@ -468,7 +468,7 @@ public sealed class FakeCenterConformanceTests
             "ReportNodeInfo" => NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
             "SignOutNode" => NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
 
-            // The sign-in requests carry no RequestMeta: the bytes are the frame as sent.
+            // The sign-in requests: the client keeps the captured request's meta (it fills only a missing one), so the frame is as sent.
             _ => null!,
         };
         if (message is null)

@@ -22,6 +22,7 @@ internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
     private readonly List<ManualTimer> _timers = [];
     private DateTimeOffset _wall = start;
     private long _ticks;
+    private int _firing;
 
     public ManualClock()
         : this(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero))
@@ -29,6 +30,19 @@ internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
     }
 
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    /// <summary>Timer callbacks that fired and have not finished yet (they run on the thread pool).</summary>
+    public int Firing => Volatile.Read(ref _firing);
+
+    /// <summary>The pending timers and when the next is due (test diagnostics).</summary>
+    public string Describe()
+    {
+        lock (_gate)
+        {
+            var next = _timers.Count == 0 ? (long?)null : _timers.Min(timer => timer.Due) - _ticks;
+            return $"{_timers.Count} timers, the next due in {(next is { } ticks ? TimeSpan.FromTicks(ticks).ToString() : "none")}, {Firing} firing";
+        }
+    }
 
     public override DateTimeOffset GetUtcNow()
     {
@@ -125,7 +139,18 @@ internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
                 }
             }
 
-            ThreadPool.UnsafeQueueUserWorkItem(_ => callback(state), null);
+            Interlocked.Increment(ref clock._firing);
+            ThreadPool.UnsafeQueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    callback(state);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref clock._firing);
+                }
+            }, null);
         }
 
         public void Dispose()
