@@ -83,7 +83,6 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Run? _current;
     private int _disposed;
-    private Task[]? _clockWait;
     private long _clockWaits;
 
     /// <summary>Creates the flows of <paramref name="link"/>.</summary>
@@ -95,6 +94,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
     /// <summary>Replaces the loopback listener's construction (tests: a bind failure).</summary>
     internal Func<IPAddress, TcpListener>? Listen { get; set; }
+
+    /// <summary>Awaited before a flow's background work starts, given the flow's ID (tests: a flow whose work starts late).</summary>
+    internal Func<Id, Task?>? BeforeWork { get; set; }
 
     /// <summary>Runs in a flow's end after the flow's lock was released and before anything else of it (tests: a BeginSignIn in that gap).</summary>
     internal Action? AfterEnd { get; set; }
@@ -134,7 +136,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         {
             lock (_lock)
             {
-                return (_clockWaits, _clockWait?[0], _clockWait is { } tasks && tasks.All(task => !task.IsCompleted));
+                // The newest flow's wait only: an ended flow's late wait (its work started after it was cancelled) never stands for it.
+                var tasks = _current?.ClockTasks;
+                return (_clockWaits, tasks?[0], tasks is not null && tasks.All(task => !task.IsCompleted));
             }
         }
     }
@@ -394,7 +398,15 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         }
 
         run.Started.TrySetResult();
-        run.Work = Task.Run(() => method == SignInMethod.Browser ? RunBrowserAsync(run) : RunDeviceAsync(run));
+        run.Work = Task.Run(async () =>
+        {
+            if (BeforeWork?.Invoke(run.Id) is { } hold)
+            {
+                await hold.ConfigureAwait(false);
+            }
+
+            await (method == SignInMethod.Browser ? RunBrowserAsync(run) : RunDeviceAsync(run)).ConfigureAwait(false);
+        });
         return null;
     }
 
@@ -635,12 +647,12 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     private ClientScope Client(CenterEndpoint center) => new(center, _options);
 
     /// <summary>Waits for the first of <paramref name="clock"/> (a delay on the flow's clock) and <paramref name="others"/>, recorded.</summary>
-    private async Task<Task> OnClockAsync(Task clock, params Task[] others)
+    private async Task<Task> OnClockAsync(Run run, Task clock, params Task[] others)
     {
         Task[] tasks = [clock, .. others];
         lock (_lock)
         {
-            _clockWait = tasks;
+            run.ClockTasks = tasks;
             _clockWaits++;
         }
 
@@ -652,9 +664,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         {
             lock (_lock)
             {
-                if (ReferenceEquals(_clockWait, tasks))
+                if (ReferenceEquals(run.ClockTasks, tasks))
                 {
-                    _clockWait = null;
+                    run.ClockTasks = null;
                 }
             }
         }
@@ -670,7 +682,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             {
                 var receiver = run.Receiver!;
                 var expiry = Task.Delay(BrowserLifetime - _options.Clock.GetElapsedTime(run.Received), _options.Clock, run.Stop.Token);
-                var done = await OnClockAsync(expiry, receiver.Result, run.Cancelled.Task).ConfigureAwait(false);
+                var done = await OnClockAsync(run, expiry, receiver.Result, run.Cancelled.Task).ConfigureAwait(false);
                 if (done != receiver.Result)
                 {
                     if (done == expiry && !run.Stop.IsCancellationRequested)
@@ -798,7 +810,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 {
                     overloaded = true;
                     var retry = Task.Delay(RetryWait(error, TimeSpan.FromSeconds(1)), _options.Clock, run.Stop.Token);
-                    await OnClockAsync(retry).ConfigureAwait(false);
+                    await OnClockAsync(run, retry).ConfigureAwait(false);
                     await retry.ConfigureAwait(false);
                     continue;
                 }
@@ -810,7 +822,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             if (reply.Outcome == CenterOutcome.Unreachable && !reply.MaybeApplied && _options.Clock.GetElapsedTime(started) + backoff < CodeLifetime)
             {
                 var pause = Task.Delay(backoff, _options.Clock, run.Stop.Token);
-                await OnClockAsync(pause).ConfigureAwait(false);
+                await OnClockAsync(run, pause).ConfigureAwait(false);
                 await pause.ConfigureAwait(false);
                 backoff = backoff * 2 > TimeSpan.FromSeconds(16) ? TimeSpan.FromSeconds(16) : backoff * 2;
                 continue;
@@ -839,7 +851,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 }
 
                 var wait = Task.Delay(run.Interval < remaining ? run.Interval : remaining, _options.Clock, run.Stop.Token);
-                if (await OnClockAsync(wait, run.Cancelled.Task).ConfigureAwait(false) != wait)
+                if (await OnClockAsync(run, wait, run.Cancelled.Task).ConfigureAwait(false) != wait)
                 {
                     return;
                 }
@@ -1240,6 +1252,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         public ArcError? Error { get; set; }
 
         public Task? Work { get; set; }
+
+        /// <summary>The tasks this flow waits for while it waits on the clock (tests: the orchestrator's ClockWait); guarded by the flow lock.</summary>
+        public Task[]? ClockTasks { get; set; }
 
         public async Task CloseReceiverAsync()
         {

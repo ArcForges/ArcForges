@@ -481,6 +481,31 @@ public sealed class SignInGuardTests
     }
 
     [Fact]
+    public async Task AnEndedFlowsLateWorkNeverHidesTheNextFlowsClockWait()
+    {
+        // The Linux leg at 16a663f (the B-1 test above, in the ci run): the first flow's background work started only after it had been
+        // cancelled and the next flow had begun; its late, immediately ended wait cleared the one shared record of a clock wait, so the
+        // next flow, blocked on the clock, looked as if it were not waiting. Each flow now records its own wait; this holds the first flow's
+        // work until the next flow waits.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var hold = new TaskCompletionSource();
+        var works = 0;
+        link.Service.SignIn.BeforeWork = _ => Interlocked.Increment(ref works) == 1 ? hold.Task : null;
+        var first = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+        var lateWork = link.Service.SignIn.Worker!;
+        Assert.Equal(SignInFlowState.Cancelled, link.Service.SignIn.Cancel(first.FlowId).Flow!.State);
+        var next = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        await Eventually.TrueAsync(() => link.Service.SignIn.ClockWait.Blocked, "the next flow waits on the clock");
+
+        hold.SetResult();
+        await lateWork.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+        Assert.True(link.Service.SignIn.ClockWait.Blocked, "the next flow's wait is hidden");
+        Assert.Equal(SignInFlowState.Pending, link.Service.SignIn.Get(next.FlowId)!.State);
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count >= 1, "the next flow's first poll");
+    }
+
+    [Fact]
     public async Task LateCredentialsOfACancelledFlowKeepTheKeyOfTheNextFlow()
     {
         // sec N-4 probe ProbeLateCredentialsOfACancelledFlowDeleteTheKeyOfTheNextFlow.
