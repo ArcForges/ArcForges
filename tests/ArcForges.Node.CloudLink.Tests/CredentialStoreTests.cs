@@ -105,6 +105,9 @@ public sealed class CredentialStoreTests
         var linkBytes = PrivateFiles.ReadOrNull(link.Storage.LinkPath)!;
         var held = link.Secrets;
 
+        // The first link may have reported itself before it stopped (its sign-in schedules a report at once): only the next start's calls count.
+        var calls = link.Center.Calls.Count;
+
         // The next start selects another backend, or the same backend but not isolated (node-10 items 1-3).
         var other = new IsolatedSecretStore(Enum.Parse<SecretStoreBackend>(selected), SecretStoreProtection.FileOwnerOnly);
         link.Secrets = other;
@@ -115,7 +118,7 @@ public sealed class CredentialStoreTests
         Assert.Contains("credential_backend_changed", service.Status().Warnings);
         Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
         Assert.Single(held.Names());
-        Assert.Empty(link.Center.Calls);
+        Assert.Equal(calls, link.Center.Calls.Count);
     }
 
     [Fact]
@@ -185,6 +188,9 @@ public sealed class CredentialStoreTests
         await link.StartAsync();
         await link.SignInAsync();
         await link.StopAsync();
+
+        // The first start may have reported itself before it stopped: only the calls after the center change count.
+        var calls = link.Center.Calls.Count;
         await using var other = await FakeCenter.StartAsync("/other");
         link.ConfiguredCenter = other.Endpoint;
         await link.StartAsync();
@@ -194,7 +200,7 @@ public sealed class CredentialStoreTests
         link.Clock.Advance(TimeSpan.FromHours(2));
         await Task.Delay(200, TestContext.Current.CancellationToken);
         Assert.Empty(other.Calls);
-        Assert.Empty(link.Center.Calls);
+        Assert.Equal(calls, link.Center.Calls.Count);
         Assert.NotNull(link.StoredRecord());
     }
 
