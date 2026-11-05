@@ -138,6 +138,8 @@ public sealed class SignInCommandLineTests
     [InlineData("signed_out", "credential_for_other_node", "logout --local")]
     [InlineData("signed_out", "credential_backend_changed", "logout --local")]
     [InlineData("signed_out", "credential_store_unavailable", "retries")]
+    [InlineData("signed_out", "credential_store_unavailable", "/account/devices")]
+    [InlineData("signed_out", "credential_store_unavailable", "remove run/cloud-link.json")]
     public void ARefusedSignInSaysWhatToDo(string state, string reason, string hint) =>
         Assert.Contains(hint, LoginCommands.StateText(state, reason), StringComparison.Ordinal);
 
@@ -158,6 +160,22 @@ public sealed class SignInCommandLineTests
         Assert.True(Messages.Plain(new string('a', 500)).Length <= 200);
         Assert.Equal(string.Empty, Messages.Plain(null));
         Assert.DoesNotContain(Messages.Plain(LoginCommands.StateText("center_refused", "\u001b[31mred")), char.IsControl);
+    }
+
+    [Fact]
+    public void AccountStatusPrintsTheCentersAccountNamesOnlyAsPlainText()
+    {
+        // N2 confirmation C1-1 (SEC-24): the account's display name and e-mail come from the center.
+        var status = new AccountStatus
+        {
+            SignedIn = true,
+            CenterUrl = "https://center.example.test",
+            AccountDisplayName = "Mallory\u001b]0;owned\u0007\u001b[2J\u202e",
+            AccountEmailMasked = "m***@example.test\r\nopen https://evil.example",
+        };
+        var rows = AccountCommands.StatusRows(status);
+        Assert.All(rows, row => Assert.DoesNotContain(row.Item2, c => char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format));
+        Assert.Contains(rows, row => row.Item1 == "account" && row.Item2.StartsWith("Mallory?]0;owned??[2J? (m***@example.test??open", StringComparison.Ordinal));
     }
 
     private static System.CommandLine.RootCommand Root() => CliApplication.Build(new GlobalOptions(), NoNode, TextWriter.Null, TextWriter.Null);

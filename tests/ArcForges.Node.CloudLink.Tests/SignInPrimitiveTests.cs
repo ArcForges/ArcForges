@@ -125,11 +125,24 @@ public sealed class SignInPrimitiveTests
         Assert.False(linux.UseShellExecute);
         Assert.Equal([url.Value], linux.ArgumentList);
         Assert.Empty(linux.Arguments);
-        Assert.False(linux.RedirectStandardOutput || linux.RedirectStandardError || linux.RedirectStandardInput);
+        Assert.True(linux.RedirectStandardOutput && linux.RedirectStandardError);
+        Assert.False(linux.RedirectStandardInput);
         var windows = BrowserOpener.StartInfo(url, windows: true);
         Assert.Equal(url.Value, windows.FileName);
         Assert.True(windows.UseShellExecute);
         Assert.Empty(windows.ArgumentList);
+    }
+
+    [Fact]
+    public async Task TheOpenersOutputIsDiscardedAndDrainedToItsEnd()
+    {
+        // N2 confirmation C1-3: the opener's output (which names the URL) is never inherited; it is read to its end, so a writer of more
+        // than a pipe's capacity is never blocked (sec N-9). seq writes about 1.3 MB: undrained it would block and still run after the wait.
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/seq"), "Linux only: the opener's process path");
+        var start = new System.Diagnostics.ProcessStartInfo("/usr/bin/seq") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add("1");
+        start.ArgumentList.Add("200000");
+        Assert.Equal(0, await BrowserOpener.RunAsync(start, TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken));
     }
 
     [Fact]

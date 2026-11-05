@@ -574,11 +574,11 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     private async Task<bool> EndIfUnwantedAsync(Run run)
     {
         bool wanted;
-        bool newest;
+        bool keyFree;
         lock (_lock)
         {
             wanted = Wanted(run);
-            newest = ReferenceEquals(_current, run);
+            keyFree = !NewerActive(run);
         }
 
         if (wanted)
@@ -587,7 +587,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         }
 
         Finish(run, FlowPhase.Cancelled, null);
-        if (newest)
+        if (keyFree)
         {
             await _link.DeleteUnusedKeyAsync(run.Center).ConfigureAwait(false);
         }
@@ -595,16 +595,34 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         return true;
     }
 
-    /// <summary>Revokes credentials the node does not keep; the key goes only when no newer flow is active (N2 review sec N-4).</summary>
+    /// <summary>Revokes credentials the node does not keep; the key goes unless a newer flow is active (N2 review sec N-4, confirmation N-3).</summary>
     private async Task<bool> RevokeAsync(Run run, NodeCredentials credentials)
     {
-        bool newest;
+        bool keyFree;
         lock (_lock)
         {
-            newest = ReferenceEquals(_current, run);
+            keyFree = !NewerActive(run);
         }
 
-        return await _link.RevokeDeliveredAsync(credentials, run.Center, deleteKey: newest, CancellationToken.None).ConfigureAwait(false);
+        return await _link.RevokeDeliveredAsync(credentials, run.Center, deleteKey: keyFree, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>True while a flow newer than <paramref name="run"/> is active (it uses the key of its center); the caller holds the lock.</summary>
+    private bool NewerActive(Run run) => _current is { IsActive: true } current && !ReferenceEquals(current, run);
+
+    /// <summary>An ended flow whose delivered credentials were revoked without the center's confirmation says so in its error (N2 N-5).</summary>
+    private void Unconfirmed(Run run)
+    {
+        lock (_lock)
+        {
+            if (run.Ended && run.State is FlowPhase.Cancelled or FlowPhase.Failed)
+            {
+                run.Error = run.Error is { } error
+                    ? NodeErrors.InvalidState(error.Details?.State?.State is { Length: > 0 } state ? state : "signing_in",
+                        (error.Details?.State?.Reason is { Length: > 0 } reason ? reason : error.Code) + ": revocation_unconfirmed")
+                    : Unkept(StateName(run.State), confirmed: false);
+            }
+        }
     }
 
     /// <summary>A flow that ends with delivered credentials revoked: the reason, and whether the center confirmed the revocation (N2 N-5).</summary>
@@ -869,9 +887,13 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                             }
                             else
                             {
-                                // Credentials that reach a cancelled flow are never stored (F-11).
+                                // Credentials that reach a cancelled flow are never stored (F-11); an unconfirmed revocation is on the flow (N-5).
                                 var confirmed = await RevokeAsync(run, credentials).ConfigureAwait(false);
                                 _options.Log.Warning("cloud.sign_in.late_credentials_revoked", new LogField("confirmed", confirmed));
+                                if (!confirmed)
+                                {
+                                    Unconfirmed(run);
+                                }
                             }
 
                             return;
@@ -1020,12 +1042,8 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     {
         if (credentials is null || !credentials.HasAccessToken || !credentials.HasRefreshToken || credentials.InstallationId is not { Value.Length: 16 })
         {
-            if (credentials is not null)
-            {
-                await RevokeAsync(run, credentials).ConfigureAwait(false);
-            }
-
-            Finish(run, FlowPhase.Failed, NodeErrors.InvalidArgument("credentials: shape"));
+            var revoked = credentials is null || await RevokeAsync(run, credentials).ConfigureAwait(false);
+            Finish(run, FlowPhase.Failed, NodeErrors.InvalidArgument(revoked ? "credentials: shape" : "credentials: shape: revocation_unconfirmed"));
             return;
         }
 
@@ -1096,17 +1114,23 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 flow.NodeKeyFingerprint = CloudIdentity.Fingerprint(key.PublicKey);
             }
 
-            if (run.Method == SignInMethod.Browser && run.Authorize is { } url)
+            // The derived URLs (the browser's carries the center's flow ID) and the user code only while the flow runs (R-4; N2
+            // confirmation C1-4): an ended flow is read back without them.
+            if (!run.Ended && run.Method == SignInMethod.Browser && run.Authorize is { } url)
             {
                 flow.AuthorizeUrl = url.Value;
             }
 
-            if (run.Method == SignInMethod.DeviceCode && run.Device is { } device)
+            if (!run.Ended && run.Method == SignInMethod.DeviceCode && run.Device is { } device)
             {
                 flow.UserCode = device.UserCode;
                 flow.VerificationUri = device.Verification.Value;
                 flow.VerificationUriComplete = device.Complete.Value;
                 flow.QrPayload = device.Complete.Value;
+            }
+
+            if (run.Method == SignInMethod.DeviceCode && run.Device is not null)
+            {
                 flow.PollIntervalMs = (ulong)run.Interval.TotalMilliseconds;
             }
 

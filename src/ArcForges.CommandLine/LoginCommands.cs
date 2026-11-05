@@ -136,10 +136,19 @@ internal static class LoginCommands
         ("signed_out", "credential_for_other_center") => "the node holds a credential of another center; set that center again, or run 'arcforges logout --local'",
         ("signed_out", "credential_backend_changed" or "credential_for_other_node") =>
             "the node holds a credential it cannot use (another secret store or node ID); restore it, or forget it with 'arcforges logout --local'",
-        ("signed_out", "credential_store_unavailable") => "the secret store cannot be read now; the node retries it, try again later",
+        ("signed_out", "credential_store_unavailable") => StoreUnavailableText("the node retries it"),
         ("center_refused", _) => "the center refused the sign-in request (" + reason + ")",
         _ => state + ": " + reason,
     };
+
+    /// <summary>
+    /// The refusal while the secret store or the link file cannot be read (N2 decision R-3, review FX-3), with the way out when it stays
+    /// unreadable (N2 confirmation N-2): revoking the node on the account's devices page ends the credential at the center; then the node is
+    /// stopped and its link file removed, so it starts signed out. Names no secret.
+    /// </summary>
+    internal static string StoreUnavailableText(string now) =>
+        "the secret store cannot be read now; " + now + ", try again later. If it stays unreadable: revoke this node on your account's "
+        + "devices page (/account/devices on the center), then stop the node and remove run/cloud-link.json from its data root";
 
     private static async Task<(SignInFlow? Flow, int Exit)> ReadAsync(Cli cli, NodeSession session, Id flowId, CancellationToken cancellationToken)
     {

@@ -38,8 +38,10 @@ internal sealed class BrowserOpener : IBrowserOpener
             return new ProcessStartInfo { FileName = url.Value, UseShellExecute = true };
         }
 
-        // Not redirected (N2 review sec N-9): a browser that inherits a pipe nobody reads would block on a full one, or meet a closed one.
-        var start = new ProcessStartInfo("xdg-open") { UseShellExecute = false, RedirectStandardOutput = false, RedirectStandardError = false, RedirectStandardInput = false };
+        // Redirected and discarded (N2 confirmation C1-3): xdg-open and the browser it starts name the URL in their messages, which would
+        // otherwise reach the node's own output (the user journal under the systemd unit). The pipes are drained to their end, for the
+        // browser's lifetime too, so a writer never blocks on a full pipe or meets a closed one (sec N-9).
+        var start = new ProcessStartInfo("xdg-open") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = false };
         start.ArgumentList.Add(url.Value);
         return start;
     }
@@ -66,33 +68,57 @@ internal sealed class BrowserOpener : IBrowserOpener
 
         try
         {
-            using var process = Process.Start(StartInfo(url, OperatingSystem.IsWindows()));
-            if (process is null)
-            {
-                return OperatingSystem.IsWindows();
-            }
-
             if (OperatingSystem.IsWindows())
             {
+                using var shell = Process.Start(StartInfo(url, windows: true));
                 return true;
             }
 
-            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            bounded.CancelAfter(wait > TimeSpan.Zero ? wait : TimeSpan.FromMilliseconds(1));
-            try
-            {
-                await process.WaitForExitAsync(bounded.Token).ConfigureAwait(false);
-                return process.ExitCode == 0;
-            }
-            catch (OperationCanceledException)
-            {
-                // Still running after the wait (a browser that stays attached): opened.
-                return true;
-            }
+            // Still running after the wait (a browser that stays attached): opened.
+            return await RunAsync(StartInfo(url, windows: false), wait, cancellationToken).ConfigureAwait(false) is null or 0;
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Starts <paramref name="start"/> (its output redirected) and discards its output: both pipes are read to their end in the background,
+    /// also after the process exits while a child it started still holds them; the process object is released only then. The exit code, or
+    /// <see langword="null"/> when the process still runs after <paramref name="wait"/>.
+    /// </summary>
+    internal static async Task<int?> RunAsync(ProcessStartInfo start, TimeSpan wait, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(start);
+        var process = Process.Start(start) ?? throw new InvalidOperationException("The process did not start.");
+        var drained = Task.WhenAll(Discard(process.StandardOutput.BaseStream), Discard(process.StandardError.BaseStream));
+        try
+        {
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bounded.CancelAfter(wait > TimeSpan.Zero ? wait : TimeSpan.FromMilliseconds(1));
+            await process.WaitForExitAsync(bounded.Token).ConfigureAwait(false);
+            return process.ExitCode;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            // Released once its output has ended (a browser it started may hold the pipes much longer than it runs).
+            _ = drained.ContinueWith(_ => process.Dispose(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+    }
+
+    private static async Task Discard(Stream stream)
+    {
+        try
+        {
+            await stream.CopyToAsync(Stream.Null).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+        {
         }
     }
 }

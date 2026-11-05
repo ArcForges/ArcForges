@@ -261,6 +261,138 @@ public sealed class SignInGuardTests
     }
 
     [Fact]
+    public async Task ASignOutDuringTheRestartsBeginEndsTheFlowDeletesItsNewKeyAndOpensNothing()
+    {
+        // N2 confirmation N-1 (probe ProbeSignOutDuringTheRestartsBeginLeavesNoKeyAndOpensNothing): the re-check after the restart's call.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var flow = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+        var key = link.Keys.Recorded()!.Fingerprint;
+        var hold = new TaskCompletionSource();
+        link.Center.Script(Complete, new FakeFault.Refusal(SignInFlowTests.Arc(ErrorCategory.Authentication, "credential_revoked")));
+        link.Center.Script("BeginNodeSignIn", new FakeFault.Hold(hold));
+        await ScriptedBrowser.GetAsync(link.Center.ApproveFlow());
+        await Eventually.TrueAsync(() => link.Center.CallsOf("BeginNodeSignIn").Count == 2, "the restart's Begin in flight");
+        var worker = link.Service.SignIn.Worker!;
+        Assert.NotEqual(key, link.Keys.Recorded()!.Fingerprint);
+        link.Service.SignIn.CancelActive();
+        hold.SetResult();
+        await worker.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+        Assert.Equal(SignInFlowState.Cancelled, link.Service.SignIn.Get(flow.FlowId)!.State);
+        Assert.Single(link.Browser.Opened);
+        Assert.Null(link.Keys.Recorded());
+        Assert.False(link.Service.SignIn.Active);
+        Assert.Equal(CloudLinkPhase.SignedOut, link.Service.Phase);
+    }
+
+    [Fact]
+    public async Task ADeviceCancelDuringTheRestartsStartDeletesItsNewKeyAndPollsNoMore()
+    {
+        // N2 confirmation N-1 (probe ProbeDeviceCancelDuringTheRestartsStartLeavesNoKeyAndPollsNoMore) and N-4 (no code of the restart shown).
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var flow = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        var hold = new TaskCompletionSource();
+        link.Center.Script(Poll, new FakeFault.Refusal(SignInFlowTests.Arc(ErrorCategory.Authentication, "credential_revoked")));
+        link.Center.Script("StartDeviceAuthorization", new FakeFault.Hold(hold));
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf("StartDeviceAuthorization").Count == 2, "the restart's Start in flight");
+        var worker = link.Service.SignIn.Worker!;
+        Assert.Equal(SignInFlowState.Cancelled, link.Service.SignIn.Cancel(flow.FlowId).Flow!.State);
+        hold.SetResult();
+        await worker.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+        link.Clock.Advance(TimeSpan.FromMinutes(2));
+        await Task.Delay(100, Cancel);
+        Assert.Single(link.Center.CallsOf(Poll));
+        Assert.Null(link.Keys.Recorded());
+        var ended = link.Service.SignIn.Get(flow.FlowId)!;
+        Assert.Equal(SignInFlowState.Cancelled, ended.State);
+        Assert.False(ended.HasUserCode);
+    }
+
+    [Fact]
+    public async Task AnEndedFlowIsReadBackWithoutItsUrlsOrUserCode()
+    {
+        // N2 confirmation C1-4 (R-4): the center's flow ID (inside authorize_url) and the user code only while the flow runs.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var browser = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+        Assert.True(browser.HasAuthorizeUrl);
+        var cancelled = link.Service.SignIn.Cancel(browser.FlowId).Flow!;
+        foreach (var flow in new[] { cancelled, link.Service.SignIn.Get(browser.FlowId)! })
+        {
+            Assert.Equal(SignInFlowState.Cancelled, flow.State);
+            Assert.False(flow.HasAuthorizeUrl);
+            Assert.Equal(browser.NodeKeyFingerprint, flow.NodeKeyFingerprint);
+        }
+
+        var device = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        Assert.True(device.HasUserCode);
+        link.Center.DenyDevice();
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Service.SignIn.Get(device.FlowId)!.State == SignInFlowState.Denied, "denied");
+        var denied = link.Service.SignIn.Get(device.FlowId)!;
+        Assert.False(denied.HasUserCode || denied.HasVerificationUri || denied.HasVerificationUriComplete || denied.HasQrPayload);
+    }
+
+    [Fact]
+    public async Task UnconfirmedRevocationsOfLateOrMisshapenCredentialsAreInTheFlowsError()
+    {
+        // N2 confirmation C1-4 (N-5 on every path): late credentials of a cancelled device flow, and credentials of the wrong shape.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var late = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        link.Center.ApproveDevice();
+        var hold = new TaskCompletionSource();
+        link.Center.Script(Poll, new FakeFault.Hold(hold));
+        link.Center.Script("SignOutNode", new FakeFault.HttpStatus(503));
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the poll in flight");
+        var worker = link.Service.SignIn.Worker!;
+        Assert.Null(link.Service.SignIn.Cancel(late.FlowId).Flow!.Error);
+        hold.SetResult();
+        await worker.WaitAsync(TimeSpan.FromSeconds(30), Cancel);
+        var ended = link.Service.SignIn.Get(late.FlowId)!;
+        Assert.Equal(SignInFlowState.Cancelled, ended.State);
+        Assert.Equal("cancelled: revocation_unconfirmed", ended.Error.Details.State.Reason);
+
+        var misshapen = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        var approved = new NodeEnrollmentServicePollDeviceAuthorizationResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new NodeEnrollmentServicePollDeviceAuthorizationValue
+            {
+                State = DeviceAuthorizationState.Approved,
+                IntervalMs = 5000,
+                Credentials = new NodeCredentials { AccessToken = "afa1.misshapen" },
+            },
+        };
+        link.Center.Script(Poll, new FakeFault.Raw([.. FakeCenter.DataFrame(approved), .. FakeCenter.TrailerFrame(0, null)]));
+        link.Center.Script("SignOutNode", new FakeFault.HttpStatus(503));
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Service.SignIn.Get(misshapen.FlowId)!.State == SignInFlowState.Failed, "failed");
+        Assert.Equal("credentials: shape: revocation_unconfirmed", link.Service.SignIn.Get(misshapen.FlowId)!.Error.Details.State.Reason);
+        Assert.Null(link.StoredRecord());
+    }
+
+    [Fact]
+    public async Task LateCredentialsWhoseNewerFlowAlreadyEndedDeleteTheKey()
+    {
+        // N2 confirmation N-3: the key is kept only while a NEWER flow is ACTIVE.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var first = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        link.Center.ApproveDevice();
+        var hold = new TaskCompletionSource();
+        link.Center.Script(Poll, new FakeFault.Hold(hold));
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the poll in flight");
+        var worker = link.Service.SignIn.Worker!;
+        link.Service.SignIn.Cancel(first.FlowId);
+        var second = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        link.Service.SignIn.Cancel(second.FlowId);
+        hold.SetResult();
+        await worker.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+        Assert.Single(link.Center.CallsOf("SignOutNode"));
+        Assert.Null(link.Keys.Recorded());
+    }
+
+    [Fact]
     public async Task LateCredentialsOfACancelledFlowKeepTheKeyOfTheNextFlow()
     {
         // sec N-4 probe ProbeLateCredentialsOfACancelledFlowDeleteTheKeyOfTheNextFlow.

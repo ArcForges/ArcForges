@@ -70,7 +70,7 @@ internal static class AccountCommands
                 if (!cli.Output.Json && error.Code == "invalid_state" && error.Details?.State?.Reason == "credential_store_unavailable")
                 {
                     // N2 review FX-3: refused while the store cannot be read; nothing changed (both forms).
-                    cli.Output.Error.WriteLine("error: the secret store cannot be read now; nothing was changed and the node retries reading it. Try again when it is available (STATE/invalid_state)");
+                    cli.Output.Error.WriteLine("error: " + LoginCommands.StoreUnavailableText("nothing was changed") + " (STATE/invalid_state)");
                     return ExitCodes.Failed;
                 }
 
@@ -125,37 +125,48 @@ internal static class AccountCommands
                 return ExitCodes.Success;
             }
 
-            var rows = new List<(string, string)>
-            {
-                ("signed in", status.SignedIn ? "yes" : "no"),
-                ("center", status.CenterUrl),
-            };
-            if (status.SignedIn)
-            {
-                rows.Add(("account", status.AccountDisplayName + (status.HasAccountEmailMasked ? " (" + status.AccountEmailMasked + ")" : string.Empty)));
-                rows.Add(("credential in OS store", status.CredentialInOsStore ? "yes" : "no"));
-                rows.Add(("credential ends", CliOutput.When(status.CredentialExpiresAt)));
-            }
-
-            if (status.HasNodeKeyFingerprint)
-            {
-                rows.Add(("key fingerprint", status.NodeKeyFingerprint));
-            }
-
-            if (status.HasCloudReachable)
-            {
-                rows.Add(("center reachable", status.CloudReachable ? "yes" : "no"));
-            }
-
-            if (status.Warnings.Count > 0)
-            {
-                rows.Add(("warnings", string.Join(", ", status.Warnings)));
-            }
-
+            var rows = StatusRows(status);
             cli.Output.KeyValues(rows);
             return ExitCodes.Success;
         });
         return command;
+    }
+
+    /// <summary>
+    /// The rows of <c>account status</c>. The account's name and e-mail come from the center: they reach the terminal only as plain text
+    /// (SEC-24; N2 confirmation C1-1), and so does every other value of the status.
+    /// </summary>
+    internal static List<(string, string)> StatusRows(AccountStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        var rows = new List<(string, string)>
+        {
+            ("signed in", status.SignedIn ? "yes" : "no"),
+            ("center", Messages.Plain(status.CenterUrl)),
+        };
+        if (status.SignedIn)
+        {
+            rows.Add(("account", Messages.Plain(status.AccountDisplayName) + (status.HasAccountEmailMasked ? " (" + Messages.Plain(status.AccountEmailMasked) + ")" : string.Empty)));
+            rows.Add(("credential in OS store", status.CredentialInOsStore ? "yes" : "no"));
+            rows.Add(("credential ends", CliOutput.When(status.CredentialExpiresAt)));
+        }
+
+        if (status.HasNodeKeyFingerprint)
+        {
+            rows.Add(("key fingerprint", Messages.Plain(status.NodeKeyFingerprint)));
+        }
+
+        if (status.HasCloudReachable)
+        {
+            rows.Add(("center reachable", status.CloudReachable ? "yes" : "no"));
+        }
+
+        if (status.Warnings.Count > 0)
+        {
+            rows.Add(("warnings", Messages.Plain(string.Join(", ", status.Warnings))));
+        }
+
+        return rows;
     }
 
     /// <summary>The account status, or <see langword="null"/> (a read failure is not this command's error).</summary>

@@ -120,7 +120,15 @@ public sealed class SignInSecretsTests
             CollectBytes(secrets, "proof", poll.NodeKeyProof.ToByteArray());
         }
 
-        foreach (var code in userCodes)
+        // Every device code and user code the center issued (C1-2: also those of a flow cancelled before its first poll).
+        Assert.Equal(2, center.IssuedDeviceCodes.Count);
+        foreach (var (deviceCode, userCode) in center.IssuedDeviceCodes)
+        {
+            Collect(secrets, "device code", deviceCode);
+            userCodes.Add(userCode);
+        }
+
+        foreach (var code in userCodes.Distinct())
         {
             Collect(secrets, "user code", code);
             Collect(secrets, "user code (display)", SignInUrls.DisplayUserCode(code));

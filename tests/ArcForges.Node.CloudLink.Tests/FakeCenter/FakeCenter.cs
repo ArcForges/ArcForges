@@ -904,6 +904,18 @@ internal sealed class FakeCenter : IAsyncDisposable
     }
 
     /// <summary>The latest user code shown (8 letters), or null.</summary>
+    /// <summary>Every device code and user code the center issued (test verification: N2-15 looks for each one).</summary>
+    public IReadOnlyList<(string DeviceCode, string UserCode)> IssuedDeviceCodes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _devices.Select(row => (row.DeviceCode, row.UserCode))];
+            }
+        }
+    }
+
     public string? LatestUserCode
     {
         get

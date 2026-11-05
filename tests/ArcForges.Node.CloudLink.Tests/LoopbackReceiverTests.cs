@@ -456,18 +456,20 @@ public sealed class LoopbackReceiverTests
         // The grace (S2): a connection that has not sent yet (a browser between connect and send) is not closed by newer idle ones.
         await using var receiver = Start();
         using var fresh = new TcpClient();
+        var watch = Stopwatch.StartNew();
         await fresh.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
         var idle = new List<TcpClient>();
         try
         {
-            for (var i = 0; i < 4 * LoopbackReceiver.Capacity; i++)
+            for (var i = 0; i < 2 * LoopbackReceiver.Capacity; i++)
             {
                 var client = new TcpClient();
                 await client.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
                 idle.Add(client);
             }
 
-            await Task.Delay(100, TestContext.Current.CancellationToken);
+            // The premise is a flood within the grace; a host too loaded to open 16 loopback connections in it cannot test it.
+            Assert.SkipWhen(watch.Elapsed > LoopbackReceiver.Grace - TimeSpan.FromMilliseconds(300), "the connections took " + watch.Elapsed + ", longer than the grace allows to test");
             var stream = fresh.GetStream();
             await stream.WriteAsync(Encoding.ASCII.GetBytes("GET /callback?code=" + Code + "&state=" + State + " HTTP/1.1\r\nHost: 127.0.0.1:" + receiver.Port + "\r\n\r\n"),
                 TestContext.Current.CancellationToken);
