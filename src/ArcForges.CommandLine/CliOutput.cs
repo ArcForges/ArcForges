@@ -231,7 +231,7 @@ public sealed class CliOutput
                 return ExitCodes.For(error);
             }
 
-            _error.WriteLine($"error: {Messages.For(error)} ({category}/{error.Code}" + (id.Length > 0 ? $", correlation {id})" : ")"));
+            _error.WriteLine($"error: {Messages.For(error)} ({category}/{Messages.Plain(error.Code)}" + (id.Length > 0 ? $", correlation {id})" : ")"));
         }
 
         return ExitCodes.For(error);
@@ -421,7 +421,28 @@ public static class Messages
             }
         }
 
-        return text;
+        return Plain(text);
+    }
+
+    /// <summary>
+    /// Text that may come from a center or another peer, made safe for a terminal (SEC-24; N2 review sec N-1): every C0 and C1 control
+    /// character, DEL and every Unicode format character (bidirectional overrides among them) becomes <c>?</c>, so no escape sequence, line
+    /// break or reordering reaches the terminal; at most 200 characters.
+    /// </summary>
+    public static string Plain(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        var builder = new System.Text.StringBuilder(Math.Min(text.Length, 200));
+        foreach (var c in text.Length > 200 ? text[..200] : text)
+        {
+            builder.Append(char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format ? '?' : c);
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>The text of a count.</summary>

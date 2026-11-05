@@ -81,7 +81,7 @@ internal static class LoginCommands
             return Refused(cli, error, request.Meta.CorrelationId);
         }
 
-        var printer = new FlowPrinter(cli);
+        var printer = new FlowPrinter(cli, session);
         var flow = begun.Value.Flow;
         if (flow.Method != method && !flow.FellBackToDeviceCode)
         {
@@ -107,7 +107,7 @@ internal static class LoginCommands
             printer.Show(flow, []);
         }
 
-        return printer.End(flow);
+        return await printer.EndAsync(flow).ConfigureAwait(false);
     }
 
     private static int Refused(Cli cli, ArcError error, Id? correlation)
@@ -120,7 +120,7 @@ internal static class LoginCommands
 
         if (!cli.Output.Json && error is { Code: "invalid_state" } && error.Details?.State is { } state)
         {
-            cli.Output.Error.WriteLine("error: " + StateText(state.State, state.Reason) + " (STATE/invalid_state)");
+            cli.Output.Error.WriteLine("error: " + Messages.Plain(StateText(state.State, state.Reason)) + " (STATE/invalid_state)");
             return ExitCodes.Failed;
         }
 
@@ -206,7 +206,7 @@ internal static class LoginCommands
                 printer.Show(next, []);
                 if (Ended(next.State))
                 {
-                    return printer.End(next);
+                    return await printer.EndAsync(next).ConfigureAwait(false);
                 }
             }
 
@@ -215,11 +215,11 @@ internal static class LoginCommands
 
         // The flow ended meanwhile: report how it ended.
         var (last, code) = await ReadAsync(cli, session, flow.FlowId, CancellationToken.None).ConfigureAwait(false);
-        return last is null ? code : printer.End(last);
+        return last is null ? code : await printer.EndAsync(last).ConfigureAwait(false);
     }
 
     /// <summary>Prints the flow's instructions once per URL or code, and each state change in <c>--json</c> (JSON Lines).</summary>
-    private sealed class FlowPrinter(Cli cli)
+    private sealed class FlowPrinter(Cli cli, NodeSession session)
     {
         private string? _shown;
         private SignInFlowState? _state;
@@ -289,7 +289,7 @@ internal static class LoginCommands
             _state = flow.State;
         }
 
-        public int End(SignInFlow flow)
+        public async Task<int> EndAsync(SignInFlow flow)
         {
             if (_ended)
             {
@@ -303,24 +303,47 @@ internal static class LoginCommands
                 return ExitFor(flow.State);
             }
 
+            if (flow.State == SignInFlowState.SignedIn)
+            {
+                await SignedInAsync().ConfigureAwait(false);
+                return ExitFor(flow.State);
+            }
+
             var text = flow.State switch
             {
-                SignInFlowState.SignedIn => "Signed in.",
                 SignInFlowState.Denied => "error: the sign-in was denied on the center's page",
                 SignInFlowState.Expired => "error: the sign-in expired before it was approved; run 'arcforges login' again",
                 SignInFlowState.Cancelled => "error: the sign-in was cancelled",
-                _ => "error: the sign-in failed" + (flow.Error is { } error ? ": " + Failure(error) + $" ({error.Category.ToString().ToUpperInvariant()}/{error.Code})" : string.Empty),
+                _ => "error: the sign-in failed" + (flow.Error is { } error ? ": " + Messages.Plain(Failure(error)) + $" ({error.Category.ToString().ToUpperInvariant()}/{Messages.Plain(error.Code)})" : string.Empty),
             };
-            if (flow.State == SignInFlowState.SignedIn)
+            cli.Output.Error.WriteLine(text);
+            return ExitFor(flow.State);
+        }
+
+        /// <summary>
+        /// d.3: "Signed in as &lt;display name&gt; (&lt;masked e-mail&gt;) at &lt;center host&gt;." and the status's storage warning (the account's
+        /// names come from the center: printed only as plain text, SEC-24).
+        /// </summary>
+        private async Task SignedInAsync()
+        {
+            AccountStatus? status = null;
+            try
             {
-                cli.Output.Line(text);
+                status = await AccountCommands.ReadStatusAsync(cli, session, CancellationToken.None).ConfigureAwait(false);
             }
-            else
+            catch (Exception exception) when (exception is Grpc.Core.RpcException or IOException or NodeUnavailableException)
             {
-                cli.Output.Error.WriteLine(text);
             }
 
-            return ExitFor(flow.State);
+            var name = Messages.Plain(status?.AccountDisplayName);
+            var email = Messages.Plain(status?.AccountEmailMasked);
+            var host = status is { HasCenterUrl: true } && Uri.TryCreate(status.CenterUrl, UriKind.Absolute, out var center) ? center.Authority : string.Empty;
+            var who = name.Length > 0 ? " as " + name + (email.Length > 0 ? " (" + email + ")" : string.Empty) : email.Length > 0 ? " as " + email : string.Empty;
+            cli.Output.Line("Signed in" + who + (host.Length > 0 ? " at " + host : string.Empty) + ".");
+            if (status?.Warnings.Contains("FILE_PERMISSIONS_ONLY") == true)
+            {
+                cli.Output.Note("credential stored in a file readable by your user only");
+            }
         }
 
         private void Common(SignInFlow flow, string url)

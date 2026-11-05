@@ -174,7 +174,7 @@ public sealed class CloudLinkHostTests
     }
 
     /// <summary>The file's bytes, read as the node shares it, or <see langword="null"/> when it no longer exists.</summary>
-    private static byte[]? ReadAllShared(string path)
+    internal static byte[]? ReadAllShared(string path)
     {
         try
         {

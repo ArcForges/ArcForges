@@ -237,6 +237,26 @@ internal sealed class NodeKeyStore
         }
     }
 
+    /// <summary>
+    /// Deletes only the key of (node ID, <paramref name="origin"/>) (a sign-in flow's own key; N2 review sec N-4), and the record when it names
+    /// that key. True when something was deleted.
+    /// </summary>
+    public bool DeleteOne(ReadOnlySpan<byte> nodeId, string origin)
+    {
+        var name = KeyName(nodeId, origin);
+        lock (_gate)
+        {
+            var deleted = Backend.Delete(name);
+            if (ReadRecord() is { } record && record.Name == name && record.Backend == Backend.Kind)
+            {
+                PrivateFiles.Delete(_recordPath);
+                deleted = true;
+            }
+
+            return deleted;
+        }
+    }
+
     /// <summary>Whether <paramref name="name"/> has the node key's shape: the prefix and 64 upper-case hexadecimal digits.</summary>
     public static bool IsKeyName(string? name) =>
         name is not null && name.Length == NamePrefix.Length + 64 && name.StartsWith(NamePrefix, StringComparison.Ordinal)

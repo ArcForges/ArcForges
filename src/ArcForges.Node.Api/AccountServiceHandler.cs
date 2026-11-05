@@ -165,7 +165,7 @@ internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
                 }
                 else
                 {
-                    answer.Value = new AccountServiceCancelSignInValue { Flow = outcome.Flow };
+                    answer.Value = new AccountServiceCancelSignInValue { Flow = Recordable(outcome.Flow!) };
                 }
 
                 return answer;
@@ -219,19 +219,35 @@ internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
         return outcome;
     }
 
+    /// <summary>
+    /// The cancelled flow as CancelSignIn answers and records it (the outcome is kept in the node's database for replays): without the
+    /// derived URLs, which carry the center's flow ID, and without the user code (N2-15; R-4: they are shown only while the flow runs).
+    /// </summary>
+    private static SignInFlow Recordable(SignInFlow flow)
+    {
+        var copy = flow.Clone();
+        copy.ClearAuthorizeUrl();
+        copy.ClearUserCode();
+        copy.ClearVerificationUri();
+        copy.ClearVerificationUriComplete();
+        copy.ClearQrPayload();
+        return copy;
+    }
+
     private static ArcError? FlowId(Id? id) => id is { Value.Length: 16 } ? null : NodeErrors.InvalidArgument("flow_id: required");
 
     private static AccountServiceSignOutResponse Outcome(AccountServiceSignOutRequest request, SignOutResult result)
     {
         var response = new AccountServiceSignOutResponse { Meta = ApiCommands.Meta(request.Meta) };
-        if (result is SignOutResult.NotSignedIn or SignOutResult.StoreUnavailable)
+        if (result == SignOutResult.StoreUnavailable)
         {
-            if (result == SignOutResult.StoreUnavailable)
-            {
-                // N2 decision R-3: the link's store cannot be read now; nothing was changed and it is retried.
-                response.Meta.Warnings.Add(StoreUnavailable);
-            }
+            // N2 decision R-3 and review FX-3: the store cannot be read now; refused, nothing was changed, the node retries reading it.
+            response.Error = NodeErrors.InvalidState("signed_out", StoreUnavailable);
+            return response;
+        }
 
+        if (result == SignOutResult.NotSignedIn)
+        {
             response.Error = NodeErrors.NotSignedIn();
             return response;
         }

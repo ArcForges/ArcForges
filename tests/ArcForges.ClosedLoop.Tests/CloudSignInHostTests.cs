@@ -151,9 +151,18 @@ public sealed class CloudSignInHostTests
             var text = await cli.WaitForAsync("Waiting for the approval");
             Assert.Contains("open " + center.Endpoint.ActivateUrl + " on any device", text, StringComparison.Ordinal);
             Assert.Contains(SignInUrls.DisplayUserCode(center.LatestUserCode!), text, StringComparison.Ordinal);
-            Assert.Contains("Key fingerprint: ", text, StringComparison.Ordinal);
-            Assert.Contains("The page asks for the last group of the fingerprint: ", text, StringComparison.Ordinal);
             Assert.Contains("Center:          127.0.0.1:" + center.Endpoint.Port, text, StringComparison.Ordinal);
+
+            // The printed fingerprint is the node's, and the group the page asks for is its LAST group (tests N-5).
+            var fingerprint = System.Text.RegularExpressions.Regex.Match(text, @"Key fingerprint: ([0-9A-F]{4}(?:-[0-9A-F]{4})+)").Groups[1].Value;
+            await using (var human = await node.HumanChannelAsync())
+            {
+                var status = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
+                Assert.Equal(status.NodeKeyFingerprint, fingerprint);
+            }
+
+            Assert.Contains("The page asks for the last group of the fingerprint: " + fingerprint[^4..], text, StringComparison.Ordinal);
+            Assert.NotEqual(fingerprint[..4], fingerprint[^4..]);
 
             // While it runs, a center change from a HUMAN CLI is refused (here first by the test-center override, G-6), exit 1.
             using (var set = Pty(node, "center set https://other.example.test"))
@@ -167,13 +176,42 @@ public sealed class CloudSignInHostTests
             Assert.Contains("Sign-in cancelled.", cli.Text, StringComparison.Ordinal);
         }
 
+        // The flow is CANCELLED at the node (tests B-1): a new BeginSignIn starts a new device authorization instead of following it.
+        await AssertNoActiveFlowAsync(node, center);
+
+        // SIGINT itself (tests N-3): the CLI under a pty started with SIGINT at its default disposition, interrupted with kill -INT.
+        using (var cli = Pty(node, "login --device-code", defaultInterrupt: true))
+        {
+            await cli.WaitForAsync("Waiting for the approval");
+            cli.Interrupt("INT");
+            Assert.Equal(130, await cli.ExitAsync());
+            Assert.Contains("Sign-in cancelled.", cli.Text, StringComparison.Ordinal);
+        }
+
+        await AssertNoActiveFlowAsync(node, center);
+
+        // --quiet trims the device block to the code line (tests N-5).
+        var devices = center.DeviceCount;
+        using (var cli = Pty(node, "--quiet login --device-code"))
+        {
+            await TestNode.WaitAsync(() => center.DeviceCount > devices, TimeSpan.FromSeconds(30), "the device authorization");
+            await cli.WaitForAsync(SignInUrls.DisplayUserCode(center.LatestUserCode!));
+            await Task.Delay(500, Ct);
+            var lines = cli.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            Assert.Equal([SignInUrls.DisplayUserCode(center.LatestUserCode!)], lines);
+            cli.Interrupt();
+            Assert.Equal(130, await cli.ExitAsync());
+        }
+
         // A sign-in that the account approves: exit 0.
         using (var cli = Pty(node, "login --device-code"))
         {
             await cli.WaitForAsync("Waiting for the approval");
             center.ApproveDevice();
             Assert.Equal(0, await cli.ExitAsync());
-            Assert.Contains("Signed in.", cli.Text, StringComparison.Ordinal);
+
+            // d.3's success line (tests N-6).
+            Assert.Contains("Signed in as " + center.Account.Name + " (" + center.Account.Email + ") at 127.0.0.1:" + center.Endpoint.Port + ".", cli.Text, StringComparison.Ordinal);
         }
 
         // Signed in: login and center set exit 1 with what to do; logout signs out (exit 0).
@@ -215,10 +253,97 @@ public sealed class CloudSignInHostTests
         }
     }
 
+    [Fact]
+    public async Task TheCliInAPtyOpensTheBrowserRefusesACenterChangeAndForgetsAStrandedLink()
+    {
+        // N2-17 (tests N-7): the browser login through ARCFORGES_TEST_BROWSER_FILE; `center set` refused while signing in, with the center set
+        // by a HUMAN UpdateNodeSettings (not the test-center override); `center set` grammar; `logout --local --yes` on a stranded link.
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "no pseudo-terminal path on this system (H-C14): the HUMAN CLI runs in a pty on Linux only");
+        await using var center = await FakeCenter.StartAsync();
+        await using var node = TestNode.Create();
+        var browserFile = Path.Combine(node.Root, "browser.txt");
+        node.Environment[CloudLinkTestHooks.BrowserFile] = browserFile;
+        await node.StartNodeAsync();
+        await using (var human = await node.HumanChannelAsync())
+        {
+            var settings = (await human.Node.GetNodeSettingsAsync(new NodeServiceGetNodeSettingsRequest(), cancellationToken: Ct)).Value.Settings;
+            var meta = Command();
+            meta.ExpectedRev = settings.Revision;
+            Assert.Null((await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = meta, CenterUrl = center.Endpoint.Url }, cancellationToken: Ct)).Error);
+        }
+
+        foreach (var usage in new[] { "center set", "center set https://other.example.test --default" })
+        {
+            using var set = Pty(node, usage);
+            Assert.Equal(2, await set.ExitAsync());
+        }
+
+        using (var cli = Pty(node, "login"))
+        {
+            var text = await cli.WaitForAsync("Waiting for the approval");
+            Assert.Contains("Opening your browser to sign this node in.", text, StringComparison.Ordinal);
+            await TestNode.WaitAsync(() => File.Exists(browserFile), TimeSpan.FromSeconds(10), "the browser file");
+            var url = File.ReadAllText(browserFile).Trim();
+            Assert.Contains("    " + url, text, StringComparison.Ordinal);
+            Assert.Contains("(compare it with the page)", text, StringComparison.Ordinal);
+            using (var set = Pty(node, "center set https://other.example.test"))
+            {
+                Assert.Equal(1, await set.ExitAsync());
+                Assert.Contains("error: a sign-in is in progress; finish or cancel it first (STATE/invalid_state)", set.Text, StringComparison.Ordinal);
+            }
+
+            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(center.ApproveFlow()));
+            Assert.Equal(0, await cli.ExitAsync());
+            Assert.Contains("Signed in as ", cli.Text, StringComparison.Ordinal);
+        }
+
+        // A link of another node ID (stranded): `--json logout --local` needs --yes; `logout --local --yes` forgets it.
+        await node.StopNodeAsync();
+        var linkPath = Path.Combine(node.DataRoot, "run", "cloud-link.json");
+        var file = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(linkPath))!.AsObject();
+        var target = (string)file["target"]!;
+        file["nodeId"] = Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+        File.WriteAllText(linkPath, file.ToJsonString());
+        await node.StartNodeAsync();
+        using (var cli = Pty(node, "--json logout --local"))
+        {
+            Assert.Equal(2, await cli.ExitAsync());
+        }
+
+        Assert.True(File.Exists(linkPath));
+        using (var cli = Pty(node, "--yes logout --local"))
+        {
+            Assert.Equal(0, await cli.ExitAsync());
+            Assert.Contains("The node forgot the credential it could not use.", cli.Text, StringComparison.Ordinal);
+        }
+
+        Assert.False(File.Exists(linkPath));
+        Assert.Empty(center.CallsOf("SignOutNode"));
+
+        // The abandon never touches the record (it is not this node's to delete); the test removes it.
+        var secrets = ArcForges.Node.Store.NodeSecretStores.ForTestDataRoot(node.DataRoot).Store;
+        Assert.NotNull(secrets.Read(target));
+        secrets.Delete(target);
+    }
+
+    /// <summary>No flow is active at the node: BeginSignIn starts a new device authorization (it would return an active flow), then cancels it.</summary>
+    private static async Task AssertNoActiveFlowAsync(TestNode node, FakeCenter center)
+    {
+        var before = center.DeviceCount;
+        var code = center.LatestUserCode;
+        await using var human = await node.HumanChannelAsync();
+        var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = SignInMethod.DeviceCode }, cancellationToken: Ct);
+        Assert.Null(begun.Error);
+        Assert.Equal(before + 1, center.DeviceCount);
+        Assert.NotEqual(code, begun.Value.Flow.UserCode);
+        var cancelled = await human.Account.CancelSignInAsync(new AccountServiceCancelSignInRequest { Meta = Command(), FlowId = begun.Value.Flow.FlowId }, cancellationToken: Ct);
+        Assert.Equal(SignInFlowState.Cancelled, cancelled.Value.Flow.State);
+    }
+
     private static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
 
     /// <summary>Starts <c>arcforges --test-mode &lt;arguments&gt;</c> inside a pseudo-terminal (<c>script -qefc</c>): a HUMAN CLI.</summary>
-    internal static PtyProcess Pty(TestNode node, string arguments)
+    internal static PtyProcess Pty(TestNode node, string arguments, bool defaultInterrupt = false)
     {
         var start = new ProcessStartInfo("/usr/bin/script")
         {
@@ -228,7 +353,8 @@ public sealed class CloudSignInHostTests
             RedirectStandardInput = true,
         };
         start.ArgumentList.Add("-qefc");
-        start.ArgumentList.Add("'" + TestNode.Host + "' --test-mode " + arguments);
+        // `env --default-signal=INT` gives the CLI SIGINT at its default disposition even when the test run inherited it ignored.
+        start.ArgumentList.Add((defaultInterrupt ? "exec env --default-signal=INT '" : "'") + TestNode.Host + "' --test-mode " + arguments);
         start.ArgumentList.Add("/dev/null");
         foreach (var (name, value) in node.Environment)
         {
@@ -287,10 +413,11 @@ public sealed class CloudSignInHostTests
         }
 
         /// <summary>
-        /// The interrupt the CLI handles like Ctrl+C: SIGTERM to the CLI under the pty (found by process IDs only). SIGTERM, because a test run
-        /// started in the background of a non-interactive shell inherits SIGINT as ignored, and the CLI treats both signals alike.
+        /// The interrupt the CLI handles like Ctrl+C: SIGTERM (default) to every process under the pty, found by process IDs only (a test
+        /// run started in the background of a non-interactive shell inherits SIGINT as ignored, and the CLI treats both signals alike), or
+        /// <c>INT</c> to the CLI itself (the leaf; with <c>defaultInterrupt</c> it has SIGINT at its default disposition).
         /// </summary>
-        public void Interrupt()
+        public void Interrupt(string signal = "TERM")
         {
             // The shell script starts may or may not exec the CLI: every descendant gets the signal (as the terminal's foreground group would).
             var descendants = new List<string>();
@@ -309,9 +436,14 @@ public sealed class CloudSignInHostTests
             }
 
             Assert.NotEmpty(descendants);
+            if (signal != "TERM")
+            {
+                descendants = [.. descendants.Where(pid => Directory.EnumerateDirectories($"/proc/{pid}/task").All(task => File.ReadAllText(Path.Combine(task, "children")).Trim().Length == 0))];
+            }
+
             foreach (var child in descendants)
             {
-                using var kill = Process.Start(new ProcessStartInfo("/bin/kill") { ArgumentList = { "-TERM", child }, UseShellExecute = false })!;
+                using var kill = Process.Start(new ProcessStartInfo("/bin/kill") { ArgumentList = { "-" + signal, child }, UseShellExecute = false })!;
                 kill.WaitForExit();
             }
         }

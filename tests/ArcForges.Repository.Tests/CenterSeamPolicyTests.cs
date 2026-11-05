@@ -93,6 +93,7 @@ public sealed partial class CenterSeamPolicyTests
         var using_ = Files("src", "tools", "tests").Where(path => path.EndsWith(".cs", StringComparison.Ordinal) && !path.StartsWith(FakeCenterDirectory, StringComparison.Ordinal)
             && path != "tests/ArcForges.Repository.Tests/CenterSeamPolicyTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudLinkHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInHostTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/SignInSecretsTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 
@@ -162,6 +163,14 @@ public sealed partial class CenterSeamPolicyTests
         var receiver = File.ReadAllText(Path.Combine(RepositoryFiles.Root, Receiver));
         Assert.Contains("new[] { IPAddress.Loopback, IPAddress.IPv6Loopback }", receiver, StringComparison.Ordinal);
         Assert.DoesNotContain("IPAddress.Any", receiver, StringComparison.Ordinal);
+
+        // N2 review FX-8: exactly one listener construction, over the loop variable of the loopback-only foreach, port 0.
+        Assert.Equal(1, Regex.Count(receiver, @"\bnew\s+TcpListener\b"));
+        var loop = receiver.IndexOf("foreach (var address in new[] { IPAddress.Loopback, IPAddress.IPv6Loopback })", StringComparison.Ordinal);
+        var construction = receiver.IndexOf("new TcpListener(address, 0)", StringComparison.Ordinal);
+        Assert.True(loop >= 0 && construction > loop, "the listener is constructed outside the loopback foreach");
+        Assert.True(receiver.IndexOf("return null;", loop, StringComparison.Ordinal) > construction, "the listener is constructed outside the loopback foreach");
+        Assert.DoesNotMatch(@"\baddress\s*=(?!=)", receiver[loop..construction]);
         Assert.Contains("CryptographicOperations.FixedTimeEquals(presented, expected)", receiver, StringComparison.Ordinal);
         Assert.DoesNotContain("Access-Control", receiver, StringComparison.Ordinal);
     }

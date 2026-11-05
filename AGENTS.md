@@ -96,6 +96,14 @@ any change. They are binding; this file summarizes them and adds the repository 
   left running (the shared parent slices stay); a test that freezes a unit must thaw it before it is killed (the user manager blocks spawning into a frozen cgroup). On Windows a
   shell inside a job without breakaway (an AI-client sandbox) refuses auto-start by design, so the auto-start
   test skips there with its reason.
+- **Cloud-link test hooks (`CloudLinkTestHooks`, honoured only under `--test-mode`; `ArcForges.Repository.Tests` pins the list):**
+  `ARCFORGES_TEST_CENTER_URL` (the node's center, overriding `node.json`; FakeCenter in the closed loop), `ARCFORGES_TEST_CONNECT_LOG`
+  (one line per center connection: authority, `sent`/`refused`, UTC instant; never a path, header or secret),
+  `ARCFORGES_TEST_CLOUDLINK_REFRESH_SECONDS` (the refresh cadence) and `ARCFORGES_TEST_BROWSER_FILE` (the browser sign-in writes the
+  derived authorize URL to this file and starts no OS handler; without it a test-mode node opens nothing). The real-center sign-in loop
+  (`CloudSignInTests`, `loop=cloud`, never in a routine suite) runs only when the coordinator sets `ARCFORGES_E2E_CENTER_URL` (a
+  rehearsal or proof center, never production), `ARCFORGES_E2E_DIR` (node-approve's handshake directory) and optionally
+  `ARCFORGES_E2E_CASES` (default `device-1,pkce-1`); otherwise it skips with its reason.
 - **OS secret stores (16-testing-strategy sections 1-2; the user's decisions of 2026-10-17).** Routine tests, the host verification and
   the deep tier never reach the real Windows Credential Manager or Secret Service. Tests use `tests/Shared/IsolatedSecretStore.cs`
   (in memory, scripted faults); nodes started with `--test-mode` and `arcforges-bench` keep keys in the file-backed store under

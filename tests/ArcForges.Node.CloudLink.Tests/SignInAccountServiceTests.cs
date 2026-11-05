@@ -105,7 +105,7 @@ public sealed class SignInAccountServiceTests
         Assert.Empty(begun.Meta.Warnings);
         Assert.Equal([begun.Value.Flow.AuthorizeUrl], node.Browser.Opened);
         await ScriptedBrowser.GetAsync(center.ApproveFlow());
-        await Eventually.TrueAsync(() => node.Cloud.AccountLinked, "signed in");
+        await Eventually.TrueAsync(() => node.Cloud.SignIn.Get(begun.Value.Flow.FlowId)?.State == SignInFlowState.SignedIn, "signed in");
         var flow = (await human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest { FlowId = begun.Value.Flow.FlowId }, cancellationToken: Cancel)).Value.Flow;
         Assert.Equal(SignInFlowState.SignedIn, flow.State);
         var status = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Cancel)).Value.Status;

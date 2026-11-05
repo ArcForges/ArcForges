@@ -125,6 +125,7 @@ public sealed class SignInPrimitiveTests
         Assert.False(linux.UseShellExecute);
         Assert.Equal([url.Value], linux.ArgumentList);
         Assert.Empty(linux.Arguments);
+        Assert.False(linux.RedirectStandardOutput || linux.RedirectStandardError || linux.RedirectStandardInput);
         var windows = BrowserOpener.StartInfo(url, windows: true);
         Assert.Equal(url.Value, windows.FileName);
         Assert.True(windows.UseShellExecute);

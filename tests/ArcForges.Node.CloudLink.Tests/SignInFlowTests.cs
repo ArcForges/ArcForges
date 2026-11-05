@@ -37,8 +37,10 @@ public sealed class SignInFlowTests
         Assert.DoesNotContain(Convert.ToHexStringLower(flow.FlowId.Value.Span)[..8], flow.AuthorizeUrl, StringComparison.Ordinal);
 
         Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(link.Center.ApproveFlow()));
-        await Eventually.TrueAsync(() => link.Service.AccountLinked, "signed in");
-        Assert.Equal(SignInFlowState.SignedIn, link.Service.SignIn.Get(flow.FlowId)!.State);
+
+        // The flow's own end, not the link's phase (which turns SignedIn a moment before the flow ends: N2 review sec N-8).
+        await Eventually.TrueAsync(() => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.SignedIn, "signed in");
+        Assert.True(link.Service.AccountLinked);
         Assert.Single(link.Center.CallsOf(Complete));
         Assert.Equal(link.Center.LatestDelivered, link.StoredRecord()!.RefreshToken);
         Assert.Equal("COMPLETED", link.Center.LatestFlowState);
@@ -152,9 +154,9 @@ public sealed class SignInFlowTests
         link.Center.Script(Complete, new FakeFault.Refusal(overloaded));
         await ScriptedBrowser.GetAsync(link.Center.ApproveFlow());
         await Eventually.TrueAsync(() => link.Center.CallsOf(Complete).Count == 1, "the first Complete");
-        await Advance(link.Clock, TimeSpan.FromSeconds(120), () => link.Service.AccountLinked, "signed in");
+        await Advance(link, TimeSpan.FromSeconds(120), () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.SignedIn, "signed in");
         Assert.Equal(2, link.Center.CallsOf(Complete).Count);
-        Assert.Equal(SignInFlowState.SignedIn, link.Service.SignIn.Get(flow.FlowId)!.State);
+        Assert.True(link.Service.AccountLinked);
     }
 
     [Theory]
@@ -204,6 +206,15 @@ public sealed class SignInFlowTests
         Assert.Equal(SignInFlowState.Pending, flow.State);
         Assert.Equal(2, link.Center.CallsOf("BeginNodeSignIn").Count);
         Assert.Equal(1, link.Center.FlowCount);
+
+        // N2 review FX-5: the retry carries a fresh PKCE verifier and state, and the receiver expects the new state.
+        var begins = link.Center.CallsOf("BeginNodeSignIn").Select(call => NodeEnrollmentServiceBeginNodeSignInRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body))).ToList();
+        Assert.NotEqual(begins[0].State, begins[1].State);
+        Assert.NotEqual(begins[0].CodeChallenge, begins[1].CodeChallenge);
+        Assert.Equal(begins[0].RedirectUri, begins[1].RedirectUri);
+        Assert.Equal("HTTP/1.1 400 Bad Request", await ScriptedBrowser.GetAsync(link.Service.SignIn.Receiver!.RedirectUri + "?code=" + new string('A', 43) + "&state=" + begins[0].State));
+        Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(link.Center.ApproveFlow()));
+        await Eventually.TrueAsync(() => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.SignedIn, "signed in");
         Assert.NotEqual(CloudIdentity.Fingerprint(held), flow.NodeKeyFingerprint);
         Assert.Equal(link.Keys.Recorded()!.Fingerprint, flow.NodeKeyFingerprint);
     }
@@ -283,11 +294,11 @@ public sealed class SignInFlowTests
         link.Clock.Advance(TimeSpan.FromSeconds(4));
         await Task.Delay(100, Cancel);
         Assert.Empty(link.Center.CallsOf(Poll));
-        await Advance(link.Clock, TimeSpan.FromSeconds(120), () => link.Center.CallsOf(Poll).Count >= 3, "three polls");
+        await Advance(link, TimeSpan.FromSeconds(120), () => link.Center.CallsOf(Poll).Count >= 3, "three polls");
         Assert.Equal("PENDING", link.Center.LatestDeviceState);
         link.Center.ApproveDevice();
-        await Advance(link.Clock, TimeSpan.FromSeconds(120), () => link.Service.AccountLinked, "signed in");
-        Assert.Equal(SignInFlowState.SignedIn, link.Service.SignIn.Get(flow.FlowId)!.State);
+        await Advance(link, TimeSpan.FromSeconds(120), () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.SignedIn, "signed in");
+        Assert.True(link.Service.AccountLinked);
         Assert.Equal("COMPLETED", link.Center.LatestDeviceState);
     }
 
@@ -303,7 +314,7 @@ public sealed class SignInFlowTests
             Value = new NodeEnrollmentServicePollDeviceAuthorizationValue { State = DeviceAuthorizationState.SlowDown, IntervalMs = 15000 },
         };
         link.Center.Script(Poll, new FakeFault.Raw([.. FakeCenter.DataFrame(slow), .. FakeCenter.TrailerFrame(0, null)]));
-        await Advance(link.Clock, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the first poll");
+        await Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the first poll");
         await Eventually.TrueAsync(() => link.Service.SignIn.Get(flow.FlowId)!.PollIntervalMs == 15000, "the raised interval");
         for (var second = 0; second < 14; second++)
         {
@@ -312,7 +323,7 @@ public sealed class SignInFlowTests
         }
 
         Assert.Single(link.Center.CallsOf(Poll));
-        await Advance(link.Clock, TimeSpan.FromSeconds(20), () => link.Center.CallsOf(Poll).Count == 2, "the next poll");
+        await Advance(link, TimeSpan.FromSeconds(20), () => link.Center.CallsOf(Poll).Count == 2, "the next poll");
 
         // The next reply's interval rules again (FakeCenter's own is 5,000 ms: it never saw an early poll).
         await Eventually.TrueAsync(() => link.Service.SignIn.Get(flow.FlowId)!.PollIntervalMs == 5000, "the center's interval");
@@ -331,7 +342,7 @@ public sealed class SignInFlowTests
             Value = new NodeEnrollmentServicePollDeviceAuthorizationValue { State = DeviceAuthorizationState.Pending, IntervalMs = 1000 },
         };
         link.Center.Script(Poll, new FakeFault.Raw([.. FakeCenter.DataFrame(fast), .. FakeCenter.TrailerFrame(0, null)]));
-        await Advance(link.Clock, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the first poll");
+        await Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the first poll");
         await Task.Delay(100, Cancel);
         for (var second = 0; second < 4; second++)
         {
@@ -350,7 +361,7 @@ public sealed class SignInFlowTests
         await link.StartAsync();
         var flow = (await BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
         link.Center.DenyDevice();
-        await Advance(link.Clock, TimeSpan.FromSeconds(120),
+        await Advance(link, TimeSpan.FromSeconds(120),
             () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.Denied, "denied");
         flow = (await BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
         await Eventually.AdvanceUntilAsync(link.Clock, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(700),
@@ -373,7 +384,7 @@ public sealed class SignInFlowTests
             Value = new NodeEnrollmentServicePollDeviceAuthorizationValue { State = DeviceAuthorizationState.Completed, IntervalMs = 5000 },
         };
         link.Center.Script(Poll, new FakeFault.Raw([.. FakeCenter.DataFrame(completed), .. FakeCenter.TrailerFrame(0, null)]));
-        await Advance(link.Clock, TimeSpan.FromSeconds(30),
+        await Advance(link, TimeSpan.FromSeconds(30),
             () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.Failed, "failed");
         Assert.Equal("credentials_already_delivered", link.Service.SignIn.Get(flow.FlowId)!.Error.Details.State.Reason);
     }
@@ -386,7 +397,7 @@ public sealed class SignInFlowTests
         var flow = (await BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
         link.Center.ApproveDevice();
         link.Center.Script(Poll, new FakeFault.DropReply());
-        await Advance(link.Clock, TimeSpan.FromSeconds(180),
+        await Advance(link, TimeSpan.FromSeconds(180),
             () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.Failed, "failed");
         Assert.Equal("poll_reply_lost", link.Service.SignIn.Get(flow.FlowId)!.Error.Details.State.Reason);
 
@@ -404,7 +415,7 @@ public sealed class SignInFlowTests
         link.Center.ApproveDevice();
         var hold = new TaskCompletionSource();
         link.Center.Script(Poll, new FakeFault.Hold(hold));
-        await Advance(link.Clock, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the poll in flight");
+        await Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count == 1, "the poll in flight");
         var cancelled = link.Service.SignIn.Cancel(flow.FlowId);
         Assert.Equal(SignInFlowState.Cancelled, cancelled.Flow!.State);
         Assert.Equal(CloudLinkPhase.SignedOut, link.Service.Phase);
@@ -488,13 +499,16 @@ public sealed class SignInFlowTests
         // Another credential becomes live while the flow is pending (R-2's race, forced through the adoption seam).
         var live = await link.SignInAsync();
         link.Center.ApproveDevice();
-        await Advance(link.Clock, TimeSpan.FromSeconds(120),
+        await Advance(link, TimeSpan.FromSeconds(120),
             () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.Failed, "failed");
         Assert.Equal("signed_in", link.Service.SignIn.Get(flow.FlowId)!.Error.Details.State.Reason);
         Assert.Equal(live.RefreshToken, link.StoredRecord()!.RefreshToken);
         Assert.False(link.Center.IsLive(link.Center.LatestDelivered!));
         Assert.True(link.Center.IsLive(live.RefreshToken));
         Assert.True(link.Service.AccountLinked);
+
+        // The revocation keeps the key the live credential uses (N2 review sec N-2, S5).
+        Assert.NotNull(link.Keys.Load(link.NodeId, link.Center.Endpoint.Origin));
     }
 
     [Fact]
@@ -531,7 +545,7 @@ public sealed class SignInFlowTests
         var flow = (await BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
         await using var other = await FakeCenter.StartAsync("/other");
         link.ConfiguredCenter = other.Endpoint;
-        await Advance(link.Clock, TimeSpan.FromSeconds(60),
+        await Advance(link, TimeSpan.FromSeconds(60),
             () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.Failed, "failed");
         Assert.Equal("center_url", link.Service.SignIn.Get(flow.FlowId)!.Error.Details.State.Reason);
         Assert.Empty(link.Center.CallsOf(Poll));
@@ -576,12 +590,15 @@ public sealed class SignInFlowTests
     }
 
     /// <summary>
-    /// Advances the manual clock a second at a time, giving the flow 60 ms of real time per second (a poll or a Complete over the real HTTP
-    /// seam runs in real time), until <paramref name="condition"/> holds; at most <paramref name="limit"/> of the clock.
+    /// Advances the manual clock a second at a time until <paramref name="condition"/> holds, at most <paramref name="limit"/> of the clock,
+    /// and only while the flow waits on the clock (N2 review tests N-4): a poll or a Complete over the real HTTP seam runs in real time, so
+    /// the clock stands still until the flow waits again. After a step the next one comes only when the wait it saw is still pending or a
+    /// new wait began, so no simulated time passes while a woken flow runs.
     /// </summary>
-    internal static async Task Advance(ManualClock clock, TimeSpan limit, Func<bool> condition, string what)
+    internal static async Task Advance(LinkFixture link, TimeSpan limit, Func<bool> condition, string what)
     {
         var moved = TimeSpan.Zero;
+        var flows = link.Service.SignIn;
         while (!condition())
         {
             if (moved >= limit)
@@ -590,9 +607,41 @@ public sealed class SignInFlowTests
                 return;
             }
 
-            clock.Advance(TimeSpan.FromSeconds(1));
+            var waiting = await Until(() => condition() || flows.ClockWait.Blocked);
+            if (!waiting)
+            {
+                Assert.Fail(what + ": the flow neither waits on the clock nor reached the condition");
+            }
+
+            if (condition())
+            {
+                return;
+            }
+
+            var (count, wait, _) = flows.ClockWait;
+            link.Clock.Advance(TimeSpan.FromSeconds(1));
             moved += TimeSpan.FromSeconds(1);
-            await Task.Delay(60, Cancel);
+            if (wait is not { IsCompleted: false })
+            {
+                // The wait ended: the flow runs on in real time until it is blocked in the next wait or reaches the condition.
+                await Until(() => condition() || (flows.ClockWait is { Blocked: true } next && next.Count != count));
+            }
+        }
+
+        static async Task<bool> Until(Func<bool> done)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            while (!done())
+            {
+                if (watch.Elapsed > TimeSpan.FromSeconds(30))
+                {
+                    return false;
+                }
+
+                await Task.Delay(5, Cancel);
+            }
+
+            return true;
         }
     }
 

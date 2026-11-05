@@ -83,6 +83,8 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Run? _current;
     private int _disposed;
+    private Task[]? _clockWait;
+    private long _clockWaits;
 
     /// <summary>Creates the flows of <paramref name="link"/>.</summary>
     public SignInOrchestrator(CloudLinkService link, CloudLinkOptions options)
@@ -102,6 +104,34 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             lock (_lock)
             {
                 return _current?.Receiver;
+            }
+        }
+    }
+
+    /// <summary>The newest flow's background work (tests: wait until a late reply was handled).</summary>
+    internal Task? Worker
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _current?.Work;
+            }
+        }
+    }
+
+    /// <summary>
+    /// How many waits on the clock began so far, the current one's delay, and whether the flow is blocked in it now (none of the tasks it
+    /// waits for has completed). Tests advance a manual clock only while the flow is blocked on it, and again only once the wait it saw is
+    /// still blocked or the next one began, so no simulated time passes while a woken flow runs.
+    /// </summary>
+    internal (long Count, Task? Wait, bool Blocked) ClockWait
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return (_clockWaits, _clockWait?[0], _clockWait is { } tasks && tasks.All(task => !task.IsCompleted));
             }
         }
     }
@@ -144,10 +174,21 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 }
 
                 run = new Run(CommandIds.New(_options.Clock), center!, CancellationTokenSource.CreateLinkedTokenSource(_stop.Token));
+                Run? previous;
                 lock (_lock)
                 {
-                    _current?.Dispose();
+                    previous = _current;
                     _current = run;
+                }
+
+                // A run whose work still finishes (a late reply) is disposed after it (N2 review sec N-7).
+                if (previous?.Work is { IsCompleted: false } work)
+                {
+                    _ = work.ContinueWith(_ => previous.Dispose(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                }
+                else
+                {
+                    previous?.Dispose();
                 }
             }
         }
@@ -320,7 +361,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         using var client = Client(run.Center);
         run.Client = client.Client;
         var error = method == SignInMethod.Browser
-            ? await BeginBrowserAsync(run, run.Center, run.State0!, () => Left(entered), allowReplace: true).ConfigureAwait(false)
+            ? await BeginBrowserAsync(run, run.Center, () => Left(entered), allowReplace: true).ConfigureAwait(false)
             : await BeginDeviceAsync(run, run.Center, () => Left(entered), allowReplace: true).ConfigureAwait(false);
         if (error is not null)
         {
@@ -372,12 +413,14 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         }
     }
 
-    /// <summary>BeginNodeSignIn with fresh PKCE (and the given state), the held-key refusal replaced once.</summary>
-    private async Task<ArcError?> BeginBrowserAsync(Run run, CenterEndpoint center, string state, Func<TimeSpan> left, bool allowReplace)
+    /// <summary>BeginNodeSignIn with a fresh PKCE verifier and state for every attempt, the held-key refusal replaced once.</summary>
+    private async Task<ArcError?> BeginBrowserAsync(Run run, CenterEndpoint center, Func<TimeSpan> left, bool allowReplace)
     {
         for (var attempt = 0; ; attempt++)
         {
             var verifier = Pkce.NewVerifier();
+            var state = Pkce.NewState();
+            run.State0 = state;
             run.Receiver!.Expect(state);
             var request = new NodeEnrollmentServiceBeginNodeSignInRequest
             {
@@ -467,14 +510,21 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 "rate_limited" => error,
                 "not_activated" => error,
                 "kill_switch_active" => NodeErrors.NotActivated("kill_switch"),
-                _ when error.Category == ErrorCategory.Validation => NodeErrors.InvalidState("center_refused", error.Details?.State?.Reason is { Length: > 0 } reason ? reason : error.Code),
+                _ when error.Category == ErrorCategory.Validation => NodeErrors.InvalidState("center_refused", Token(error.Details?.State?.Reason) ?? Token(error.Code) ?? "refused"),
                 _ when error.Code == "already_exists" => NodeErrors.InvalidState("center_refused", "node_key: already_registered"),
-                _ => NodeErrors.CloudUnreachable(error.Category.ToString().ToLowerInvariant() + "/" + error.Code),
+                _ => NodeErrors.CloudUnreachable(error.Category.ToString().ToLowerInvariant() + "/" + (Token(error.Code) ?? "refused")),
             };
         }
 
         return NodeErrors.CloudUnreachable(reply.Outcome == CenterOutcome.ProtocolMismatch ? "center_protocol_mismatch" : "no_center_answer");
     }
+
+    /// <summary>
+    /// A center-supplied reason or code the node repeats in its own error only in a token's shape (lower-case letters, digits, <c>_ . : -</c>
+    /// and spaces, at most 120 characters; N2 review sec N-1), else <see langword="null"/>: no control character or markup reaches a terminal.
+    /// </summary>
+    internal static string? Token(string? value) =>
+        value is { Length: > 0 and <= 120 } && value.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_' or '.' or ':' or '-' or ' ') ? value : null;
 
     /// <summary>fleet.proto Begin/Start: "CONFLICT/already_exists (state.state node_key, state.reason already_registered)".</summary>
     private static bool KeyHeld<T>(CenterReply<T> reply)
@@ -498,7 +548,96 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         _options.Log.Info("cloud.sign_in.key_replaced");
     }
 
+    /// <summary>True while <paramref name="run"/> is the active flow, not ended, cancelled or stopped by a sign-out (the caller holds the lock).</summary>
+    private bool Wanted(Run run) => !run.Ended && !run.CancelRequested && ReferenceEquals(_current, run) && !run.Stop.IsCancellationRequested;
+
+    /// <summary>The key restart, under the flow's lock: replaced only while the flow is wanted; otherwise the flow ends CANCELLED.</summary>
+    private bool ReplaceKeyIfWanted(Run run)
+    {
+        lock (_lock)
+        {
+            if (Wanted(run))
+            {
+                ReplaceKey(run);
+                return true;
+            }
+        }
+
+        Finish(run, FlowPhase.Cancelled, null);
+        return false;
+    }
+
+    /// <summary>
+    /// After a restart's center call: a flow cancelled meanwhile ends CANCELLED, and the key it created is deleted unless a credential or a
+    /// newer flow uses it.
+    /// </summary>
+    private async Task<bool> EndIfUnwantedAsync(Run run)
+    {
+        bool wanted;
+        bool newest;
+        lock (_lock)
+        {
+            wanted = Wanted(run);
+            newest = ReferenceEquals(_current, run);
+        }
+
+        if (wanted)
+        {
+            return false;
+        }
+
+        Finish(run, FlowPhase.Cancelled, null);
+        if (newest)
+        {
+            await _link.DeleteUnusedKeyAsync(run.Center).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>Revokes credentials the node does not keep; the key goes only when no newer flow is active (N2 review sec N-4).</summary>
+    private async Task<bool> RevokeAsync(Run run, NodeCredentials credentials)
+    {
+        bool newest;
+        lock (_lock)
+        {
+            newest = ReferenceEquals(_current, run);
+        }
+
+        return await _link.RevokeDeliveredAsync(credentials, run.Center, deleteKey: newest, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>A flow that ends with delivered credentials revoked: the reason, and whether the center confirmed the revocation (N2 N-5).</summary>
+    private static ArcError Unkept(string reason, bool confirmed) =>
+        NodeErrors.InvalidState("signing_in", confirmed ? reason : reason + ": revocation_unconfirmed");
+
     private ClientScope Client(CenterEndpoint center) => new(center, _options);
+
+    /// <summary>Waits for the first of <paramref name="clock"/> (a delay on the flow's clock) and <paramref name="others"/>, recorded.</summary>
+    private async Task<Task> OnClockAsync(Task clock, params Task[] others)
+    {
+        Task[] tasks = [clock, .. others];
+        lock (_lock)
+        {
+            _clockWait = tasks;
+            _clockWaits++;
+        }
+
+        try
+        {
+            return await Task.WhenAny(tasks).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                if (ReferenceEquals(_clockWait, tasks))
+                {
+                    _clockWait = null;
+                }
+            }
+        }
+    }
 
     private async Task RunBrowserAsync(Run run)
     {
@@ -510,7 +649,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             {
                 var receiver = run.Receiver!;
                 var expiry = Task.Delay(BrowserLifetime - _options.Clock.GetElapsedTime(run.Received), _options.Clock, run.Stop.Token);
-                var done = await Task.WhenAny(receiver.Result, expiry, run.Cancelled.Task).ConfigureAwait(false);
+                var done = await OnClockAsync(expiry, receiver.Result, run.Cancelled.Task).ConfigureAwait(false);
                 if (done != receiver.Result)
                 {
                     if (done == expiry && !run.Stop.IsCancellationRequested)
@@ -540,17 +679,21 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                     return;
                 }
 
-                // The center retired or holds the key: a new key and a new flow, once (the same node-local flow, PENDING again).
-                ReplaceKey(run);
-                var state = Pkce.NewState();
-                run.Receiver = LoopbackReceiver.TryStart(state, _options.Log, Listen);
+                // The center retired or holds the key: a new key and a new flow, once (the same node-local flow, PENDING again), but only while
+                // the flow is still the active, uncancelled one: after a cancel or a sign-out nothing is created, begun or opened (N2 FX-1).
+                if (!ReplaceKeyIfWanted(run))
+                {
+                    return;
+                }
+
+                run.Receiver = LoopbackReceiver.TryStart(Pkce.NewState(), _options.Log, Listen);
                 if (run.Receiver is null)
                 {
                     Finish(run, FlowPhase.Failed, NodeErrors.InvalidState("sign_in_flow", "loopback_unavailable"));
                     return;
                 }
 
-                var error = await BeginBrowserAsync(run, run.Center, state, () => TimeSpan.FromSeconds(10), allowReplace: false).ConfigureAwait(false);
+                var error = await BeginBrowserAsync(run, run.Center, () => TimeSpan.FromSeconds(10), allowReplace: false).ConfigureAwait(false);
                 if (error is not null)
                 {
                     Finish(run, FlowPhase.Failed, error);
@@ -559,12 +702,15 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
                 lock (_lock)
                 {
-                    if (run.State != FlowPhase.Completing)
+                    if (run.State == FlowPhase.Completing && !run.CancelRequested && !run.Ended)
                     {
-                        return;
+                        run.State = FlowPhase.Pending;
                     }
+                }
 
-                    run.State = FlowPhase.Pending;
+                if (await EndIfUnwantedAsync(run).ConfigureAwait(false))
+                {
+                    return;
                 }
 
                 await Open(run, OpenerWait).ConfigureAwait(false);
@@ -630,7 +776,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 if (error.Code == "overloaded" && !overloaded)
                 {
                     overloaded = true;
-                    await Task.Delay(RetryWait(error, TimeSpan.FromSeconds(1)), _options.Clock, run.Stop.Token).ConfigureAwait(false);
+                    var retry = Task.Delay(RetryWait(error, TimeSpan.FromSeconds(1)), _options.Clock, run.Stop.Token);
+                    await OnClockAsync(retry).ConfigureAwait(false);
+                    await retry.ConfigureAwait(false);
                     continue;
                 }
 
@@ -640,7 +788,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
             if (reply.Outcome == CenterOutcome.Unreachable && !reply.MaybeApplied && _options.Clock.GetElapsedTime(started) + backoff < CodeLifetime)
             {
-                await Task.Delay(backoff, _options.Clock, run.Stop.Token).ConfigureAwait(false);
+                var pause = Task.Delay(backoff, _options.Clock, run.Stop.Token);
+                await OnClockAsync(pause).ConfigureAwait(false);
+                await pause.ConfigureAwait(false);
                 backoff = backoff * 2 > TimeSpan.FromSeconds(16) ? TimeSpan.FromSeconds(16) : backoff * 2;
                 continue;
             }
@@ -668,7 +818,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 }
 
                 var wait = Task.Delay(run.Interval < remaining ? run.Interval : remaining, _options.Clock, run.Stop.Token);
-                if (await Task.WhenAny(wait, run.Cancelled.Task).ConfigureAwait(false) != wait)
+                if (await OnClockAsync(wait, run.Cancelled.Task).ConfigureAwait(false) != wait)
                 {
                     return;
                 }
@@ -719,7 +869,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                             }
                             else
                             {
-                                await _link.RevokeDeliveredAsync(credentials, run.Center, CancellationToken.None).ConfigureAwait(false);
+                                // Credentials that reach a cancelled flow are never stored (F-11).
+                                var confirmed = await RevokeAsync(run, credentials).ConfigureAwait(false);
+                                _options.Log.Warning("cloud.sign_in.late_credentials_revoked", new LogField("confirmed", confirmed));
                             }
 
                             return;
@@ -747,12 +899,22 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                         return;
                     }
 
-                    // A new key and a new user code, once: the person approves the new code (N2 decision F-20).
-                    ReplaceKey(run);
+                    // A new key and a new user code, once: the person approves the new code (N2 decision F-20); only while the flow is still the
+                    // active, uncancelled one (N2 FX-1).
+                    if (!ReplaceKeyIfWanted(run))
+                    {
+                        return;
+                    }
+
                     var error = await BeginDeviceAsync(run, run.Center, () => TimeSpan.FromSeconds(10), allowReplace: false).ConfigureAwait(false);
                     if (error is not null)
                     {
                         Finish(run, FlowPhase.Failed, error);
+                        return;
+                    }
+
+                    if (await EndIfUnwantedAsync(run).ConfigureAwait(false))
+                    {
                         return;
                     }
 
@@ -860,29 +1022,30 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         {
             if (credentials is not null)
             {
-                await _link.RevokeDeliveredAsync(credentials, run.Center, CancellationToken.None).ConfigureAwait(false);
+                await RevokeAsync(run, credentials).ConfigureAwait(false);
             }
 
             Finish(run, FlowPhase.Failed, NodeErrors.InvalidArgument("credentials: shape"));
             return;
         }
 
-        if (run.CancelRequested)
-        {
-            await _link.RevokeDeliveredAsync(credentials, run.Center, CancellationToken.None).ConfigureAwait(false);
-            Finish(run, FlowPhase.Cancelled, null);
-            return;
-        }
-
-        var refused = await _link.AdoptSignInAsync(credentials, run.Center).ConfigureAwait(false);
+        // The cancel or sign-out check runs under the link's gate with the adoption, so a sign-out that cancelled a completing flow always
+        // keeps its credentials out (N2 FX-1, the S4 guard).
+        var refused = await _link.AdoptSignInAsync(credentials, run.Center, () => !run.CancelRequested && !run.Ended).ConfigureAwait(false);
         if (refused is null)
         {
             Finish(run, FlowPhase.SignedIn, null);
             return;
         }
 
-        await _link.RevokeDeliveredAsync(credentials, run.Center, CancellationToken.None).ConfigureAwait(false);
-        Finish(run, FlowPhase.Failed, NodeErrors.InvalidState("signing_in", refused));
+        var confirmed = await RevokeAsync(run, credentials).ConfigureAwait(false);
+        if (refused == "cancelled")
+        {
+            Finish(run, FlowPhase.Cancelled, confirmed ? null : Unkept("cancelled", confirmed));
+            return;
+        }
+
+        Finish(run, FlowPhase.Failed, Unkept(refused, confirmed));
     }
 
     /// <summary>Ends the flow once: its state, the receiver, the reservation (the phase is the link's own again, a held probe resumes).</summary>
@@ -897,7 +1060,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
             run.Ended = true;
             run.State = state;
-            run.Error = state == FlowPhase.Failed ? error : null;
+            run.Error = state is FlowPhase.Failed or FlowPhase.Cancelled ? error : null;
         }
 
         run.Cancelled.TrySetResult();

@@ -38,7 +38,8 @@ internal sealed class BrowserOpener : IBrowserOpener
             return new ProcessStartInfo { FileName = url.Value, UseShellExecute = true };
         }
 
-        var start = new ProcessStartInfo("xdg-open") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // Not redirected (N2 review sec N-9): a browser that inherits a pipe nobody reads would block on a full one, or meet a closed one.
+        var start = new ProcessStartInfo("xdg-open") { UseShellExecute = false, RedirectStandardOutput = false, RedirectStandardError = false, RedirectStandardInput = false };
         start.ArgumentList.Add(url.Value);
         return start;
     }

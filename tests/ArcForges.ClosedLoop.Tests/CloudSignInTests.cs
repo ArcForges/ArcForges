@@ -111,7 +111,7 @@ public sealed class CloudSignInTests
                 flow = await LatestFlowAsync(human, cli.Text);
                 WriteBegin(handshake, name, flow, nodeName, center);
                 Assert.Equal(0, await cli.WaitExitAsync(TimeSpan.FromMinutes(9)));
-                Step("the CLI signed in", cli.Text.Contains("Signed in.", StringComparison.Ordinal), "exit 0");
+                Step("the CLI signed in", cli.Text.Contains("Signed in", StringComparison.Ordinal), "exit 0");
             }
             else
             {

@@ -30,21 +30,27 @@ internal sealed record LoopbackResult(LoopbackOutcome Outcome, string? Code);
 /// order, with exactly one <c>Host</c> equal to its own authority (the DNS-rebinding guard), no other or repeated key, no <c>%</c>, no
 /// body, the state compared in constant time. There is no Origin or <c>Sec-Fetch-*</c> rule: the browser's top-level navigation carries no
 /// Origin, and the 256-bit state is the secret. Any other request is answered 400 and never ends the flow; idle connections are closed
-/// silently at their 5 s deadline (one total deadline per connection, not per read). At most 8 connections are served at once; at that
-/// capacity a new connection closes the OLDEST one that has not yet sent a complete request line (N2 decision R-1), sparing connections
-/// younger than one second below a hard capacity of 256, so neither idle connections nor a flood of new ones can lock the browser out (a
-/// browser sends its request at once). The answer to the valid request is a static page without script; then the receiver
-/// stops. It logs a count of refused requests, nothing request-derived.
+/// silently at their 5 s deadline (one total deadline per connection for its whole request, not per read). Once 8 connections are idle
+/// (no complete request line, nothing waiting to be read, older than one second), a new connection closes the OLDEST idle one (N2 decision R-1), so idle
+/// connections cannot lock the browser out (a browser sends its request at once). Every open connection counts against a hard cap of 256
+/// (N2 review FX-4): at the cap a new connection closes the oldest one that has not completed its request, whatever it sent (those with
+/// bytes waiting to be read last; when every one completed, the oldest of all), so connections that send a request line and stall never
+/// hold more than 256 sockets. The valid request ends the flow before its
+/// answer is written (a static page without script, best effort); then the receiver stops. It logs a count of refused requests, nothing
+/// request-derived.
 /// </summary>
 internal sealed class LoopbackReceiver : IAsyncDisposable
 {
-    /// <summary>Connections served at once before the oldest without a request line is closed.</summary>
+    /// <summary>Idle connections (no complete request line, nothing waiting to be read) from which a new one closes the oldest idle one (R-1).</summary>
     public const int Capacity = 8;
 
-    /// <summary>Connections served at once in any case (beyond it the oldest without a request line is closed whatever its age).</summary>
+    /// <summary>The most connections open at once, of any kind: at it, a new one closes the oldest that has not completed its request.</summary>
     public const int HardCapacity = 256;
 
-    /// <summary>How long a new connection is spared from eviction below the hard capacity.</summary>
+    /// <summary>
+    /// How long a new connection does not count as idle (below the hard cap): a browser connects and then sends, and a flood of new idle
+    /// connections must not close the browser's in between (<c>AFreshConnectionOutlivesAFloodOfIdleOnesBelowTheHardCap</c> fails without it).
+    /// </summary>
     public static readonly TimeSpan Grace = TimeSpan.FromSeconds(1);
 
     /// <summary>The longest request line.</summary>
@@ -75,6 +81,7 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
     private int _served;
     private long _lastLog;
     private int _stopped;
+    private int _peak;
 
     private LoopbackReceiver(TcpListener listener, IPAddress address, int port, string state, NodeLog? log)
     {
@@ -111,6 +118,24 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
 
     /// <summary>The valid requests served (0 or 1).</summary>
     public int Served => Volatile.Read(ref _served);
+
+    /// <summary>The bound endpoint, as the socket reports it (tests: loopback only, N2 review FX-8).</summary>
+    internal IPEndPoint LocalEndpoint => (IPEndPoint)_listener.LocalEndpoint;
+
+    /// <summary>The connections open now (tests).</summary>
+    internal int Open
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _connections.Count;
+            }
+        }
+    }
+
+    /// <summary>The most connections that were open at once (tests: the hard cap holds).</summary>
+    internal int Peak => Volatile.Read(ref _peak);
 
     /// <summary>
     /// Binds the receiver: IPv4 loopback first (a port outside 1024..65535 is released and another one drawn, three times at most), then IPv6
@@ -198,12 +223,13 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
         _listener.Stop();
         lock (_lock)
         {
-            foreach (var connection in _connections)
+            // The connection that brought the valid request finishes its answer within its own deadline (N2 review sec N-3).
+            foreach (var connection in _connections.Where(open => !open.Answering))
             {
                 connection.Close();
             }
 
-            _connections.Clear();
+            _connections.RemoveAll(open => !open.Answering);
         }
 
         if (Refused > 0)
@@ -237,21 +263,19 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
                         return;
                     }
 
-                    // N2 decision R-1: never refuse the new connection; close the oldest that has not sent its request line. A connection
-                    // younger than the grace is spared below the hard capacity (a browser's request arrives and is read within it), so a flood
-                    // of new connections cannot close the browser's before its line is read.
-                    var now = Environment.TickCount64;
-                    var oldest = _connections.Count >= Capacity
-                        ? _connections.Where(open => !open.LineComplete && (now - open.Accepted >= (long)Grace.TotalMilliseconds || _connections.Count >= HardCapacity))
-                            .MinBy(open => open.Accepted)
-                        : null;
-                    if (oldest is not null)
+                    // N2 decision R-1: never refuse the new connection; close the oldest that has not sent its request line. At the hard
+                    // cap (N2 review FX-4) the oldest that has not completed its request goes whatever it sent, so the count never exceeds it.
+                    if (Evicted() is { } oldest)
                     {
                         oldest.Close();
                         _connections.Remove(oldest);
                     }
 
                     _connections.Add(connection);
+                    if (_connections.Count > _peak)
+                    {
+                        Volatile.Write(ref _peak, _connections.Count);
+                    }
                 }
 
                 _ = Task.Run(() => ServeAsync(connection));
@@ -261,6 +285,32 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
         {
             _listener.Stop();
         }
+    }
+
+    /// <summary>
+    /// The connection a new one closes (the caller holds the lock), or <see langword="null"/>. R-1: once <see cref="Capacity"/> connections
+    /// are idle (no complete request line read, no bytes waiting to be read, older than <see cref="Grace"/>), the oldest idle one; so a
+    /// browser's connection, whose request is on its way, is never closed by newer idle ones below the hard cap. FX-4: at <see cref="HardCapacity"/> open connections of any kind, the
+    /// oldest one that has not completed its request, those with bytes waiting last, so stalled request lines go before a browser's
+    /// request that is about to be read.
+    /// </summary>
+    private Connection? Evicted()
+    {
+        var now = Environment.TickCount64;
+        var idle = _connections.Where(open => !open.LineComplete && !open.Answering && !open.Unread && now - open.Accepted >= (long)Grace.TotalMilliseconds).ToList();
+        if (idle.Count >= Capacity)
+        {
+            return idle.MinBy(open => open.Accepted);
+        }
+
+        if (_connections.Count < HardCapacity)
+        {
+            return null;
+        }
+
+        var unfinished = _connections.Where(open => !open.RequestComplete && !open.Answering).ToList();
+        return unfinished.Where(open => !open.Unread).MinBy(open => open.Accepted) ?? unfinished.MinBy(open => open.Accepted)
+            ?? _connections.Where(open => !open.Answering).MinBy(open => open.Accepted);
     }
 
     private async Task ServeAsync(Connection connection)
@@ -290,9 +340,13 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
                 return;
             }
 
-            await WriteAsync(stream, "200 OK", "text/html; charset=utf-8", Page, deadline.Token).ConfigureAwait(false);
+            // The single use is consumed and the result kept before the answer is written: a browser that resets the connection does not
+            // leave the flow waiting for its expiry (N2 review sec N-3). The answer has its own deadline, not cut by the stop.
+            connection.Answering = true;
             _result.TrySetResult(result);
             Stop();
+            using var answer = new CancellationTokenSource(RequestDeadline);
+            await WriteAsync(stream, "200 OK", "text/html; charset=utf-8", Page, answer.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException or ObjectDisposedException
             or InvalidOperationException)
@@ -358,6 +412,7 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
                     return Request.Bad;
                 }
 
+                connection.RequestComplete = true;
                 return Request.Parse(Encoding.Latin1.GetString(buffer, 0, lineEnd), Encoding.Latin1.GetString(buffer, lineEnd + 2, Math.Max(0, end - lineEnd - 2)),
                     length > end + 4);
             }
@@ -446,6 +501,25 @@ internal sealed class LoopbackReceiver : IAsyncDisposable
 
         public bool LineComplete { get; set; }
 
+        public bool RequestComplete { get; set; }
+
+        public bool Answering { get; set; }
+
+        /// <summary>Bytes arrived that the receiver has not read yet.</summary>
+        public bool Unread
+        {
+            get
+            {
+                try
+                {
+                    return Volatile.Read(ref _closed) == 0 && Client.Client is { } socket && socket.Available > 0;
+                }
+                catch (Exception exception) when (exception is ObjectDisposedException or SocketException)
+                {
+                    return false;
+                }
+            }
+        }
 
         public void Close()
         {

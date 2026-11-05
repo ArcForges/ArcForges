@@ -38,11 +38,17 @@ internal static class AccountCommands
         {
             var localOnly = result.GetValue(local);
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            if (localOnly && !cli.Yes && !Console.IsInputRedirected && !cli.Output.Json)
+            if (localOnly && !cli.Yes && (cli.Output.Json || !Console.IsInputRedirected))
             {
                 var status = await ReadStatusAsync(cli, session, cancellationToken).ConfigureAwait(false);
                 if (status?.Warnings.FirstOrDefault(warning => Abandonable.Contains(warning, StringComparer.Ordinal)) is not null)
                 {
+                    if (cli.Output.Json)
+                    {
+                        // Only --yes skips the abandon confirmation (N2 review sec N-6): --json never answers it.
+                        return cli.Output.Usage("logout --local would forget a credential this node cannot use; confirm it with --yes.");
+                    }
+
                     cli.Output.Error.Write("Forget a credential this node cannot use? It may remain in the previous secret store and stay live at "
                         + (status.CenterUrl is { Length: > 0 } center ? center : "its center") + " until you revoke this device on the web or it expires. [y/N] ");
                     var answer = Console.In.ReadLine();
@@ -61,9 +67,10 @@ internal static class AccountCommands
             var warnings = response.Meta?.Warnings.ToList() ?? [];
             if (response.Error is { } error)
             {
-                if (!cli.Output.Json && warnings.Contains("credential_store_unavailable"))
+                if (!cli.Output.Json && error.Code == "invalid_state" && error.Details?.State?.Reason == "credential_store_unavailable")
                 {
-                    cli.Output.Error.WriteLine("error: the secret store cannot be read now; nothing was changed and the node retries it (STATE/not_signed_in)");
+                    // N2 review FX-3: refused while the store cannot be read; nothing changed (both forms).
+                    cli.Output.Error.WriteLine("error: the secret store cannot be read now; nothing was changed and the node retries reading it. Try again when it is available (STATE/invalid_state)");
                     return ExitCodes.Failed;
                 }
 

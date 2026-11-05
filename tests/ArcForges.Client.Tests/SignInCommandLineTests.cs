@@ -141,5 +141,24 @@ public sealed class SignInCommandLineTests
     public void ARefusedSignInSaysWhatToDo(string state, string reason, string hint) =>
         Assert.Contains(hint, LoginCommands.StateText(state, reason), StringComparison.Ordinal);
 
+    [Fact]
+    public void CenterSuppliedErrorTextReachesTheTerminalOnlyAsPlainText()
+    {
+        // N2 review sec N-1 (SEC-24): a hostile center's ArcError text carries escape sequences, a line break and a bidirectional override.
+        var error = new ArcForges.Contracts.Foundation.V1.ArcError
+        {
+            Category = ArcForges.Contracts.Foundation.V1.ErrorCategory.State,
+            Code = "cloud\u001b[2Junreachable",
+            MessageKey = "error.\u001b]0;owned\u0007key\nopen https://evil.example\u202e",
+            Details = new ArcForges.Contracts.Foundation.V1.ErrorDetails { State = new ArcForges.Contracts.Foundation.V1.StateFailure { State = "x\u009b31m", Reason = "y\r\nz" } },
+        };
+        var text = Messages.For(error);
+        Assert.DoesNotContain(text, c => char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format);
+        Assert.Equal("cloud?[2Junreachable", Messages.Plain(error.Code));
+        Assert.True(Messages.Plain(new string('a', 500)).Length <= 200);
+        Assert.Equal(string.Empty, Messages.Plain(null));
+        Assert.DoesNotContain(Messages.Plain(LoginCommands.StateText("center_refused", "\u001b[31mred")), char.IsControl);
+    }
+
     private static System.CommandLine.RootCommand Root() => CliApplication.Build(new GlobalOptions(), NoNode, TextWriter.Null, TextWriter.Null);
 }

@@ -575,17 +575,25 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     }
 
     /// <summary>
-    /// Adopts the credentials a sign-in delivered (N2 decision R-2): under the gate, only while the configured center is still the flow's
+    /// Adopts the credentials a sign-in delivered (N2 decision R-2): under the gate, only while <paramref name="wanted"/> still holds (the flow
+    /// was not cancelled and no sign-out cancelled it: N2 review FX-1, <c>cancelled</c>), the configured center is still the flow's
     /// <paramref name="center"/>, the node is not signed in, and there is no link or the link holds this target's
     /// <c>center_rejected_credential</c> (which the new credential replaces). <see langword="null"/> on success; otherwise the reason, and the
-    /// caller revokes the delivered credentials (also when the adoption itself failed, N2 decision N-1).
+    /// caller revokes the delivered credentials (also when the adoption itself failed, N2 decision N-1). An adoption that fails after its
+    /// commit began is undone two-phase first (N1 R-1; N2 review FX-2): the link never names a credential the node is about to revoke.
     /// </summary>
-    internal async Task<string?> AdoptSignInAsync(NodeCredentials credentials, CenterEndpoint center)
+    internal async Task<string?> AdoptSignInAsync(NodeCredentials credentials, CenterEndpoint center, Func<bool> wanted)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(center);
+        ArgumentNullException.ThrowIfNull(wanted);
         using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
         {
+            if (!wanted())
+            {
+                return "cancelled";
+            }
+
             if (Configured()?.Url != center.Url)
             {
                 return "center_url";
@@ -615,16 +623,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
             {
                 _options.Log.Warning("cloud.sign_in.adoption_failed", new LogField("errorType", exception.GetType().Name));
-                try
-                {
-                    // A committing link without its record ends as a sign-in that never completed (the storage table's crash points).
-                    Load();
-                }
-                catch (Exception reload) when (reload is not OutOfMemoryException and not OperationCanceledException)
-                {
-                    _options.Log.Warning("cloud.loop.reload_failed", new LogField("errorType", reload.GetType().Name));
-                }
-
+                UndoAdoption(target);
                 return "credential_storage_failed";
             }
         }
@@ -635,11 +634,39 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     }
 
     /// <summary>
-    /// Revokes credentials a sign-in delivered that the node does not keep (a cancelled flow, a refused or failed adoption; N2 decisions R-2,
-    /// N-1, N-4, F-11): SignOutNode with the delivered access token at the flow's center, then the node key, unless a credential of this node
-    /// still uses it. True when the center confirmed; otherwise the family stays live at the center until it is revoked on the web or expires.
+    /// After a failed adoption (the caller holds the gate): a committing link of the flow's target is this adoption's own commit, so it ends
+    /// two-phase (the record first, the pointer last; a failed step stays recorded and is retried) instead of being completed by a reload,
+    /// which would leave a <c>signed_in</c> link to the credential the caller revokes next. Anything else is reloaded as it is.
     /// </summary>
-    internal async Task<bool> RevokeDeliveredAsync(NodeCredentials credentials, CenterEndpoint center, CancellationToken cancellationToken)
+    private void UndoAdoption(string target)
+    {
+        try
+        {
+            if (_store.ReadLink() is { State: LinkStates.Committing } link && link.Target == target && Unowned(link) is null)
+            {
+                EndCredential("sign_in_not_completed", notice: null, link);
+                return;
+            }
+
+            Load();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+        {
+            _options.Log.Warning("cloud.loop.reload_failed", new LogField("errorType", exception.GetType().Name));
+            lock (_stateLock)
+            {
+                _reload = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Revokes credentials a sign-in delivered that the node does not keep (a cancelled flow, a refused or failed adoption; N2 decisions R-2,
+    /// N-1, N-4, F-11): SignOutNode with the delivered access token at the flow's center, then, with <paramref name="deleteKey"/> (no newer
+    /// flow is active), the flow's own node key (its center's origin; N2 review sec N-4) unless a credential of this node still uses it. True
+    /// when the center confirmed; otherwise the family stays live at the center until it is revoked on the web or expires.
+    /// </summary>
+    internal async Task<bool> RevokeDeliveredAsync(NodeCredentials credentials, CenterEndpoint center, bool deleteKey, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(center);
@@ -657,22 +684,44 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             }
         }
 
+        if (deleteKey)
+        {
+            await DeleteUnusedKeyAsync(center).ConfigureAwait(false);
+        }
+
+        _options.Log.Warning("cloud.sign_in.delivered_credentials_revoked", new LogField("confirmed", confirmed));
+        return confirmed;
+    }
+
+    /// <summary>
+    /// Deletes the node key of <paramref name="center"/>'s origin that a sign-in flow created or used, unless a credential of this node (signed
+    /// in, or a held rejected one, which a sign-in replaces) or a link still uses it. Takes the gate.
+    /// </summary>
+    internal async Task DeleteUnusedKeyAsync(CenterEndpoint center)
+    {
+        ArgumentNullException.ThrowIfNull(center);
         using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
         {
             bool keyInUse;
             lock (_stateLock)
             {
-                keyInUse = _phase == CloudLinkPhase.SignedIn || _rejected;
+                keyInUse = _phase == CloudLinkPhase.SignedIn || _rejected || _link is not null;
             }
 
-            if (!keyInUse)
+            if (keyInUse)
             {
-                TryDeleteKey(null);
+                return;
+            }
+
+            try
+            {
+                _options.Keys.DeleteOne(_options.NodeId.Span, center.Origin);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                _options.Log.Warning("cloud.node_key.delete_failed", new LogField("errorType", exception.GetType().Name));
             }
         }
-
-        _options.Log.Warning("cloud.sign_in.delivered_credentials_revoked", new LogField("confirmed", confirmed));
-        return confirmed;
     }
 
     /// <summary>
@@ -704,17 +753,21 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// (<see cref="EnterForSignOutAsync"/>): the center call in flight has ended by then. With <paramref name="revokeRemote"/>, SignOutNode
     /// with the current access token, to the credential's own center only, within <paramref name="remoteBudget"/> (real time, as the
     /// caller's deadline; default <see cref="SignOutRemoteBudget"/>; less than <see cref="SignOutRemoteMinimum"/> skips it). Whatever the
-    /// answer, the credential ends locally, two-phase (R-1). A link this node cannot end here (another node ID or secret-store backend, an
-    /// unreadable or inconsistent file) is left alone: <see cref="SignOutResult.NotSignedIn"/>, and the status keeps reporting it.
+    /// answer, the credential ends locally, two-phase (R-1). While the store cannot be read (<c>credential_store_unavailable</c>: a locked
+    /// keyring, an unreadable, underived or inconsistent link) both forms refuse and change nothing (<see cref="SignOutResult.StoreUnavailable"/>;
+    /// N2 decision R-3, review FX-3). A link of another node ID or secret-store backend is left alone by the remote form
+    /// (<see cref="SignOutResult.NotSignedIn"/>) and abandoned only by the local one (<see cref="SignOutResult.Abandoned"/>).
     /// </summary>
     public async Task<SignOutResult> SignOutHeldAsync(bool revokeRemote, TimeSpan? remoteBudget = null)
     {
         CloudCredentialRecord? record;
         CloudLinkFile? link;
+        bool storeUnavailable;
         lock (_stateLock)
         {
             record = _record;
             link = _link;
+            storeUnavailable = _warnings.Contains(Warnings.StoreUnavailable);
         }
 
         if (link is null)
@@ -725,13 +778,22 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                return SignOutResult.NotSignedIn;
+                // N2 review FX-3: an unreadable link file is refused, never read as "not signed in".
+                return SignOutResult.StoreUnavailable;
             }
         }
 
         if (link is null)
         {
-            return SignOutResult.NotSignedIn;
+            return storeUnavailable ? SignOutResult.StoreUnavailable : SignOutResult.NotSignedIn;
+        }
+
+        // N2 decision R-3 and review FX-3: while the store cannot be read (a locked keyring, any read error, an inconsistent or underived
+        // link), both forms refuse and change nothing: the record was never read, so neither a remote revocation nor a local ending could
+        // be honest. A recorded ending is not refused: it only retries (N1 R-1).
+        if (storeUnavailable && link.State != LinkStates.Ending)
+        {
+            return SignOutResult.StoreUnavailable;
         }
 
         if (Unowned(link) is { } unowned)

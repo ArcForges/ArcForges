@@ -315,5 +315,206 @@ public sealed class LoopbackReceiverTests
         Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync("http://127.0.0.1:" + receiver.Port + "/callback?code=" + Code + "&state=another-state-0123456789"));
     }
 
+    [Fact]
+    public async Task ConnectionsThatSendARequestLineAndStallNeverExceedTheHardCapAndTheBrowserIsServed()
+    {
+        // N2 review FX-4 (sec B-4): every open connection counts, also one whose request line arrived; at the cap the oldest that has not
+        // completed its request is closed, so a stream of stalled request lines cannot pin sockets beyond it or lock the browser out.
+        await using var receiver = Start();
+        using var stop = new CancellationTokenSource();
+        var stalled = new System.Collections.Concurrent.ConcurrentQueue<TcpClient>();
+        async Task FloodAsync()
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var client = new TcpClient();
+                try
+                {
+                    await client.ConnectAsync(IPAddress.Loopback, receiver.Port, stop.Token);
+                    await client.GetStream().WriteAsync("GET / HTTP/1.1\r\n"u8.ToArray(), stop.Token);
+                    stalled.Enqueue(client);
+                }
+                catch (Exception exception) when (exception is SocketException or IOException or OperationCanceledException)
+                {
+                    client.Dispose();
+                    return;
+                }
+            }
+        }
+
+        var flood = Enumerable.Range(0, 4).Select(_ => Task.Run(FloodAsync, TestContext.Current.CancellationToken)).ToArray();
+        try
+        {
+            var deadline = Stopwatch.StartNew();
+            while (stalled.Count < LoopbackReceiver.HardCapacity + 64 && deadline.Elapsed < TimeSpan.FromSeconds(3))
+            {
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+
+            Assert.True(stalled.Count > LoopbackReceiver.HardCapacity, "only " + stalled.Count + " connections were opened");
+            Assert.InRange(receiver.Peak, 1, LoopbackReceiver.HardCapacity);
+            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync("http://127.0.0.1:" + receiver.Port + "/callback?code=" + Code + "&state=" + State));
+            Assert.InRange(receiver.Peak, 1, LoopbackReceiver.HardCapacity);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await Task.WhenAll(flood);
+            while (stalled.TryDequeue(out var client))
+            {
+                client.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task StalledRequestLinesAreClosedAtTheCapWhileAFlowWaits()
+    {
+        await using var receiver = Start();
+        var stalled = new List<TcpClient>();
+        try
+        {
+            const int Count = LoopbackReceiver.HardCapacity + 44;
+            for (var i = 0; i < Count; i++)
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
+                await client.GetStream().WriteAsync("GET / HTTP/1.1\r\n"u8.ToArray(), TestContext.Current.CancellationToken);
+                stalled.Add(client);
+            }
+
+            await Task.Delay(300, TestContext.Current.CancellationToken);
+            Assert.InRange(receiver.Peak, 1, LoopbackReceiver.HardCapacity);
+            Assert.InRange(receiver.Open, 0, LoopbackReceiver.HardCapacity);
+            var closed = 0;
+            foreach (var client in stalled)
+            {
+                if (client.Client.Poll(0, SelectMode.SelectRead) && client.Client.Available == 0)
+                {
+                    closed++;
+                }
+            }
+
+            // At least the connections beyond the cap were closed by the receiver (on 1483afb none was: each lived its 5 s).
+            Assert.True(closed >= Count - LoopbackReceiver.HardCapacity, "closed " + closed);
+            Assert.False(receiver.Result.IsCompleted);
+            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync("http://127.0.0.1:" + receiver.Port + "/callback?code=" + Code + "&state=" + State));
+        }
+        finally
+        {
+            stalled.ForEach(client => client.Dispose());
+        }
+    }
+
+    [Fact]
+    public async Task AConnectionWhoseRequestLineArrivedIsNotClosedBelowTheHardCap()
+    {
+        // R-1's other half (sec S3): below the hard cap only idle connections (no complete request line) are closed, the oldest first.
+        await using var receiver = Start();
+        using var early = new TcpClient();
+        await early.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
+        var stream = early.GetStream();
+        await stream.WriteAsync("GET / HTTP/1.1\r\n"u8.ToArray(), TestContext.Current.CancellationToken);
+        var idle = new List<TcpClient>();
+        try
+        {
+            // Every connection past the grace, then a stream of new idle ones: the old idle ones are closed, the oldest first; the early
+            // connection, the oldest of all, is not idle.
+            await Task.Delay(LoopbackReceiver.Grace + TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken);
+            await OpenAsync(2 * LoopbackReceiver.Capacity);
+            await Task.Delay(LoopbackReceiver.Grace + TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken);
+            await OpenAsync(2 * LoopbackReceiver.Capacity);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+            var closed = idle.Take(2 * LoopbackReceiver.Capacity).Count(client => client.Client.Poll(0, SelectMode.SelectRead) && client.Client.Available == 0);
+            Assert.True(closed > LoopbackReceiver.Capacity, "only " + closed + " old idle connections were closed");
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("Host: 127.0.0.1:" + receiver.Port + "\r\n\r\n"), TestContext.Current.CancellationToken);
+            var buffer = new byte[64];
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+            wait.CancelAfter(TimeSpan.FromSeconds(5));
+            var read = await stream.ReadAsync(buffer, wait.Token);
+            Assert.StartsWith("HTTP/1.1 400 Bad Request", Encoding.ASCII.GetString(buffer, 0, read), StringComparison.Ordinal);
+        }
+        finally
+        {
+            idle.ForEach(client => client.Dispose());
+        }
+
+        async Task OpenAsync(int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
+                idle.Add(client);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AFreshConnectionOutlivesAFloodOfIdleOnesBelowTheHardCap()
+    {
+        // The grace (S2): a connection that has not sent yet (a browser between connect and send) is not closed by newer idle ones.
+        await using var receiver = Start();
+        using var fresh = new TcpClient();
+        await fresh.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
+        var idle = new List<TcpClient>();
+        try
+        {
+            for (var i = 0; i < 4 * LoopbackReceiver.Capacity; i++)
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
+                idle.Add(client);
+            }
+
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+            var stream = fresh.GetStream();
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("GET /callback?code=" + Code + "&state=" + State + " HTTP/1.1\r\nHost: 127.0.0.1:" + receiver.Port + "\r\n\r\n"),
+                TestContext.Current.CancellationToken);
+            var buffer = new byte[64];
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+            wait.CancelAfter(TimeSpan.FromSeconds(5));
+            var read = await stream.ReadAsync(buffer, wait.Token);
+            Assert.StartsWith("HTTP/1.1 200 OK", Encoding.ASCII.GetString(buffer, 0, read), StringComparison.Ordinal);
+        }
+        finally
+        {
+            idle.ForEach(client => client.Dispose());
+        }
+    }
+
+    [Fact]
+    public async Task TheReceiverBindsOnlyALoopbackAddress()
+    {
+        // N2 review FX-8 (tests B-3): the bound endpoint as the socket reports it, not the address the receiver believes it chose.
+        await using var receiver = Start();
+        Assert.Equal(IPAddress.Loopback, receiver.LocalEndpoint.Address);
+        Assert.True(IPAddress.IsLoopback(receiver.LocalEndpoint.Address));
+        Assert.Equal(receiver.Port, receiver.LocalEndpoint.Port);
+        if (Socket.OSSupportsIPv6)
+        {
+            await using var ipv6 = LoopbackReceiver.TryStart(State, null, address => address.Equals(IPAddress.Loopback) ? throw new SocketException(10013) : new TcpListener(address, 0));
+            if (ipv6 is not null)
+            {
+                Assert.Equal(IPAddress.IPv6Loopback, ipv6.LocalEndpoint.Address);
+                Assert.True(IPAddress.IsLoopback(ipv6.LocalEndpoint.Address));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AValidRequestWhoseConnectionIsResetStillEndsTheWait()
+    {
+        // N2 review sec N-3: the result is kept before the answer is written.
+        await using var receiver = Start();
+        var client = new TcpClient { LingerState = new LingerOption(true, 0) };
+        await client.ConnectAsync(IPAddress.Loopback, receiver.Port, TestContext.Current.CancellationToken);
+        await client.GetStream().WriteAsync(Encoding.ASCII.GetBytes("GET /callback?code=" + Code + "&state=" + State + " HTTP/1.1\r\nHost: 127.0.0.1:" + receiver.Port + "\r\n\r\n"),
+            TestContext.Current.CancellationToken);
+        client.Dispose();
+        var result = await receiver.Result.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(LoopbackOutcome.Code, result.Outcome);
+    }
+
     private static LoopbackReceiver Start() => LoopbackReceiver.TryStart(State, null) ?? throw new InvalidOperationException("no loopback port");
 }

@@ -121,6 +121,11 @@ public sealed class FakeCenterConformanceTests
     [InlineData("ReportNodeInfo-credential-revoked")]
     [InlineData("ReportNodeInfo-restricted-account")]
     [InlineData("SignOutNode-node-not-live")]
+    [InlineData("BeginNodeSignIn-ok")]
+    [InlineData("CompleteNodeSignIn-ok")]
+    [InlineData("StartDeviceAuthorization-ok")]
+    [InlineData("PollDeviceAuthorization-approved")]
+    [InlineData("PollDeviceAuthorization-pending")]
     public async Task TheRealClientBuildsTheCapturedRequests(string name)
     {
         var capture = Capture.Load(name);
@@ -137,6 +142,20 @@ public sealed class FakeCenterConformanceTests
             case "ReportNodeInfo":
                 var report = NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(payload);
                 await client.ReportNodeInfoAsync(bearer!, report.Node, report.Meta.CommandId, CancellationToken.None);
+                break;
+
+            // The four sign-in methods (N2-18, tests N-8): anonymous, the request the flow built, sent as captured.
+            case "BeginNodeSignIn":
+                await client.BeginNodeSignInAsync(NodeEnrollmentServiceBeginNodeSignInRequest.Parser.ParseFrom(payload), CancellationToken.None);
+                break;
+            case "CompleteNodeSignIn":
+                await client.CompleteNodeSignInAsync(NodeEnrollmentServiceCompleteNodeSignInRequest.Parser.ParseFrom(payload), CancellationToken.None);
+                break;
+            case "StartDeviceAuthorization":
+                await client.StartDeviceAuthorizationAsync(NodeEnrollmentServiceStartDeviceAuthorizationRequest.Parser.ParseFrom(payload), CancellationToken.None);
+                break;
+            case "PollDeviceAuthorization":
+                await client.PollDeviceAuthorizationAsync(NodeEnrollmentServicePollDeviceAuthorizationRequest.Parser.ParseFrom(payload), CancellationToken.None);
                 break;
             default:
                 await client.SignOutNodeAsync(bearer!, NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(payload).Meta.CommandId, CancellationToken.None);
@@ -447,8 +466,16 @@ public sealed class FakeCenterConformanceTests
         {
             "RefreshNodeSession" => NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
             "ReportNodeInfo" => NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
-            _ => NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
+            "SignOutNode" => NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
+
+            // The sign-in requests carry no RequestMeta: the bytes are the frame as sent.
+            _ => null!,
         };
+        if (message is null)
+        {
+            return body;
+        }
+
         var meta = (RequestMeta)message.Descriptor.FindFieldByName("meta").Accessor.GetValue(message);
         meta.CorrelationId = null;
         return FakeCenter.DataFrame(message);

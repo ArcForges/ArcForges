@@ -428,7 +428,8 @@ public sealed class CredentialBindingTests
         Assert.Single(link.Secrets.Names());
         using (await link.Service.EnterAsync(CancellationToken.None))
         {
-            Assert.Equal(SignOutResult.NotSignedIn, await link.Service.SignOutHeldAsync(revokeRemote: false));
+            // N2 review FX-3: an unreadable link file refuses the sign-out (never "not signed in"); nothing changes.
+            Assert.Equal(SignOutResult.StoreUnavailable, await link.Service.SignOutHeldAsync(revokeRemote: false));
         }
 
         Assert.Single(link.Secrets.Names());
