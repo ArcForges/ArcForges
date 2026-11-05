@@ -220,6 +220,23 @@ public sealed class CloudLinkHostTests
         });
     }
 
-    internal static CloudCredentialRecord? Stored(string dataRoot, byte[] nodeId, FakeCenter center) =>
-        new CloudCredentialStore(dataRoot, NodeSecretStores.ForTestDataRoot(dataRoot)).ReadRecord(CloudCredentialStore.Target(nodeId, center.Endpoint.Origin));
+    /// <summary>
+    /// The record in the node's isolated test store, read from the test process. On Windows the node process may be replacing the file at
+    /// that moment (a rename over it), which refuses the test's read for a moment: the read is retried for up to 2 s (the test's read only).
+    /// </summary>
+    internal static CloudCredentialRecord? Stored(string dataRoot, byte[] nodeId, FakeCenter center)
+    {
+        var store = new CloudCredentialStore(dataRoot, NodeSecretStores.ForTestDataRoot(dataRoot));
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return store.ReadRecord(CloudCredentialStore.Target(nodeId, center.Endpoint.Origin));
+            }
+            catch (Exception exception) when (attempt < 40 && exception is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(50);
+            }
+        }
+    }
 }

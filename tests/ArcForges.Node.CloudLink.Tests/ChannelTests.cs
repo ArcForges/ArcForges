@@ -268,7 +268,7 @@ public sealed class ChannelTests
         {
             await connection.CloseAsync(4409, "replaced", null);
             await Eventually.TrueAsync(() => link.Notices().Contains(CloudLinkService.Notices.ChannelReplaced), "the notification");
-            Assert.Equal(ChannelReasons.Replaced, link.Service.Status().RelayReason);
+            await Eventually.TrueAsync(() => link.Service.Status() is { Relay: RelayState.Backoff, RelayReason: ChannelReasons.Replaced }, "BACKOFF, replaced");
         }
     }
 
