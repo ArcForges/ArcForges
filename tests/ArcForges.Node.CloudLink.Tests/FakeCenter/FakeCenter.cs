@@ -62,8 +62,11 @@ internal abstract record FakeFault
 /// node tests only; conformance-tested against exchanges captured from a real center)"; CTR4-TST-03). It serves binary gRPC-Web over a real
 /// loopback HTTP/1.1 listener under a path base, with the center's ingress refusals and the node credential's strict rotation:
 /// RefreshNodeSession (a spent token revokes the family), ReportNodeInfo and SignOutNode (receipts by command ID). Its replies for these
-/// methods are compared byte for byte with the REAL captures (<c>FakeCenterConformanceTests</c>). The sign-in methods are part N2's. It never
-/// stands in for an end-to-end result.
+/// methods are compared byte for byte with the REAL captures (<c>FakeCenterConformanceTests</c>). Part N2 adds the sign-in methods
+/// (BeginNodeSignIn, CompleteNodeSignIn, StartDeviceAuthorization, PollDeviceAuthorization) with the account's side as test controls (approve,
+/// deny, expire), its own S256 check and its own node key proof verifier (node-13 item 4: independent of the node's builder), and the
+/// center's rules of docs/center-fleet.md (held keys, the one-use code, reuse revocation, SLOW_DOWN). It never stands in for an end-to-end
+/// result.
 /// </summary>
 internal sealed class FakeCenter : IAsyncDisposable
 {
@@ -158,21 +161,32 @@ internal sealed class FakeCenter : IAsyncDisposable
     /// </summary>
     public NodeCredentials Issue(ReadOnlySpan<byte> nodeId, string displayName = "Test Account")
     {
-        var installation = RandomNumberGenerator.GetBytes(16);
-        var session = new Session(nodeId.ToArray(), installation, NewToken("afa1."), NewToken("afr1."), Clock.GetUtcNow() + AccessLifetime,
-            Clock.GetUtcNow() + FamilyLifetime);
+        var id = nodeId.ToArray();
         lock (_gate)
         {
-            _byRefresh[session.Refresh] = session;
-            _byAccess[session.Access] = session;
+            return IssueLocked(id, displayName);
         }
+    }
+
+    private NodeCredentials IssueLocked(byte[] nodeId, string displayName)
+    {
+        var installation = NextInstallationIds.Count > 0 ? NextInstallationIds.Dequeue() : RandomNumberGenerator.GetBytes(16);
+        var session = new Session(nodeId, installation, NewToken("afa1."), NewToken("afr1."), Clock.GetUtcNow() + AccessLifetime,
+            Clock.GetUtcNow() + FamilyLifetime);
+        _byRefresh[session.Refresh] = session;
+        _byAccess[session.Access] = session;
 
         var credentials = new NodeCredentials
         {
             RefreshToken = session.Refresh,
             AccessToken = session.Access,
             AccessExpiresAt = ProtoTime.ToInstant(session.AccessExpires),
-            Account = new AccountSummary { AccountId = new Id { Value = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)) }, DisplayName = displayName, EmailMasked = "t***@example.test" },
+            Account = new AccountSummary
+            {
+                AccountId = new Id { Value = ByteString.CopyFrom(NextAccountIds.Count > 0 ? NextAccountIds.Dequeue() : RandomNumberGenerator.GetBytes(16)) },
+                DisplayName = displayName,
+                EmailMasked = displayName == Account.Name ? Account.Email : "t***@example.test",
+            },
             InstallationId = new Id { Value = ByteString.CopyFrom(installation) },
             SessionExpiresAt = ProtoTime.ToInstant(session.SessionExpires),
             AccessLifetimeMs = (ulong)AccessLifetime.TotalMilliseconds,
@@ -195,6 +209,16 @@ internal sealed class FakeCenter : IAsyncDisposable
         ("ReportNodeInfo", "transport:auth.unauthenticated"), ("ReportNodeInfo", "transport:auth.credential_revoked"), ("ReportNodeInfo", "transport:auth.token_expired"),
         ("SignOutNode", "ok"), ("SignOutNode", "transport:auth.credential_revoked"), ("SignOutNode", "transport:auth.unauthenticated"),
         ("SignOutNode", "transport:auth.token_expired"), ("SignOutNode", "CONFLICT/command_id_reused"), ("SignOutNode", "AUTHENTICATION/unauthenticated"),
+        ("BeginNodeSignIn", "ok"), ("BeginNodeSignIn", "VALIDATION/invalid_argument"), ("BeginNodeSignIn", "CONFLICT/already_exists:node_key"),
+        ("CompleteNodeSignIn", "ok"), ("CompleteNodeSignIn", "VALIDATION/invalid_argument"), ("CompleteNodeSignIn", "STATE/not_found"),
+        ("CompleteNodeSignIn", "STATE/expired"), ("CompleteNodeSignIn", "AUTHENTICATION/unauthenticated"), ("CompleteNodeSignIn", "CONFLICT/code_reused"),
+        ("CompleteNodeSignIn", "CONFLICT/already_exists:node"), ("CompleteNodeSignIn", "CONFLICT/already_exists:node_key"),
+        ("CompleteNodeSignIn", "AUTHENTICATION/credential_revoked"), ("CompleteNodeSignIn", "RESOURCE/quota_exceeded"),
+        ("StartDeviceAuthorization", "ok"), ("StartDeviceAuthorization", "VALIDATION/invalid_argument"), ("StartDeviceAuthorization", "CONFLICT/already_exists:node_key"),
+        ("PollDeviceAuthorization", "ok"), ("PollDeviceAuthorization", "VALIDATION/invalid_argument"), ("PollDeviceAuthorization", "STATE/not_found"),
+        ("PollDeviceAuthorization", "AUTHENTICATION/unauthenticated"), ("PollDeviceAuthorization", "CONFLICT/already_exists:node"),
+        ("PollDeviceAuthorization", "CONFLICT/already_exists:node_key"), ("PollDeviceAuthorization", "AUTHENTICATION/credential_revoked"),
+        ("PollDeviceAuthorization", "RESOURCE/quota_exceeded"),
     ];
 
     /// <summary>Seeds a live session with given tokens (the conformance test puts FakeCenter in a capture's state).</summary>
@@ -382,6 +406,10 @@ internal sealed class FakeCenter : IAsyncDisposable
                 "RefreshNodeSession" => (Refresh(NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(payload)), null),
                 "ReportNodeInfo" => Credentialed(authorization, session => Report(session, NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(payload), payload)),
                 "SignOutNode" => Credentialed(authorization, session => SignOut(session, NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(payload), payload)),
+                "BeginNodeSignIn" => (Begin(NodeEnrollmentServiceBeginNodeSignInRequest.Parser.ParseFrom(payload)), null),
+                "CompleteNodeSignIn" => (Complete(NodeEnrollmentServiceCompleteNodeSignInRequest.Parser.ParseFrom(payload)), null),
+                "StartDeviceAuthorization" => (Start(NodeEnrollmentServiceStartDeviceAuthorizationRequest.Parser.ParseFrom(payload)), null),
+                "PollDeviceAuthorization" => (Poll(NodeEnrollmentServicePollDeviceAuthorizationRequest.Parser.ParseFrom(payload)), null),
                 _ => (null, "unimplemented"),
             };
         }
@@ -664,6 +692,642 @@ internal sealed class FakeCenter : IAsyncDisposable
         var low = new System.Numerics.BigInteger(proof.AsSpan(32), isUnsigned: true, isBigEndian: true);
         return r.Sign > 0 && r < order && low.Sign > 0 && low <= order >> 1
             && key.VerifyData(message, proof, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+    }
+
+
+    // ---- Part N2: the sign-in methods (docs/center-fleet.md "Browser sign-in" and "Device-code sign-in") ----
+
+    private readonly List<SignInFlowRow> _flows = [];
+    private readonly List<DeviceRow> _devices = [];
+    private readonly Dictionary<string, bool> _heldKeys = new(StringComparer.Ordinal);
+
+    /// <summary>Node IDs live under another account (Enroll: <c>CONFLICT/already_exists</c>, <c>state.state</c> <c>node</c>).</summary>
+    public HashSet<string> ForeignNodes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The account's node cap is reached (Enroll: <c>RESOURCE/quota_exceeded</c>).</summary>
+    public bool QuotaReached { get; set; }
+
+    /// <summary>A hostile center: the <c>authorize_url</c> it answers instead of the derived one.</summary>
+    public string? AuthorizeUrlOverride { get; set; }
+
+    /// <summary>A hostile center: the <c>verification_uri</c> it answers instead of the derived one.</summary>
+    public string? VerificationUriOverride { get; set; }
+
+    /// <summary>A hostile center: the user code it answers.</summary>
+    public string? UserCodeOverride { get; set; }
+
+    /// <summary>The browser sign-ins begun.</summary>
+    public int FlowCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _flows.Count;
+            }
+        }
+    }
+
+    /// <summary>The device authorizations started.</summary>
+    public int DeviceCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _devices.Count;
+            }
+        }
+    }
+
+    /// <summary>The state of the latest browser sign-in (PENDING, APPROVED, COMPLETED, DENIED, EXPIRED, REVOKED), or null.</summary>
+    public string? LatestFlowState
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _flows.Count == 0 ? null : _flows[^1].State.ToString().ToUpperInvariant();
+            }
+        }
+    }
+
+    /// <summary>The state of the latest device authorization, or null.</summary>
+    public string? LatestDeviceState
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _devices.Count == 0 ? null : _devices[^1].State.ToString().ToUpperInvariant();
+            }
+        }
+    }
+
+    /// <summary>The refresh token delivered by the latest sign-in (either flow), or null.</summary>
+    public string? LatestDelivered
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _deliveredRefresh;
+            }
+        }
+    }
+
+    private string? _deliveredRefresh;
+
+    /// <summary>
+    /// The center's public base URL (the derived URLs and the proof audience): its own endpoint, unless a test names another (the
+    /// conformance test uses the captures' <c>https://center.example.test/api</c>).
+    /// </summary>
+    public CenterEndpoint PublicBase
+    {
+        get => _publicBase ?? Endpoint;
+        set => _publicBase = value;
+    }
+
+    private CenterEndpoint? _publicBase;
+
+    /// <summary>Placeholder mode (conformance): the flow IDs it draws next.</summary>
+    public Queue<byte[]> NextFlowIds { get; } = new();
+
+    /// <summary>Placeholder mode: the device codes it draws next.</summary>
+    public Queue<string> NextDeviceCodes { get; } = new();
+
+    /// <summary>Placeholder mode: the user codes it draws next.</summary>
+    public Queue<string> NextUserCodes { get; } = new();
+
+    /// <summary>Placeholder mode: the installation IDs it draws next.</summary>
+    public Queue<byte[]> NextInstallationIds { get; } = new();
+
+    /// <summary>Placeholder mode: the account IDs it names next.</summary>
+    public Queue<byte[]> NextAccountIds { get; } = new();
+
+    /// <summary>The account's display name and masked e-mail address in delivered credentials.</summary>
+    public (string Name, string Email) Account { get; set; } = ("Test Account", "t***@example.test");
+
+    /// <summary>
+    /// The conformance seam (FakeCenterConformanceTests only): the captured requests carry placeholder proofs (64 bytes of one value
+    /// 0xe0+n, because ES256 draws a nonce), which this accepts; every behaviour test leaves it off and the real verifier decides.
+    /// </summary>
+    public bool AcceptPlaceholderProofs { get; set; }
+
+    private bool Placeholder(ByteString proof) => AcceptPlaceholderProofs && proof.Length == 64 && proof.All(b => b == proof[0]) && proof[0] >= 0xe0;
+
+    /// <summary>Seeds a browser flow (the conformance test puts FakeCenter in a capture's state).</summary>
+    public void SeedFlow(byte[] flowId, byte[] nodeId, byte[] key, string challenge, string? code, string state, TimeSpan life, TimeSpan codeLife)
+    {
+        lock (_gate)
+        {
+            _flows.Add(new SignInFlowRow(flowId, challenge, "http://127.0.0.1:53682/callback", "node-state-0123456789abcdefghij", nodeId, key, Clock.GetUtcNow() + life)
+            {
+                State = Enum.Parse<FlowRowState>(state, ignoreCase: true),
+                Code = code,
+                CodeExpires = Clock.GetUtcNow() + codeLife,
+            });
+        }
+    }
+
+    /// <summary>Seeds a device authorization.</summary>
+    public void SeedDevice(string deviceCode, byte[] nodeId, byte[] key, string state, TimeSpan life, DateTimeOffset? lastPoll = null)
+    {
+        lock (_gate)
+        {
+            _devices.Add(new DeviceRow(deviceCode, "BBBBBBBC", nodeId, key, Clock.GetUtcNow() + life)
+            {
+                State = Enum.Parse<DeviceRowState>(state, ignoreCase: true),
+                LastPoll = lastPoll,
+            });
+        }
+    }
+
+    /// <summary>Marks <paramref name="publicKey"/> as held by an installation: live (refused at Begin/Start and Enroll) or retired.</summary>
+    public void HoldKey(byte[] publicKey, bool retired = false)
+    {
+        lock (_gate)
+        {
+            _heldKeys[Convert.ToHexString(publicKey)] = retired;
+        }
+    }
+
+    /// <summary>True when <paramref name="publicKey"/> is held by an installation.</summary>
+    public bool Holds(byte[] publicKey)
+    {
+        lock (_gate)
+        {
+            return _heldKeys.ContainsKey(Convert.ToHexString(publicKey));
+        }
+    }
+
+    /// <summary>The account approves the latest pending browser sign-in: the one-use code and the loopback redirect (center-fleet.md "Decision").</summary>
+    public string ApproveFlow()
+    {
+        lock (_gate)
+        {
+            var flow = _flows.LastOrDefault(row => row.State is FlowRowState.Pending or FlowRowState.Approved) ?? throw new InvalidOperationException("No flow to approve.");
+            flow.State = FlowRowState.Approved;
+            flow.Code = Base64Url(RandomNumberGenerator.GetBytes(32));
+            flow.CodeExpires = Clock.GetUtcNow() + TimeSpan.FromMinutes(2);
+            return flow.RedirectUri + "?code=" + flow.Code + "&state=" + flow.State0;
+        }
+    }
+
+    /// <summary>The account denies the latest pending browser sign-in: the denial redirect.</summary>
+    public string DenyFlow()
+    {
+        lock (_gate)
+        {
+            var flow = _flows.LastOrDefault(row => row.State is FlowRowState.Pending or FlowRowState.Approved) ?? throw new InvalidOperationException("No flow to deny.");
+            flow.State = FlowRowState.Denied;
+            return flow.RedirectUri + "?error=access_denied&state=" + flow.State0;
+        }
+    }
+
+    /// <summary>The account approves the latest pending device authorization.</summary>
+    public void ApproveDevice()
+    {
+        lock (_gate)
+        {
+            (_devices.LastOrDefault(row => row.State == DeviceRowState.Pending) ?? throw new InvalidOperationException("No authorization to approve.")).State = DeviceRowState.Approved;
+        }
+    }
+
+    /// <summary>The account denies the latest pending device authorization.</summary>
+    public void DenyDevice()
+    {
+        lock (_gate)
+        {
+            (_devices.LastOrDefault(row => row.State is DeviceRowState.Pending or DeviceRowState.Approved) ?? throw new InvalidOperationException("No authorization to deny.")).State = DeviceRowState.Denied;
+        }
+    }
+
+    /// <summary>The latest user code shown (8 letters), or null.</summary>
+    /// <summary>Every device code and user code the center issued (test verification: N2-15 looks for each one).</summary>
+    public IReadOnlyList<(string DeviceCode, string UserCode)> IssuedDeviceCodes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _devices.Select(row => (row.DeviceCode, row.UserCode))];
+            }
+        }
+    }
+
+    public string? LatestUserCode
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _devices.Count == 0 ? null : _devices[^1].UserCode;
+            }
+        }
+    }
+
+    private NodeEnrollmentServiceBeginNodeSignInResponse Begin(NodeEnrollmentServiceBeginNodeSignInRequest request)
+    {
+        var response = new NodeEnrollmentServiceBeginNodeSignInResponse { Meta = Meta() };
+        if (!IsBase64Url43(request.CodeChallenge))
+        {
+            response.Error = Invalid(response.Meta, "code_challenge", "code_challenge: pattern");
+            return response;
+        }
+
+        if (!AdmittedRedirect(request.RedirectUri))
+        {
+            response.Error = Invalid(response.Meta, "redirect_uri", "redirect_uri: not_admitted");
+            return response;
+        }
+
+        if (NodeShape(request.Node, request.NodePublicKey) is { } invalid)
+        {
+            response.Error = Invalid(response.Meta, invalid.Field, invalid.Reason);
+            return response;
+        }
+
+        if (request.State is not { Length: >= 16 and <= 128 } state || !state.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '~' or '-'))
+        {
+            response.Error = Invalid(response.Meta, "state", "state: pattern");
+            return response;
+        }
+
+        if (_heldKeys.ContainsKey(Convert.ToHexString(request.NodePublicKey.Span)))
+        {
+            response.Error = Error(ErrorCategory.Conflict, "already_exists", response.Meta, new StateFailure { State = "node_key", Reason = "already_registered" });
+            return response;
+        }
+
+        var key = request.NodePublicKey.ToByteArray();
+        var nodeId = request.Node.NodeId.Value.ToByteArray();
+        foreach (var older in _flows.Where(row => row.State == FlowRowState.Pending && row.NodeId.AsSpan().SequenceEqual(nodeId) && row.Key.AsSpan().SequenceEqual(key)))
+        {
+            // "A newer Begin of the same node ID and the same key expires the node's PENDING flows."
+            older.State = FlowRowState.Expired;
+        }
+
+        var flow = new SignInFlowRow(NextFlowIds.Count > 0 ? NextFlowIds.Dequeue() : RandomNumberGenerator.GetBytes(16), request.CodeChallenge, request.RedirectUri, request.State, nodeId, key, Clock.GetUtcNow() + TimeSpan.FromMinutes(10));
+        _flows.Add(flow);
+        response.Value = new NodeEnrollmentServiceBeginNodeSignInValue
+        {
+            FlowId = new Id { Value = ByteString.CopyFrom(flow.Id) },
+            AuthorizeUrl = AuthorizeUrlOverride ?? PublicBase.ConnectUrl(flow.Id),
+            ExpiresAt = ProtoTime.ToInstant(flow.Expires),
+        };
+        return response;
+    }
+
+    private NodeEnrollmentServiceCompleteNodeSignInResponse Complete(NodeEnrollmentServiceCompleteNodeSignInRequest request)
+    {
+        var response = new NodeEnrollmentServiceCompleteNodeSignInResponse { Meta = Meta() };
+        if (request.FlowId is not { Value.Length: 16 })
+        {
+            response.Error = Invalid(response.Meta, "flow_id", "flow_id: required");
+            return response;
+        }
+
+        if (request.CodeVerifier is not { Length: >= 43 and <= 128 } verifier || !verifier.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '_' or '~'))
+        {
+            response.Error = Invalid(response.Meta, "code_verifier", "code_verifier: pattern");
+            return response;
+        }
+
+        if (request.NodeKeyProof.Length != 64)
+        {
+            response.Error = Invalid(response.Meta, "node_key_proof", "node_key_proof: length");
+            return response;
+        }
+
+        var flow = _flows.FirstOrDefault(row => row.Id.AsSpan().SequenceEqual(request.FlowId.Value.Span));
+        if (flow is null)
+        {
+            response.Error = Error(ErrorCategory.State, "not_found", response.Meta, new StateFailure
+            {
+                State = "node_sign_in",
+                Reason = "not_found",
+                Resource = new AggregateRef { Kind = "node_sign_in", Id = request.FlowId.Clone() },
+            });
+            return response;
+        }
+
+        var now = Clock.GetUtcNow();
+        if ((flow.State is FlowRowState.Pending or FlowRowState.Approved && now >= flow.Expires) || (flow.State == FlowRowState.Approved && now >= flow.CodeExpires))
+        {
+            response.Error = Error(ErrorCategory.State, "expired", response.Meta, null);
+            return response;
+        }
+
+        // The code first, in constant time; any mismatch, in every state, is unauthenticated with nothing written (protocol-1).
+        var matches = flow.Code is { } code && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(code), Encoding.ASCII.GetBytes(request.Code ?? string.Empty));
+        if (!matches || flow.State == FlowRowState.Denied)
+        {
+            response.Error = Error(ErrorCategory.Authentication, "unauthenticated", response.Meta, null);
+            return response;
+        }
+
+        switch (flow.State)
+        {
+            case FlowRowState.Expired:
+                response.Error = Error(ErrorCategory.State, "expired", response.Meta, null);
+                return response;
+            case FlowRowState.Revoked:
+                response.Error = Error(ErrorCategory.Conflict, "code_reused", response.Meta, null);
+                return response;
+            case FlowRowState.Completed:
+                // A reuse: the flow and the family it delivered are revoked.
+                flow.State = FlowRowState.Revoked;
+                if (flow.Delivered is { } delivered)
+                {
+                    delivered.Revoked = true;
+                }
+
+                response.Error = Error(ErrorCategory.Conflict, "code_reused", response.Meta, null);
+                return response;
+        }
+
+        var verifierOk = S256(request.CodeVerifier) == flow.Challenge;
+        var proofOk = Placeholder(request.NodeKeyProof) || VerifyNodeKeyProof(flow.Key, ProofMessage(0x01, flow.NodeId, [.. flow.Id, .. Encoding.ASCII.GetBytes(request.Code!)]), request.NodeKeyProof.ToByteArray());
+        if (!verifierOk || !proofOk)
+        {
+            flow.State = FlowRowState.Revoked;
+            response.Error = Error(ErrorCategory.Authentication, "unauthenticated", response.Meta, null);
+            return response;
+        }
+
+        if (Enroll(flow.NodeId, flow.Key, response.Meta, out var credentials, out var session) is { } refused)
+        {
+            response.Error = refused;
+            return response;
+        }
+
+        flow.State = FlowRowState.Completed;
+        flow.Delivered = session;
+        response.Value = new NodeEnrollmentServiceCompleteNodeSignInValue { Credentials = credentials };
+        return response;
+    }
+
+    private NodeEnrollmentServiceStartDeviceAuthorizationResponse Start(NodeEnrollmentServiceStartDeviceAuthorizationRequest request)
+    {
+        var response = new NodeEnrollmentServiceStartDeviceAuthorizationResponse { Meta = Meta() };
+        if (NodeShape(request.Node, request.NodePublicKey) is { } invalid)
+        {
+            response.Error = Invalid(response.Meta, invalid.Field, invalid.Reason);
+            return response;
+        }
+
+        if (_heldKeys.ContainsKey(Convert.ToHexString(request.NodePublicKey.Span)))
+        {
+            response.Error = Error(ErrorCategory.Conflict, "already_exists", response.Meta, new StateFailure { State = "node_key", Reason = "already_registered" });
+            return response;
+        }
+
+        var key = request.NodePublicKey.ToByteArray();
+        var nodeId = request.Node.NodeId.Value.ToByteArray();
+        foreach (var older in _devices.Where(row => row.State == DeviceRowState.Pending && row.NodeId.AsSpan().SequenceEqual(nodeId) && row.Key.AsSpan().SequenceEqual(key)))
+        {
+            older.State = DeviceRowState.Expired;
+        }
+
+        var userCode = UserCodeOverride ?? (NextUserCodes.Count > 0 ? NextUserCodes.Dequeue() : new string([.. RandomNumberGenerator.GetBytes(8).Select(b => "BCDFGHJKLMNPQRSTVWXZ"[b % 20])]));
+        var device = new DeviceRow(NextDeviceCodes.Count > 0 ? NextDeviceCodes.Dequeue() : Base64Url(RandomNumberGenerator.GetBytes(32)), userCode, nodeId, key,
+            Clock.GetUtcNow() + TimeSpan.FromSeconds(600));
+        _devices.Add(device);
+        var display = userCode.Length == 8 ? userCode[..4] + "-" + userCode[4..] : userCode;
+        response.Value = new NodeEnrollmentServiceStartDeviceAuthorizationValue
+        {
+            Authorization = new DeviceAuthorization
+            {
+                DeviceCode = device.DeviceCode,
+                UserCode = userCode,
+                VerificationUri = VerificationUriOverride ?? PublicBase.ActivateUrl,
+                VerificationUriComplete = (VerificationUriOverride ?? PublicBase.ActivateUrl) + "#code=" + display,
+                IntervalMs = device.IntervalMs,
+                ExpiresAt = ProtoTime.ToInstant(device.Expires),
+            },
+        };
+        return response;
+    }
+
+    private NodeEnrollmentServicePollDeviceAuthorizationResponse Poll(NodeEnrollmentServicePollDeviceAuthorizationRequest request)
+    {
+        var response = new NodeEnrollmentServicePollDeviceAuthorizationResponse { Meta = Meta() };
+        if (string.IsNullOrEmpty(request.DeviceCode))
+        {
+            response.Error = Invalid(response.Meta, "device_code", "device_code: required");
+            return response;
+        }
+
+        if (request.NodeKeyProof.Length != 64)
+        {
+            response.Error = Invalid(response.Meta, "node_key_proof", "node_key_proof: length");
+            return response;
+        }
+
+        var device = _devices.FirstOrDefault(row => row.DeviceCode == request.DeviceCode);
+        if (device is null)
+        {
+            response.Error = Error(ErrorCategory.State, "not_found", response.Meta, new StateFailure { State = "device_authorization", Reason = "not_found" });
+            return response;
+        }
+
+        if (!Placeholder(request.NodeKeyProof) && !VerifyNodeKeyProof(device.Key, ProofMessage(0x02, device.NodeId, Encoding.ASCII.GetBytes(device.DeviceCode)), request.NodeKeyProof.ToByteArray()))
+        {
+            // "A bad node key proof on an APPROVED authorization is AUTHENTICATION/unauthenticated and leaves it APPROVED."
+            response.Error = Error(ErrorCategory.Authentication, "unauthenticated", response.Meta, null);
+            return response;
+        }
+
+        var now = Clock.GetUtcNow();
+        var value = new NodeEnrollmentServicePollDeviceAuthorizationValue { IntervalMs = device.IntervalMs };
+        response.Value = value;
+        if (device.State is DeviceRowState.Pending or DeviceRowState.Approved && now >= device.Expires)
+        {
+            device.State = DeviceRowState.Expired;
+        }
+
+        switch (device.State)
+        {
+            case DeviceRowState.Denied:
+                value.State = DeviceAuthorizationState.Denied;
+                return response;
+            case DeviceRowState.Expired:
+                value.State = DeviceAuthorizationState.Expired;
+                return response;
+            case DeviceRowState.Completed:
+                if (!device.Reused)
+                {
+                    device.Reused = true;
+                    if (device.Delivered is { } delivered)
+                    {
+                        delivered.Revoked = true;
+                    }
+                }
+
+                value.State = DeviceAuthorizationState.Completed;
+                return response;
+        }
+
+        if (device.LastPoll is { } last && now - last < TimeSpan.FromMilliseconds(device.IntervalMs - 500))
+        {
+            device.IntervalMs = Math.Min(device.IntervalMs + 5000, 60000);
+            value.IntervalMs = device.IntervalMs;
+            value.State = DeviceAuthorizationState.SlowDown;
+            return response;
+        }
+
+        device.LastPoll = now;
+        if (device.State == DeviceRowState.Pending)
+        {
+            value.State = DeviceAuthorizationState.Pending;
+            return response;
+        }
+
+        if (Enroll(device.NodeId, device.Key, response.Meta, out var credentials, out var session) is { } refused)
+        {
+            response.Value = null;
+            response.Error = refused;
+            return response;
+        }
+
+        device.State = DeviceRowState.Completed;
+        device.Delivered = session;
+        value.State = DeviceAuthorizationState.Approved;
+        value.Credentials = credentials;
+        return response;
+    }
+
+    /// <summary>fleet.Enroll's refusals (center-fleet.md "Enrollment" rules 2 and 4), then a new node session; the key becomes held.</summary>
+    private ArcError? Enroll(byte[] nodeId, byte[] key, ResponseMeta meta, out NodeCredentials? credentials, out Session? session)
+    {
+        credentials = null;
+        session = null;
+        if (ForeignNodes.Contains(Convert.ToHexString(nodeId)))
+        {
+            return Error(ErrorCategory.Conflict, "already_exists", meta, new StateFailure { State = "node", Reason = "already_exists" });
+        }
+
+        if (_heldKeys.TryGetValue(Convert.ToHexString(key), out var retired))
+        {
+            return retired
+                ? Error(ErrorCategory.Authentication, "credential_revoked", meta, null)
+                : Error(ErrorCategory.Conflict, "already_exists", meta, new StateFailure { State = "node_key", Reason = "already_registered" });
+        }
+
+        if (QuotaReached)
+        {
+            var error = Error(ErrorCategory.Resource, "quota_exceeded", meta, null);
+            error.Details = new ErrorDetails { Limit = new LimitFailure { LimitName = "max_nodes_per_account", Maximum = new ArcForges.Contracts.Foundation.V1.Decimal { Value = "2" } } };
+            return error;
+        }
+
+        credentials = IssueLocked(nodeId, Account.Name);
+        session = _byRefresh[credentials.RefreshToken];
+        _deliveredRefresh = credentials.RefreshToken;
+        _heldKeys[Convert.ToHexString(key)] = false;
+        return null;
+    }
+
+    private static ArcError Invalid(ResponseMeta meta, string field, string reason) =>
+        Error(ErrorCategory.Validation, "invalid_argument", meta, new StateFailure { State = field, Reason = reason });
+
+    private static (string Field, string Reason)? NodeShape(EnrollingNodeInfo? node, ByteString key)
+    {
+        if (node is null || node.NodeId is not { Value.Length: 16 })
+        {
+            return ("node.node_id", "node.node_id: required");
+        }
+
+        if (key.Length != 91)
+        {
+            return ("node_public_key", "node_public_key: required");
+        }
+
+        return node.Name is { Length: >= 1 and <= 64 } ? null : ("node.name", "node.name: length");
+    }
+
+    /// <summary>The center's loopback admission (the vendored redirect vectors).</summary>
+    public static bool AdmittedRedirect(string? uri) =>
+        uri is not null && System.Text.RegularExpressions.Regex.IsMatch(uri, @"^http://(127\.0\.0\.1|\[::1\]):([1-9][0-9]{3,4})/callback$")
+        && int.Parse(uri[(uri.LastIndexOf(':') + 1)..uri.LastIndexOf('/')], System.Globalization.CultureInfo.InvariantCulture) is >= 1024 and <= 65535;
+
+    /// <summary>The proof message, built by FakeCenter's own code (fleet.proto "Node key proof").</summary>
+    private byte[] ProofMessage(byte purpose, byte[] nodeId, byte[] binding) =>
+        [.. Encoding.ASCII.GetBytes("ArcForges node-key-proof v1\n"), purpose, .. SHA256.HashData(Encoding.UTF8.GetBytes(PublicBase.Url)), .. nodeId, .. binding];
+
+    /// <summary>FakeCenter's own S256 (RFC 7636 section 4.2), independent of the node's <c>Pkce</c>.</summary>
+    public static string S256(string verifier) => Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+
+    private static bool IsBase64Url43(string? value) => value is { Length: 43 } && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
+
+    private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private enum FlowRowState
+    {
+        Pending,
+        Approved,
+        Completed,
+        Denied,
+        Expired,
+        Revoked,
+    }
+
+    private enum DeviceRowState
+    {
+        Pending,
+        Approved,
+        Completed,
+        Denied,
+        Expired,
+    }
+
+    private sealed class SignInFlowRow(byte[] id, string challenge, string redirectUri, string state, byte[] nodeId, byte[] key, DateTimeOffset expires)
+    {
+        public byte[] Id { get; } = id;
+
+        public string Challenge { get; } = challenge;
+
+        public string RedirectUri { get; } = redirectUri;
+
+        public string State0 { get; } = state;
+
+        public byte[] NodeId { get; } = nodeId;
+
+        public byte[] Key { get; } = key;
+
+        public DateTimeOffset Expires { get; } = expires;
+
+        public FlowRowState State { get; set; }
+
+        public string? Code { get; set; }
+
+        public DateTimeOffset CodeExpires { get; set; }
+
+        public Session? Delivered { get; set; }
+    }
+
+    private sealed class DeviceRow(string deviceCode, string userCode, byte[] nodeId, byte[] key, DateTimeOffset expires)
+    {
+        public string DeviceCode { get; } = deviceCode;
+
+        public string UserCode { get; } = userCode;
+
+        public byte[] NodeId { get; } = nodeId;
+
+        public byte[] Key { get; } = key;
+
+        public DateTimeOffset Expires { get; } = expires;
+
+        public DeviceRowState State { get; set; }
+
+        public DateTimeOffset? LastPoll { get; set; }
+
+        public ulong IntervalMs { get; set; } = 5000;
+
+        public bool Reused { get; set; }
+
+        public Session? Delivered { get; set; }
     }
 
     /// <summary>The message of a gRPC-Web request body (one uncompressed data frame).</summary>

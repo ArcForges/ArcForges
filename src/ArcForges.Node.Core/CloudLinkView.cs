@@ -7,7 +7,7 @@ public enum CloudLinkPhase
     /// <summary>No usable credential for the configured center (also after a revocation, with its reason).</summary>
     SignedOut,
 
-    /// <summary>A sign-in flow is active (reached only with part N2's flows).</summary>
+    /// <summary>A sign-in flow is active (part N2: from the reservation of BeginSignIn to the flow's end).</summary>
     SigningIn,
 
     /// <summary>The node holds a credential of the configured center.</summary>
@@ -28,6 +28,9 @@ public interface ICloudLinkView
 
     /// <summary><c>NodeInfo.account_linked</c>: the node holds a credential of its configured center.</summary>
     bool AccountLinked { get; }
+
+    /// <summary>The <c>NodeInfo.features</c> the link adds (part N2: <c>account.sign_in.v1</c>, once the sign-in methods are served).</summary>
+    IReadOnlyList<string> Features { get; }
 
     /// <summary>Takes the link's gate (the one async gate of refresh, sign-out and sign-in completion); dispose to release it.</summary>
     Task<IDisposable> EnterAsync(CancellationToken cancellationToken);
@@ -57,6 +60,9 @@ public sealed class NoCloudLink : ICloudLinkView
 
     /// <inheritdoc />
     public bool AccountLinked => false;
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Features => [];
 
     /// <inheritdoc />
     public Task<IDisposable> EnterAsync(CancellationToken cancellationToken) => Task.FromResult<IDisposable>(Released.Instance);

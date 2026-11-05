@@ -48,10 +48,14 @@ public static class NodeApiServer
         builder.AddService(approvals);
         if (cloud is not null)
         {
-            // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s; the methods of later parts and tasks answer UNIMPLEMENTED.
+            // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s, BeginSignIn 15 s, GetSignInFlow 5 s, CancelSignIn 5 s; the methods of later
+            // tasks answer UNIMPLEMENTED.
             builder.AddService(new AccountServiceHandler(node, sessions, cloud));
             builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetAccountStatus", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
             builder.RegisterMethod(AccountServiceHandler.ServiceName, "SignOut", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
+            builder.RegisterMethod(AccountServiceHandler.ServiceName, "BeginSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
+            builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetSignInFlow", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+            builder.RegisterMethod(AccountServiceHandler.ServiceName, "CancelSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
         }
 
         node.ResumeApprovals = approvals.ResumeAsync;

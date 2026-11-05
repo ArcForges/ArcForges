@@ -7,6 +7,7 @@ using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Node.Core;
 using Google.Protobuf;
 
 namespace ArcForges.Node.CloudLink.Tests;
@@ -120,6 +121,11 @@ public sealed class FakeCenterConformanceTests
     [InlineData("ReportNodeInfo-credential-revoked")]
     [InlineData("ReportNodeInfo-restricted-account")]
     [InlineData("SignOutNode-node-not-live")]
+    [InlineData("BeginNodeSignIn-ok")]
+    [InlineData("CompleteNodeSignIn-ok")]
+    [InlineData("StartDeviceAuthorization-ok")]
+    [InlineData("PollDeviceAuthorization-approved")]
+    [InlineData("PollDeviceAuthorization-pending")]
     public async Task TheRealClientBuildsTheCapturedRequests(string name)
     {
         var capture = Capture.Load(name);
@@ -136,6 +142,20 @@ public sealed class FakeCenterConformanceTests
             case "ReportNodeInfo":
                 var report = NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(payload);
                 await client.ReportNodeInfoAsync(bearer!, report.Node, report.Meta.CommandId, CancellationToken.None);
+                break;
+
+            // The four sign-in methods (N2-18, tests N-8): anonymous, the request the flow built, sent as captured.
+            case "BeginNodeSignIn":
+                await client.BeginNodeSignInAsync(NodeEnrollmentServiceBeginNodeSignInRequest.Parser.ParseFrom(payload), CancellationToken.None);
+                break;
+            case "CompleteNodeSignIn":
+                await client.CompleteNodeSignInAsync(NodeEnrollmentServiceCompleteNodeSignInRequest.Parser.ParseFrom(payload), CancellationToken.None);
+                break;
+            case "StartDeviceAuthorization":
+                await client.StartDeviceAuthorizationAsync(NodeEnrollmentServiceStartDeviceAuthorizationRequest.Parser.ParseFrom(payload), CancellationToken.None);
+                break;
+            case "PollDeviceAuthorization":
+                await client.PollDeviceAuthorizationAsync(NodeEnrollmentServicePollDeviceAuthorizationRequest.Parser.ParseFrom(payload), CancellationToken.None);
                 break;
             default:
                 await client.SignOutNodeAsync(bearer!, NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(payload).Meta.CommandId, CancellationToken.None);
@@ -250,6 +270,161 @@ public sealed class FakeCenterConformanceTests
         Assert.Equal(Convert.ToHexString(capture.ReplyBody()), Convert.ToHexString(body));
     }
 
+    /// <summary>
+    /// Part N2 (N2-18): FakeCenter's sign-in methods answer the captured requests with the captured bytes, put in the capture's state and
+    /// its placeholder values (the IDs, tokens, codes and instants the capture's normalization names). The captured proofs are placeholders
+    /// (ES256 draws a nonce): this replay alone accepts them (<c>AcceptPlaceholderProofs</c>); every behaviour test uses the real verifier.
+    /// </summary>
+    [Theory]
+    [InlineData("BeginNodeSignIn-ok")]
+    [InlineData("BeginNodeSignIn-invalid-redirect")]
+    [InlineData("BeginNodeSignIn-key-registered")]
+    [InlineData("StartDeviceAuthorization-ok")]
+    [InlineData("StartDeviceAuthorization-invalid-key")]
+    [InlineData("StartDeviceAuthorization-key-registered")]
+    [InlineData("CompleteNodeSignIn-ok")]
+    [InlineData("CompleteNodeSignIn-not-found")]
+    [InlineData("CompleteNodeSignIn-invalid-verifier")]
+    [InlineData("CompleteNodeSignIn-unauthenticated")]
+    [InlineData("CompleteNodeSignIn-expired")]
+    [InlineData("CompleteNodeSignIn-code-reused")]
+    [InlineData("CompleteNodeSignIn-key-held")]
+    [InlineData("CompleteNodeSignIn-key-retired")]
+    [InlineData("CompleteNodeSignIn-node-id-of-another-account")]
+    [InlineData("CompleteNodeSignIn-quota")]
+    [InlineData("PollDeviceAuthorization-pending")]
+    [InlineData("PollDeviceAuthorization-slow-down")]
+    [InlineData("PollDeviceAuthorization-approved")]
+    [InlineData("PollDeviceAuthorization-denied")]
+    [InlineData("PollDeviceAuthorization-expired")]
+    [InlineData("PollDeviceAuthorization-completed")]
+    [InlineData("PollDeviceAuthorization-not-found")]
+    [InlineData("PollDeviceAuthorization-invalid-device-code")]
+    [InlineData("PollDeviceAuthorization-unauthenticated")]
+    [InlineData("PollDeviceAuthorization-key-held")]
+    [InlineData("PollDeviceAuthorization-key-retired")]
+    [InlineData("PollDeviceAuthorization-node-id-of-another-account")]
+    [InlineData("PollDeviceAuthorization-quota")]
+    public async Task FakeCenterAnswersTheCapturedSignInRequestsWithTheCapturedBytes(string name)
+    {
+        var capture = Capture.Load(name);
+        await using var center = await FakeCenter.StartAsync();
+        var payload = capture.RequestPayload();
+        var reply = capture.ReplyMessage();
+        center.AcceptPlaceholderProofs = !name.EndsWith("-unauthenticated", StringComparison.Ordinal);
+        center.Account = ("Owner", "o***@example.test");
+        center.PublicBase = CenterEndpoint.Parse("https://center.example.test/api");
+        var key = new byte[91];
+        var nodeId = new byte[16];
+        var at = TimeSpan.Zero;
+        switch (capture.Method)
+        {
+            case "BeginNodeSignIn":
+                var begin = NodeEnrollmentServiceBeginNodeSignInRequest.Parser.ParseFrom(payload);
+                key = begin.NodePublicKey.ToByteArray();
+                if (((NodeEnrollmentServiceBeginNodeSignInResponse)reply).Value is { } begun)
+                {
+                    center.NextFlowIds.Enqueue(begun.FlowId.Value.ToByteArray());
+                    at = TimeSpan.FromSeconds(begun.ExpiresAt.UnixSeconds) - TimeSpan.FromMinutes(10);
+                }
+
+                break;
+            case "StartDeviceAuthorization":
+                var start = NodeEnrollmentServiceStartDeviceAuthorizationRequest.Parser.ParseFrom(payload);
+                key = start.NodePublicKey.ToByteArray();
+                if (((NodeEnrollmentServiceStartDeviceAuthorizationResponse)reply).Value is { } started)
+                {
+                    center.NextDeviceCodes.Enqueue(started.Authorization.DeviceCode);
+                    center.NextUserCodes.Enqueue(started.Authorization.UserCode);
+                    at = TimeSpan.FromSeconds(started.Authorization.ExpiresAt.UnixSeconds) - TimeSpan.FromSeconds(600);
+                }
+
+                break;
+        }
+
+        if (capture.Method is "CompleteNodeSignIn" or "PollDeviceAuthorization")
+        {
+            var credentials = capture.Method == "CompleteNodeSignIn"
+                ? ((NodeEnrollmentServiceCompleteNodeSignInResponse)reply).Value?.Credentials
+                : ((NodeEnrollmentServicePollDeviceAuthorizationResponse)reply).Value?.Credentials;
+            if (credentials is not null)
+            {
+                center.NextTokens.Enqueue(credentials.AccessToken);
+                center.NextTokens.Enqueue(credentials.RefreshToken);
+                center.NextInstallationIds.Enqueue(credentials.InstallationId.Value.ToByteArray());
+                center.NextAccountIds.Enqueue(credentials.Account.AccountId.Value.ToByteArray());
+                center.AccessLifetime = TimeSpan.FromMilliseconds(credentials.AccessLifetimeMs);
+                at = TimeSpan.FromSeconds(credentials.AccessExpiresAt.UnixSeconds) - center.AccessLifetime;
+                center.FamilyLifetime = TimeSpan.FromSeconds(credentials.SessionExpiresAt.UnixSeconds) - at;
+            }
+        }
+
+        center.Clock = new ManualClock(DateTimeOffset.UnixEpoch + at);
+        var outcome = name[(name.IndexOf('-', StringComparison.Ordinal) + 1)..];
+        if (capture.Method == "CompleteNodeSignIn")
+        {
+            var complete = NodeEnrollmentServiceCompleteNodeSignInRequest.Parser.ParseFrom(payload);
+            var flow = complete.FlowId?.Value.ToByteArray() ?? [];
+            var challenge = complete.CodeVerifier is { Length: > 0 } verifier ? FakeCenter.S256(verifier) : string.Empty;
+            var (state, life, codeLife) = outcome switch
+            {
+                "expired" => ("approved", TimeSpan.FromMinutes(10), -TimeSpan.FromSeconds(1)),
+                "code-reused" => ("revoked", TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(2)),
+                _ => ("approved", TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(2)),
+            };
+            if (outcome != "not-found" && flow.Length == 16)
+            {
+                center.SeedFlow(flow, nodeId, key, challenge, outcome == "unauthenticated" ? Convert.ToBase64String(new byte[32]) : complete.Code, state, life, codeLife);
+            }
+        }
+
+        if (capture.Method == "PollDeviceAuthorization")
+        {
+            var poll = NodeEnrollmentServicePollDeviceAuthorizationRequest.Parser.ParseFrom(payload);
+            var state = outcome switch
+            {
+                "pending" or "slow-down" => "pending",
+                "denied" => "denied",
+                "expired" => "expired",
+                "completed" => "completed",
+                _ => "approved",
+            };
+            if (outcome is not ("not-found" or "invalid-device-code"))
+            {
+                center.SeedDevice(poll.DeviceCode, nodeId, key, state, TimeSpan.FromSeconds(600),
+                    outcome == "slow-down" ? center.Clock.GetUtcNow() - TimeSpan.FromSeconds(1) : null);
+            }
+        }
+
+        switch (outcome)
+        {
+            case "key-registered":
+                center.HoldKey(key);
+                break;
+            case "key-held":
+                center.HoldKey(key);
+                break;
+            case "key-retired":
+                center.HoldKey(key, retired: true);
+                break;
+            case "node-id-of-another-account":
+                center.ForeignNodes.Add(Convert.ToHexString(nodeId));
+                break;
+            case "quota":
+                center.QuotaReached = true;
+                break;
+        }
+
+        if (capture.ReplyCorrelation() is { } correlation)
+        {
+            center.NextCorrelations.Enqueue(correlation);
+        }
+
+        var (body, status) = center.Reply(capture.Method, capture.Authorization, capture.RequestFrame());
+        Assert.Equal(capture.HttpStatus, status);
+        Assert.Equal(Convert.ToHexString(capture.ReplyBody()), Convert.ToHexString(body));
+    }
+
     [Fact]
     public void EveryOutcomeFakeCenterEmitsIsCapturedOrAReviewedContractModelledRow()
     {
@@ -261,10 +436,15 @@ public sealed class FakeCenterConformanceTests
             Assert.False(captured.Contains(outcome) && ContractModelled.ContainsKey(outcome), $"{outcome.Method} {outcome.Outcome} is captured now: drop its row");
         }
 
-        // Every captured outcome of the methods FakeCenter serves is one FakeCenter emits.
-        foreach (var outcome in captured.Where(item => item.Method is "RefreshNodeSession" or "ReportNodeInfo" or "SignOutNode"))
+        // Every captured outcome of the methods FakeCenter serves is one FakeCenter emits, except the sign-in methods' budget and surface
+        // refusals (the edge's or the center's buckets, the Worker's not_activated), which tests script as faults where they need them.
+        foreach (var outcome in captured.Where(item => item.Method is "RefreshNodeSession" or "ReportNodeInfo" or "SignOutNode"
+            or "BeginNodeSignIn" or "CompleteNodeSignIn" or "StartDeviceAuthorization" or "PollDeviceAuthorization"))
         {
-            Assert.Contains(outcome, FakeCenter.Outcomes);
+            if (outcome.Method is "RefreshNodeSession" or "ReportNodeInfo" or "SignOutNode" || outcome.Outcome is not ("RESOURCE/rate_limited" or "STATE/not_activated"))
+            {
+                Assert.Contains(outcome, FakeCenter.Outcomes);
+            }
         }
 
         Assert.All(ContractModelled.Keys, key => Assert.Contains(key, FakeCenter.Outcomes));
@@ -286,8 +466,16 @@ public sealed class FakeCenterConformanceTests
         {
             "RefreshNodeSession" => NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
             "ReportNodeInfo" => NodeEnrollmentServiceReportNodeInfoRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
-            _ => NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
+            "SignOutNode" => NodeEnrollmentServiceSignOutNodeRequest.Parser.ParseFrom(FakeCenter.Payload(body)),
+
+            // The sign-in requests: the client keeps the captured request's meta (it fills only a missing one), so the frame is as sent.
+            _ => null!,
         };
+        if (message is null)
+        {
+            return body;
+        }
+
         var meta = (RequestMeta)message.Descriptor.FindFieldByName("meta").Accessor.GetValue(message);
         meta.CorrelationId = null;
         return FakeCenter.DataFrame(message);
@@ -351,6 +539,10 @@ public sealed class FakeCenterConformanceTests
             {
                 "RefreshNodeSession" => NodeEnrollmentServiceRefreshNodeSessionResponse.Parser.ParseFrom(payload),
                 "ReportNodeInfo" => NodeEnrollmentServiceReportNodeInfoResponse.Parser.ParseFrom(payload),
+                "BeginNodeSignIn" => NodeEnrollmentServiceBeginNodeSignInResponse.Parser.ParseFrom(payload),
+                "CompleteNodeSignIn" => NodeEnrollmentServiceCompleteNodeSignInResponse.Parser.ParseFrom(payload),
+                "StartDeviceAuthorization" => NodeEnrollmentServiceStartDeviceAuthorizationResponse.Parser.ParseFrom(payload),
+                "PollDeviceAuthorization" => NodeEnrollmentServicePollDeviceAuthorizationResponse.Parser.ParseFrom(payload),
                 _ => NodeEnrollmentServiceSignOutNodeResponse.Parser.ParseFrom(payload),
             };
         }

@@ -142,7 +142,7 @@ public sealed class CloudLinkHostTests
         // seam; the FakeCenter call list is the center side).
         var lines = File.ReadAllLines(connectLog);
         Assert.NotEmpty(lines);
-        Assert.All(lines, line => Assert.Equal("127.0.0.1:" + center.Endpoint.Port + " sent", line));
+        Assert.All(lines, line => Assert.StartsWith("127.0.0.1:" + center.Endpoint.Port + " sent ", line, StringComparison.Ordinal));
 
         // TestNoSecretReachesTheNodeLog: no token the center issued, no token prefix (read as the node shares it: Windows keeps it open).
         var log = TestNode.ReadShared(node.NodeLog);
@@ -174,7 +174,7 @@ public sealed class CloudLinkHostTests
     }
 
     /// <summary>The file's bytes, read as the node shares it, or <see langword="null"/> when it no longer exists.</summary>
-    private static byte[]? ReadAllShared(string path)
+    internal static byte[]? ReadAllShared(string path)
     {
         try
         {

@@ -41,10 +41,11 @@ public static class CliApplication
             return ExitCodes.Usage;
         }
 
-        // Ctrl+C and SIGTERM cancel the command's token; the wait covers the node's own shutdown budget (10 s). `run` and the `tasks`
+        // Ctrl+C and SIGTERM cancel the command's token; the wait covers the node's own shutdown budget (10 s). `run`, `login` and the `tasks`
         // commands handle Ctrl+C themselves (once cancels the task, twice detaches; cli.md C-01), so no termination timeout applies to them.
         var command = result.CommandResult.Command;
-        var handlesInterrupts = command.Name == "run" || command.Parents.OfType<Command>().Any(parent => parent.Name == "tasks");
+        // `login` cancels its sign-in on Ctrl+C (CancelSignIn) and exits 130 (AF-CTR-04 N2).
+        var handlesInterrupts = command.Name is "run" or "login" || command.Parents.OfType<Command>().Any(parent => parent.Name == "tasks");
         return await result.InvokeAsync(new InvocationConfiguration
         {
             Output = output,
@@ -75,6 +76,10 @@ public static class CliApplication
         root.Subcommands.Add(ConfigCommands.Build(factory));
         root.Subcommands.Add(EventCommands.Build(factory));
         root.Subcommands.Add(JobCommands.Build(factory));
+        root.Subcommands.Add(LoginCommands.Build(factory));
+        root.Subcommands.Add(AccountCommands.Logout(factory));
+        root.Subcommands.Add(CenterCommands.Build(factory));
+        root.Subcommands.Add(AccountCommands.Account(factory));
         root.Subcommands.Add(StatusCommands.Version(factory));
         root.Subcommands.Add(CompletionCommand.Build(output));
         root.SetAction(result =>

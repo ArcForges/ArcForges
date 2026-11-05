@@ -7,8 +7,8 @@ namespace ArcForges.Node.CloudLink.Tests;
 
 /// <summary>
 /// N1-2 (CTR4-NODE-01/02; N1 decision G-6): the center setting in <c>node.json</c> through the node's settings manager, the code the
-/// <c>UpdateNodeSettings</c> handler runs (REAL files). The <c>signing_in</c> refusal of <c>center_url</c> is reached only with part N2's
-/// sign-in flows; no N1 path enters that phase, so no N1 test reaches it.
+/// <c>UpdateNodeSettings</c> handler runs (REAL files). The <c>signing_in</c> refusal of <c>center_url</c> is reached with part N2's sign-in
+/// flows (<c>SignInAccountServiceTests.TheCenterUrlIsRefusedWhileSigningInAndAcceptedAfterTheFlowEnds</c>).
 /// </summary>
 public sealed class CenterSettingTests : IDisposable
 {

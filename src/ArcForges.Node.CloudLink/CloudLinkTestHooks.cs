@@ -20,6 +20,12 @@ internal static class CloudLinkTestHooks
     /// <summary>A fixed refresh cadence in whole seconds, 15 to 3,600 (it replaces the computed delay, floor included).</summary>
     public const string RefreshSeconds = "ARCFORGES_TEST_CLOUDLINK_REFRESH_SECONDS";
 
+    /// <summary>
+    /// An absolute file the test node writes the browser sign-in's derived URL to instead of opening a browser (part N2; under
+    /// <c>--test-mode</c> the node never starts an OS handler).
+    /// </summary>
+    public const string BrowserFile = "ARCFORGES_TEST_BROWSER_FILE";
+
     /// <summary>The shortest refresh cadence the hook admits: the center admits 60 refreshes of one session per 10 minutes.</summary>
     public const int MinimumRefreshSeconds = 15;
 
@@ -29,6 +35,10 @@ internal static class CloudLinkTestHooks
 
     /// <summary>The connect log, when <paramref name="testMode"/> and <paramref name="value"/> is an absolute path.</summary>
     public static string? Connections(bool testMode, string? value) =>
+        testMode && !string.IsNullOrWhiteSpace(value) && Path.IsPathFullyQualified(value) ? value : null;
+
+    /// <summary>The browser file, when <paramref name="testMode"/> and <paramref name="value"/> is an absolute path.</summary>
+    public static string? Browser(bool testMode, string? value) =>
         testMode && !string.IsNullOrWhiteSpace(value) && Path.IsPathFullyQualified(value) ? value : null;
 
     /// <summary>The refresh cadence, when <paramref name="testMode"/> and <paramref name="value"/> is 15..3600 in canonical decimal.</summary>

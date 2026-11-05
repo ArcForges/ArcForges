@@ -43,6 +43,7 @@ public sealed class PermissionTests
         { PermissionMatrix.ProcessAdopt, A, D, D, null },
         { PermissionMatrix.ProcessTerminate, A, P, P, null },
         { PermissionMatrix.Integrations, A, D, D, null },
+        { PermissionMatrix.SignInRead, A, A, D, null },
         { PermissionMatrix.NodeStop, A, A, D, "stop_node" },
         { PermissionMatrix.NodeUpdate, A, A, D, "apply_update" },
         { PermissionMatrix.NodeRollback, A, D, D, null },
@@ -70,6 +71,23 @@ public sealed class PermissionTests
         Assert.Equal(D, PermissionMatrix.Decide(Origin.Unspecified, operation, []).Decision);
         Assert.Equal(D, PermissionMatrix.Decide(Origin.Guest, operation, []).Decision);
         Assert.Equal(PermissionMatrix.DefaultSource, PermissionMatrix.Decide(Origin.Script, operation, []).Source);
+    }
+
+    [Fact]
+    public void ASignInFlowCanNeverBeReadByAnAgent()
+    {
+        // AF-CTR-04 N2 (node-12 item 2, N2 decision F-3): GetSignInFlow is HUMAN A, SCRIPT A, AGENT D and the row is fixed, because the
+        // flow holds the approval URL and the user code; an override can neither admit an agent nor deny a script.
+        var row = PermissionMatrix.Find(PermissionMatrix.SignInRead)!;
+        Assert.True(row.Fixed);
+        List<PermissionOverride> overrides =
+        [
+            new() { Operation = PermissionMatrix.SignInRead, Origin = Origin.Agent, Decision = A },
+            new() { Operation = PermissionMatrix.SignInRead, Origin = Origin.Script, Decision = D },
+        ];
+        Assert.Equal(D, PermissionMatrix.Decide(Origin.Agent, PermissionMatrix.SignInRead, overrides).Decision);
+        Assert.Equal(A, PermissionMatrix.Decide(Origin.Script, PermissionMatrix.SignInRead, overrides).Decision);
+        Assert.NotNull(PermissionMatrix.Valid(overrides[0]));
     }
 
     [Fact]

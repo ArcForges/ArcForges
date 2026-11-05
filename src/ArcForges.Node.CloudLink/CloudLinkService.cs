@@ -36,6 +36,15 @@ internal enum SignOutResult
 
     /// <summary>Signed out locally; the center's revocation was not confirmed (the credential may stay live until it expires).</summary>
     RemoteUnconfirmed,
+
+    /// <summary>
+    /// A link this node can never end (another secret-store backend or node ID) was abandoned by the explicit local sign-out (N2 decision
+    /// R-3): its pointer, key sets and this node's key are gone; the credential itself may stay live at its center and in the other store.
+    /// </summary>
+    Abandoned,
+
+    /// <summary>The link's store cannot be read now: nothing was changed (N1 decision R-1); it is retried.</summary>
+    StoreUnavailable,
 }
 
 /// <summary>The cloud link's inputs (the host builds them at startup step 8; tests give a temporary data root and a test center).</summary>
@@ -76,6 +85,9 @@ internal sealed record CloudLinkOptions
 
     /// <summary>The test-mode hook <c>ARCFORGES_TEST_CLOUDLINK_REFRESH_SECONDS</c> (already checked), or <see langword="null"/>.</summary>
     public TimeSpan? RefreshInterval { get; init; }
+
+    /// <summary>The browser opener of the sign-in flows (part N2); <see langword="null"/> opens nothing.</summary>
+    public IBrowserOpener? Opener { get; init; }
 }
 
 /// <summary>
@@ -157,6 +169,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private Task _loop = Task.CompletedTask;
     private int _disposed;
     private int _idle;
+    private bool _signingIn;
 
     /// <summary>Creates the link (nothing is read until <see cref="StartAsync"/>).</summary>
     public CloudLinkService(CloudLinkOptions options)
@@ -164,7 +177,14 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _store = new CloudCredentialStore(options.DataRoot, options.Secrets);
         _nodeHex = Convert.ToHexStringLower(options.NodeId.Span);
+        SignIn = new SignInOrchestrator(this, options);
     }
+
+    /// <summary>The sign-in flows (part N2: BeginSignIn, GetSignInFlow, CancelSignIn).</summary>
+    public SignInOrchestrator SignIn { get; }
+
+    /// <summary>The link's inputs (the sign-in flows use its node ID, keys, clock, log and test hooks).</summary>
+    internal CloudLinkOptions Options => _options;
 
     /// <inheritdoc />
     public CloudLinkPhase Phase
@@ -173,13 +193,19 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         {
             lock (_stateLock)
             {
-                return _phase;
+                return _signingIn && _phase == CloudLinkPhase.SignedOut ? CloudLinkPhase.SigningIn : _phase;
             }
         }
     }
 
     /// <inheritdoc />
     public bool AccountLinked => Phase == CloudLinkPhase.SignedIn;
+
+    /// <summary>The feature token of the sign-in methods (G-7: advertised with the methods; recorded for Design 02).</summary>
+    public const string SignInFeature = "account.sign_in.v1";
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Features { get; } = [SignInFeature];
 
     /// <summary>Incremented at every rotation (the single-flight gate's generation, node-9 item 1).</summary>
     public long Generation => Interlocked.Read(ref _generation);
@@ -412,72 +438,290 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(center);
         using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
         {
-            var now = _options.Clock.GetUtcNow();
-            var lifetime = credentials.HasAccessLifetimeMs ? (long)credentials.AccessLifetimeMs : 0;
-            var accessExpires = ProtoTime.ToDateTimeOffset(credentials.AccessExpiresAt)?.ToUnixTimeMilliseconds() ?? 0;
-            var sessionExpires = ProtoTime.ToDateTimeOffset(credentials.SessionExpiresAt)?.ToUnixTimeMilliseconds() ?? 0;
-            var record = new CloudCredentialRecord
-            {
-                NodeId = _nodeHex,
-                CenterUrl = center.Url,
-                AccountId = credentials.Account?.AccountId is { } account ? Convert.ToHexStringLower(account.Value.Span) : null,
-                DisplayName = credentials.Account is { HasDisplayName: true } a ? a.DisplayName : null,
-                EmailMasked = credentials.Account is { HasEmailMasked: true } m ? m.EmailMasked : null,
-                InstallationId = credentials.InstallationId is { } installation ? Convert.ToHexStringLower(installation.Value.Span) : string.Empty,
-                AccessToken = credentials.AccessToken,
-                AccessExpiresAtMs = accessExpires,
-                AccessLifetimeMs = lifetime,
-                RefreshToken = credentials.RefreshToken,
-                SessionExpiresAtMs = sessionExpires,
-                FamilyLifetimeMs = sessionExpires > 0 && accessExpires > 0 ? sessionExpires - (accessExpires - lifetime) : 0,
-                WrittenAtMs = now.ToUnixTimeMilliseconds(),
-            };
-            var target = CloudCredentialStore.Target(_options.NodeId.Span, center.Origin);
-            if (_store.ReadLink() is { } existing && (existing.Target != target || existing.State == LinkStates.Ending))
-            {
-                throw new InvalidOperationException("The node holds the link of another credential (" + existing.State + "); it is ended first.");
-            }
-
-            var link = new CloudLinkFile
-            {
-                State = LinkStates.Committing,
-                Backend = _options.Secrets.Backend.ToString(),
-                Protection = _options.Secrets.Protection.ToString(),
-                Isolated = _options.Secrets.Isolated,
-                Target = target,
-                CenterUrl = center.Url,
-                NodeId = _nodeHex,
-            };
-            _store.WriteLink(link);
-            _store.WriteRecord(target, record);
-            ReplaceKeySets(record, credentials.CommandKeys, credentials.EntitlementKeys, now);
-            link.State = LinkStates.SignedIn;
-            _store.WriteLink(link);
-            lock (_stateLock)
-            {
-                _link = link;
-                _record = record;
-                _phase = CloudLinkPhase.SignedIn;
-                _rejected = false;
-                _lastError = null;
-                _pendingWrite = false;
-                _pendingRecord = null;
-                _pendingTarget = null;
-                _ambiguousToken = null;
-                _failures = 0;
-                _warnings.Clear();
-                _receipt = _options.Clock.GetTimestamp();
-                _nextRefresh = _receipt + Ticks(RefreshDelay(record));
-                _nextReport = _options.Clock.GetTimestamp();
-                _centerOffset = CenterOffset(record, now);
-                Interlocked.Increment(ref _generation);
-            }
-
-            _options.Log.Info("cloud.signed_in", new LogField("center", center.Url), new LogField("backend", link.Backend), new LogField("isolated", link.Isolated));
+            AdoptCore(credentials, center);
         }
 
         await PublishAsync(null).ConfigureAwait(false);
         Wake();
+    }
+
+    /// <summary>The two-phase adoption; the caller holds the gate.</summary>
+    private void AdoptCore(NodeCredentials credentials, CenterEndpoint center)
+    {
+        var now = _options.Clock.GetUtcNow();
+        var lifetime = credentials.HasAccessLifetimeMs ? (long)credentials.AccessLifetimeMs : 0;
+        var accessExpires = ProtoTime.ToDateTimeOffset(credentials.AccessExpiresAt)?.ToUnixTimeMilliseconds() ?? 0;
+        var sessionExpires = ProtoTime.ToDateTimeOffset(credentials.SessionExpiresAt)?.ToUnixTimeMilliseconds() ?? 0;
+        var record = new CloudCredentialRecord
+        {
+            NodeId = _nodeHex,
+            CenterUrl = center.Url,
+            AccountId = credentials.Account?.AccountId is { } account ? Convert.ToHexStringLower(account.Value.Span) : null,
+            DisplayName = credentials.Account is { HasDisplayName: true } a ? a.DisplayName : null,
+            EmailMasked = credentials.Account is { HasEmailMasked: true } m ? m.EmailMasked : null,
+            InstallationId = credentials.InstallationId is { } installation ? Convert.ToHexStringLower(installation.Value.Span) : string.Empty,
+            AccessToken = credentials.AccessToken,
+            AccessExpiresAtMs = accessExpires,
+            AccessLifetimeMs = lifetime,
+            RefreshToken = credentials.RefreshToken,
+            SessionExpiresAtMs = sessionExpires,
+            FamilyLifetimeMs = sessionExpires > 0 && accessExpires > 0 ? sessionExpires - (accessExpires - lifetime) : 0,
+            WrittenAtMs = now.ToUnixTimeMilliseconds(),
+        };
+        var target = CloudCredentialStore.Target(_options.NodeId.Span, center.Origin);
+        if (_store.ReadLink() is { } existing && (existing.Target != target || existing.State == LinkStates.Ending))
+        {
+            throw new InvalidOperationException("The node holds the link of another credential (" + existing.State + "); it is ended first.");
+        }
+
+        var link = new CloudLinkFile
+        {
+            State = LinkStates.Committing,
+            Backend = _options.Secrets.Backend.ToString(),
+            Protection = _options.Secrets.Protection.ToString(),
+            Isolated = _options.Secrets.Isolated,
+            Target = target,
+            CenterUrl = center.Url,
+            NodeId = _nodeHex,
+        };
+        _store.WriteLink(link);
+        _store.WriteRecord(target, record);
+        ReplaceKeySets(record, credentials.CommandKeys, credentials.EntitlementKeys, now);
+        link.State = LinkStates.SignedIn;
+        _store.WriteLink(link);
+        lock (_stateLock)
+        {
+            _link = link;
+            _record = record;
+            _phase = CloudLinkPhase.SignedIn;
+            _rejected = false;
+            _lastError = null;
+            _pendingWrite = false;
+            _pendingRecord = null;
+            _pendingTarget = null;
+            _ambiguousToken = null;
+            _failures = 0;
+            _warnings.Clear();
+            _receipt = _options.Clock.GetTimestamp();
+            _nextRefresh = _receipt + Ticks(RefreshDelay(record));
+            _nextReport = _options.Clock.GetTimestamp();
+            _centerOffset = CenterOffset(record, now);
+            Interlocked.Increment(ref _generation);
+        }
+
+        _options.Log.Info("cloud.signed_in", new LogField("center", center.Url), new LogField("backend", link.Backend), new LogField("isolated", link.Isolated));
+    }
+
+    /// <summary>
+    /// Reserves the sign-in (part N2; N2 decisions R-2 and F-1); the caller holds the gate. The link's own preconditions, each a contract
+    /// <c>STATE/invalid_state</c> of BeginSignIn: not signed in (<c>signed_in</c>/<c>sign_in</c>); no link this node cannot use or is ending
+    /// (<c>signed_out</c> and the warning's name, or <c>ending</c>), except a credential held as <c>center_rejected_credential</c>, which only
+    /// a successful sign-in replaces; a configured center (<c>center_url</c>). On success the phase is <c>SigningIn</c> (the <c>center_url</c>
+    /// refusal) and the probe of a held credential pauses until <see cref="ReleaseSignIn"/>.
+    /// </summary>
+    internal ArcError? ReserveSignIn(out CenterEndpoint? center)
+    {
+        center = Configured(out var invalid);
+        lock (_stateLock)
+        {
+            if (_phase == CloudLinkPhase.SignedIn)
+            {
+                return NodeErrors.InvalidState("signed_in", "sign_in");
+            }
+
+            if (_signingIn)
+            {
+                return NodeErrors.InvalidState("signing_in", "sign_in");
+            }
+
+            if (_link is { State: LinkStates.Ending })
+            {
+                return NodeErrors.InvalidState("signed_out", "ending");
+            }
+
+            foreach (var warning in (string[])[Warnings.OtherCenter, Warnings.BackendChanged, Warnings.OtherNode, Warnings.StoreUnavailable])
+            {
+                if (_warnings.Contains(warning))
+                {
+                    return NodeErrors.InvalidState("signed_out", warning);
+                }
+            }
+
+            if (_link is not null && !_rejected)
+            {
+                return NodeErrors.InvalidState("signed_out", "link");
+            }
+
+            if (invalid || center is null)
+            {
+                return NodeErrors.InvalidState("signed_out", "center_url");
+            }
+
+            _signingIn = true;
+        }
+
+        return null;
+    }
+
+    /// <summary>Ends the reservation (every end of a flow): the phase is the link's own again and a held credential's probe resumes.</summary>
+    internal void ReleaseSignIn()
+    {
+        lock (_stateLock)
+        {
+            _signingIn = false;
+        }
+
+        Wake();
+    }
+
+    /// <summary>
+    /// Adopts the credentials a sign-in delivered (N2 decision R-2): under the gate, only while <paramref name="wanted"/> still holds (the flow
+    /// was not cancelled and no sign-out cancelled it: N2 review FX-1, <c>cancelled</c>), the configured center is still the flow's
+    /// <paramref name="center"/>, the node is not signed in, and there is no link or the link holds this target's
+    /// <c>center_rejected_credential</c> (which the new credential replaces). <see langword="null"/> on success; otherwise the reason, and the
+    /// caller revokes the delivered credentials (also when the adoption itself failed, N2 decision N-1). An adoption that fails after its
+    /// commit began is undone two-phase first (N1 R-1; N2 review FX-2): the link never names a credential the node is about to revoke.
+    /// </summary>
+    internal async Task<string?> AdoptSignInAsync(NodeCredentials credentials, CenterEndpoint center, Func<bool> wanted)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentNullException.ThrowIfNull(center);
+        ArgumentNullException.ThrowIfNull(wanted);
+        using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            if (!wanted())
+            {
+                return "cancelled";
+            }
+
+            if (Configured()?.Url != center.Url)
+            {
+                return "center_url";
+            }
+
+            bool rejected;
+            lock (_stateLock)
+            {
+                if (_phase == CloudLinkPhase.SignedIn)
+                {
+                    return "signed_in";
+                }
+
+                rejected = _rejected;
+            }
+
+            var target = CloudCredentialStore.Target(_options.NodeId.Span, center.Origin);
+            try
+            {
+                if (_store.ReadLink() is { } existing && !(rejected && existing.Target == target && existing.State != LinkStates.Ending))
+                {
+                    return "link";
+                }
+
+                AdoptCore(credentials, center);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+            {
+                _options.Log.Warning("cloud.sign_in.adoption_failed", new LogField("errorType", exception.GetType().Name));
+                UndoAdoption(target);
+                return "credential_storage_failed";
+            }
+        }
+
+        await PublishAsync(null).ConfigureAwait(false);
+        Wake();
+        return null;
+    }
+
+    /// <summary>
+    /// After a failed adoption (the caller holds the gate): a committing link of the flow's target is this adoption's own commit, so it ends
+    /// two-phase (the record first, the pointer last; a failed step stays recorded and is retried) instead of being completed by a reload,
+    /// which would leave a <c>signed_in</c> link to the credential the caller revokes next. Anything else is reloaded as it is.
+    /// </summary>
+    private void UndoAdoption(string target)
+    {
+        try
+        {
+            if (_store.ReadLink() is { State: LinkStates.Committing } link && link.Target == target && Unowned(link) is null)
+            {
+                EndCredential("sign_in_not_completed", notice: null, link);
+                return;
+            }
+
+            Load();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+        {
+            _options.Log.Warning("cloud.loop.reload_failed", new LogField("errorType", exception.GetType().Name));
+            lock (_stateLock)
+            {
+                _reload = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Revokes credentials a sign-in delivered that the node does not keep (a cancelled flow, a refused or failed adoption; N2 decisions R-2,
+    /// N-1, N-4, F-11): SignOutNode with the delivered access token at the flow's center, then, with <paramref name="deleteKey"/> (no newer
+    /// flow is active), the flow's own node key (its center's origin; N2 review sec N-4) unless a credential of this node still uses it. True
+    /// when the center confirmed; otherwise the family stays live at the center until it is revoked on the web or expires.
+    /// </summary>
+    internal async Task<bool> RevokeDeliveredAsync(NodeCredentials credentials, CenterEndpoint center, bool deleteKey, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentNullException.ThrowIfNull(center);
+        var confirmed = false;
+        if (credentials.HasAccessToken && credentials.AccessToken.Length > 0)
+        {
+            using var http = new CenterHttpClient(center, _options.ConnectLog);
+            var client = new CenterClient(http, _options.Clock);
+            try
+            {
+                confirmed = NotLive(await client.SignOutNodeAsync(credentials.AccessToken, CommandIds.New(_options.Clock), cancellationToken).ConfigureAwait(false));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        if (deleteKey)
+        {
+            await DeleteUnusedKeyAsync(center).ConfigureAwait(false);
+        }
+
+        _options.Log.Warning("cloud.sign_in.delivered_credentials_revoked", new LogField("confirmed", confirmed));
+        return confirmed;
+    }
+
+    /// <summary>
+    /// Deletes the node key of <paramref name="center"/>'s origin that a sign-in flow created or used, unless a credential of this node (signed
+    /// in, or a held rejected one, which a sign-in replaces) or a link still uses it. Takes the gate.
+    /// </summary>
+    internal async Task DeleteUnusedKeyAsync(CenterEndpoint center)
+    {
+        ArgumentNullException.ThrowIfNull(center);
+        using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            bool keyInUse;
+            lock (_stateLock)
+            {
+                keyInUse = _phase == CloudLinkPhase.SignedIn || _rejected || _link is not null;
+            }
+
+            if (keyInUse)
+            {
+                return;
+            }
+
+            try
+            {
+                _options.Keys.DeleteOne(_options.NodeId.Span, center.Origin);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                _options.Log.Warning("cloud.node_key.delete_failed", new LogField("errorType", exception.GetType().Name));
+            }
+        }
     }
 
     /// <summary>
@@ -509,17 +753,21 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// (<see cref="EnterForSignOutAsync"/>): the center call in flight has ended by then. With <paramref name="revokeRemote"/>, SignOutNode
     /// with the current access token, to the credential's own center only, within <paramref name="remoteBudget"/> (real time, as the
     /// caller's deadline; default <see cref="SignOutRemoteBudget"/>; less than <see cref="SignOutRemoteMinimum"/> skips it). Whatever the
-    /// answer, the credential ends locally, two-phase (R-1). A link this node cannot end here (another node ID or secret-store backend, an
-    /// unreadable or inconsistent file) is left alone: <see cref="SignOutResult.NotSignedIn"/>, and the status keeps reporting it.
+    /// answer, the credential ends locally, two-phase (R-1). While the store cannot be read (<c>credential_store_unavailable</c>: a locked
+    /// keyring, an unreadable, underived or inconsistent link) both forms refuse and change nothing (<see cref="SignOutResult.StoreUnavailable"/>;
+    /// N2 decision R-3, review FX-3). A link of another node ID or secret-store backend is left alone by the remote form
+    /// (<see cref="SignOutResult.NotSignedIn"/>) and abandoned only by the local one (<see cref="SignOutResult.Abandoned"/>).
     /// </summary>
     public async Task<SignOutResult> SignOutHeldAsync(bool revokeRemote, TimeSpan? remoteBudget = null)
     {
         CloudCredentialRecord? record;
         CloudLinkFile? link;
+        bool storeUnavailable;
         lock (_stateLock)
         {
             record = _record;
             link = _link;
+            storeUnavailable = _warnings.Contains(Warnings.StoreUnavailable);
         }
 
         if (link is null)
@@ -530,13 +778,36 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                return SignOutResult.NotSignedIn;
+                // N2 review FX-3: an unreadable link file is refused, never read as "not signed in".
+                return SignOutResult.StoreUnavailable;
             }
         }
 
-        if (link is null || Unowned(link) is not null)
+        if (link is null)
         {
-            return SignOutResult.NotSignedIn;
+            return storeUnavailable ? SignOutResult.StoreUnavailable : SignOutResult.NotSignedIn;
+        }
+
+        // N2 decision R-3 and review FX-3: while the store cannot be read (a locked keyring, any read error, an inconsistent or underived
+        // link), both forms refuse and change nothing: the record was never read, so neither a remote revocation nor a local ending could
+        // be honest. A recorded ending is not refused: it only retries (N1 R-1).
+        if (storeUnavailable && link.State != LinkStates.Ending)
+        {
+            return SignOutResult.StoreUnavailable;
+        }
+
+        if (Unowned(link) is { } unowned)
+        {
+            // N2 decision R-3 (routed confirmation N-2): only a link of another secret-store backend or node ID, which this node can never
+            // end, is abandoned, and only by the explicit local sign-out; a link whose store cannot be read now changes nothing (R-1).
+            // An ending of another backend is not abandoned: it completes in its own backend when that is selected again (N1 R-1, FX-3).
+            if (!revokeRemote && unowned.Warning is Warnings.BackendChanged or Warnings.OtherNode && link.State != LinkStates.Ending)
+            {
+                Abandon(link, unowned.Warning, unowned.Reason);
+                return SignOutResult.Abandoned;
+            }
+
+            return unowned.Warning == Warnings.StoreUnavailable ? SignOutResult.StoreUnavailable : SignOutResult.NotSignedIn;
         }
 
         var result = !revokeRemote ? SignOutResult.LocalOnly : SignOutResult.RemoteUnconfirmed;
@@ -566,8 +837,36 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         return result;
     }
 
+    /// <summary>
+    /// Abandons a link this node can never end (another backend or node ID): its pointer, the key sets and this node's key go; the record in
+    /// the other store is never touched (it is not this node's to delete, or not reachable), so the credential may stay live there and at its
+    /// center until it is revoked on the web or expires. Logged and notified.
+    /// </summary>
+    private void Abandon(CloudLinkFile link, string warning, string reason)
+    {
+        TryDeleteKeySets();
+        TryDeleteKey(link);
+        _store.DeleteLink();
+        lock (_stateLock)
+        {
+            _phase = CloudLinkPhase.SignedOut;
+            _record = null;
+            _rejected = false;
+            _rejectedRecord = null;
+            _link = null;
+            _reload = false;
+            _lastError = "link_abandoned";
+            _warnings.Clear();
+            _notice = Notices.Abandoned;
+            _nextRefresh = long.MaxValue;
+            _nextReport = long.MaxValue;
+        }
+
+        _options.Log.Warning("cloud.link_abandoned", new LogField("warning", warning), new LogField("reason", reason));
+    }
+
     /// <summary>Publishes the current state (after a sign-out the handler calls it, outside the gate).</summary>
-    public Task PublishCurrentAsync() => PublishAsync(null);
+    public Task PublishCurrentAsync() => PublishAsync(TakeNotice());
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
@@ -577,6 +876,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             return;
         }
 
+        // An active sign-in ends first: its receiver closes and no new center call starts (a restart cancels a flow).
+        await SignIn.DisposeAsync().ConfigureAwait(false);
         await _stop.CancelAsync().ConfigureAwait(false);
         Wake();
         try
@@ -679,7 +980,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                         changed |= FlushPendingWrite();
                     }
 
-                    if ((Phase == CloudLinkPhase.SignedIn || _rejected) && now >= Interlocked.Read(ref _nextRefresh))
+                    if ((Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
                     {
                         changed |= await RefreshCoreAsync(work.Token).ConfigureAwait(false);
                     }
@@ -724,6 +1025,17 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
     private CloudNotice? _notice;
 
+    private bool SigningInNow
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return _signingIn;
+            }
+        }
+    }
+
     private CloudNotice? TakeNotice()
     {
         lock (_stateLock)
@@ -740,7 +1052,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         long next;
         lock (_stateLock)
         {
-            next = _phase == CloudLinkPhase.SignedIn || _rejected ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
+            next = _phase == CloudLinkPhase.SignedIn || (_rejected && !_signingIn) ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
             if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter))
             {
                 next = Math.Min(next, now + Ticks(TimeSpan.FromSeconds(60)));
@@ -1695,5 +2007,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
         public static readonly CloudNotice ReplyLost = new("account_signed_out", "Signed out of the center",
             "The reply to a credential refresh was lost and the center then refused the credential (refresh_reply_lost: strict rotation); sign in again.");
+
+        public static readonly CloudNotice Abandoned = new("account_link_abandoned", "A credential was forgotten",
+            "The node forgot a credential it could not use (another secret store or node ID). It may remain in the previous secret store and stay live at its center until you revoke this device on the web or it expires.");
     }
 }

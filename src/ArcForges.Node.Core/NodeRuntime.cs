@@ -211,6 +211,7 @@ public sealed class NodeRuntime : IDisposable
             Edition = Edition.Free,
             State = Lifecycle.State,
         };
+        info.Features.AddRange(CloudLink.Features);
         return info;
     }
 
