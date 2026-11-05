@@ -805,17 +805,13 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         return fallback;
     }
 
+    /// <summary>The poll interval: the center's, never below <paramref name="floor"/> (at least <see cref="PollFloor"/>), never above the cap.</summary>
     private static TimeSpan Interval(ulong milliseconds, TimeSpan floor)
     {
         var interval = TimeSpan.FromMilliseconds(milliseconds);
         if (interval < floor)
         {
             interval = floor;
-        }
-
-        if (interval < PollFloor)
-        {
-            interval = PollFloor;
         }
 
         return interval > PollCap ? PollCap : interval;
