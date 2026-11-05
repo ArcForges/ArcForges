@@ -75,7 +75,7 @@ internal sealed class CenterHttpClient : IDisposable
 
     /// <summary>
     /// Refuses every request whose scheme, host or port differ from the center (CTR4-SEC-19), and with the test-mode hook
-    /// <c>ARCFORGES_TEST_CONNECT_LOG</c> appends <c>host:port sent</c> or <c>host:port refused</c> for each attempt (nothing else: no path,
+    /// <c>ARCFORGES_TEST_CONNECT_LOG</c> appends <c>host:port sent</c> or <c>host:port refused</c> and the UTC instant for each attempt (nothing else: no path,
     /// header or body). The log is the node's own corroboration, not independent evidence.
     /// </summary>
     internal sealed class AuthorityGuardHandler(CenterEndpoint center, string? connectLog) : DelegatingHandler
@@ -108,7 +108,7 @@ internal sealed class CenterHttpClient : IDisposable
 
             lock (LogGate)
             {
-                File.AppendAllText(connectLog, authority + " " + outcome + "\n");
+                File.AppendAllText(connectLog, authority + " " + outcome + " " + DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture) + "\n");
             }
         }
     }

@@ -82,6 +82,9 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Func<string, NodeKeyStore>? NodeKeys { get; init; }
 
+    /// <summary>The sign-in flows' browser opener (tests give the allowed ScriptedBrowser); by default the system browser, none under test mode.</summary>
+    internal IBrowserOpener? Opener { get; init; }
+
     /// <summary>
     /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
     /// executable beside this one (04 section 3: helpers are invoked by path); component tests name the host built next to them.
@@ -371,6 +374,8 @@ public static class NodeHost
             }),
             ConnectLog = CloudLinkTestHooks.Connections(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.ConnectLog)),
             RefreshInterval = CloudLinkTestHooks.Refresh(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.RefreshSeconds)),
+            Opener = options.Opener
+                ?? new BrowserOpener(options.TestMode, CloudLinkTestHooks.Browser(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.BrowserFile))),
         });
         await using var cloudScope = cloud.ConfigureAwait(false);
         node.CloudLink = cloud;

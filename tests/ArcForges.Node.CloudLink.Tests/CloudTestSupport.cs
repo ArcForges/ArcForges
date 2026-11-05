@@ -195,6 +195,9 @@ internal sealed class LinkFixture : IAsyncDisposable
 
     public string? ConnectLog { get; set; }
 
+    /// <summary>The sign-in flows' browser (part N2): the allowed ScriptedBrowser.</summary>
+    public ScriptedBrowser Browser { get; } = new();
+
     public List<CloudLinkPublication> Publications { get; } = [];
 
     public CloudLinkService Service => _service ?? throw new InvalidOperationException("Start the link first.");
@@ -240,6 +243,7 @@ internal sealed class LinkFixture : IAsyncDisposable
             },
             RefreshInterval = RefreshInterval,
             ConnectLog = ConnectLog,
+            Opener = Browser,
         });
         await _service.StartAsync();
         return _service;

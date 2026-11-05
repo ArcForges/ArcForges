@@ -109,6 +109,12 @@ public static class PermissionMatrix
     /// <summary>Integrations, pairing, account sign-in.</summary>
     public const string Integrations = "integration.change";
 
+    /// <summary>
+    /// Read a sign-in flow (<c>AccountService.GetSignInFlow</c>; account.proto: HUMAN A, SCRIPT A, AGENT D). Fixed: the flow holds the approval
+    /// URL and the user code, so no override may admit an agent (AF-CTR-04 N2, node-12 item 2).
+    /// </summary>
+    public const string SignInRead = "account.sign_in.read";
+
     /// <summary>Stop the node (<c>StopNode</c>).</summary>
     public const string NodeStop = "node.stop";
 
@@ -151,6 +157,7 @@ public static class PermissionMatrix
         new(ProcessAdopt, "Adopt a process", A, D, D, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(ProcessTerminate, "Terminate a process", A, P, P, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(Integrations, "Integrations, pairing, account sign-in", A, D, D, null, RiskClass.Unspecified, D, true, RiskClass.High),
+        new(SignInRead, "Read a sign-in flow", A, A, D, null, RiskClass.Unspecified, D, true, RiskClass.Medium),
         new(NodeStop, "Stop the node", A, A, D, "stop_node", RiskClass.High, D, false, RiskClass.High),
         new(NodeUpdate, "Apply an update", A, A, D, "apply_update", RiskClass.High, D, false, RiskClass.High),
         new(NodeRollback, "Roll back an update", A, D, D, null, RiskClass.Unspecified, D, true, RiskClass.High),

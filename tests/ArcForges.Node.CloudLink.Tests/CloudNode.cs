@@ -44,6 +44,9 @@ internal sealed class CloudNode : IAsyncDisposable
 
     public IsolatedSecretStore Secrets { get; } = new();
 
+    /// <summary>The sign-in flows' browser (the allowed ScriptedBrowser; the node never starts a real one in these tests).</summary>
+    public ScriptedBrowser Browser { get; } = new();
+
     public NodeRuntime Runtime => _ready.Task.Result;
 
     public CloudLinkService Cloud => (CloudLinkService)Runtime.CloudLink;
@@ -74,6 +77,7 @@ internal sealed class CloudNode : IAsyncDisposable
             Ready = runtime => _ready.TrySetResult(runtime),
             SecretStore = _ => Secrets.Selection,
             NodeKeys = NodeKeyStores.ForTestDataRoot,
+            Opener = Browser,
             Output = TextWriter.Null,
             Error = TextWriter.Null,
             LinuxSlice = Slice,

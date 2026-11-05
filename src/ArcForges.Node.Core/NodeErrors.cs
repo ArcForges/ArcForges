@@ -55,6 +55,14 @@ public static class NodeErrors
     /// <summary><c>STATE/not_signed_in</c>: the node holds no credential to sign out (account.proto <c>SignOut</c>).</summary>
     public static ArcError NotSignedIn() => Create(ErrorCategory.State, "not_signed_in", RetryMode.Never, null);
 
+    /// <summary><c>STATE/cloud_unreachable</c>: the center did not answer (account.proto BeginSignIn); <c>state.reason</c> says what failed.</summary>
+    public static ArcError CloudUnreachable(string reason) =>
+        Create(ErrorCategory.State, "cloud_unreachable", RetryMode.SameCommand, new StateFailure { Reason = reason });
+
+    /// <summary><c>STATE/not_activated</c>: the center does not serve the surface (account.proto BeginSignIn); <c>state.reason</c> names it.</summary>
+    public static ArcError NotActivated(string reason) =>
+        Create(ErrorCategory.State, "not_activated", RetryMode.Never, new StateFailure { Reason = reason });
+
     /// <summary><c>STATE/not_attached</c>: a stdin call without the caller's current attach.</summary>
     public static ArcError NotAttached() => Create(ErrorCategory.State, "not_attached", RetryMode.Never, null);
 

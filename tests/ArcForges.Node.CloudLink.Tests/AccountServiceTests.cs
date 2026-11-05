@@ -297,9 +297,6 @@ public sealed class AccountServiceTests
     }
 
     [Theory]
-    [InlineData("BeginSignIn")]
-    [InlineData("GetSignInFlow")]
-    [InlineData("CancelSignIn")]
     [InlineData("SetCloudLink")]
     [InlineData("CreatePhonePairing")]
     [InlineData("GetPhonePairing")]
@@ -313,11 +310,8 @@ public sealed class AccountServiceTests
         await using var human = await node.ChannelAsync(Origin.Human);
         var call = method switch
         {
-            "BeginSignIn" => human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "SetCloudLink" => human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "CreatePhonePairing" => human.Account.CreatePhonePairingAsync(new AccountServiceCreatePhonePairingRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
-            "GetSignInFlow" => human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest(), cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
-            "CancelSignIn" => human.Account.CancelSignInAsync(new AccountServiceCancelSignInRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "GetPhonePairing" => human.Account.GetPhonePairingAsync(new AccountServiceGetPhonePairingRequest(), cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "ConfirmPhonePairing" => human.Account.ConfirmPhonePairingAsync(new AccountServiceConfirmPhonePairingRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             _ => (Task)human.Account.RefreshEntitlementAsync(new AccountServiceRefreshEntitlementRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,

@@ -85,9 +85,11 @@ public sealed class CenterSeamTests
             await new CenterClient(http, TimeProvider.System).RefreshAsync("afr1.unknown", CancellationToken.None);
             var lines = File.ReadAllLines(log);
             Assert.Equal(5, lines.Length);
-            Assert.All(lines.Take(4), line => Assert.EndsWith(" refused", line, StringComparison.Ordinal));
-            Assert.Equal("127.0.0.1:" + center.Endpoint.Port + " sent", lines[4]);
-            Assert.All(lines, line => Assert.Matches("^[^ /]+:[0-9]+ (sent|refused)$", line));
+            Assert.All(lines.Take(4), line => Assert.Contains(" refused ", line, StringComparison.Ordinal));
+            Assert.StartsWith("127.0.0.1:" + center.Endpoint.Port + " sent ", lines[4], StringComparison.Ordinal);
+
+            // host:port, the outcome and the UTC instant (N2 decision F-13), nothing else.
+            Assert.All(lines, line => Assert.Matches("^[^ /]+:[0-9]+ (sent|refused) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$", line));
             Assert.Single(center.Calls);
 
             // A 307 and a 308 with a Location on another server are not followed: that server receives nothing (it would answer a value).
