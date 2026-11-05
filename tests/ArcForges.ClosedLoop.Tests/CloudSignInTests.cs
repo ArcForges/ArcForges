@@ -16,7 +16,9 @@ namespace ArcForges.ClosedLoop.Tests;
 /// <c>&lt;case&gt;.result.json</c> in node-probe's format (Cloud docs/center-fleet.md, "node-probe and the node-approve run"; data only,
 /// nothing of Cloud is built). Cases (<c>ARCFORGES_E2E_CASES</c>, default <c>device-1,pkce-1</c>): <c>device-*</c> and <c>pkce-*</c> through
 /// the API as HUMAN, <c>cli-device-*</c> through the literal CLI in a pty (Linux). Each case: signed in, the fingerprint and the derived
-/// URL, two refreshes at the 15 s cadence, a restart that keeps credential and key, only the center's authority contacted; after every
+/// URL, a first contact, two refreshes at the 15 s cadence (counted from the status's last contact), the delivered center keys when
+/// <c>ARCFORGES_E2E_EXPECT_KEYS=command:&lt;kid&gt;,&lt;kid&gt;[;entitlement:&lt;kid&gt;,...]</c> is set (the node's <c>run/cloud-keys.json</c> holds exactly those kids,
+/// after the sign-in and after the refreshes; skipped with its reason otherwise), a restart that keeps credential and key, only the center's authority contacted; after every
 /// result is written, node-approve's clean-up revokes the devices and each node turns signed out, deletes its key and notifies. Skipped
 /// with its reason unless <c>ARCFORGES_E2E_CENTER_URL</c> is set; it runs only when the coordinator starts it beside node-approve.
 /// </summary>
@@ -26,6 +28,7 @@ public sealed class CloudSignInTests
     private const string CenterVariable = "ARCFORGES_E2E_CENTER_URL";
     private const string DirectoryVariable = "ARCFORGES_E2E_DIR";
     private const string CasesVariable = "ARCFORGES_E2E_CASES";
+    private const string ExpectedKidsVariable = "ARCFORGES_E2E_EXPECT_KEYS";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -88,11 +91,32 @@ public sealed class CloudSignInTests
         node.Environment[CloudLinkTestHooks.BrowserFile] = browserFile;
         node.Environment[CloudLinkTestHooks.ConnectLog] = connectLog;
         node.Environment[CloudLinkTestHooks.RefreshSeconds] = "15";
+        var keys = CloudSignInChecks.KeyExpectation.Parse(Environment.GetEnvironmentVariable(ExpectedKidsVariable));
         var steps = new JsonArray();
         void Step(string step, bool ok, string outcome)
         {
             steps.Add(new JsonObject { ["name"] = step, ["ok"] = ok, ["outcome"] = outcome });
             Assert.True(ok, name + ": " + step + " (" + outcome + ")");
+        }
+
+        async Task KeysAsync(string when)
+        {
+            if (keys is null)
+            {
+                Step("the delivered center keys " + when, true, "skipped: " + ExpectedKidsVariable + " is not set (proof delivers no command keys today)");
+                return;
+            }
+
+            var file = Path.Combine(node.DataRoot, "run", "cloud-keys.json");
+            string? problem;
+            var started = TimeProvider.System.GetTimestamp();
+            while ((problem = CloudSignInChecks.CompareKeys(File.Exists(file) ? File.ReadAllText(file) : null, keys)) is not null
+                && TimeProvider.System.GetElapsedTime(started) < TimeSpan.FromSeconds(10))
+            {
+                await Task.Delay(200, Ct);
+            }
+
+            Step("the delivered center keys " + when, problem is null, problem ?? "exactly " + string.Join("; ", keys.Select(item => item.Purpose + ": " + string.Join(", ", item.Kids))));
         }
 
         await node.StartNodeAsync();
@@ -138,10 +162,18 @@ public sealed class CloudSignInTests
             var status = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
             Step("the account status", status.SignedIn && status.CenterUrl == center.Url && !status.CredentialInOsStore && status.NodeKeyFingerprint == flow.NodeKeyFingerprint,
                 "signed in, fingerprint " + status.NodeKeyFingerprint);
-            var contact = status.LastContactAt?.UnixSeconds ?? 0;
-            await TestNode.WaitAsync(async () => ((await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status.LastContactAt?.UnixSeconds ?? 0) >= contact + 25,
-                TimeSpan.FromSeconds(90), name + ": two refreshes at the 15 s cadence");
-            Step("two refreshes", (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status.SignedIn, "rotated");
+            await KeysAsync("after the sign-in");
+            var refreshes = new CloudSignInChecks.RefreshCounter(15);
+            async Task<bool> TwoRefreshesAsync()
+            {
+                refreshes.Observe((await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status.LastContactAt?.UnixSeconds);
+                return refreshes.Refreshes >= 2;
+            }
+
+            await TestNode.WaitAsync(TwoRefreshesAsync, TimeSpan.FromSeconds(120), name + ": a first contact, then two refreshes at the 15 s cadence");
+            var after = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
+            Step("two refreshes seen", after.SignedIn, refreshes.Describe());
+            await KeysAsync("after the refreshes");
         }
 
         await node.StopNodeAsync();
