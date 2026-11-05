@@ -56,10 +56,10 @@ public sealed class CredentialStoreTests
         Assert.Equal(link.Secrets.Backend.ToString(), file.Backend);
         Assert.True(file.Isolated);
         Assert.Equal(link.Center.Endpoint.Url, file.CenterUrl);
-        var text = File.ReadAllText(link.Storage.LinkPath);
+        var text = System.Text.Encoding.UTF8.GetString(PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
         Assert.DoesNotContain("afr1.", text, StringComparison.Ordinal);
         Assert.DoesNotContain("afa1.", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("afr1.", File.ReadAllText(link.Storage.KeysPath), StringComparison.Ordinal);
+        Assert.DoesNotContain("afr1.", System.Text.Encoding.UTF8.GetString(PrivateFiles.ReadOrNull(link.Storage.KeysPath)!), StringComparison.Ordinal);
         if (!OperatingSystem.IsWindows())
         {
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(link.Storage.LinkPath));
@@ -102,7 +102,7 @@ public sealed class CredentialStoreTests
         await link.StartAsync();
         await link.SignInAsync();
         await link.StopAsync();
-        var linkBytes = File.ReadAllBytes(link.Storage.LinkPath);
+        var linkBytes = PrivateFiles.ReadOrNull(link.Storage.LinkPath)!;
         var held = link.Secrets;
 
         // The next start selects another backend, or the same backend but not isolated (node-10 items 1-3).
@@ -113,7 +113,7 @@ public sealed class CredentialStoreTests
         await service.StartAsync();
         Assert.False(service.AccountLinked);
         Assert.Contains("credential_backend_changed", service.Status().Warnings);
-        Assert.Equal(linkBytes, File.ReadAllBytes(link.Storage.LinkPath));
+        Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
         Assert.Single(held.Names());
         Assert.Empty(link.Center.Calls);
     }

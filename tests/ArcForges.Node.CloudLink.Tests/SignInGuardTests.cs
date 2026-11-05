@@ -172,7 +172,7 @@ public sealed class SignInGuardTests
         link.Secrets.Unavailable = true;
         await link.StartAsync();
         Assert.Contains("credential_store_unavailable", link.Service.Status().Warnings);
-        var linkBytes = File.ReadAllBytes(link.Storage.LinkPath);
+        var linkBytes = PrivateFiles.ReadOrNull(link.Storage.LinkPath)!;
         SignOutResult result;
         using (await link.Service.EnterForSignOutAsync(TimeSpan.FromSeconds(5), Cancel))
         {
@@ -180,7 +180,7 @@ public sealed class SignInGuardTests
         }
 
         Assert.Equal(SignOutResult.StoreUnavailable, result);
-        Assert.Equal(linkBytes, File.ReadAllBytes(link.Storage.LinkPath));
+        Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
         Assert.True(File.Exists(link.Storage.KeysPath));
         Assert.NotNull(link.Keys.Recorded());
         Assert.Empty(link.Center.CallsOf("SignOutNode"));
@@ -210,7 +210,7 @@ public sealed class SignInGuardTests
         await node.StopAsync();
         node.Secrets.Unavailable = true;
         await node.StartAsync();
-        var linkBytes = File.ReadAllBytes(node.Cloud.Storage.LinkPath);
+        var linkBytes = PrivateFiles.ReadOrNull(node.Cloud.Storage.LinkPath)!;
         await using var human = await node.ChannelAsync(Origin.Human);
         foreach (var remote in new[] { true, false })
         {
@@ -221,7 +221,7 @@ public sealed class SignInGuardTests
             Assert.Equal("credential_store_unavailable", response.Error.Details.State.Reason);
         }
 
-        Assert.Equal(linkBytes, File.ReadAllBytes(node.Cloud.Storage.LinkPath));
+        Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(node.Cloud.Storage.LinkPath)!);
         Assert.Empty(center.CallsOf("SignOutNode"));
         Assert.True(center.IsLive(issued.RefreshToken));
     }

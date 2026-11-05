@@ -1023,6 +1023,29 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Records the reported name and version in the link file, and in memory only once the file has them: a write that fails (on Windows
+    /// another process may hold the file beyond the retries) leaves both unchanged, so the next report is not skipped as already done.
+    /// </summary>
+    private bool RecordReported(CloudLinkFile link, EnrollingNodeInfo info)
+    {
+        var (name, version) = (link.ReportedName, link.ReportedVersion);
+        link.ReportedName = info.Name;
+        link.ReportedVersion = info.Version;
+        try
+        {
+            _store.WriteLink(link);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            link.ReportedName = name;
+            link.ReportedVersion = version;
+            _options.Log.Warning("cloud.report.record_failed", new LogField("errorType", exception.GetType().Name));
+            return false;
+        }
+    }
+
     private CloudNotice? _notice;
 
     private bool SigningInNow
@@ -1466,9 +1489,13 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         {
             case CenterOutcome.Value:
                 _reportCommand = null;
-                link.ReportedName = info.Name;
-                link.ReportedVersion = info.Version;
-                _store.WriteLink(link);
+                if (!RecordReported(link, info))
+                {
+                    // The report reached the center; only its record failed. The same report again later, so the file catches up (an
+                    // idempotent replay at the center: the same values under a new command ID).
+                    Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(TimeSpan.FromMinutes(1) + Jitter(TimeSpan.FromMinutes(1))));
+                }
+
                 var changed = RemoveWarning(Warnings.InfoRejected) | RemoveWarning(Warnings.Restricted);
                 Contact(true);
                 return changed;

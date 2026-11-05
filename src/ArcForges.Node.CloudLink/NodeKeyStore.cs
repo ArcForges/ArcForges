@@ -383,9 +383,18 @@ internal sealed class SoftwareNodeKey(ECDsa key) : INodeKey
     public void Dispose() => key.Dispose();
 }
 
-/// <summary>Owner-only files of the cloud link under <c>run/</c>: 0600 at creation, flushed, then renamed into place.</summary>
+/// <summary>
+/// Owner-only files of the cloud link under <c>run/</c>: 0600 at creation, flushed, then renamed into place. Windows-safe: another process
+/// (an antivirus scan, a backup, the search indexer, a person's editor) may hold one of these files open for a moment, and on Windows that
+/// makes a read, the atomic replace or a delete fail with a sharing violation (or, for the replace and delete, access denied) although
+/// nothing is wrong. Reads open with every sharing mode (so they never block this node's own replace or delete), and each operation retries
+/// such a transient refusal within a bound (<see cref="RetryDelays"/>, about 0.6 s in all) before it reports the failure as before.
+/// </summary>
 internal static class PrivateFiles
 {
+    /// <summary>The waits before the retries of an operation refused by another handle on the file.</summary>
+    internal static readonly TimeSpan[] RetryDelays = [.. new[] { 10, 20, 40, 80, 160, 320 }.Select(milliseconds => TimeSpan.FromMilliseconds(milliseconds))];
+
     private static readonly Lock Gate = new();
 
     /// <summary>Writes <paramref name="path"/> atomically (0600 on Unix, in a 0700 directory).</summary>
@@ -411,7 +420,8 @@ internal static class PrivateFiles
                     stream.Flush(flushToDisk: true);
                 }
 
-                File.Move(temporary, path, overwrite: true);
+                // On Windows the replace fails while another handle on the target lacks delete sharing: retried within the bound.
+                Retry(() => File.Move(temporary, path, overwrite: true), replacing: true);
                 renamed = true;
             }
             finally
@@ -435,7 +445,14 @@ internal static class PrivateFiles
     {
         try
         {
-            return File.ReadAllBytes(path);
+            return Retry(() =>
+            {
+                // Every sharing mode: a reader never makes this node's own replace or delete fail (Windows), nor waits on another reader.
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 0);
+                using var copy = new MemoryStream();
+                stream.CopyTo(copy);
+                return copy.ToArray();
+            }, replacing: false);
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -453,8 +470,49 @@ internal static class PrivateFiles
                 return false;
             }
 
-            File.Delete(path);
+            Retry(() => File.Delete(path), replacing: true);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// True for a refusal caused by another handle on the file, which ends when that handle closes: a sharing or lock violation (Windows;
+    /// on Unix the runtime's emulation of <see cref="FileShare.None"/> refuses the same way), and on Windows an access denial of a replace or
+    /// delete (the target is open without delete sharing, or its deletion is pending). A permission denial on Unix is not transient.
+    /// </summary>
+    internal static bool Transient(Exception exception, bool replacing)
+    {
+        const int SharingViolation = 32;
+        const int LockViolation = 33;
+        const int WouldBlock = 11;
+        return exception switch
+        {
+            FileNotFoundException or DirectoryNotFoundException => false,
+            IOException io when OperatingSystem.IsWindows() => (io.HResult & 0xFFFF) is SharingViolation or LockViolation,
+            IOException io => io.HResult == WouldBlock || (io.HResult & 0xFFFF) is SharingViolation or LockViolation,
+            UnauthorizedAccessException => OperatingSystem.IsWindows() && replacing,
+            _ => false,
+        };
+    }
+
+    private static void Retry(Action action, bool replacing) => Retry<object?>(() =>
+    {
+        action();
+        return null;
+    }, replacing);
+
+    private static T Retry<T>(Func<T> action, bool replacing)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return action();
+            }
+            catch (Exception exception) when (attempt < RetryDelays.Length && Transient(exception, replacing))
+            {
+                Thread.Sleep(RetryDelays[attempt]);
+            }
         }
     }
 }
