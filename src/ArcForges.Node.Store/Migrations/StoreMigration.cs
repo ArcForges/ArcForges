@@ -84,12 +84,16 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 1;
+    public const int SupportedSchemaVersion = 2;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
         // Version 1 is ArcForges-Design docs/data/node-store.sql verbatim (all tables of schema version 1).
         Load(1, 1, "0001-schema-v1.sql"),
+
+        // Version 2 is ArcForges-Design docs/data/node-store.sql at 611dda6, the "schema step 2" block verbatim (node-store.md section 2a:
+        // task.local_diagnostic and routed_call_log; AF-CTR-05 N1). Expand-only, so readers of version 1 still read the store.
+        Load(2, 1, "0002-schema-step-2.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

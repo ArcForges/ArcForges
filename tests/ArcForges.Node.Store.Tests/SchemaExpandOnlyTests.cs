@@ -21,6 +21,18 @@ public sealed class SchemaExpandOnlyTests
         Assert.Equal(DesignSchemaV1Sha256, StoreMigrations.Released.Steps[0].Sha256);
     }
 
+    /// <summary>ArcForges-Design docs/data/node-store.sql at 611dda6, its "schema step 2" block (node-store.md section 2a).</summary>
+    private const string DesignSchemaStep2Sha256 = "5540abe3d93b59cdf4c3bb0669306224623fc6d6c79e076ca027950437ed1137";
+
+    [Fact]
+    public void Version2IsTheDesignStep2Verbatim()
+    {
+        Assert.Equal(DesignSchemaStep2Sha256, StoreMigrations.Released.Steps[1].Sha256);
+        Assert.StartsWith("-- ------------------------------------------------------------------ schema step 2\n", StoreMigrations.Released.Steps[1].Sql, StringComparison.Ordinal);
+        Assert.Contains("CREATE UNIQUE INDEX ux_routed_call_log__call ON routed_call_log (call_id) WHERE call_id IS NOT NULL;", StoreMigrations.Released.Steps[1].Sql,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ReleasedMigrationsMatchTheirRecordedHistory()
     {
@@ -75,7 +87,7 @@ public sealed class SchemaExpandOnlyTests
     public void ContractStepsAreViolations(string sql, string violation)
     {
         var before = Snapshot(StoreMigrations.Released.Steps);
-        var after = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(2, 1, "0002-contract.sql", sql)]);
+        var after = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(StoreMigrations.Released.LatestVersion + 1, 1, "0003-contract.sql", sql)]);
 
         Assert.Contains(violation, SchemaDiff.ExpandOnlyViolations(before, after));
         Assert.NotEmpty(SchemaDiff.ContractStatements(sql));
@@ -93,7 +105,7 @@ public sealed class SchemaExpandOnlyTests
             UPDATE node_setting SET rev = rev WHERE name = 'never "DROP" here';
             """;
         var before = Snapshot(StoreMigrations.Released.Steps);
-        var after = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(2, 1, "0002-expand.sql", sql)]);
+        var after = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(StoreMigrations.Released.LatestVersion + 1, 1, "0003-expand.sql", sql)]);
 
         Assert.Empty(SchemaDiff.ExpandOnlyViolations(before, after));
         Assert.Empty(SchemaDiff.ContractStatements(sql));
@@ -101,10 +113,24 @@ public sealed class SchemaExpandOnlyTests
     }
 
     [Fact]
+    public void AColumnAddedBeforeATableConstraintIsExpandOnly()
+    {
+        // SQLite inserts an added column after the last column definition, before the table constraints (the task table of step 2).
+        var before = Snapshot([new StoreMigration(1, 1, "0001-t.sql", "CREATE TABLE t (a INTEGER NOT NULL, b INTEGER, CHECK (a > 0 OR b IS NULL)) STRICT;")]);
+        var after = Snapshot([new StoreMigration(1, 1, "0001-t.sql", "CREATE TABLE t (a INTEGER NOT NULL, b INTEGER, CHECK (a > 0 OR b IS NULL)) STRICT;"),
+            new StoreMigration(2, 1, "0002-t.sql", "ALTER TABLE t ADD COLUMN c INTEGER NOT NULL DEFAULT 0 CHECK (c IN (0, 1));")]);
+        Assert.Empty(SchemaDiff.ExpandOnlyViolations(before, after));
+
+        // A rebuilt table whose constraint changed is still refused, also when it gains a column.
+        var rebuilt = Snapshot([new StoreMigration(1, 1, "0001-t.sql", "CREATE TABLE t (a INTEGER NOT NULL, b INTEGER, c INTEGER, CHECK (a > 1 OR b IS NULL)) STRICT;")]);
+        Assert.Contains("table t changed its definition beyond added columns", SchemaDiff.ExpandOnlyViolations(before, rebuilt));
+    }
+
+    [Fact]
     public void ANotNullColumnWithoutDefaultIsAViolation()
     {
         var before = Snapshot(StoreMigrations.Released.Steps);
-        var rebuilt = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(2, 1, "0002-x.sql",
+        var rebuilt = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(StoreMigrations.Released.LatestVersion + 1, 1, "0003-x.sql",
             "CREATE TABLE t2 (a INTEGER) STRICT; DROP TABLE toolchain; CREATE TABLE toolchain (kind TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, identity_json TEXT NOT NULL CHECK (json_valid(identity_json)), detected_at INTEGER NOT NULL, missing INTEGER NOT NULL DEFAULT 0 CHECK (missing IN (0, 1)), owner TEXT NOT NULL, PRIMARY KEY (kind, path)) STRICT, WITHOUT ROWID;")]);
 
         Assert.Contains("column toolchain.owner was added NOT NULL without a default", SchemaDiff.ExpandOnlyViolations(before, rebuilt));
