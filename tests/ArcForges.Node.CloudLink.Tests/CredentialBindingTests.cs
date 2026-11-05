@@ -146,6 +146,53 @@ public sealed class CredentialBindingTests
     }
 
     [Fact]
+    public async Task AStatusReadDuringTheRetryOfABlockedEndingStillSaysTheStoreCannotBeRead()
+    {
+        // The Windows leg at PR #71 (ACenterChangeWhileTheRecordCannotBeRead...): the loop retries a recorded ending through Load(), which
+        // cleared the stranded warnings first and set them again only after the store failed once more; a status read in between saw a
+        // store that cannot be read as fine. A slow refusal (the store answers each delete after 300 ms, then fails) widens that window.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await link.SignInAsync();
+        link.Secrets.Unavailable = true;
+        using (await link.Service.EnterForSignOutAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken))
+        {
+            await link.Service.SignOutHeldAsync(revokeRemote: false);
+        }
+
+        Assert.Equal(LinkStates.Ending, link.Storage.ReadLink()!.State);
+        Assert.Contains("credential_store_unavailable", link.Service.Status().Warnings);
+        link.Secrets.DeleteDelay = TimeSpan.FromMilliseconds(300);
+        var deletes = link.Secrets.Deletes;
+        using var stop = new CancellationTokenSource();
+        var reader = Task.Run(() =>
+        {
+            var misses = 0;
+            while (!stop.IsCancellationRequested)
+            {
+                if (!link.Service.Status().Warnings.Contains("credential_store_unavailable"))
+                {
+                    misses++;
+                }
+            }
+
+            return misses;
+        }, TestContext.Current.CancellationToken);
+
+        // Two retries of the ending, each a minute apart.
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5), () => link.Secrets.Deletes >= deletes + 2, "two retries");
+        await stop.CancelAsync();
+        Assert.Equal(0, await reader.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.Equal(LinkStates.Ending, link.Storage.ReadLink()!.State);
+
+        // When the store answers, the ending finishes.
+        link.Secrets.DeleteDelay = TimeSpan.Zero;
+        link.Secrets.Unavailable = false;
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(3), () => !File.Exists(link.Storage.LinkPath), "the ending finished");
+        Assert.DoesNotContain("credential_store_unavailable", link.Service.Status().Warnings);
+    }
+
+    [Fact]
     public async Task ARotationAwaitingItsWriteSurvivesAStrandAndIsWrittenAtShutdown()
     {
         // Confirmation probe P1 (G-8): a rotation whose write failed, then another center configured (the credential is stranded); the

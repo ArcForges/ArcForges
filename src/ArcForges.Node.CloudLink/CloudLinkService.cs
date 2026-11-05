@@ -1135,7 +1135,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             // An unreadable or unparsable link file is never read as "absent": reported, retried, nothing deleted.
-            SetStranded(Warnings.StoreUnavailable, "the link file cannot be read: " + exception.GetType().Name);
+            SetStranded(Warnings.StoreUnavailable, "the link file cannot be read: " + exception.GetType().Name, exclusive: false);
             lock (_stateLock)
             {
                 _reload = true;
@@ -1144,6 +1144,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             return;
         }
 
+        // The stranded warnings are not cleared here but where the outcome is known (ClearStranded, SetStranded, EndCredential): a status read
+        // during this reload (a retry every minute while the store cannot be read) never sees a store that cannot be read as fine.
         lock (_stateLock)
         {
             _reload = false;
@@ -1155,16 +1157,12 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _nextRefresh = long.MaxValue;
             _nextReport = long.MaxValue;
             _centerOffset = TimeSpan.Zero;
-            _warnings.Remove(Warnings.StoreUnavailable);
-            _warnings.Remove(Warnings.BackendChanged);
-            _warnings.Remove(Warnings.OtherCenter);
-            _warnings.Remove(Warnings.OtherNode);
-            _warnings.Remove(Warnings.Rejected);
         }
 
         if (link is null)
         {
             // Key sets without a link belong to no credential.
+            ClearStranded();
             TryDeleteKeySets();
             return;
         }
@@ -1232,6 +1230,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         if (configurationInvalid)
         {
             // node.json cannot be read, so the record's center is not confirmed: nothing is sent; retried every minute.
+            ClearStranded();
             lock (_stateLock)
             {
                 _reload = true;
@@ -1260,6 +1259,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         var now = _options.Clock.GetTimestamp();
+        ClearStranded();
         lock (_stateLock)
         {
             _record = record;
@@ -1273,17 +1273,47 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         _options.Log.Info("cloud.loaded", new LogField("center", record.CenterUrl), new LogField("backend", link.Backend), new LogField("isolated", link.Isolated));
     }
 
-    private void SetStranded(string warning, string reason)
+    /// <summary>
+    /// A link this node cannot use now: <paramref name="warning"/> replaces the other stranded warnings in one step (<paramref name="exclusive"/>;
+    /// an unreadable link file keeps what was known), so a status read sees either the earlier or the new state, never neither.
+    /// </summary>
+    private void SetStranded(string warning, string reason, bool exclusive = true)
     {
         lock (_stateLock)
         {
             _phase = CloudLinkPhase.SignedOut;
             _record = null;
+            if (exclusive)
+            {
+                RemoveStrandedLocked(warning);
+            }
+
             _warnings.Add(warning);
             _lastError = warning;
         }
 
         _options.Log.Warning("cloud.credential_unusable", new LogField("warning", warning), new LogField("reason", reason));
+    }
+
+    /// <summary>A reload found nothing stranded: the stranded warnings go.</summary>
+    private void ClearStranded()
+    {
+        lock (_stateLock)
+        {
+            RemoveStrandedLocked(keep: null);
+        }
+    }
+
+    /// <summary>Removes the stranded warnings except <paramref name="keep"/>; the caller holds the state lock.</summary>
+    private void RemoveStrandedLocked(string? keep)
+    {
+        foreach (var warning in (string[])[Warnings.StoreUnavailable, Warnings.BackendChanged, Warnings.OtherCenter, Warnings.OtherNode, Warnings.Rejected])
+        {
+            if (warning != keep)
+            {
+                _warnings.Remove(warning);
+            }
+        }
     }
 
     /// <summary>One refresh under the gate; returns whether the published state changed.</summary>
