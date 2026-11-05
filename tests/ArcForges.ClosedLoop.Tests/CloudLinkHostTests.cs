@@ -189,7 +189,7 @@ public sealed class CloudLinkHostTests
         }
     }
 
-    private static void Seed(string dataRoot, byte[] nodeId, FakeCenter center, ArcForges.Contracts.Fleet.V1.NodeCredentials issued)
+    internal static void Seed(string dataRoot, byte[] nodeId, FakeCenter center, ArcForges.Contracts.Fleet.V1.NodeCredentials issued)
     {
         var secrets = NodeSecretStores.ForTestDataRoot(dataRoot);
         var storage = new CloudCredentialStore(dataRoot, secrets);
@@ -198,6 +198,7 @@ public sealed class CloudLinkHostTests
         {
             NodeId = Convert.ToHexStringLower(nodeId),
             CenterUrl = center.Endpoint.Url,
+            AccountId = Convert.ToHexStringLower(issued.Account.AccountId.Value.Span),
             DisplayName = issued.Account.DisplayName,
             InstallationId = Convert.ToHexStringLower(issued.InstallationId.Value.Span),
             AccessToken = issued.AccessToken,
@@ -219,6 +220,6 @@ public sealed class CloudLinkHostTests
         });
     }
 
-    private static CloudCredentialRecord? Stored(string dataRoot, byte[] nodeId, FakeCenter center) =>
+    internal static CloudCredentialRecord? Stored(string dataRoot, byte[] nodeId, FakeCenter center) =>
         new CloudCredentialStore(dataRoot, NodeSecretStores.ForTestDataRoot(dataRoot)).ReadRecord(CloudCredentialStore.Target(nodeId, center.Endpoint.Origin));
 }
