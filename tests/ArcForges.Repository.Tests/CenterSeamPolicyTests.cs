@@ -92,6 +92,7 @@ public sealed partial class CenterSeamPolicyTests
         Assert.Equal([FakeCenterDirectory + "FakeCenter/FakeCenter.cs"], defining);
         var using_ = Files("src", "tools", "tests").Where(path => path.EndsWith(".cs", StringComparison.Ordinal) && !path.StartsWith(FakeCenterDirectory, StringComparison.Ordinal)
             && path != "tests/ArcForges.Repository.Tests/CenterSeamPolicyTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudLinkHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInHostTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 

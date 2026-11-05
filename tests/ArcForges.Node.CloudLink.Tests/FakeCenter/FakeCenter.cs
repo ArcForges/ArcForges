@@ -170,7 +170,7 @@ internal sealed class FakeCenter : IAsyncDisposable
 
     private NodeCredentials IssueLocked(byte[] nodeId, string displayName)
     {
-        var installation = RandomNumberGenerator.GetBytes(16);
+        var installation = NextInstallationIds.Count > 0 ? NextInstallationIds.Dequeue() : RandomNumberGenerator.GetBytes(16);
         var session = new Session(nodeId, installation, NewToken("afa1."), NewToken("afr1."), Clock.GetUtcNow() + AccessLifetime,
             Clock.GetUtcNow() + FamilyLifetime);
         _byRefresh[session.Refresh] = session;
@@ -181,7 +181,12 @@ internal sealed class FakeCenter : IAsyncDisposable
             RefreshToken = session.Refresh,
             AccessToken = session.Access,
             AccessExpiresAt = ProtoTime.ToInstant(session.AccessExpires),
-            Account = new AccountSummary { AccountId = new Id { Value = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)) }, DisplayName = displayName, EmailMasked = "t***@example.test" },
+            Account = new AccountSummary
+            {
+                AccountId = new Id { Value = ByteString.CopyFrom(NextAccountIds.Count > 0 ? NextAccountIds.Dequeue() : RandomNumberGenerator.GetBytes(16)) },
+                DisplayName = displayName,
+                EmailMasked = displayName == Account.Name ? Account.Email : "t***@example.test",
+            },
             InstallationId = new Id { Value = ByteString.CopyFrom(installation) },
             SessionExpiresAt = ProtoTime.ToInstant(session.SessionExpires),
             AccessLifetimeMs = (ulong)AccessLifetime.TotalMilliseconds,
@@ -773,6 +778,71 @@ internal sealed class FakeCenter : IAsyncDisposable
 
     private string? _deliveredRefresh;
 
+    /// <summary>
+    /// The center's public base URL (the derived URLs and the proof audience): its own endpoint, unless a test names another (the
+    /// conformance test uses the captures' <c>https://center.example.test/api</c>).
+    /// </summary>
+    public CenterEndpoint PublicBase
+    {
+        get => _publicBase ?? Endpoint;
+        set => _publicBase = value;
+    }
+
+    private CenterEndpoint? _publicBase;
+
+    /// <summary>Placeholder mode (conformance): the flow IDs it draws next.</summary>
+    public Queue<byte[]> NextFlowIds { get; } = new();
+
+    /// <summary>Placeholder mode: the device codes it draws next.</summary>
+    public Queue<string> NextDeviceCodes { get; } = new();
+
+    /// <summary>Placeholder mode: the user codes it draws next.</summary>
+    public Queue<string> NextUserCodes { get; } = new();
+
+    /// <summary>Placeholder mode: the installation IDs it draws next.</summary>
+    public Queue<byte[]> NextInstallationIds { get; } = new();
+
+    /// <summary>Placeholder mode: the account IDs it names next.</summary>
+    public Queue<byte[]> NextAccountIds { get; } = new();
+
+    /// <summary>The account's display name and masked e-mail address in delivered credentials.</summary>
+    public (string Name, string Email) Account { get; set; } = ("Test Account", "t***@example.test");
+
+    /// <summary>
+    /// The conformance seam (FakeCenterConformanceTests only): the captured requests carry placeholder proofs (64 bytes of one value
+    /// 0xe0+n, because ES256 draws a nonce), which this accepts; every behaviour test leaves it off and the real verifier decides.
+    /// </summary>
+    public bool AcceptPlaceholderProofs { get; set; }
+
+    private bool Placeholder(ByteString proof) => AcceptPlaceholderProofs && proof.Length == 64 && proof.All(b => b == proof[0]) && proof[0] >= 0xe0;
+
+    /// <summary>Seeds a browser flow (the conformance test puts FakeCenter in a capture's state).</summary>
+    public void SeedFlow(byte[] flowId, byte[] nodeId, byte[] key, string challenge, string? code, string state, TimeSpan life, TimeSpan codeLife)
+    {
+        lock (_gate)
+        {
+            _flows.Add(new SignInFlowRow(flowId, challenge, "http://127.0.0.1:53682/callback", "node-state-0123456789abcdefghij", nodeId, key, Clock.GetUtcNow() + life)
+            {
+                State = Enum.Parse<FlowRowState>(state, ignoreCase: true),
+                Code = code,
+                CodeExpires = Clock.GetUtcNow() + codeLife,
+            });
+        }
+    }
+
+    /// <summary>Seeds a device authorization.</summary>
+    public void SeedDevice(string deviceCode, byte[] nodeId, byte[] key, string state, TimeSpan life, DateTimeOffset? lastPoll = null)
+    {
+        lock (_gate)
+        {
+            _devices.Add(new DeviceRow(deviceCode, "BBBBBBBC", nodeId, key, Clock.GetUtcNow() + life)
+            {
+                State = Enum.Parse<DeviceRowState>(state, ignoreCase: true),
+                LastPoll = lastPoll,
+            });
+        }
+    }
+
     /// <summary>Marks <paramref name="publicKey"/> as held by an installation: live (refused at Begin/Start and Enroll) or retired.</summary>
     public void HoldKey(byte[] publicKey, bool retired = false)
     {
@@ -886,12 +956,12 @@ internal sealed class FakeCenter : IAsyncDisposable
             older.State = FlowRowState.Expired;
         }
 
-        var flow = new SignInFlowRow(RandomNumberGenerator.GetBytes(16), request.CodeChallenge, request.RedirectUri, request.State, nodeId, key, Clock.GetUtcNow() + TimeSpan.FromMinutes(10));
+        var flow = new SignInFlowRow(NextFlowIds.Count > 0 ? NextFlowIds.Dequeue() : RandomNumberGenerator.GetBytes(16), request.CodeChallenge, request.RedirectUri, request.State, nodeId, key, Clock.GetUtcNow() + TimeSpan.FromMinutes(10));
         _flows.Add(flow);
         response.Value = new NodeEnrollmentServiceBeginNodeSignInValue
         {
             FlowId = new Id { Value = ByteString.CopyFrom(flow.Id) },
-            AuthorizeUrl = AuthorizeUrlOverride ?? Endpoint.ConnectUrl(flow.Id),
+            AuthorizeUrl = AuthorizeUrlOverride ?? PublicBase.ConnectUrl(flow.Id),
             ExpiresAt = ProtoTime.ToInstant(flow.Expires),
         };
         return response;
@@ -906,9 +976,9 @@ internal sealed class FakeCenter : IAsyncDisposable
             return response;
         }
 
-        if (request.CodeVerifier is not { Length: >= 43 and <= 128 })
+        if (request.CodeVerifier is not { Length: >= 43 and <= 128 } verifier || !verifier.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '_' or '~'))
         {
-            response.Error = Invalid(response.Meta, "code_verifier", "code_verifier: length");
+            response.Error = Invalid(response.Meta, "code_verifier", "code_verifier: pattern");
             return response;
         }
 
@@ -921,7 +991,12 @@ internal sealed class FakeCenter : IAsyncDisposable
         var flow = _flows.FirstOrDefault(row => row.Id.AsSpan().SequenceEqual(request.FlowId.Value.Span));
         if (flow is null)
         {
-            response.Error = Error(ErrorCategory.State, "not_found", response.Meta, null);
+            response.Error = Error(ErrorCategory.State, "not_found", response.Meta, new StateFailure
+            {
+                State = "node_sign_in",
+                Reason = "not_found",
+                Resource = new AggregateRef { Kind = "node_sign_in", Id = request.FlowId.Clone() },
+            });
             return response;
         }
 
@@ -961,7 +1036,7 @@ internal sealed class FakeCenter : IAsyncDisposable
         }
 
         var verifierOk = S256(request.CodeVerifier) == flow.Challenge;
-        var proofOk = VerifyNodeKeyProof(flow.Key, ProofMessage(0x01, flow.NodeId, [.. flow.Id, .. Encoding.ASCII.GetBytes(request.Code!)]), request.NodeKeyProof.ToByteArray());
+        var proofOk = Placeholder(request.NodeKeyProof) || VerifyNodeKeyProof(flow.Key, ProofMessage(0x01, flow.NodeId, [.. flow.Id, .. Encoding.ASCII.GetBytes(request.Code!)]), request.NodeKeyProof.ToByteArray());
         if (!verifierOk || !proofOk)
         {
             flow.State = FlowRowState.Revoked;
@@ -1003,8 +1078,9 @@ internal sealed class FakeCenter : IAsyncDisposable
             older.State = DeviceRowState.Expired;
         }
 
-        var userCode = UserCodeOverride ?? new string([.. RandomNumberGenerator.GetBytes(8).Select(b => "BCDFGHJKLMNPQRSTVWXZ"[b % 20])]);
-        var device = new DeviceRow(Base64Url(RandomNumberGenerator.GetBytes(32)), userCode, nodeId, key, Clock.GetUtcNow() + TimeSpan.FromSeconds(600));
+        var userCode = UserCodeOverride ?? (NextUserCodes.Count > 0 ? NextUserCodes.Dequeue() : new string([.. RandomNumberGenerator.GetBytes(8).Select(b => "BCDFGHJKLMNPQRSTVWXZ"[b % 20])]));
+        var device = new DeviceRow(NextDeviceCodes.Count > 0 ? NextDeviceCodes.Dequeue() : Base64Url(RandomNumberGenerator.GetBytes(32)), userCode, nodeId, key,
+            Clock.GetUtcNow() + TimeSpan.FromSeconds(600));
         _devices.Add(device);
         var display = userCode.Length == 8 ? userCode[..4] + "-" + userCode[4..] : userCode;
         response.Value = new NodeEnrollmentServiceStartDeviceAuthorizationValue
@@ -1013,8 +1089,8 @@ internal sealed class FakeCenter : IAsyncDisposable
             {
                 DeviceCode = device.DeviceCode,
                 UserCode = userCode,
-                VerificationUri = VerificationUriOverride ?? Endpoint.ActivateUrl,
-                VerificationUriComplete = (VerificationUriOverride ?? Endpoint.ActivateUrl) + "#code=" + display,
+                VerificationUri = VerificationUriOverride ?? PublicBase.ActivateUrl,
+                VerificationUriComplete = (VerificationUriOverride ?? PublicBase.ActivateUrl) + "#code=" + display,
                 IntervalMs = device.IntervalMs,
                 ExpiresAt = ProtoTime.ToInstant(device.Expires),
             },
@@ -1044,7 +1120,7 @@ internal sealed class FakeCenter : IAsyncDisposable
             return response;
         }
 
-        if (!VerifyNodeKeyProof(device.Key, ProofMessage(0x02, device.NodeId, Encoding.ASCII.GetBytes(device.DeviceCode)), request.NodeKeyProof.ToByteArray()))
+        if (!Placeholder(request.NodeKeyProof) && !VerifyNodeKeyProof(device.Key, ProofMessage(0x02, device.NodeId, Encoding.ASCII.GetBytes(device.DeviceCode)), request.NodeKeyProof.ToByteArray()))
         {
             // "A bad node key proof on an APPROVED authorization is AUTHENTICATION/unauthenticated and leaves it APPROVED."
             response.Error = Error(ErrorCategory.Authentication, "unauthenticated", response.Meta, null);
@@ -1117,7 +1193,7 @@ internal sealed class FakeCenter : IAsyncDisposable
         session = null;
         if (ForeignNodes.Contains(Convert.ToHexString(nodeId)))
         {
-            return Error(ErrorCategory.Conflict, "already_exists", meta, new StateFailure { State = "node" });
+            return Error(ErrorCategory.Conflict, "already_exists", meta, new StateFailure { State = "node", Reason = "already_exists" });
         }
 
         if (_heldKeys.TryGetValue(Convert.ToHexString(key), out var retired))
@@ -1134,7 +1210,7 @@ internal sealed class FakeCenter : IAsyncDisposable
             return error;
         }
 
-        credentials = IssueLocked(nodeId, "Test Account");
+        credentials = IssueLocked(nodeId, Account.Name);
         session = _byRefresh[credentials.RefreshToken];
         _deliveredRefresh = credentials.RefreshToken;
         _heldKeys[Convert.ToHexString(key)] = false;
@@ -1166,7 +1242,7 @@ internal sealed class FakeCenter : IAsyncDisposable
 
     /// <summary>The proof message, built by FakeCenter's own code (fleet.proto "Node key proof").</summary>
     private byte[] ProofMessage(byte purpose, byte[] nodeId, byte[] binding) =>
-        [.. Encoding.ASCII.GetBytes("ArcForges node-key-proof v1\n"), purpose, .. SHA256.HashData(Encoding.UTF8.GetBytes(Endpoint.Url)), .. nodeId, .. binding];
+        [.. Encoding.ASCII.GetBytes("ArcForges node-key-proof v1\n"), purpose, .. SHA256.HashData(Encoding.UTF8.GetBytes(PublicBase.Url)), .. nodeId, .. binding];
 
     /// <summary>FakeCenter's own S256 (RFC 7636 section 4.2), independent of the node's <c>Pkce</c>.</summary>
     public static string S256(string verifier) => Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));

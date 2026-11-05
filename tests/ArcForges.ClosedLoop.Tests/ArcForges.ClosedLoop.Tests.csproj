@@ -23,6 +23,7 @@
     -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="../ArcForges.Node.CloudLink.Tests/FakeCenter/FakeCenter.cs" Link="Shared/FakeCenter.cs" />
+    <Compile Include="../ArcForges.Node.CloudLink.Tests/ScriptedBrowser.cs" Link="Shared/ScriptedBrowser.cs" />
     <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
     <ProjectReference Include="../../src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
     <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />
