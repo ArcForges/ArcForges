@@ -151,24 +151,42 @@ public sealed class CloudLinkHostTests
         Assert.Contains("cloud.credential_ended", log, StringComparison.Ordinal);
 
         // SEC-14 beyond the log: no file of the node outside its secret store (the journal with its events and notifications, the
-        // supervisor log, the link and key-set files, the connect log) holds a token. Lock files (a process ID, held locked) are skipped.
+        // supervisor log, the link and key-set files, the connect log) holds a token. The scan starts once every process of this
+        // environment (node and supervisor) has exited, so nothing removes or writes a file meanwhile; a file that is gone by the time it
+        // is read is skipped, and the store database must have been read. Lock files (a process ID, held locked) are skipped.
+        await TestNode.WaitAsync(() => node.LiveProcesses().Count == 0, TimeSpan.FromSeconds(30), "the node and its supervisor to exit");
         var secrets = Path.Combine(node.DataRoot, "run", "test-secrets") + Path.DirectorySeparatorChar;
-        var scanned = Directory.EnumerateFiles(node.Root, "*", SearchOption.AllDirectories)
-            .Where(file => !file.StartsWith(secrets, StringComparison.Ordinal) && !file.EndsWith(".lock", StringComparison.Ordinal)).ToList();
-        Assert.Contains(scanned, file => file.EndsWith("node.db", StringComparison.Ordinal));
-        foreach (var file in scanned)
+        var read = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(node.Root, "*", SearchOption.AllDirectories)
+            .Where(file => !file.StartsWith(secrets, StringComparison.Ordinal) && !file.EndsWith(".lock", StringComparison.Ordinal)).ToList())
         {
-            var text = System.Text.Encoding.Latin1.GetString(ReadAllShared(file));
+            if (ReadAllShared(file) is not { } bytes)
+            {
+                continue;
+            }
+
+            read.Add(file);
+            var text = System.Text.Encoding.Latin1.GetString(bytes);
             Assert.False(text.Contains("afr1.", StringComparison.Ordinal) || text.Contains("afa1.", StringComparison.Ordinal), "a token in " + file);
         }
+
+        Assert.Contains(read, file => file.EndsWith("node.db", StringComparison.Ordinal));
     }
 
-    private static byte[] ReadAllShared(string path)
+    /// <summary>The file's bytes, read as the node shares it, or <see langword="null"/> when it no longer exists.</summary>
+    private static byte[]? ReadAllShared(string path)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var copy = new MemoryStream();
-        stream.CopyTo(copy);
-        return copy.ToArray();
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            return copy.ToArray();
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
     }
 
     private static void Seed(string dataRoot, byte[] nodeId, FakeCenter center, ArcForges.Contracts.Fleet.V1.NodeCredentials issued)

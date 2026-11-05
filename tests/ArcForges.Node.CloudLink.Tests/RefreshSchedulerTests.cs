@@ -28,9 +28,11 @@ public sealed class RefreshSchedulerTests
 
         // 60 minutes issued (access_lifetime_ms): two thirds is 40 minutes, less up to a tenth of jitter (6 minutes).
         Assert.InRange(at, TimeSpan.FromMinutes(34), TimeSpan.FromMinutes(40.5));
-        await Eventually.TrueAsync(() => link.StoredRecord()?.RefreshToken is { } token && token != issued.RefreshToken, "the rotated record is stored");
+        // The rotated record is written before it is used (CTR4-NODE-05), so the store shows it before the link swaps it in: wait for the
+        // rotation itself (the generation), not for the stored record.
+        await Eventually.TrueAsync(() => link.Service.Generation == 2, "the rotation");
+        Assert.NotEqual(issued.RefreshToken, link.StoredRecord()!.RefreshToken);
         Assert.True(link.Center.IsLive(link.StoredRecord()!.RefreshToken));
-        Assert.Equal(1, link.Service.Generation - 1);
     }
 
     [Fact]
@@ -153,9 +155,11 @@ public sealed class RefreshSchedulerTests
         link.Center.Script(Refresh, new FakeFault.HttpStatus(503));
         await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(45), () => link.Center.CallsOf(Refresh).Count == 3,
             "two retries");
-        await Eventually.TrueAsync(() => link.StoredRecord()?.RefreshToken != issued.RefreshToken, "the third attempt rotates");
+        // The third attempt rotates. The record is stored before the link swaps it in and records the contact, so wait for the contact
+        // (the last step of a rotation), not for the stored record.
+        await Eventually.TrueAsync(() => link.Service.Generation == 2 && link.Service.Status().CloudReachable, "the third attempt reaches the center");
+        Assert.NotEqual(issued.RefreshToken, link.StoredRecord()!.RefreshToken);
         Assert.True(link.Service.AccountLinked);
-        Assert.False(link.Service.Status().CloudReachable == false);
     }
 
     [Fact]
