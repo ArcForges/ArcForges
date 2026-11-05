@@ -88,6 +88,22 @@ internal sealed class FakeCenter : IAsyncDisposable
         _app = app;
         _pathBase = pathBase;
         Endpoint = endpoint;
+        Channel = new FakeChannelPeer(this);
+    }
+
+    /// <summary>The node channel peer (AF-CTR-05 N1), served at <c>&lt;path base&gt;/fleet/v1/node</c>.</summary>
+    public FakeChannelPeer Channel { get; }
+
+    /// <summary>The node, installation and account of a live access token (the channel's bearer), or <see langword="null"/>.</summary>
+    internal (byte[] NodeId, byte[] Installation, byte[] Account)? ChannelIdentity(string accessToken)
+    {
+        lock (_gate)
+        {
+            return _byAccess.TryGetValue(accessToken, out var session) && session is { Revoked: false } && session.Access == accessToken
+                && session.AccessExpires > Clock.GetUtcNow()
+                ? (session.NodeId, session.Installation, session.Account)
+                : null;
+        }
     }
 
     /// <summary>The center's URL (<c>http://127.0.0.1:&lt;port&gt;&lt;path base&gt;</c>).</summary>
@@ -146,6 +162,7 @@ internal sealed class FakeCenter : IAsyncDisposable
         builder.WebHost.UseKestrel(options => options.Listen(IPAddress.Loopback, 0, listen => listen.Protocols = HttpProtocols.Http1));
         var app = builder.Build();
         FakeCenter? center = null;
+        app.UseWebSockets();
         app.Run(context => center!.HandleAsync(context));
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First());
@@ -175,6 +192,7 @@ internal sealed class FakeCenter : IAsyncDisposable
             Clock.GetUtcNow() + FamilyLifetime);
         _byRefresh[session.Refresh] = session;
         _byAccess[session.Access] = session;
+        session.Account = NextAccountIds.Count > 0 ? NextAccountIds.Dequeue() : RandomNumberGenerator.GetBytes(16);
 
         var credentials = new NodeCredentials
         {
@@ -183,7 +201,7 @@ internal sealed class FakeCenter : IAsyncDisposable
             AccessExpiresAt = ProtoTime.ToInstant(session.AccessExpires),
             Account = new AccountSummary
             {
-                AccountId = new Id { Value = ByteString.CopyFrom(NextAccountIds.Count > 0 ? NextAccountIds.Dequeue() : RandomNumberGenerator.GetBytes(16)) },
+                AccountId = new Id { Value = ByteString.CopyFrom(session.Account) },
                 DisplayName = displayName,
                 EmailMasked = displayName == Account.Name ? Account.Email : "t***@example.test",
             },
@@ -317,6 +335,12 @@ internal sealed class FakeCenter : IAsyncDisposable
     private async Task HandleAsync(HttpContext context)
     {
         var path = context.Request.Path.Value ?? string.Empty;
+        if (path == _pathBase + FakeChannelPeer.Path)
+        {
+            await Channel.HandleAsync(context);
+            return;
+        }
+
         if (context.Request.Method != "POST" || !path.StartsWith(_pathBase + Service, StringComparison.Ordinal))
         {
             context.Response.StatusCode = 404;
@@ -1226,6 +1250,7 @@ internal sealed class FakeCenter : IAsyncDisposable
         session = _byRefresh[credentials.RefreshToken];
         _deliveredRefresh = credentials.RefreshToken;
         _heldKeys[Convert.ToHexString(key)] = false;
+        Channel.RegisterInstallationKey(session.Installation, key);
         return null;
     }
 
@@ -1381,6 +1406,8 @@ internal sealed class FakeCenter : IAsyncDisposable
         public byte[] NodeId { get; } = nodeId;
 
         public byte[] Installation { get; } = installation;
+
+        public byte[] Account { get; set; } = new byte[16];
 
         public string Access { get; set; } = access;
 

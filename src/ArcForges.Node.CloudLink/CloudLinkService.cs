@@ -88,6 +88,34 @@ internal sealed record CloudLinkOptions
 
     /// <summary>The browser opener of the sign-in flows (part N2); <see langword="null"/> opens nothing.</summary>
     public IBrowserOpener? Opener { get; init; }
+
+    /// <summary>
+    /// The store of <c>routed_call_log</c> (AF-CTR-05 N1; the host passes its command processor). Without it the node channel does not run
+    /// (the relay state is DISABLED, <c>channel_not_configured</c>), as in the link's unit tests that do not exercise the channel.
+    /// </summary>
+    public IRoutedCallStore? RoutedCalls { get; init; }
+
+    /// <summary>The routed dispatch (part N2); part N1 refuses every verified call (<see cref="RefusingDispatcher"/>).</summary>
+    public IRoutedDispatcher? Dispatcher { get; init; }
+
+    /// <summary>The node's version as its hello states it.</summary>
+    public string Version { get; init; } = "0.1.0-dev";
+
+    /// <summary>The Contracts cohort the node was built with, as its hello states it.</summary>
+    public string ContractVersion { get; init; } = ChannelContract.Cohort;
+
+    /// <summary>The channel backoff's random draw in [0, 1] (tests make it deterministic).</summary>
+    public Func<double>? ChannelRandom { get; init; }
+
+    /// <summary>The refresh scheduler's random draw in [0, 1] (tests make it deterministic; PR #71 review N-10).</summary>
+    public Func<double>? LinkRandom { get; init; }
+}
+
+/// <summary>The Contracts cohort of the node channel (Directory.Packages.props; a repository test keeps them equal).</summary>
+internal static class ChannelContract
+{
+    /// <summary>The cohort of ArcForges.Contracts.Relay, Fleet, Foundation and Node (AF-CTR-05 C2, K2).</summary>
+    public const string Cohort = "1.0.0-ci.437.1";
 }
 
 /// <summary>
@@ -102,7 +130,7 @@ internal sealed record CloudLinkOptions
 /// flushed at shutdown; a restart before a successful write presents the spent stored token, which the center treats as a reuse that
 /// revokes the family and signs the node out (it fails closed).</para>
 /// </summary>
-internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
+internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDisposable
 {
     /// <summary>The access lifetime assumed when the center states none (the policy minimum, so the node never refreshes late).</summary>
     public static readonly TimeSpan FallbackAccessLifetime = TimeSpan.FromMinutes(15);
@@ -171,6 +199,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private int _disposed;
     private int _idle;
     private bool _signingIn;
+    private ChannelLoop? _channel;
 
     /// <summary>Creates the link (nothing is read until <see cref="StartAsync"/>).</summary>
     public CloudLinkService(CloudLinkOptions options)
@@ -179,7 +208,20 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         _store = new CloudCredentialStore(options.DataRoot, options.Secrets);
         _nodeHex = Convert.ToHexStringLower(options.NodeId.Span);
         SignIn = new SignInOrchestrator(this, options);
+        if (options.RoutedCalls is { } routed)
+        {
+            _channel = new ChannelLoop(this, new RoutedCallLog(routed, options.Clock), options.Dispatcher ?? new RefusingDispatcher(options.Clock), options.Log,
+                options.Clock, options.ConnectLog, options.Version, options.ContractVersion, options.ChannelRandom);
+            Features = [SignInFeature, ChannelFeature];
+        }
+        else
+        {
+            Features = [SignInFeature];
+        }
     }
+
+    /// <summary>The node channel (<see langword="null"/> when the link was built without its store).</summary>
+    internal ChannelLoop? Channel => _channel;
 
     /// <summary>The sign-in flows (part N2: BeginSignIn, GetSignInFlow, CancelSignIn).</summary>
     public SignInOrchestrator SignIn { get; }
@@ -205,8 +247,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <summary>The feature token of the sign-in methods (G-7: advertised with the methods; recorded for Design 02).</summary>
     public const string SignInFeature = "account.sign_in.v1";
 
+    /// <summary>The feature token of the node channel (AF-CTR-05 E.3; the feature-token pattern of <see cref="SignInFeature"/>).</summary>
+    public const string ChannelFeature = "center.channel.v1";
+
     /// <inheritdoc />
-    public IReadOnlyList<string> Features { get; } = [SignInFeature];
+    public IReadOnlyList<string> Features { get; }
 
     /// <summary>Incremented at every rotation (the single-flight gate's generation, node-9 item 1).</summary>
     public long Generation => Interlocked.Read(ref _generation);
@@ -227,6 +272,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
         await PublishAsync(null).ConfigureAwait(false);
         _loop = Task.Run(() => LoopAsync(_stop.Token), CancellationToken.None);
+        _channel?.Start();
     }
 
     /// <inheritdoc />
@@ -361,15 +407,16 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     {
         // Read before the state lock: the key store may wait for another handle on its record (PrivateFiles' retries; PR #71 review N-1).
         var recorded = _options.Keys.Recorded();
+        var channel = _channel?.Status ?? new ChannelStatus(RelayState.Disabled, ChannelReasons.NotConfigured);
         lock (_stateLock)
         {
             var status = new AccountStatus
             {
                 SignedIn = _phase == CloudLinkPhase.SignedIn,
                 NodeEnrolled = _phase == CloudLinkPhase.SignedIn,
-                Relay = RelayState.Disabled,
-                RelayReason = "not_delivered",
-                CloudLinkEnabled = false,
+                Relay = channel.State,
+                RelayReason = channel.Reason,
+                CloudLinkEnabled = _phase == CloudLinkPhase.SignedIn && _link is { ChannelDisabled: not true },
             };
             var center = Configured();
             if (_phase == CloudLinkPhase.SignedIn && _record is { } record)
@@ -886,6 +933,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
         // An active sign-in ends first: its receiver closes and no new center call starts (a restart cancels a flow).
         await SignIn.DisposeAsync().ConfigureAwait(false);
+        if (_channel is not null)
+        {
+            await _channel.DisposeAsync().ConfigureAwait(false);
+        }
+
         await _stop.CancelAsync().ConfigureAwait(false);
         Wake();
         try
@@ -910,6 +962,162 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         _http?.Dispose();
+    }
+
+    /// <summary>
+    /// <c>AccountService.SetCloudLink</c> (AF-CTR-05 E.3; SM-RELAY: a false turns every state DISABLED and closes the channel): records the
+    /// switch in the link file under the gate. <see langword="false"/> when the node is not signed in (<c>STATE/not_signed_in</c>).
+    /// </summary>
+    public async Task<bool> SetCloudLinkAsync(bool enabled)
+    {
+        using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            CloudLinkFile? link;
+            lock (_stateLock)
+            {
+                link = _phase == CloudLinkPhase.SignedIn ? _link : null;
+            }
+
+            if (link is null)
+            {
+                return false;
+            }
+
+            var disabled = enabled ? (bool?)null : true;
+            if (link.ChannelDisabled != disabled)
+            {
+                link.ChannelDisabled = disabled;
+                _store.WriteLink(link);
+                _options.Log.Info("cloud.link_switched", new LogField("enabled", enabled));
+            }
+        }
+
+        await PublishAsync(null).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Signs a relay assertion for a local caller over a fresh center-sent relay nonce of the open channel (Plan addendum D0-B1, C-N2; part N3's
+    /// local proxy relays with it); <see langword="null"/> without a connected channel.
+    /// </summary>
+    internal Task<ArcForges.Contracts.Relay.V1.RelayAssertion?> SignRelayAssertionAsync(Origin localOrigin, Id localSessionId,
+        ArcForges.Contracts.Relay.V1.RoutedMethod method, ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken) =>
+        _channel is { } channel
+            ? channel.SignRelayAssertionAsync(localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
+            : Task.FromResult<ArcForges.Contracts.Relay.V1.RelayAssertion?>(null);
+
+    /// <inheritdoc />
+    (ChannelTicket? Ticket, string Reason) IChannelHost.Ticket()
+    {
+        var center = Configured(out var invalid);
+        lock (_stateLock)
+        {
+            if (_phase != CloudLinkPhase.SignedIn || _record is not { } record || _link is not { } link)
+            {
+                return (null, _warnings.Count > 0 && _link is not null ? ChannelReasons.CredentialUnusable : ChannelReasons.SignedOut);
+            }
+
+            if (link.ChannelDisabled == true)
+            {
+                return (null, ChannelReasons.LinkDisabled);
+            }
+
+            if (invalid || center is null || center.Url != record.CenterUrl || record.InstallationId.Length != 32
+                || !CenterEndpoint.TryParse(record.CenterUrl, out var bound, out _))
+            {
+                return (null, ChannelReasons.CredentialUnusable);
+            }
+
+            byte[] installation;
+            try
+            {
+                installation = Convert.FromHexString(record.InstallationId);
+            }
+            catch (FormatException)
+            {
+                return (null, ChannelReasons.CredentialUnusable);
+            }
+
+            return (new ChannelTicket(bound, record.AccessToken, Generation, _options.NodeId, installation), ChannelReasons.Connecting);
+        }
+    }
+
+    /// <inheritdoc />
+    CallBinding? IChannelHost.Binding()
+    {
+        CloudCredentialRecord? record;
+        lock (_stateLock)
+        {
+            record = _phase == CloudLinkPhase.SignedIn ? _record : null;
+        }
+
+        if (record is null || !CenterEndpoint.TryParse(record.CenterUrl, out var center, out _))
+        {
+            return null;
+        }
+
+        CloudKeySetFile? keys;
+        try
+        {
+            keys = _store.ReadKeys();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            keys = null;
+        }
+
+        byte[] account;
+        try
+        {
+            account = record.AccountId is { Length: 32 } hex ? Convert.FromHexString(hex) : [];
+        }
+        catch (FormatException)
+        {
+            account = [];
+        }
+
+        return new CallBinding { Center = center, NodeId = _options.NodeId, AccountId = account, InstallationId = record.InstallationId, Keys = keys };
+    }
+
+    /// <inheritdoc />
+    INodeKey? IChannelHost.OpenKey(ChannelTicket ticket)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+        try
+        {
+            return _options.Keys.Load(_options.NodeId.Span, ticket.Center.Origin);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+        {
+            _options.Log.Warning("cloud.channel.node_key_unavailable", new LogField("errorType", exception.GetType().Name));
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    void IChannelHost.RelayChanged() => _ = PublishRelayAsync();
+
+    /// <inheritdoc />
+    void IChannelHost.Notice(CloudNotice notice)
+    {
+        lock (_stateLock)
+        {
+            _notice = notice;
+        }
+
+        _ = PublishAsync(TakeNotice());
+    }
+
+    private async Task PublishRelayAsync()
+    {
+        try
+        {
+            await _options.Publish(new CloudLinkPublication(Status(), null)).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+        {
+            _options.Log.Warning("cloud.publish.failed", new LogField("errorType", exception.GetType().Name));
+        }
     }
 
     private async Task<bool> RemoteSignOutAsync(CenterClient client, CloudCredentialRecord record, CancellationToken cancellationToken)
@@ -979,7 +1187,22 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 {
                     if (_reload || (_link?.State == LinkStates.Ending) || OwnCenterConfiguredAgain())
                     {
-                        Load();
+                        try
+                        {
+                            Load();
+                        }
+                        catch
+                        {
+                            // PR #71 review N-11: a reload that throws (a link or key-set file failing beyond its retries) is retried at the
+                            // next turn, which settles the stranded warnings once the store answers.
+                            lock (_stateLock)
+                            {
+                                _reload = true;
+                            }
+
+                            throw;
+                        }
+
                         changed = true;
                     }
 
@@ -1259,9 +1482,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         var now = _options.Clock.GetTimestamp();
-        ClearStranded();
         lock (_stateLock)
         {
+            // PR #71 review N-12: the stranded warnings go in the same lock that makes the link signed in, so no status read sees neither.
+            RemoveStrandedLocked(keep: null);
             _record = record;
             _phase = CloudLinkPhase.SignedIn;
             _receipt = now;
@@ -1463,6 +1687,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         Contact(true);
+
+        // CTR5-NODE-04: the connected channel sends TokenRefresh with the new access token.
+        _channel?.CredentialRotated();
         return true;
     }
 
@@ -2006,6 +2233,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
     private async Task PublishAsync(CloudNotice? notice)
     {
+        // Every state change of the link is published: the channel re-reads the link (a session of an ended credential closes).
+        _channel?.LinkChanged();
         try
         {
             await _options.Publish(new CloudLinkPublication(Status(), notice)).ConfigureAwait(false);
@@ -2020,7 +2249,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
     private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * _options.Clock.TimestampFrequency);
 
-    private static TimeSpan Jitter(TimeSpan range) => range <= TimeSpan.Zero ? TimeSpan.Zero : TimeSpan.FromTicks(Random.Shared.NextInt64(range.Ticks + 1));
+    /// <summary>A uniform draw in [0, <paramref name="range"/>] (the link's random source; tests can make it deterministic, PR #71 review N-10).</summary>
+    private TimeSpan Jitter(TimeSpan range) => range <= TimeSpan.Zero
+        ? TimeSpan.Zero
+        : _options.LinkRandom is { } draw ? TimeSpan.FromTicks((long)(Math.Clamp(draw(), 0, 1) * range.Ticks)) : TimeSpan.FromTicks(Random.Shared.NextInt64(range.Ticks + 1));
 
     /// <summary>A center call in flight under the gate, which a sign-out can cancel (<see cref="EnterForSignOutAsync"/>).</summary>
     private readonly struct WorkScope(CloudLinkService owner, CancellationTokenSource work) : IDisposable
@@ -2085,6 +2317,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
         public static readonly CloudNotice ReplyLost = new("account_signed_out", "Signed out of the center",
             "The reply to a credential refresh was lost and the center then refused the credential (refresh_reply_lost: strict rotation); sign in again.");
+
+        public static readonly CloudNotice ChannelReplaced = new("account_channel_replaced", "Another connection took over this node's channel",
+            "The center replaced this node's channel with a newer connection proved with this node's key. If no other copy of this node runs with this data root, check this computer and sign the node out on the web.");
 
         public static readonly CloudNotice Abandoned = new("account_link_abandoned", "A credential was forgotten",
             "The node forgot a credential it could not use (another secret store or node ID). It may remain in the previous secret store and stay live at its center until you revoke this device on the web or it expires.");

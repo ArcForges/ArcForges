@@ -376,6 +376,10 @@ public static class NodeHost
             RefreshInterval = CloudLinkTestHooks.Refresh(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.RefreshSeconds)),
             Opener = options.Opener
                 ?? new BrowserOpener(options.TestMode, CloudLinkTestHooks.Browser(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.BrowserFile))),
+
+            // AF-CTR-05 N1: the node channel logs every received call in routed_call_log through the single writer.
+            RoutedCalls = new ProcessorRoutedCallStore(processor),
+            Version = NodeContract.ProductVersion,
         });
         await using var cloudScope = cloud.ConfigureAwait(false);
         node.CloudLink = cloud;
@@ -615,10 +619,12 @@ public static class NodeHost
             {
                 try
                 {
-                    // Approvals past their TTL expire; decided approvals (90 days) and audit entries (1 year) are pruned (node-store.md).
+                    // Approvals past their TTL expire; decided approvals (90 days), audit entries (1 year) and routed calls (node-store.md section 2a)
+                    // are pruned (node-store.md).
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
-                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)).ConfigureAwait(false);
+                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
+                        + RoutedCallLog.Prune(context.Transaction)).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
 
                     // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.

@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/ArcForges/Contracts",
+  "sourceCommit": "e67a6b089a7270ab771a97c27aeba92c5d3b0469",
+  "sourcePath": "fixtures/internal",
+  "producer": "Contracts AF-CTR-05 C2 (#129): the golden byte and signature vectors of the node channel, checked by Contracts go/internal/compat/relay_vectors_test.go and tests/StructureTests/NodeChannelCases.cs",
+  "contractsCohort": "1.0.0-ci.437.1",
+  "licence": "Apache-2.0 (Contracts); the data file copied byte for byte",
+  "listingSha256": "ce3ce38d46412228bd23cefd1cf3bcc2b5fcd0cada707364f6966364f51ca7ac",
+  "files": [
+    {
+      "file": "af-ctr-05-relay-vectors.json",
+      "gitBlob": "2bd12ed05865c971e484f2f3c75d4c416fc9b246",
+      "sha256": "8b6f1fb333a6aad96c32467b77148894ed0fce04d54fc9603c7b8c620fdec899"
+    }
+  ]
+}

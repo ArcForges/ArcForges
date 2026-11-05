@@ -37,6 +37,16 @@ public sealed class FakeCenterConformanceTests
         [("SignOutNode", "CONFLICT/command_id_reused")] = "fleet.proto SignOutNode idempotency: command_id",
     };
 
+    /// <summary>
+    /// Later cohorts the captures still pin, with the reason (reviewed): the node's NodeEnrollmentService requests and replies are unchanged.
+    /// </summary>
+    internal static readonly Dictionary<(string Captured, string Built), string> WireIdenticalCohorts = new()
+    {
+        [("1.0.0-ci.424.1", "1.0.0-ci.437.1")] =
+            "AF-CTR-05 C2 (Contracts a5bc52f..e67a6b0) is additive: in fleet.proto it changes only comments of NodeEnrollmentService and its messages, "
+            + "and adds FleetService methods and FleetNode.reported_name, which no NodeEnrollmentService method carries; the Cloud captures stay at 424.1",
+    };
+
     public static TheoryData<string> Captures() =>
         [.. Directory.EnumerateFiles(Path.Combine(Fixtures, "center-exchanges"), "*.json").Select(path => Path.GetFileNameWithoutExtension(path)!).Order(StringComparer.Ordinal)];
 
@@ -45,10 +55,13 @@ public sealed class FakeCenterConformanceTests
     {
         var root = VendoredManifest("center-exchanges", 53);
 
-        // A cohort bump without a re-vendor fails: the captures name the cohort of the generated types this repository builds with.
+        // A cohort bump without a re-vendor fails: the captures name the cohort of the generated types this repository builds with, or the
+        // cohort is in the reviewed table of later cohorts whose NodeEnrollmentService messages are byte-identical on the wire.
         var cohort = root.GetProperty("contractsCohort").GetString()!;
         var version = typeof(NodeEnrollmentService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
-        Assert.StartsWith(cohort, version, StringComparison.Ordinal);
+        Assert.True(version.StartsWith(cohort, StringComparison.Ordinal)
+            || WireIdenticalCohorts.Any(entry => entry.Key.Captured == cohort && version.StartsWith(entry.Key.Built, StringComparison.Ordinal)),
+            "the captures of cohort " + cohort + " were not re-vendored for " + version);
         foreach (var file in root.GetProperty("files").EnumerateArray())
         {
             Assert.Equal(cohort, Capture.Load(file.GetProperty("file").GetString()![..^5]).Cohort);
@@ -59,11 +72,11 @@ public sealed class FakeCenterConformanceTests
     /// Checks a vendored directory against its manifest (the Cloud source commit of Cloud #136, each file's SHA-256, the listing digest) and
     /// returns the manifest; a drifted, missing or extra file fails.
     /// </summary>
-    internal static JsonElement VendoredManifest(string directory, int count)
+    internal static JsonElement VendoredManifest(string directory, int count, string sourceCommit = "41c8a72dbbd63efdb6967f71c23610ae2f73fae1")
     {
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Fixtures, directory + ".SOURCE.json")));
         var root = manifest.RootElement.Clone();
-        Assert.Equal("41c8a72dbbd63efdb6967f71c23610ae2f73fae1", root.GetProperty("sourceCommit").GetString());
+        Assert.Equal(sourceCommit, root.GetProperty("sourceCommit").GetString());
         var files = root.GetProperty("files").EnumerateArray().ToList();
         Assert.Equal(count, files.Count);
         var listing = new StringBuilder();

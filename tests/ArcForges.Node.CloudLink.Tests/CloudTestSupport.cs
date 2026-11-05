@@ -218,12 +218,27 @@ internal sealed class LinkFixture : IAsyncDisposable
 
     public TimeSpan? RefreshInterval { get; set; }
 
+    /// <summary>The link's random draw in [0, 1] (<see langword="null"/>: random).</summary>
+    public Func<double>? LinkRandom { get; set; }
+
     public string? ConnectLog { get; set; }
 
     /// <summary>The sign-in flows' browser (part N2): the allowed ScriptedBrowser.</summary>
     public ScriptedBrowser Browser { get; } = new();
 
     public List<CloudLinkPublication> Publications { get; } = [];
+
+    /// <summary>Runs the node channel (AF-CTR-05 N1) with a real node store of the data root for <c>routed_call_log</c>.</summary>
+    public bool Channel { get; set; }
+
+    /// <summary>The routed dispatch of the channel (<see langword="null"/>: part N1's refusing dispatcher).</summary>
+    public IRoutedDispatcher? Dispatcher { get; set; }
+
+    /// <summary>The channel backoff's random draw.</summary>
+    public Func<double>? ChannelRandom { get; set; }
+
+    /// <summary>The node store while the link runs with <see cref="Channel"/> (closed at <see cref="StopAsync"/>, reopened at the next start).</summary>
+    public NodeStore? Store { get; private set; }
 
     public CloudLinkService Service => _service ?? throw new InvalidOperationException("Start the link first.");
 
@@ -239,8 +254,17 @@ internal sealed class LinkFixture : IAsyncDisposable
     /// <summary>Builds and starts a link (again, after <see cref="StopAsync"/>: a node restart over the same files and secret store).</summary>
     public async Task<CloudLinkService> StartAsync()
     {
+        if (Channel)
+        {
+            Store ??= NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "boot-1", Clock = Clock });
+        }
+
+        var store = Store;
         _service = new CloudLinkService(new CloudLinkOptions
         {
+            RoutedCalls = store is null ? null : new DirectRoutedCallStore(store),
+            Dispatcher = Dispatcher,
+            ChannelRandom = ChannelRandom,
             DataRoot = DataRoot,
             NodeId = NodeId,
             Secrets = Secrets.Selection,
@@ -267,6 +291,7 @@ internal sealed class LinkFixture : IAsyncDisposable
                 return Task.CompletedTask;
             },
             RefreshInterval = RefreshInterval,
+            LinkRandom = LinkRandom,
             ConnectLog = ConnectLog,
             Opener = Browser,
         });
@@ -289,6 +314,53 @@ internal sealed class LinkFixture : IAsyncDisposable
             await _service.DisposeAsync();
             _service = null;
         }
+
+        Store?.Dispose();
+        Store = null;
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>
+    /// Signs in for the channel: the node key of the center's origin first (as a sign-in creates it before its request), the peer's command key
+    /// in the delivered key set, and the key registered for the credential's installation (as the center registers it at sign-in).
+    /// </summary>
+    public async Task<NodeCredentials> SignInWithChannelAsync()
+    {
+        using (var key = Keys.Load(NodeId, Center.Endpoint.Origin) ?? Keys.Create(NodeId, Center.Endpoint.Origin, Clock))
+        {
+            NodePublicKey = key.PublicKey;
+        }
+
+        if (!Center.CommandKeys.Any(key => key.Kid == FakeChannelPeer.Kid))
+        {
+            Center.CommandKeys.Add(Center.Channel.CommandPublicKey);
+        }
+
+        var credentials = Center.Issue(NodeId);
+        Center.Channel.RegisterNodeKey(credentials.AccessToken, NodePublicKey);
+        await Service.AdoptAsync(credentials, Center.Endpoint);
+        return credentials;
+    }
+
+    /// <summary>The node key's public half (after <see cref="SignInWithChannelAsync"/>).</summary>
+    public byte[] NodePublicKey { get; private set; } = [];
+
+    /// <summary>The rows of <c>routed_call_log</c> (decision, refusal step, refusal code, call ID present).</summary>
+    public List<(long Decision, string? Step, string? Code, bool CallId)> RoutedLog()
+    {
+        var store = Store ?? throw new InvalidOperationException("The link runs without its store.");
+        return store.Read(reader =>
+        {
+            var rows = new List<(long, string?, string?, bool)>();
+            using var command = reader.CreateCommand("SELECT decision, refusal_step, refusal_code, call_id IS NOT NULL FROM routed_call_log ORDER BY log_id;");
+            using var result = command.ExecuteReader();
+            while (result.Read())
+            {
+                rows.Add((result.GetInt64(0), result.IsDBNull(1) ? null : result.GetString(1), result.IsDBNull(2) ? null : result.GetString(2), result.GetInt64(3) == 1));
+            }
+
+            return rows;
+        });
     }
 
     /// <summary>The stored credential record (test verification; the node reads it only through the link).</summary>
@@ -388,4 +460,11 @@ internal static class Eventually
             await Task.Delay(15);
         }
     }
+}
+
+/// <summary>The link tests' routed-call store: one write transaction of the node store (the host uses its command processor).</summary>
+internal sealed class DirectRoutedCallStore(NodeStore store) : IRoutedCallStore
+{
+    /// <inheritdoc />
+    public Task<long> WriteAsync(Func<StoreTransaction, long> write) => Task.FromResult(store.Write(write));
 }

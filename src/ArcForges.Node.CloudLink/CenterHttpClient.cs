@@ -74,7 +74,7 @@ internal sealed class CenterHttpClient : IDisposable
     }
 
     /// <summary>
-    /// Refuses every request whose scheme, host or port differ from the center (CTR4-SEC-19), and with the test-mode hook
+    /// Refuses every request whose scheme, host or port differ from the center (CTR4-SEC-19; the channel's ws/wss is http/https of the same origin), and with the test-mode hook
     /// <c>ARCFORGES_TEST_CONNECT_LOG</c> appends <c>host:port sent</c> or <c>host:port refused</c> and the UTC instant for each attempt (nothing else: no path,
     /// header or body). The log is the node's own corroboration, not independent evidence.
     /// </summary>
@@ -86,7 +86,10 @@ internal sealed class CenterHttpClient : IDisposable
         {
             ArgumentNullException.ThrowIfNull(request);
             var uri = request.RequestUri;
-            var allowed = uri is not null && uri.IsAbsoluteUri && string.Equals(uri.Scheme, center.Scheme, StringComparison.Ordinal)
+
+            // The node channel's upgrade (CenterChannelClient) reaches the guard with its ws or wss URI: the scheme of the same origin.
+            var scheme = uri?.Scheme switch { "ws" => "http", "wss" => "https", var other => other };
+            var allowed = uri is not null && uri.IsAbsoluteUri && string.Equals(scheme, center.Scheme, StringComparison.Ordinal)
                 && string.Equals(uri.Host, center.Host, StringComparison.Ordinal)
                 && uri.Port == center.EffectivePort;
             Record(uri is null ? "unknown" : uri.Host + ":" + uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture), allowed ? "sent" : "refused");
