@@ -165,6 +165,7 @@ public sealed class CredentialBindingTests
         link.Secrets.DeleteDelay = TimeSpan.FromMilliseconds(300);
         var deletes = link.Secrets.Deletes;
         using var stop = new CancellationTokenSource();
+        var reads = 0;
         var reader = Task.Run(() =>
         {
             var misses = 0;
@@ -174,13 +175,25 @@ public sealed class CredentialBindingTests
                 {
                     misses++;
                 }
+
+                Interlocked.Increment(ref reads);
+                Thread.Sleep(1);
             }
 
             return misses;
         }, TestContext.Current.CancellationToken);
 
-        // Two retries of the ending, each a minute apart.
-        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5), () => link.Secrets.Deletes >= deletes + 2, "two retries");
+        // Two retries of the ending (the loop retries every minute): the clock moves until the store saw two more deletes; each retry
+        // holds the window open for 300 ms, which the reader samples many times.
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (link.Secrets.Deletes < deletes + 2)
+        {
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(60), "the loop retried the ending only " + (link.Secrets.Deletes - deletes) + " times");
+            link.Clock.Advance(TimeSpan.FromSeconds(20));
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+        }
+
+        Assert.True(Volatile.Read(ref reads) > 10, "the reader read the status " + reads + " times");
         await stop.CancelAsync();
         Assert.Equal(0, await reader.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
         Assert.Equal(LinkStates.Ending, link.Storage.ReadLink()!.State);
