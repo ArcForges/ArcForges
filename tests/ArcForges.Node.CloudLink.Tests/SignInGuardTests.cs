@@ -393,6 +393,38 @@ public sealed class SignInGuardTests
     }
 
     [Fact]
+    public async Task WhoeverSeesAFlowEndedSeesTheLinksOwnPhase()
+    {
+        // The Windows leg's ABrowserFlowExpiresAfterTenMinutes: the flow read EXPIRED while the link still said SigningIn, because the flow's
+        // end and the release of the link's reservation were two steps (the receiver's stop between them). A reader spins on the flow while
+        // the flow ends; the first time it sees the end, the phase must already be the link's own.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var seen = new List<CloudLinkPhase>();
+        for (var round = 0; round < 50; round++)
+        {
+            var flow = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+            using var started = new SemaphoreSlim(0);
+            var reader = Task.Run(() =>
+            {
+                started.Release();
+                while (true)
+                {
+                    if (link.Service.SignIn.Get(flow.FlowId)!.State != SignInFlowState.Pending)
+                    {
+                        return link.Service.Phase;
+                    }
+                }
+            }, Cancel);
+            await started.WaitAsync(Cancel);
+            link.Service.SignIn.Cancel(flow.FlowId);
+            seen.Add(await reader.WaitAsync(TimeSpan.FromSeconds(5), Cancel));
+        }
+
+        Assert.All(seen, phase => Assert.Equal(CloudLinkPhase.SignedOut, phase));
+    }
+
+    [Fact]
     public async Task LateCredentialsOfACancelledFlowKeepTheKeyOfTheNextFlow()
     {
         // sec N-4 probe ProbeLateCredentialsOfACancelledFlowDeleteTheKeyOfTheNextFlow.

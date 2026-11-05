@@ -1079,6 +1079,10 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             run.Ended = true;
             run.State = state;
             run.Error = state is FlowPhase.Failed or FlowPhase.Cancelled ? error : null;
+
+            // In the same step as the flow's end (lock order: the flow's lock, then the link's state lock; never the other way): a reader of
+            // the ended flow never sees the link still SigningIn (the Windows leg saw that race in ABrowserFlowExpiresAfterTenMinutes).
+            _link.EndSignInReservation();
         }
 
         run.Cancelled.TrySetResult();

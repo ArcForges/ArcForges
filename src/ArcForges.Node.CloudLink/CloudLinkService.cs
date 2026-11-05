@@ -566,12 +566,20 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <summary>Ends the reservation (every end of a flow): the phase is the link's own again and a held credential's probe resumes.</summary>
     internal void ReleaseSignIn()
     {
+        EndSignInReservation();
+        Wake();
+    }
+
+    /// <summary>
+    /// Ends the reservation without waking the loop: the flow's end calls it while it holds the flow's lock, so whoever sees the flow ended
+    /// also sees the link's own phase (no <c>SigningIn</c> after an EXPIRED, DENIED, FAILED or CANCELLED flow). Then <see cref="ReleaseSignIn"/>.
+    /// </summary>
+    internal void EndSignInReservation()
+    {
         lock (_stateLock)
         {
             _signingIn = false;
         }
-
-        Wake();
     }
 
     /// <summary>
