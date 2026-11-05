@@ -158,12 +158,12 @@ public sealed class SignInAccountServiceTests
 
         await link.StartAsync();
         Assert.Contains(state, link.Service.Status().Warnings);
-        var linkBytes = File.ReadAllBytes(link.Storage.LinkPath);
+        var linkBytes = PrivateFiles.ReadOrNull(link.Storage.LinkPath)!;
 
         // The remote form never abandons anything.
         Assert.Equal(state == "credential_store_unavailable" ? SignOutResult.StoreUnavailable : SignOutResult.NotSignedIn,
             await link.Service.SignOutHeldAsync(revokeRemote: true));
-        Assert.Equal(linkBytes, File.ReadAllBytes(link.Storage.LinkPath));
+        Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
 
         var result = await link.Service.SignOutHeldAsync(revokeRemote: false);
         await link.Service.PublishCurrentAsync();
@@ -185,7 +185,7 @@ public sealed class SignInAccountServiceTests
         else
         {
             Assert.Equal(SignOutResult.StoreUnavailable, result);
-            Assert.Equal(linkBytes, File.ReadAllBytes(link.Storage.LinkPath));
+            Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
             Assert.True(File.Exists(link.Storage.KeysPath));
             Assert.Single(held.Names());
         }

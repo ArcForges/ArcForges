@@ -150,6 +150,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private string? _lastError;
     private bool _rejected;
     private bool _pendingWrite;
+    private CloudLinkFile? _reportedUnwritten;
     private CloudCredentialRecord? _pendingRecord;
     private string? _pendingTarget;
     private bool _signOutPending;
@@ -358,6 +359,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <summary>The account status (account.proto <c>AccountStatus</c>; AF-CTR-04 N1 d.2).</summary>
     public AccountStatus Status()
     {
+        // Read before the state lock: the key store may wait for another handle on its record (PrivateFiles' retries; PR #71 review N-1).
+        var recorded = _options.Keys.Recorded();
         lock (_stateLock)
         {
             var status = new AccountStatus
@@ -404,7 +407,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 status.LastContactAt = ProtoTime.ToInstant(contact);
             }
 
-            if (_options.Keys.Recorded() is { } key && key.NodeId == _nodeHex)
+            if (recorded is { } key && key.NodeId == _nodeHex)
             {
                 status.NodeKeyFingerprint = key.Fingerprint;
             }
@@ -517,7 +520,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <c>STATE/invalid_state</c> of BeginSignIn: not signed in (<c>signed_in</c>/<c>sign_in</c>); no link this node cannot use or is ending
     /// (<c>signed_out</c> and the warning's name, or <c>ending</c>), except a credential held as <c>center_rejected_credential</c>, which only
     /// a successful sign-in replaces; a configured center (<c>center_url</c>). On success the phase is <c>SigningIn</c> (the <c>center_url</c>
-    /// refusal) and the probe of a held credential pauses until <see cref="ReleaseSignIn"/>.
+    /// refusal) and the probe of a held credential pauses until the flow ends (<see cref="EndSignInReservation"/>).
     /// </summary>
     internal ArcError? ReserveSignIn(out CenterEndpoint? center)
     {
@@ -563,15 +566,20 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         return null;
     }
 
-    /// <summary>Ends the reservation (every end of a flow): the phase is the link's own again and a held credential's probe resumes.</summary>
-    internal void ReleaseSignIn()
+    /// <summary>Wakes the loop after a flow's end (a held credential's probe resumes, unless a newer flow reserved meanwhile).</summary>
+    internal void WakeAfterSignIn() => Wake();
+
+    /// <summary>
+    /// Ends the reservation, once per flow: the flow's end calls it while it holds the flow's lock, so whoever sees the flow ended also sees
+    /// the link's own phase (no <c>SigningIn</c> after an EXPIRED, DENIED, FAILED or CANCELLED flow). It is never called again for that flow:
+    /// a newer flow may have reserved by then (PR #71 review B-1). Then <see cref="WakeAfterSignIn"/>.
+    /// </summary>
+    internal void EndSignInReservation()
     {
         lock (_stateLock)
         {
             _signingIn = false;
         }
-
-        Wake();
     }
 
     /// <summary>
@@ -980,6 +988,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                         changed |= FlushPendingWrite();
                     }
 
+                    FlushReported();
+
                     if ((Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
                     {
                         changed |= await RefreshCoreAsync(work.Token).ConfigureAwait(false);
@@ -1023,6 +1033,46 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Records the reported name and version: in memory at once (the center has them; the report is done and is not sent again), and in the
+    /// link file. A write that fails (on Windows another process may hold the file beyond the retries) leaves the values pending: the loop
+    /// writes the link file again at its next turn, every minute, until it has them (no new center call; PR #71 review N-5). Any other write
+    /// of the link file meanwhile carries them too. The caller holds the gate.
+    /// </summary>
+    private void RecordReported(CloudLinkFile link, EnrollingNodeInfo info)
+    {
+        link.ReportedName = info.Name;
+        link.ReportedVersion = info.Version;
+        Volatile.Write(ref _reportedUnwritten, link);
+        FlushReported();
+    }
+
+    /// <summary>Writes the link file of a recorded report that is not yet in it (the caller holds the gate).</summary>
+    private void FlushReported()
+    {
+        if (Volatile.Read(ref _reportedUnwritten) is not { } link)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(link, _link))
+        {
+            // The link was ended, reloaded or replaced meanwhile: its file decides (a reload re-reports what it lacks).
+            Volatile.Write(ref _reportedUnwritten, null);
+            return;
+        }
+
+        try
+        {
+            _store.WriteLink(link);
+            Volatile.Write(ref _reportedUnwritten, null);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _options.Log.Warning("cloud.report.record_failed", new LogField("errorType", exception.GetType().Name));
+        }
+    }
+
     private CloudNotice? _notice;
 
     private bool SigningInNow
@@ -1053,7 +1103,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         lock (_stateLock)
         {
             next = _phase == CloudLinkPhase.SignedIn || (_rejected && !_signingIn) ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
-            if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter))
+            if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter) || Volatile.Read(ref _reportedUnwritten) is not null)
             {
                 next = Math.Min(next, now + Ticks(TimeSpan.FromSeconds(60)));
             }
@@ -1085,7 +1135,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             // An unreadable or unparsable link file is never read as "absent": reported, retried, nothing deleted.
-            SetStranded(Warnings.StoreUnavailable, "the link file cannot be read: " + exception.GetType().Name);
+            SetStranded(Warnings.StoreUnavailable, "the link file cannot be read: " + exception.GetType().Name, exclusive: false);
             lock (_stateLock)
             {
                 _reload = true;
@@ -1094,6 +1144,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             return;
         }
 
+        // The stranded warnings are not cleared here but where the outcome is known (ClearStranded, SetStranded, EndCredential): a status read
+        // during this reload (a retry every minute while the store cannot be read) never sees a store that cannot be read as fine.
         lock (_stateLock)
         {
             _reload = false;
@@ -1105,16 +1157,12 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _nextRefresh = long.MaxValue;
             _nextReport = long.MaxValue;
             _centerOffset = TimeSpan.Zero;
-            _warnings.Remove(Warnings.StoreUnavailable);
-            _warnings.Remove(Warnings.BackendChanged);
-            _warnings.Remove(Warnings.OtherCenter);
-            _warnings.Remove(Warnings.OtherNode);
-            _warnings.Remove(Warnings.Rejected);
         }
 
         if (link is null)
         {
             // Key sets without a link belong to no credential.
+            ClearStranded();
             TryDeleteKeySets();
             return;
         }
@@ -1182,6 +1230,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         if (configurationInvalid)
         {
             // node.json cannot be read, so the record's center is not confirmed: nothing is sent; retried every minute.
+            ClearStranded();
             lock (_stateLock)
             {
                 _reload = true;
@@ -1210,6 +1259,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         var now = _options.Clock.GetTimestamp();
+        ClearStranded();
         lock (_stateLock)
         {
             _record = record;
@@ -1223,17 +1273,47 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         _options.Log.Info("cloud.loaded", new LogField("center", record.CenterUrl), new LogField("backend", link.Backend), new LogField("isolated", link.Isolated));
     }
 
-    private void SetStranded(string warning, string reason)
+    /// <summary>
+    /// A link this node cannot use now: <paramref name="warning"/> replaces the other stranded warnings in one step (<paramref name="exclusive"/>;
+    /// an unreadable link file keeps what was known), so a status read sees either the earlier or the new state, never neither.
+    /// </summary>
+    private void SetStranded(string warning, string reason, bool exclusive = true)
     {
         lock (_stateLock)
         {
             _phase = CloudLinkPhase.SignedOut;
             _record = null;
+            if (exclusive)
+            {
+                RemoveStrandedLocked(warning);
+            }
+
             _warnings.Add(warning);
             _lastError = warning;
         }
 
         _options.Log.Warning("cloud.credential_unusable", new LogField("warning", warning), new LogField("reason", reason));
+    }
+
+    /// <summary>A reload found nothing stranded: the stranded warnings go.</summary>
+    private void ClearStranded()
+    {
+        lock (_stateLock)
+        {
+            RemoveStrandedLocked(keep: null);
+        }
+    }
+
+    /// <summary>Removes the stranded warnings except <paramref name="keep"/>; the caller holds the state lock.</summary>
+    private void RemoveStrandedLocked(string? keep)
+    {
+        foreach (var warning in (string[])[Warnings.StoreUnavailable, Warnings.BackendChanged, Warnings.OtherCenter, Warnings.OtherNode, Warnings.Rejected])
+        {
+            if (warning != keep)
+            {
+                _warnings.Remove(warning);
+            }
+        }
     }
 
     /// <summary>One refresh under the gate; returns whether the published state changed.</summary>
@@ -1466,9 +1546,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         {
             case CenterOutcome.Value:
                 _reportCommand = null;
-                link.ReportedName = info.Name;
-                link.ReportedVersion = info.Version;
-                _store.WriteLink(link);
+                RecordReported(link, info);
                 var changed = RemoveWarning(Warnings.InfoRejected) | RemoveWarning(Warnings.Restricted);
                 Contact(true);
                 return changed;

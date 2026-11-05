@@ -175,6 +175,23 @@ public sealed partial class CenterSeamPolicyTests
         Assert.DoesNotContain("Access-Control", receiver, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ThePrivateFilesReadIntoOneExactSizeArray()
+    {
+        // PR #71 review B-2: the node key's PKCS#8 bytes are read through PrivateFiles; no copy may outlive the one array its caller zeroes.
+        var source = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/NodeKeyStore.cs"));
+        var start = source.IndexOf("internal static class PrivateFiles", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var privateFiles = source[start..];
+        foreach (var forbidden in (string[])["MemoryStream", "CopyTo", "ArrayPool", "ReadAllBytes", "StreamReader", "BufferedStream"])
+        {
+            Assert.DoesNotContain(forbidden, privateFiles, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("bufferSize: 0", privateFiles, StringComparison.Ordinal);
+        Assert.Contains("CryptographicOperations.ZeroMemory(bytes)", privateFiles, StringComparison.Ordinal);
+    }
+
     private static IEnumerable<string> Files(params string[] roots) => roots.SelectMany(root =>
         Directory.EnumerateFiles(Path.Combine(RepositoryFiles.Root, root), "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(RepositoryFiles.Root, path).Replace('\\', '/'))
