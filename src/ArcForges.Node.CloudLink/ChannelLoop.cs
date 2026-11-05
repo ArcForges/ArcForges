@@ -428,7 +428,13 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
             session.Cancel();
             await session.Calls.WaitAsync().ConfigureAwait(false);
-            await client.CloseAsync(1000, "node_closing").ConfigureAwait(false);
+            if (session.Accepted && client.CloseStatus is null)
+            {
+                // The node's own end of an accepted connection, as the center's nodetest peer sends it: RelayClose 1000, then the close.
+                await SendQuietlyAsync(client, new RelayFrame { Close = new RelayClose { Code = 1000, Reason = "node_closed" } }, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await client.CloseAsync(1000, "node_closed").ConfigureAwait(false);
             session.Dispose();
             if (connectedAt is { } at && _clock.GetElapsedTime(at) >= ChannelPolicy.StableAfter)
             {
@@ -724,11 +730,15 @@ internal sealed class ChannelLoop : IAsyncDisposable
         return new ChannelEnd(Contracts.Node.V1.RelayState.Backoff, ChannelReasons.ProtocolError);
     }
 
-    private static async Task SendQuietlyAsync(Session session, RelayFrame frame)
+    private static Task SendQuietlyAsync(Session session, RelayFrame frame) => SendQuietlyAsync(session.Client, frame, session.Token);
+
+    private static async Task SendQuietlyAsync(CenterChannelClient client, RelayFrame frame, CancellationToken cancellationToken = default)
     {
         try
         {
-            await session.Client.SendAsync(frame, session.Token).ConfigureAwait(false);
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bounded.CancelAfter(TimeSpan.FromSeconds(2));
+            await client.SendAsync(frame, bounded.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or ObjectDisposedException or IOException or InvalidOperationException)
         {

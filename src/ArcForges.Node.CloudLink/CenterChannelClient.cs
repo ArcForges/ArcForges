@@ -55,8 +55,8 @@ internal sealed class CenterChannelClient : IAsyncDisposable
     /// <summary>The frame bound (relay.proto ChannelLimits.max_frame_bytes: exactly 1,048,576).</summary>
     public const int MaxFrameBytes = 1_048_576;
 
-    /// <summary>The response header that carries the center's closed refusal code before the upgrade (Plan PN-3).</summary>
-    public const string RefusalHeader = "ArcForges-Error";
+    /// <summary>The response header that carries the center's closed refusal reason before the upgrade (Plan PN-3; Cloud E1a hub).</summary>
+    public const string RefusalHeader = "ArcForges-Refusal";
 
     private readonly ClientWebSocket _socket;
     private readonly HttpMessageInvoker _invoker;

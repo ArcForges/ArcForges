@@ -282,14 +282,14 @@ internal sealed class FakeChannelPeer(FakeCenter center)
         {
             RefuseUpgrade = null;
             context.Response.StatusCode = refusal.Status;
-            context.Response.Headers["ArcForges-Error"] = refusal.Code;
+            context.Response.Headers[CenterChannelClient.RefusalHeader] = refusal.Code;
             return;
         }
 
         if (token is null || center.ChannelIdentity(token) is not { } identity)
         {
             context.Response.StatusCode = 401;
-            context.Response.Headers["ArcForges-Error"] = "AUTHENTICATION/unauthenticated";
+            context.Response.Headers[CenterChannelClient.RefusalHeader] = "AUTHENTICATION/unauthenticated";
             return;
         }
 
