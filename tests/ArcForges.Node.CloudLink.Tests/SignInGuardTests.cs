@@ -172,7 +172,7 @@ public sealed class SignInGuardTests
         link.Secrets.Unavailable = true;
         await link.StartAsync();
         Assert.Contains("credential_store_unavailable", link.Service.Status().Warnings);
-        var linkBytes = File.ReadAllBytes(link.Storage.LinkPath);
+        var linkBytes = PrivateFiles.ReadOrNull(link.Storage.LinkPath)!;
         SignOutResult result;
         using (await link.Service.EnterForSignOutAsync(TimeSpan.FromSeconds(5), Cancel))
         {
@@ -180,7 +180,7 @@ public sealed class SignInGuardTests
         }
 
         Assert.Equal(SignOutResult.StoreUnavailable, result);
-        Assert.Equal(linkBytes, File.ReadAllBytes(link.Storage.LinkPath));
+        Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(link.Storage.LinkPath)!);
         Assert.True(File.Exists(link.Storage.KeysPath));
         Assert.NotNull(link.Keys.Recorded());
         Assert.Empty(link.Center.CallsOf("SignOutNode"));
@@ -210,7 +210,7 @@ public sealed class SignInGuardTests
         await node.StopAsync();
         node.Secrets.Unavailable = true;
         await node.StartAsync();
-        var linkBytes = File.ReadAllBytes(node.Cloud.Storage.LinkPath);
+        var linkBytes = PrivateFiles.ReadOrNull(node.Cloud.Storage.LinkPath)!;
         await using var human = await node.ChannelAsync(Origin.Human);
         foreach (var remote in new[] { true, false })
         {
@@ -221,7 +221,7 @@ public sealed class SignInGuardTests
             Assert.Equal("credential_store_unavailable", response.Error.Details.State.Reason);
         }
 
-        Assert.Equal(linkBytes, File.ReadAllBytes(node.Cloud.Storage.LinkPath));
+        Assert.Equal(linkBytes, PrivateFiles.ReadOrNull(node.Cloud.Storage.LinkPath)!);
         Assert.Empty(center.CallsOf("SignOutNode"));
         Assert.True(center.IsLive(issued.RefreshToken));
     }
@@ -390,6 +390,119 @@ public sealed class SignInGuardTests
         await worker.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
         Assert.Single(link.Center.CallsOf("SignOutNode"));
         Assert.Null(link.Keys.Recorded());
+    }
+
+    [Fact]
+    public async Task WhoeverSeesAFlowEndedSeesTheLinksOwnPhase()
+    {
+        // The Windows leg's ABrowserFlowExpiresAfterTenMinutes: the flow read EXPIRED while the link still said SigningIn, because the flow's
+        // end and the release of the link's reservation were two steps (the receiver's stop between them). A reader spins on the flow while
+        // the flow ends; the first time it sees the end, the phase must already be the link's own.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var seen = new List<CloudLinkPhase>();
+        for (var round = 0; round < 50; round++)
+        {
+            var flow = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+            using var started = new SemaphoreSlim(0);
+            var reader = Task.Run(() =>
+            {
+                started.Release();
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while (deadline.Elapsed < TimeSpan.FromSeconds(10))
+                {
+                    if (link.Service.SignIn.Get(flow.FlowId)!.State != SignInFlowState.Pending)
+                    {
+                        return link.Service.Phase;
+                    }
+                }
+
+                return (CloudLinkPhase?)null;
+            }, Cancel);
+            await started.WaitAsync(Cancel);
+            link.Service.SignIn.Cancel(flow.FlowId);
+            var phase = await reader.WaitAsync(TimeSpan.FromSeconds(20), Cancel);
+            Assert.True(phase is not null, "round " + round + ": the reader never saw the flow end within 10 s");
+            seen.Add(phase.Value);
+        }
+
+        Assert.All(seen, phase => Assert.Equal(CloudLinkPhase.SignedOut, phase));
+    }
+
+    [Fact]
+    public async Task AFlowBegunRightAfterAnotherEndedKeepsItsReservationAndTheHeldProbePaused()
+    {
+        // PR #71 review B-1: the ending flow released the reservation a second time after its lock, so a BeginSignIn in that gap lost its
+        // reservation (the phase read SignedOut and the probe of a held rejected credential resumed during the new flow; N2 R-2, F-1).
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await link.SignInAsync();
+        link.Center.Script("RefreshNodeSession", new FakeFault.Refusal(SignInFlowTests.Arc(ErrorCategory.Authentication, "unauthenticated")));
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45),
+            () => link.Service.Status().Warnings.Contains("center_rejected_credential"), "the rejection");
+
+        // The held credential's probe is due 50 to 60 minutes after the rejection (at least 49 minutes from here).
+        var rejected = link.Clock.GetTimestamp();
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(49),
+            () => link.Clock.GetElapsedTime(rejected) >= TimeSpan.FromMinutes(48.5), "48.5 minutes after the rejection");
+        var refreshes = link.Center.CallsOf("RefreshNodeSession").Count;
+
+        var first = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+        SignInReply? next = null;
+        link.Service.SignIn.AfterEnd = () =>
+        {
+            // In the gap between the first flow's end and the rest of its ending: the new flow reserves.
+            link.Service.SignIn.AfterEnd = null;
+            next = SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode).GetAwaiter().GetResult();
+        };
+        Assert.Equal(SignInFlowState.Cancelled, link.Service.SignIn.Cancel(first.FlowId).Flow!.State);
+        Assert.NotNull(next?.Flow);
+        Assert.Equal(SignInFlowState.Pending, next.Flow.State);
+        Assert.Equal(CloudLinkPhase.SigningIn, link.Service.Phase);
+
+        // Through the new flow's whole life (its hard stop, past the probe's due time) the probe stays paused; it runs once the flow ended.
+        // The count is read before the state, so a count seen with the flow still pending was the count while it was pending.
+        var whilePending = refreshes;
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(700), () =>
+        {
+            var count = link.Center.CallsOf("RefreshNodeSession").Count;
+            if (link.Service.SignIn.Get(next.Flow.FlowId)!.State == SignInFlowState.Pending)
+            {
+                whilePending = Math.Max(whilePending, count);
+                return false;
+            }
+
+            return true;
+        }, "the new flow's end");
+        Assert.Equal(refreshes, whilePending);
+        Assert.Equal(SignInFlowState.Expired, link.Service.SignIn.Get(next.Flow.FlowId)!.State);
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(15),
+            () => link.Center.CallsOf("RefreshNodeSession").Count > refreshes, "the probe after the flow");
+    }
+
+    [Fact]
+    public async Task AnEndedFlowsLateWorkNeverHidesTheNextFlowsClockWait()
+    {
+        // The Linux leg at 16a663f (the B-1 test above, in the ci run): the first flow's background work started only after it had been
+        // cancelled and the next flow had begun; its late, immediately ended wait cleared the one shared record of a clock wait, so the
+        // next flow, blocked on the clock, looked as if it were not waiting. Each flow now records its own wait; this holds the first flow's
+        // work until the next flow waits.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var hold = new TaskCompletionSource();
+        var works = 0;
+        link.Service.SignIn.BeforeWork = _ => Interlocked.Increment(ref works) == 1 ? hold.Task : null;
+        var first = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+        var lateWork = link.Service.SignIn.Worker!;
+        Assert.Equal(SignInFlowState.Cancelled, link.Service.SignIn.Cancel(first.FlowId).Flow!.State);
+        var next = (await SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        await Eventually.TrueAsync(() => link.Service.SignIn.ClockWait.Blocked, "the next flow waits on the clock");
+
+        hold.SetResult();
+        await lateWork.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+        Assert.True(link.Service.SignIn.ClockWait.Blocked, "the next flow's wait is hidden");
+        Assert.Equal(SignInFlowState.Pending, link.Service.SignIn.Get(next.FlowId)!.State);
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf(Poll).Count >= 1, "the next flow's first poll");
     }
 
     [Fact]

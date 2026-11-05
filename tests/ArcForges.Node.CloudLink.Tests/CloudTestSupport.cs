@@ -365,6 +365,9 @@ internal static class Eventually
             alsoAdvance?.Invoke(step);
             moved += step;
             await Task.Delay(5);
+
+            // The timers the step fired run on the thread pool: the loop is judged idle only once they have run.
+            await TrueAsync(() => link.Clock.Firing == 0, "the fired timers (" + what + ")");
         }
     }
 
