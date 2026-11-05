@@ -138,6 +138,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private string? _lastError;
     private bool _rejected;
     private bool _pendingWrite;
+    private CloudCredentialRecord? _pendingRecord;
+    private string? _pendingTarget;
+    private bool _signOutPending;
     private bool _reload;
     private int _configurationInvalid;
     private TimeSpan _centerOffset;
@@ -221,6 +224,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         CancellationTokenSource? work;
         lock (_stateLock)
         {
+            // No new center call starts from now on (BeginWork hands out cancelled work) until the sign-out holds the gate.
+            _signOutPending = true;
             work = _work;
         }
 
@@ -237,7 +242,18 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
 
         _options.Log.Info("cloud.sign_out.cancelled_call_in_flight");
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_stateLock)
+            {
+                _signOutPending = false;
+            }
+        }
+
         return new Held(_gate);
     }
 
@@ -254,11 +270,12 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
     /// <inheritdoc />
     /// <remarks>
-    /// N1 decision G-1 in both directions: every credential record of another center than the one now configured ends, two-phase (record,
-    /// key sets, node key, link file), a held <c>center_rejected_credential</c> included; nothing of it is sent anywhere. A stored credential
-    /// of the center now configured (a <c>credential_for_other_center</c> link whose center is configured again) is signed in as at start.
-    /// A record the node cannot reach here (another node ID, another backend, an unavailable store) is left alone and stays reported. Without
-    /// a credential, the old center's key sets and node key go.
+    /// N1 decision G-1 in both directions: every credential of this node's link of another center than the one now configured ends,
+    /// two-phase (record, key sets, node key, link file), a held <c>center_rejected_credential</c> included, and also while its record cannot
+    /// be read (the ending is recorded first and completes once the store answers); nothing of it is sent anywhere. A stored credential of
+    /// the center now configured (a <c>credential_for_other_center</c> link whose center is configured again) is signed in as at start. A
+    /// link the node cannot end here (another node ID or backend, an unreadable link file) is left alone and stays reported. Without a
+    /// credential, the old center's key sets and node key go. The loop is woken, so a retry does not wait for its previous timer.
     /// </remarks>
     public async Task CenterChangedAsync()
     {
@@ -275,22 +292,40 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             {
                 _http?.Dispose();
                 _http = null;
-                Load();
-                if (HasWarning(Warnings.OtherCenter))
+                CloudLinkFile? stored;
+                var readable = true;
+                try
                 {
-                    EndCredential("center_changed", notice: null, _link);
+                    stored = _store.ReadLink();
                 }
-                else if (Phase != CloudLinkPhase.SignedIn)
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                 {
-                    TryDeleteKeySets();
-                    if (_link is null)
+                    stored = null;
+                    readable = false;
+                }
+
+                if (stored is not null && Unowned(stored) is null && stored.CenterUrl != center?.Url)
+                {
+                    // Whether or not the record can be read now: the ending is recorded first and completes once the store answers (R-1),
+                    // so the old center's credential can never be signed in again by configuring that center again.
+                    EndCredential("center_changed", notice: null, stored);
+                }
+                else
+                {
+                    Load();
+                    if (Phase != CloudLinkPhase.SignedIn)
                     {
-                        TryDeleteKey(null);
+                        TryDeleteKeySets();
+                        if (readable && _link is null)
+                        {
+                            TryDeleteKey(null);
+                        }
                     }
                 }
             }
         }
 
+        Wake();
         await PublishAsync(null).ConfigureAwait(false);
     }
 
@@ -426,6 +461,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 _rejected = false;
                 _lastError = null;
                 _pendingWrite = false;
+                _pendingRecord = null;
+                _pendingTarget = null;
                 _ambiguousToken = null;
                 _failures = 0;
                 _warnings.Clear();
@@ -631,7 +668,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 using (await EnterAsync(stop).ConfigureAwait(false))
                 using (var work = BeginWork(stop))
                 {
-                    if (_reload || (_link?.State == LinkStates.Ending))
+                    if (_reload || (_link?.State == LinkStates.Ending) || OwnCenterConfiguredAgain())
                     {
                         Load();
                         changed = true;
@@ -704,7 +741,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         lock (_stateLock)
         {
             next = _phase == CloudLinkPhase.SignedIn || _rejected ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
-            if (_reload || _pendingWrite)
+            if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter))
             {
                 next = Math.Min(next, now + Ticks(TimeSpan.FromSeconds(60)));
             }
@@ -799,6 +836,12 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             return;
         }
 
+        // A rotation whose write failed is newer than what the store holds: it is the credential (G-8).
+        if (_pendingWrite && _pendingRecord is { } pending && _pendingTarget == link.Target)
+        {
+            record = pending;
+        }
+
         if (record is null)
         {
             if (link.State == LinkStates.Committing)
@@ -890,7 +933,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             record = _record ?? (_rejected ? _rejectedRecord : null);
         }
 
-        if (record is null)
+        if (record is null || cancellationToken.IsCancellationRequested)
         {
             return false;
         }
@@ -984,10 +1027,15 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _store.WriteRecord(_link!.Target, record);
             RemoveWarning(Warnings.StorageFailed);
             _pendingWrite = false;
+            _pendingRecord = null;
+            _pendingTarget = null;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
         {
+            // G-8: kept apart from the active record, so a strand or a rejection never drops it; the loop and the shutdown write it.
             _pendingWrite = true;
+            _pendingRecord = record;
+            _pendingTarget = _link!.Target;
             AddWarning(Warnings.StorageFailed);
             _options.Log.Warning("cloud.credential_storage_failed", new LogField("errorType", exception.GetType().Name));
         }
@@ -1053,6 +1101,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
 
     private async Task<bool> ReportCoreAsync(CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
         CloudCredentialRecord? record;
         lock (_stateLock)
         {
@@ -1192,6 +1245,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
             _rejectedRecord = null;
             _rejected = false;
             _pendingWrite = false;
+            _pendingRecord = null;
+            _pendingTarget = null;
             _ambiguousToken = null;
             _link = finished ? null : link;
             _reload = blocked == Warnings.StoreUnavailable;
@@ -1303,17 +1358,23 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Writes a rotated record whose write failed (G-8): the record pending its write, whatever the phase now (a credential held for its
+    /// own center or held as rejected keeps its newest tokens).
+    /// </summary>
     private bool FlushPendingWrite()
     {
-        if (!_pendingWrite || _record is not { } record || _link is not { } link)
+        if (!_pendingWrite || _pendingRecord is not { } record || _pendingTarget is not { } target)
         {
             return false;
         }
 
         try
         {
-            _store.WriteRecord(link.Target, record);
+            _store.WriteRecord(target, record);
             _pendingWrite = false;
+            _pendingRecord = null;
+            _pendingTarget = null;
             return RemoveWarning(Warnings.StorageFailed);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
@@ -1405,6 +1466,13 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A credential held as <c>credential_for_other_center</c> whose own center is configured again (<c>node.json</c> edited back): the
+    /// next load signs it in as a start would; nothing is ever sent to another center.
+    /// </summary>
+    private bool OwnCenterConfiguredAgain() =>
+        HasWarning(Warnings.OtherCenter) && _link is { } link && Configured() is { } center && center.Url == link.CenterUrl;
+
     private bool HasWarning(string warning)
     {
         lock (_stateLock)
@@ -1419,6 +1487,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         lock (_stateLock)
         {
             _work = work;
+            if (_signOutPending)
+            {
+                work.Cancel();
+            }
         }
 
         return new WorkScope(this, work);

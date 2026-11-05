@@ -100,6 +100,130 @@ public sealed class CredentialBindingTests
     }
 
     [Fact]
+    public async Task ACenterChangeWhileTheRecordCannotBeReadRecordsTheEndingAndFinishesItWhenTheStoreAnswers()
+    {
+        // Confirmation probe P3: a held rejected credential, a center change while the keyring is locked. The ending is recorded first; the
+        // old credential can never come back by configuring its center again, and the new center receives nothing.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await link.SignInAsync();
+        using (link.Keys.Create(link.NodeId, link.Center.Endpoint.Origin, link.Clock))
+        {
+        }
+
+        await Eventually.TrueAsync(() => link.Center.CallsOf(Report).Count == 1, "the first report");
+        link.Center.Script(Refresh, new FakeFault.Refusal(Arc(ErrorCategory.Authentication, "unauthenticated")));
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45),
+            () => link.Service.Status().Warnings.Contains("center_rejected_credential"), "the rejection");
+        await using var other = await FakeCenter.StartAsync("/other");
+        link.Secrets.Unavailable = true;
+        link.ConfiguredCenter = other.Endpoint;
+        await link.Service.CenterChangedAsync();
+
+        // The change wakes the loop, which retries the ending at once; read the state once it waits again.
+        await Eventually.TrueAsync(() => link.Service.Idle, "the loop's retry");
+        Assert.Equal(LinkStates.Ending, link.Storage.ReadLink()!.State);
+        Assert.Contains("credential_store_unavailable", link.Service.Status().Warnings);
+        Assert.Single(link.Secrets.Names());
+
+        // Configuring the old center again does not sign the ended credential back in.
+        link.ConfiguredCenter = link.Center.Endpoint;
+        await link.Service.CenterChangedAsync();
+        await Eventually.TrueAsync(() => link.Service.Idle, "the loop's retry");
+        Assert.False(link.Service.AccountLinked);
+        Assert.Equal(LinkStates.Ending, link.Storage.ReadLink()!.State);
+
+        link.Secrets.Unavailable = false;
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(3), () => !File.Exists(link.Storage.LinkPath), "the ending finished");
+        Assert.Empty(link.Secrets.Names());
+        Assert.False(File.Exists(link.Storage.KeysPath));
+        Assert.Null(link.Keys.Recorded());
+        Assert.False(link.Service.AccountLinked);
+        link.Clock.Advance(TimeSpan.FromHours(3));
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+        Assert.Empty(other.Calls);
+        Assert.Single(link.Center.CallsOf(Refresh));
+    }
+
+    [Fact]
+    public async Task ARotationAwaitingItsWriteSurvivesAStrandAndIsWrittenAtShutdown()
+    {
+        // Confirmation probe P1 (G-8): a rotation whose write failed, then another center configured (the credential is stranded); the
+        // shutdown writes the rotation, so the next start presents the newest token, not the spent one.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var issued = await link.SignInAsync();
+        await Eventually.TrueAsync(() => link.Center.CallsOf(Report).Count == 1, "the first report");
+        link.Secrets.FailWrites(1000);
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45), () => link.Service.Generation == 2, "a rotation");
+        Assert.Contains("credential_storage_failed", link.Service.Status().Warnings);
+        Assert.Equal(issued.RefreshToken, link.StoredRecord()!.RefreshToken);
+
+        await using var other = await FakeCenter.StartAsync("/other");
+        link.ConfiguredCenter = other.Endpoint;
+        link.NodeName = "renamed";
+        link.Service.NodeInfoChanged();
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5),
+            () => link.Service.Status().Warnings.Contains("credential_for_other_center"), "stranded");
+        link.Secrets.FailWrites(0);
+        await link.StopAsync();
+        Assert.NotEqual(issued.RefreshToken, link.StoredRecord()!.RefreshToken);
+        Assert.Empty(other.Calls);
+
+        link.ConfiguredCenter = link.Center.Endpoint;
+        await link.StartAsync();
+        // A new process counts its rotations from zero: the first refresh after the restart rotates with the newest token.
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(5), () => link.Service.Generation == 1, "the refresh after the restart");
+        Assert.Equal(2, link.Center.CallsOf(Refresh).Count);
+        Assert.True(link.Service.AccountLinked);
+        Assert.Null(link.Service.LastError);
+    }
+
+    [Fact]
+    public async Task ARotationAwaitingItsWriteIsTheCredentialWhenItsOwnCenterIsConfiguredAgain()
+    {
+        // G-8 with N-4: the store still refuses writes when node.json is edited back; the link signs in with the rotation it holds, never
+        // with the spent token the store still has (whose presentation would revoke the family).
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var issued = await link.SignInAsync();
+        await Eventually.TrueAsync(() => link.Center.CallsOf(Report).Count == 1, "the first report");
+        link.Secrets.FailWrites(1000);
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45), () => link.Service.Generation == 2, "a rotation");
+        await using var other = await FakeCenter.StartAsync("/other");
+        link.ConfiguredCenter = other.Endpoint;
+        link.NodeName = "renamed";
+        link.Service.NodeInfoChanged();
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5),
+            () => link.Service.Status().Warnings.Contains("credential_for_other_center"), "stranded");
+        link.ConfiguredCenter = link.Center.Endpoint;
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(5), () => link.Service.Generation == 3, "a rotation after the return");
+        Assert.True(link.Service.AccountLinked);
+        Assert.Null(link.Service.LastError);
+        Assert.Equal(issued.RefreshToken, link.StoredRecord()!.RefreshToken);
+        Assert.Empty(other.Calls);
+    }
+
+    [Fact]
+    public async Task AStrandedCredentialIsUsedAgainOnceItsOwnCenterIsConfiguredAgain()
+    {
+        // Confirmation N-4: node.json edited away and back while the node runs; nothing is ever sent to the other center.
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await link.SignInAsync();
+        await Eventually.TrueAsync(() => link.Center.CallsOf(Report).Count == 1, "the first report");
+        await using var other = await FakeCenter.StartAsync("/other");
+        link.ConfiguredCenter = other.Endpoint;
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(70),
+            () => link.Service.Status().Warnings.Contains("credential_for_other_center"), "stranded");
+        link.ConfiguredCenter = link.Center.Endpoint;
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(3), () => link.Service.AccountLinked, "signed in again");
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(3), () => link.Center.CallsOf(Refresh).Count == 1, "a refresh at its own center");
+        Assert.Empty(other.Calls);
+        Assert.DoesNotContain("credential_for_other_center", link.Service.Status().Warnings);
+    }
+
+    [Fact]
     public async Task ACenterChangeWithoutACredentialDeletesTheOldCentersKeySetsAndKey()
     {
         await using var link = await LinkFixture.CreateAsync();
