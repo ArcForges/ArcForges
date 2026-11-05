@@ -16,6 +16,13 @@
     <Compile Include="../Shared/Leftovers.cs" Link="Shared/Leftovers.cs" />
     <!-- Tests run in parallel: an environment counts only the processes that carry its own endpoint (or run in its slice). -->
     <Compile Include="../Shared/ProcessInspection.cs" Link="Shared/ProcessInspection.cs" />
+    <!--
+      AF-CTR-04 N1-21: the cloud link of a real node process runs against FakeCenter (the Plan's AF-CTR-04 fakes_allowed), compiled in from
+      the cloud-link test project, where its conformance with the REAL captures is tested; this is its one other consumer
+      (ArcForges.Repository.Tests checks this).
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Compile Include="../ArcForges.Node.CloudLink.Tests/FakeCenter/FakeCenter.cs" Link="Shared/FakeCenter.cs" />
     <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
     <ProjectReference Include="../../src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
     <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />

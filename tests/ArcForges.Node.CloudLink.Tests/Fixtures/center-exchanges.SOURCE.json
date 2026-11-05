@@ -1,0 +1,278 @@
+{
+  "source": "https://github.com/ArcForges/Cloud",
+  "sourceCommit": "41c8a72dbbd63efdb6967f71c23610ae2f73fae1",
+  "sourcePath": "center/internal/fleetapi/testdata/exchanges",
+  "producer": "center/internal/fleetapi/capture_integration_test.go TestFleetExchangeCapture (REAL PostgreSQL, the REAL Go center behind its ingress; normalized placeholders)",
+  "centerCommit": "3ab4fe0 (the 46 captures of Cloud 2686a73, byte-identical) and 2686a73 (the 7 added by Cloud #136)",
+  "contractsCohort": "1.0.0-ci.424.1",
+  "schemaVersion": 2,
+  "licence": "AGPL-3.0-only (Cloud and ArcForges alike); data files copied byte for byte, no Cloud source is built or referenced",
+  "listingSha256": "0803c8e674a3ec31fb940724c2ddf8114670c4059ca9d28ca0bb56749ab39d99",
+  "files": [
+    {
+      "file": "BeginNodeSignIn-invalid-redirect.json",
+      "gitBlob": "871e5c09ffb6ac79092ee7907cb28ec61db6b526",
+      "sha256": "2fe4ff34fa2073a20c2dc6c3e06ba6a7ed878420bc7506012a5b78bd717847d1"
+    },
+    {
+      "file": "BeginNodeSignIn-key-registered.json",
+      "gitBlob": "0a362d57777e87b2e942db3f4c8aa12d3835c829",
+      "sha256": "6ca5a132f3383ac54af990851d1d5b5a919d01689b155ad9784687892467fa1d"
+    },
+    {
+      "file": "BeginNodeSignIn-ok.json",
+      "gitBlob": "2c15d3cbc6ad04125dc2fc154fe7f9fd1b95d2f1",
+      "sha256": "c6b8c33a9f90ae6f5598247f20c834a00678568e1ba1781032f654dfd55eeb68"
+    },
+    {
+      "file": "BeginNodeSignIn-rate-limited.json",
+      "gitBlob": "e04d77b1023af5394139fed78a30cca64d3bcc4f",
+      "sha256": "4553bb3dafdf61270957df999ca58894745550df40006cbeac231fb806eae70b"
+    },
+    {
+      "file": "BeginNodeSignIn-surface-off.json",
+      "gitBlob": "0ddae77ac7ef12950a020e3624bbbf27b271f5ed",
+      "sha256": "399d2b7ae70f1a9bf2550130a3268286577f06197e2f6cea1c4ec068bb2c226c"
+    },
+    {
+      "file": "CompleteNodeSignIn-code-reused.json",
+      "gitBlob": "de8a04cd111614c5f643542c5770874434459d3f",
+      "sha256": "2105da8b22911471d0fc095ca46cd8bb6e5383b48a520a04e918c604111e311f"
+    },
+    {
+      "file": "CompleteNodeSignIn-expired.json",
+      "gitBlob": "13394ab6ff911da33b9905e3cc076b7725b956c1",
+      "sha256": "cafed368702e04ab70702a561b1c8f94e45e253ea123c4e7af744b4797dfc18f"
+    },
+    {
+      "file": "CompleteNodeSignIn-invalid-verifier.json",
+      "gitBlob": "6338208a8977567232a0998b5b95fb1465da8c60",
+      "sha256": "938c0bcb04ab1821d9a7fcff6c204ac93576c4862eaaf7e98137a232c8480c37"
+    },
+    {
+      "file": "CompleteNodeSignIn-key-held.json",
+      "gitBlob": "051f5967a7e1d70a4d81576babef61eace421d74",
+      "sha256": "d524e6231d435e74515d867e5d67c5f7bb44d44bf532de4fe411aaac5b45a82c"
+    },
+    {
+      "file": "CompleteNodeSignIn-key-retired.json",
+      "gitBlob": "27e5e602ef9f515e5a6cba04b0729674ceee6cf5",
+      "sha256": "4b18eb1855b61d75a3517315f11f7a290edd587fca02d919b5647d261f580c89"
+    },
+    {
+      "file": "CompleteNodeSignIn-node-id-of-another-account.json",
+      "gitBlob": "27d6429cc4d6aa9a2b590b1129bb31031bc25069",
+      "sha256": "0c89cb2d0154af73caa2ca6ad50b586be72f3fd44690100c61953c62dbd19abd"
+    },
+    {
+      "file": "CompleteNodeSignIn-not-found.json",
+      "gitBlob": "a978aa3c7ba7190b41a194675c1e6d7bf0df1ac5",
+      "sha256": "f8bc4bb4a2feb08686603befbda1486932d4a9886daa3baaaf5290c7f8a5aa9b"
+    },
+    {
+      "file": "CompleteNodeSignIn-ok.json",
+      "gitBlob": "291afb2027a58371eb5453145f4221e11e66ad49",
+      "sha256": "cef86fe0d761354c2a5551f1bcef20d8c049a2fca66ae100cb7c374717e4ed1d"
+    },
+    {
+      "file": "CompleteNodeSignIn-quota.json",
+      "gitBlob": "b423fdda8c8e5fbfbaf3862106bbd4e6146993e6",
+      "sha256": "2689930c982f3ae778025881c1ca2d640043f81133d8836f997dcfa4423c3b46"
+    },
+    {
+      "file": "CompleteNodeSignIn-rate-limited.json",
+      "gitBlob": "1e2c651880579c77947f573a1ee25c32005265e7",
+      "sha256": "ab39d83c7de1bc0bdf6845e699eb103734461053c01554188ef3ccedac44c60f"
+    },
+    {
+      "file": "CompleteNodeSignIn-surface-off.json",
+      "gitBlob": "e039d1f4abb433ab7a10c0afb4c82058faec0116",
+      "sha256": "3a89502958744cefa258cf2d200c60bf5bafbbcbb1eb23afd82c80892bee16d3"
+    },
+    {
+      "file": "CompleteNodeSignIn-unauthenticated.json",
+      "gitBlob": "8b3a31384b42fca3027304d6875bd3b89a677381",
+      "sha256": "fb67d56cbb19beb35592c6bc9f41b84a510d5c3d54ec6de1600f4c6f82347954"
+    },
+    {
+      "file": "PollDeviceAuthorization-approved.json",
+      "gitBlob": "4f0d45ebaa75447e3e35cdeb48586d949f64f540",
+      "sha256": "8556314afb461f4507ec359be0046fe7d6ce0b393e5157a1ae4f3e8c52d2b75a"
+    },
+    {
+      "file": "PollDeviceAuthorization-completed.json",
+      "gitBlob": "3b9f9591a91d02e3d7e7fbc5236e922d6a38989c",
+      "sha256": "c36c678488d1de42e9aa2fc11f126f8361cdf605cdd9ad8d23dea92573880f9e"
+    },
+    {
+      "file": "PollDeviceAuthorization-denied.json",
+      "gitBlob": "c98e53fd9568d9f20d5b7776b5c6b2739873f3c4",
+      "sha256": "0388b6cf3cb5a79554632fae6d0eff5413c4854b39af8e7b42854c0f3a89fa31"
+    },
+    {
+      "file": "PollDeviceAuthorization-expired.json",
+      "gitBlob": "11d5756d63128f7ce62615f6b5e0635f49b99106",
+      "sha256": "8c7d2e633b4fe8b25697a2f707f76ea607842bbe3f1d1ba26e41410d44d326c1"
+    },
+    {
+      "file": "PollDeviceAuthorization-invalid-device-code.json",
+      "gitBlob": "ba7b5e65f772f8efe8914b2c3f2ae424a7fe1429",
+      "sha256": "d53faab819883c698fed3e312e5267f0f3053d6bcb638c217e42ad3c5e399bb9"
+    },
+    {
+      "file": "PollDeviceAuthorization-key-held.json",
+      "gitBlob": "1d193fb464cf0be3206ef864bfb9abd21033c99c",
+      "sha256": "2a441cd867b2a31fb71a784ae6a755d426e9c9c1f22e5fa6cbb6930a93ffefa6"
+    },
+    {
+      "file": "PollDeviceAuthorization-key-retired.json",
+      "gitBlob": "54f2527171de1ae4777fc9f3391cf5328445a4da",
+      "sha256": "9e24917681073497800af6a080dbe88954883f649081037da68cec3dfe57b795"
+    },
+    {
+      "file": "PollDeviceAuthorization-node-id-of-another-account.json",
+      "gitBlob": "ff67317ef9cf7a041efeb7c5b2e968adf95cfc9f",
+      "sha256": "cc6e009a457f843a1b127252bc645767ad330c7b20dd902d99fc7716cb450e9d"
+    },
+    {
+      "file": "PollDeviceAuthorization-not-found.json",
+      "gitBlob": "d129f6fdab4a15c035b4c39cf8e40aa2f05cdd00",
+      "sha256": "4c4703c5330cd187d773016971572f34ed221732baf6251754649edd406c54f0"
+    },
+    {
+      "file": "PollDeviceAuthorization-pending.json",
+      "gitBlob": "f93c10b81fffcce843cbeacbbf5d29735e24453c",
+      "sha256": "ce3b17e7c9d03e342d9b9e840853a2d4fa304207958417bc902c48f497682fb6"
+    },
+    {
+      "file": "PollDeviceAuthorization-quota.json",
+      "gitBlob": "f3ef2432b1a4c63a89dc5dd291b5c006d5872ba6",
+      "sha256": "7617ec6a0427fb504fc8a056f6c4c013cb765f398bd2334f4e52984a559d9ec6"
+    },
+    {
+      "file": "PollDeviceAuthorization-rate-limited.json",
+      "gitBlob": "b572d78e369bca4f9e97880733400aba19fd0249",
+      "sha256": "c9a6c5975d3b288075c937828fbe8122b6ab56adce84acdbab2c95143f83058e"
+    },
+    {
+      "file": "PollDeviceAuthorization-slow-down.json",
+      "gitBlob": "52ead6c34b850cf7713fe33f639c1001b92de203",
+      "sha256": "2a9bdd078f3ee253aca16d2b5f55e82a93c7bbd22d9abe68dd287616dc131088"
+    },
+    {
+      "file": "PollDeviceAuthorization-surface-off.json",
+      "gitBlob": "1d468437cfb32eb6383d4ba35e4decaf74994fcc",
+      "sha256": "0d636a12bf1083748b679cf9b3099eaef79df7e6219ed7f563f8b6addbeee044"
+    },
+    {
+      "file": "PollDeviceAuthorization-unauthenticated.json",
+      "gitBlob": "d71aa00d2d8e10b4b89aefe1b60c6ef3fa327b9f",
+      "sha256": "3624712c75b9e00e3f0dde965251a8043876fe72fcd86f74f20e6c1204b8083b"
+    },
+    {
+      "file": "RefreshNodeSession-account-token.json",
+      "gitBlob": "f740961e02726028ab0a8faf8a76ec3f419c0156",
+      "sha256": "6933cdcf89c8e335072f11701d82702755a76271b48ccd74a65be7555bc6ed1e"
+    },
+    {
+      "file": "RefreshNodeSession-device-revoked.json",
+      "gitBlob": "8931c239e61e7d22f4859ee2ff99e0ae93e7a0e4",
+      "sha256": "f3f083edef28b7e9fd7f9a27904dd0e29902629376132e015ac2dbe005a0dae2"
+    },
+    {
+      "file": "RefreshNodeSession-ok.json",
+      "gitBlob": "5a19375ce568a825d7f4e8e32601f30fa812d553",
+      "sha256": "1d3dfde10df9acb532b534cd196b335eabebb6b1eaee447d55ccd104097256ed"
+    },
+    {
+      "file": "RefreshNodeSession-rate-limited.json",
+      "gitBlob": "254938bb8ac6decc7195ced9a085a4955b92d3e9",
+      "sha256": "a0d2cc293e617c905ccbf93b68b07b680b4c2ea6e22a346f589396403c1db1b0"
+    },
+    {
+      "file": "RefreshNodeSession-spent-token.json",
+      "gitBlob": "28f5efa91dcb3fe86196c43fad464173f3ec42a4",
+      "sha256": "57d91e032d35029717950b15df021b997df4b8f4f40864a9b4c1f6ca6cbaf058"
+    },
+    {
+      "file": "RefreshNodeSession-token-expired.json",
+      "gitBlob": "90d64314a134487d24506568d8e46b7706e9e5e5",
+      "sha256": "94a465f634e4801a976f74b0d86f132c00b63058a564348791d2b26ff44843bc"
+    },
+    {
+      "file": "RefreshNodeSession-unknown-token.json",
+      "gitBlob": "e374e3b4fcc97560f33534695af08bb3b5ede30b",
+      "sha256": "27dd1e2e030e56590aca6cd29a4499d32dc8e2e19c104b7d63c77c660072c8c1"
+    },
+    {
+      "file": "ReportNodeInfo-command-id-reused.json",
+      "gitBlob": "eff26e9f851bb19065d0e22b08d98dba867a8ab2",
+      "sha256": "73aaf77a6ec79ef57f3a89e9849ca589ba7a1822365884126a148fea4e727c9c"
+    },
+    {
+      "file": "ReportNodeInfo-credential-revoked.json",
+      "gitBlob": "fc8c9fe88d58dc48bd47951b1cdf5e3a36358cb6",
+      "sha256": "69e89e122ac1a9a67ecc81193bd0ded0c77082f41ab391cfe8c7e48b1a74da54"
+    },
+    {
+      "file": "ReportNodeInfo-node-id-mismatch.json",
+      "gitBlob": "2c2daa68c93f71e0c2d715e5c8ac3eccf811971b",
+      "sha256": "7084786f587256169df429d93fed13c0a5c80901538152349051960349e29bd7"
+    },
+    {
+      "file": "ReportNodeInfo-ok.json",
+      "gitBlob": "5fa67049310051b942d829595d4dbffb08c11787",
+      "sha256": "eab981655932b3ca17f581669083926ac07372476cee5b823297209156c6693a"
+    },
+    {
+      "file": "ReportNodeInfo-restricted-account.json",
+      "gitBlob": "9c0c21385dbb67a74f20be38fdbe0866028f8f41",
+      "sha256": "24575ebaf82f25c4b8e284c95070268e76bda7f7d6ef14a93c418442e7330e69"
+    },
+    {
+      "file": "ReportNodeInfo-token-expired.json",
+      "gitBlob": "6418678247fa158349ee855299f85694c1ed60c6",
+      "sha256": "54afcd65f8c3481065a48ba3e821326c6cc32bd3848db7706cfa005e72ee9b3a"
+    },
+    {
+      "file": "SignOutNode-node-not-live.json",
+      "gitBlob": "0d49d1716902cd0b0c1ce63b96aaec984b66595e",
+      "sha256": "f96a526bb801367a24481c75e044201ff587b18a8ec1fb2c0590b114243a6fea"
+    },
+    {
+      "file": "SignOutNode-ok.json",
+      "gitBlob": "7660dddf2e1e59d50c74b2b4bc217f5422b09035",
+      "sha256": "28b8e0decbf081970424f0a107bd0500a003090ee3bb613b5a3fad3c509d64e5"
+    },
+    {
+      "file": "SignOutNode-retry-after-revocation.json",
+      "gitBlob": "172d4fec5be86413c6094847bca9b621e3a687b7",
+      "sha256": "b29ae8a66beeed6b25a7ea696ed003ddfe835eda507506bc320272b9264ad665"
+    },
+    {
+      "file": "StartDeviceAuthorization-invalid-key.json",
+      "gitBlob": "7f51cf9d2e0a5bbb63fc8ef20951e900a404b2a1",
+      "sha256": "63ae03fd6302c430d31820f694b60b545b1abd2643de9b4f7ebad5975f1fb487"
+    },
+    {
+      "file": "StartDeviceAuthorization-key-registered.json",
+      "gitBlob": "481376f18a20ea9d62813571981cd36d5673cb55",
+      "sha256": "260afd3c5857289688b760cb5292a59dc4dda9b8989ddcfa411ebc72944ce44f"
+    },
+    {
+      "file": "StartDeviceAuthorization-ok.json",
+      "gitBlob": "5071a85541a727e90d7554cb13680b5b2ef9f35b",
+      "sha256": "984438e19eb2d0c5a156d82e26cd8d89546919b568a91e991193dbd0bb8df4e1"
+    },
+    {
+      "file": "StartDeviceAuthorization-rate-limited.json",
+      "gitBlob": "568558f124ff858d169068857b07386c9273854a",
+      "sha256": "a3ded47efda7e4ae909a3f50289c5c836d111bb60860e9e9088443cdc44bd65a"
+    },
+    {
+      "file": "StartDeviceAuthorization-surface-off.json",
+      "gitBlob": "5d2b5e5f3dc141135eb1328fc741e04a520845ab",
+      "sha256": "e134203b042a04aa71cc7c7481e1589fdc4648758bf7af7df542dffd1c114484"
+    }
+  ]
+}

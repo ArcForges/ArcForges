@@ -30,8 +30,44 @@ public sealed class NodeSettingsManager
     /// <summary>The configuration file.</summary>
     public string ConfigPath => _configPath;
 
+    /// <summary>The node runs with <c>--test-mode</c>: no official default center (CTR4-NODE-01).</summary>
+    public bool TestMode { get; init; }
+
+    /// <summary>
+    /// The center named by the test-mode-only hook <c>ARCFORGES_TEST_CENTER_URL</c> (already validated), or <see langword="null"/>. While
+    /// it is in effect it is the effective center and a <c>center_url</c> update is refused (N1 decision G-6); it is never written to
+    /// <c>node.json</c>.
+    /// </summary>
+    public CenterEndpoint? CenterOverride { get; init; }
+
     /// <summary>The settings as <c>node.json</c> holds them now.</summary>
     public NodeSettings Current() => ToSettings(NodeConfiguration.Read(_configPath));
+
+    /// <summary>
+    /// The effective center: the test override, else <c>node.json</c>'s <c>centerUrl</c>, else the official default, which a
+    /// <c>--test-mode</c> node does not have (<see langword="null"/>).
+    /// </summary>
+    public CenterEndpoint? Center() => Effective(NodeConfiguration.Read(_configPath));
+
+    /// <summary>
+    /// Checks a <c>center_url</c> update before it is applied (node.proto: "empty = back to the official default (refused under
+    /// --test-mode)"): <see langword="null"/> when it may be applied.
+    /// </summary>
+    public ArcError? CheckCenter(string centerUrl)
+    {
+        ArgumentNullException.ThrowIfNull(centerUrl);
+        if (CenterOverride is not null)
+        {
+            return NodeErrors.InvalidState("test_override", "center_url: the test hook ARCFORGES_TEST_CENTER_URL names the center of this node");
+        }
+
+        if (centerUrl.Length == 0)
+        {
+            return TestMode ? NodeErrors.InvalidArgument("center_url: empty (the official default) is refused under --test-mode") : null;
+        }
+
+        return CenterEndpoint.TryParse(centerUrl, out _, out var reason) ? null : NodeErrors.InvalidArgument("center_url: " + reason);
+    }
 
     /// <summary>
     /// Applies an update: <paramref name="logLevel"/> (<see cref="LogLevel.Unspecified"/> = unchanged) and
@@ -39,7 +75,15 @@ public sealed class NodeSettingsManager
     /// current revision is <c>CONFLICT/revision_conflict</c>. Returns the new settings and whether a restart is needed (never: both
     /// settings apply at once).
     /// </summary>
-    public (NodeSettings? Settings, bool RestartRequired, ArcError? Error) Update(long? expectedRevision, LogLevel logLevel, bool? telemetryOptIn)
+    public (NodeSettings? Settings, bool RestartRequired, ArcError? Error) Update(long? expectedRevision, LogLevel logLevel, bool? telemetryOptIn) =>
+        Update(expectedRevision, logLevel, telemetryOptIn, centerUrl: null);
+
+    /// <summary>
+    /// As <see cref="Update(long?, LogLevel, bool?)"/>, with <paramref name="centerUrl"/> (<see langword="null"/> = unchanged; empty = back
+    /// to the official default), which the caller checked with <see cref="CheckCenter"/> under the cloud link's gate.
+    /// </summary>
+    public (NodeSettings? Settings, bool RestartRequired, ArcError? Error) Update(long? expectedRevision, LogLevel logLevel, bool? telemetryOptIn,
+        string? centerUrl)
     {
         var file = NodeConfiguration.Read(_configPath);
         if (expectedRevision is { } expected && expected != file.Revision)
@@ -57,22 +101,58 @@ public sealed class NodeSettingsManager
             file.TelemetryOptIn = optIn;
         }
 
+        if (centerUrl is not null)
+        {
+            if (CheckCenter(centerUrl) is { } refused)
+            {
+                return (null, false, refused);
+            }
+
+            file.CenterUrl = centerUrl.Length == 0 ? null : centerUrl;
+        }
+
         file.Revision++;
         NodeConfiguration.Write(_configPath, file);
         _log.MinimumLevel = NodeConfiguration.ParseLogLevel(file.LogLevel);
         _log.Info("node.settings.updated", new LogField("revision", file.Revision), new LogField("logLevel", file.LogLevel ?? "info"),
-            new LogField("telemetryOptIn", file.TelemetryOptIn ?? false));
+            new LogField("telemetryOptIn", file.TelemetryOptIn ?? false), new LogField("centerUrl", Effective(file)?.Url ?? "none"));
         return (ToSettings(file), false, null);
     }
 
-    private NodeSettings ToSettings(NodeConfigurationFile file) => new()
+    private NodeSettings ToSettings(NodeConfigurationFile file)
     {
-        DataRoot = _dataRoot,
-        LogLevel = NodeConfiguration.ParseLogLevel(file.LogLevel),
-        TelemetryOptIn = file.TelemetryOptIn ?? false,
-        ConfigPath = _configPath,
-        Revision = new Revision { Value = file.Revision },
-    };
+        var settings = new NodeSettings
+        {
+            DataRoot = _dataRoot,
+            LogLevel = NodeConfiguration.ParseLogLevel(file.LogLevel),
+            TelemetryOptIn = file.TelemetryOptIn ?? false,
+            ConfigPath = _configPath,
+            Revision = new Revision { Value = file.Revision },
+        };
+
+        // node.proto: "the official default when none is configured; absent under --test-mode until one is set".
+        if (Effective(file) is { } center)
+        {
+            settings.CenterUrl = center.Url;
+        }
+
+        return settings;
+    }
+
+    private CenterEndpoint? Effective(NodeConfigurationFile file)
+    {
+        if (CenterOverride is not null)
+        {
+            return CenterOverride;
+        }
+
+        if (file.CenterUrl is { } configured)
+        {
+            return CenterEndpoint.Parse(configured);
+        }
+
+        return TestMode ? null : CenterEndpoint.Parse(CenterEndpoint.OfficialDefault);
+    }
 }
 
 /// <summary>The node's display name (<c>node_setting</c> <c>node.name</c>; default: the machine name).</summary>

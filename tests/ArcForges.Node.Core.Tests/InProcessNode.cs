@@ -184,6 +184,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             StreamBuffer = StreamBuffer,
             Ready = runtime => _ready.TrySetResult(runtime),
             SecretStore = _ => Secrets.Selection,
+            NodeKeys = ArcForges.Node.CloudLink.NodeKeyStores.ForTestDataRoot,
             Output = TextWriter.Null,
             Error = TextWriter.Null,
             HelperExecutable = HelperExecutable,

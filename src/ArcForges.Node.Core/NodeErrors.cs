@@ -52,6 +52,9 @@ public static class NodeErrors
     public static ArcError Validation(string code, string reason) =>
         Create(ErrorCategory.Validation, code, RetryMode.Never, new StateFailure { Reason = reason });
 
+    /// <summary><c>STATE/not_signed_in</c>: the node holds no credential to sign out (account.proto <c>SignOut</c>).</summary>
+    public static ArcError NotSignedIn() => Create(ErrorCategory.State, "not_signed_in", RetryMode.Never, null);
+
     /// <summary><c>STATE/not_attached</c>: a stdin call without the caller's current attach.</summary>
     public static ArcError NotAttached() => Create(ErrorCategory.State, "not_attached", RetryMode.Never, null);
 

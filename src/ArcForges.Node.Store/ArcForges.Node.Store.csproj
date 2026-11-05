@@ -37,6 +37,9 @@
       secret-store tier binds it to the real store.
     -->
     <InternalsVisibleTo Include="ArcForges.Node.Api" />
+    <!-- The cloud link keeps the node credential in the same injected secret store (AF-CTR-04 N1). -->
+    <InternalsVisibleTo Include="ArcForges.Node.CloudLink" />
+    <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
     <!-- The arcforges host applies the test-mode tripwire at startup (NodeSecretStores.ApplyTestModeTripwire). -->
     <InternalsVisibleTo Include="arcforges" />
     <InternalsVisibleTo Include="arcforges-bench" />

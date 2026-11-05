@@ -99,12 +99,14 @@ any change. They are binding; this file summarizes them and adds the repository 
 - **OS secret stores (16-testing-strategy sections 1-2; the user's decisions of 2026-10-17).** Routine tests, the host verification and
   the deep tier never reach the real Windows Credential Manager or Secret Service. Tests use `tests/Shared/IsolatedSecretStore.cs`
   (in memory, scripted faults); nodes started with `--test-mode` and `arcforges-bench` keep keys in the file-backed store under
-  their data root (`NodeSecretStores`, the only production source that names the OS selection). The guard: every test project sets
+  their data root (`NodeSecretStores`, the only production source that names the OS selection; the node key's file-backed
+  store comes from `NodeKeyStores`, the only production source that names the CNG key store). The guard: every test project sets
   the AppContext switch `ArcForges.Security.Secrets.DenyOsStores` (`tests/Directory.Build.props`), so the adapters refuse before
   any OS call; `eng/test.ps1`/`eng/test.sh` remove a stray `ARCFORGES_OS_SECRET_STORE_TESTS`, `eng/verify_steps.py` refuses to
   run with it, and `ArcForges.Repository.Tests` (`OsSecretStoreGuardPolicyTests`) checks sources, `--test-mode`, the tier's
-  isolation and every runtime configuration. The OS secret-store tier (`tests/ArcForges.OsSecretStoreTier`: one sequential
-  write, read, overwrite, delete and absence cycle of the node data key, at most 4 entries, 32 calls, 10 s per call, 5 minutes,
+  isolation and every runtime configuration. The OS secret-store tier (`tests/ArcForges.OsSecretStoreTier`: sequential cycles of
+  the node data key and the node credential (write, read, overwrite, delete, absence) and of the CNG node key (create, sign, reopen,
+  delete, absence); each test class has its own fixture and budget of at most 4 entries, 32 calls, 10 s per call and 5 minutes, with
   exact-name cleanup from its name list) runs only in `.github/workflows/os-secret-store-tier.yml` (external PRs, merge queue,
   dispatch, weekly; the opt-in on its test step only) or, on the user's explicit opt-in, through `eng/os_secret_store_tier.py`.
   Agents never set the opt-in, never run the tier and never stress an OS store.

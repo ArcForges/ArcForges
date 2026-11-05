@@ -23,6 +23,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     private const string TierRunner = "eng/os_secret_store_tier.py";
     private const string ThisFile = "tests/ArcForges.Repository.Tests/OsSecretStoreGuardPolicyTests.cs";
     private const string CompositionRoot = "src/ArcForges.Node.Store/Secrets/NodeSecretStores.cs";
+    private const string KeyCompositionRoot = "src/ArcForges.Node.CloudLink/NodeKeyStores.cs";
     private const string TestNodeFile = "tests/ArcForges.ClosedLoop.Tests/TestNode.cs";
     private const string OptIn = "ARCFORGES_OS_SECRET_STORE_TESTS";
     private const string DenySwitch = "ArcForges.Security.Secrets.DenyOsStores";
@@ -66,7 +67,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         foreach (var path in Sources().Where(path => !IsProduction(path) && !InTier(path)))
         {
             var text = File.ReadAllText(Path.Combine(Root, path));
-            if (!AdapterReference().IsMatch(text) && !DirectStoreAccess().IsMatch(text))
+            if (!AdapterReference().IsMatch(text) && !DirectStoreAccess().IsMatch(text) && !CngReference().IsMatch(text))
             {
                 continue;
             }
@@ -101,6 +102,22 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     [InlineData("using static ArcForges.Security.Secrets.SecretServiceSecretStore;")]
     public void TheReferenceCheckCatchesEveryFormOfNamingTheAdaptersAndTheirSelection(string source) =>
         Assert.Matches(AdapterReference(), source);
+
+    [Theory]
+    [InlineData("using var key = CngKey.Open(name);")]
+    [InlineData("var ecdsa = new System.Security.Cryptography.ECDsaCng(key);")]
+    [InlineData("Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,")]
+    [InlineData("new CngKeyCreationParameters { ExportPolicy = CngExportPolicies.AllowPlaintextExport }")]
+    [InlineData("var container = new CspParameters { KeyContainerName = name };")]
+    [InlineData("using var rsa = new RSACryptoServiceProvider(parameters);")]
+    [InlineData("[LibraryImport(\"ncrypt.dll\")] private static partial int NCryptOpenStorageProvider(out nint provider, string name, int flags);")]
+    [InlineData("int status = NCryptDeleteKey(handle, 0);")]
+    [InlineData("using var rsa = new RSACng(key);")]
+    [InlineData("using var dh = new ECDiffieHellmanCng(key);")]
+    [InlineData("CngKey.Open(name, provider, CngKeyOpenOptions.UserKey)")]
+    [InlineData("key.Export(CngKeyBlobFormat.EccPrivateBlob)")]
+    public void TheCngCheckCatchesTheKeyStoreTypes(string source) =>
+        Assert.Matches(CngReference(), source);
 
     [Theory]
     [InlineData("if (OsSecretStoreGuard.IsDenied) return;")]
@@ -139,7 +156,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         var offenders = Sources().Where(path => IsProduction(path) && path != CompositionRoot).Where(path =>
         {
             var text = File.ReadAllText(Path.Combine(Root, path));
-            return AdapterReference().IsMatch(text) || DirectStoreAccess().IsMatch(text);
+            return AdapterReference().IsMatch(text) || DirectStoreAccess().IsMatch(text) || (path != KeyCompositionRoot && CngReference().IsMatch(text));
         }).ToList();
         Assert.True(offenders.Count == 0, "Production sources outside the composition root " + CompositionRoot + " name a real OS store: "
             + string.Join(", ", offenders));
@@ -156,6 +173,19 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         // The node host takes its store from the composition root unless a test overrides it.
         var host = File.ReadAllText(Path.Combine(Root, "src/ArcForges.Node.Api/NodeHost.cs"));
         Assert.Contains("options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode)", host, StringComparison.Ordinal);
+
+        // AF-CTR-04: the node key's composition root (the only production source that names CNG) follows the same --test-mode rule, asks the
+        // guard before every CNG operation, and the host takes its key store from it unless a test overrides it.
+        var keys = File.ReadAllText(Path.Combine(Root, KeyCompositionRoot));
+        Assert.Matches(CngReference(), keys);
+        Assert.Contains("Environment.GetEnvironmentVariable(OsSecretStoreGuard.OptInVariable)", keys, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"OperatingSystem\.IsWindows\(\)\s*&&\s*NodeSecretStores\.UsesOsSecretStore\(testMode, optIn\)\s*\?\s*new CngNodeKeyBackend\(\)\s*:\s*new FileNodeKeyBackend\(dataRoot\)"), keys);
+        Assert.Equal(3, Regex.Count(keys, @"OsSecretStoreGuard\.ThrowIfDenied\(""a CNG user key store""\);"));
+        Assert.Contains("ExportPolicy = CngExportPolicies.None,", keys, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(keys, @"\bCngKey\.Create\("));
+        Assert.Contains("CngKey.Create(CngAlgorithm.ECDsaP256, name, CngCreationParameters())", keys, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(keys, @"\bnew\(\)\s*\{\s*Provider = CngProvider\.MicrosoftSoftwareKeyStorageProvider,\s*ExportPolicy = CngExportPolicies\.None,\s*KeyUsage = CngKeyUsages\.Signing,\s*\}"));
+        Assert.Contains("options.NodeKeys?.Invoke(dataRoot) ?? NodeKeyStores.ForNode(dataRoot, options.TestMode)", host, StringComparison.Ordinal);
 
         // Every --test-mode process of the arcforges host and the supervisor sets the runtime tripwire at startup unless the exact opt-in
         // is set; production is unaffected (16 section 1, item 2).
@@ -179,7 +209,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
             var text = File.ReadAllText(Path.Combine(Root, path));
             var (count, offenders) = NodeHostsWithoutSecretStore(text);
             Assert.True(offenders.Count == 0, $"{path}: a NodeHostOptions built at offset {string.Join(", ", offenders)} does not override "
-                + "SecretStore with an isolated backend");
+                + "SecretStore with an isolated backend and NodeKeys with the file-backed key store");
             built += count;
         }
 
@@ -196,13 +226,15 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     [InlineData("NodeHostOptions? options = new() { ConfigPath = path };")]
     [InlineData("await NodeHost.RunAsync(new() { ConfigPath = path }, token);")]
     [InlineData("var copy = options with { SecretStore = null };")]
+    [InlineData("var options = new NodeHostOptions { SecretStore = _ => secrets.Selection };")]
+    [InlineData("var copy = options with { NodeKeys = null };")]
     public void TheNodeHostCheckCatchesEveryConstructionWithoutAnIsolatedSecretStore(string source) =>
         Assert.NotEmpty(NodeHostsWithoutSecretStore(source).Offenders);
 
     [Theory]
-    [InlineData("var options = new NodeHostOptions { SecretStore = _ => secrets.Selection, TestMode = false };")]
-    [InlineData("NodeHostOptions options = new() { Endpoint = endpoint, SecretStore = _ => secrets.Selection };")]
-    [InlineData("await NodeHost.RunAsync(new() { SecretStore = _ => secrets.Selection }, token);")]
+    [InlineData("var options = new NodeHostOptions { SecretStore = _ => secrets.Selection, NodeKeys = NodeKeyStores.ForTestDataRoot, TestMode = false };")]
+    [InlineData("NodeHostOptions options = new() { Endpoint = endpoint, SecretStore = _ => secrets.Selection, NodeKeys = root => keys };")]
+    [InlineData("await NodeHost.RunAsync(new() { SecretStore = _ => secrets.Selection, NodeKeys = NodeKeyStores.ForTestDataRoot }, token);")]
     public void TheNodeHostCheckAcceptsAConstructionWithAnIsolatedSecretStore(string source)
     {
         var (count, offenders) = NodeHostsWithoutSecretStore(source);
@@ -342,8 +374,8 @@ public sealed partial class OsSecretStoreGuardPolicyTests
             || (Indent(lines[index]) < 6 && lines[index].Trim().Length > 0), lines.Length);
         Assert.Contains("dotnet test --project " + TierProject, string.Join('\n', lines[step..next]), StringComparison.Ordinal);
         Assert.Contains(lines[step..next], line => line.Trim() == "timeout-minutes: 7");
-        Assert.Contains("--no-build --minimum-expected-tests 1 --fail-skips on ", string.Join('\n', lines[step..next]), StringComparison.Ordinal);
-        Assert.Contains("\"--minimum-expected-tests\", \"1\", \"--fail-skips\", \"on\"", File.ReadAllText(Path.Combine(Root, TierRunner)),
+        Assert.Contains("--no-build --minimum-expected-tests 3 --fail-skips on ", string.Join('\n', lines[step..next]), StringComparison.Ordinal);
+        Assert.Contains("\"--minimum-expected-tests\", \"3\", \"--fail-skips\", \"on\"", File.ReadAllText(Path.Combine(Root, TierRunner)),
             StringComparison.Ordinal);
 
         // Triggers and the job condition of the AD-0016 amendment: external PRs, merge_group, dispatch and a weekly schedule; never a
@@ -423,14 +455,14 @@ public sealed partial class OsSecretStoreGuardPolicyTests
             {
                 count++;
                 var initializer = Initializer(text, match.Index + match.Length);
-                if (initializer is null || !Regex.IsMatch(initializer, @"\bSecretStore\s*="))
+                if (initializer is null || !Regex.IsMatch(initializer, @"\bSecretStore\s*=") || !Regex.IsMatch(initializer, @"\bNodeKeys\s*="))
                 {
                     offenders.Add(match.Index);
                 }
             }
         }
 
-        offenders.AddRange(Regex.Matches(text, @"\bwith\s*\{[^}]*\bSecretStore\s*=\s*null").Select(match => match.Index));
+        offenders.AddRange(Regex.Matches(text, @"\bwith\s*\{[^}]*\b(?:SecretStore|NodeKeys)\s*=\s*null").Select(match => match.Index));
         return (count, offenders);
     }
 
@@ -513,6 +545,13 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         + @"|\b(?:DllImport|LibraryImport)\s*\([^)]*\bEntryPoint\s*=\s*""Cred[A-Z]\w*""|\b(?:DllImport|LibraryImport)\s*\([^)]*\)\s*\][^;{]*?\bCred[A-Z]\w*\s*\(",
         RegexOptions.IgnoreCase)]
     private static partial Regex DirectStoreAccess();
+
+    // The OS key stores (AF-CTR-04: the node key): the CNG types, the CryptoAPI key containers and the NCrypt API; only the key composition
+    // root and the tier name them.
+    [GeneratedRegex(@"\b(?:CngKey|ECDsaCng|CngProvider|CngAlgorithm|CngKeyCreationParameters|CngExportPolicies|CngKeyUsages|CngKeyOpenOptions"
+        + @"|CngKeyCreationOptions|CngKeyBlobFormat|CngUIPolicy|RSACng|DSACng|ECDiffieHellmanCng|AesCng|TripleDESCng|CspParameters|CspKeyContainerInfo"
+        + @"|RSACryptoServiceProvider|DSACryptoServiceProvider)\b|(?i:\bncrypt)")]
+    private static partial Regex CngReference();
 
     [GeneratedRegex(@"\[Trait\(\s*""env""\s*,\s*""os-secret-store""\s*\)\]")]
     private static partial Regex TierTrait();
