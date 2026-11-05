@@ -1,0 +1,83 @@
+{
+  "source": "https://github.com/ArcForges/Cloud",
+  "sourceCommit": "c14156bf97aadce9165fd7762aaf482d68d23bd9",
+  "sourcePath": "center/internal/hub/testdata/exchanges",
+  "producer": "center/internal/hub/capture_integration_test.go TestChannelExchangeCapture (REAL PostgreSQL, the REAL Go hub of Cloud E1a #144 behind its upgrade admission; the node side is center/internal/nodetest; normalized placeholders; a committed file that differs fails the Cloud test)",
+  "centerCommit": "250f93a",
+  "contractsCohort": "1.0.0-ci.437.1",
+  "schemaVersion": 2,
+  "licence": "AGPL-3.0-only (Cloud and ArcForges alike); data files copied byte for byte, no Cloud source is built or referenced",
+  "listingSha256": "c3691cd1f9400085c4d730b1995ad6a826f656b411eb9fe64976f02924f91c0d",
+  "files": [
+    {
+      "file": "NodeChannel-accepted.json",
+      "gitBlob": "ab79f745ba89d0a8c1727062ac9facee8e982df3",
+      "sha256": "a94e2741230ee64a3abce78841f0c4f7d7e8553d3e8d68bf9a5c4f2f98dbe61d"
+    },
+    {
+      "file": "NodeChannel-hello-deadline.json",
+      "gitBlob": "85410c24bfa2c1ba48b73c8493bcf011b2cf34b8",
+      "sha256": "e08cff0d14ef98d29a844632ba11c43ad989dd4dbfaecf6a697b5df4f3240490"
+    },
+    {
+      "file": "NodeChannel-hello-malformed.json",
+      "gitBlob": "890242e0a7393f5f9c19164c55f612103251b401",
+      "sha256": "618f8165bb002561fcaaef9374b9051e235c8a62d5cc290a1d2e794de3d8672d"
+    },
+    {
+      "file": "NodeChannel-hello-mismatch.json",
+      "gitBlob": "b1a10e5e2cf052022a139385ed97c47c0ec428e3",
+      "sha256": "b40fed577149779c2c316040ca9ce6bb9f5fab1f5485404b901c30ea48f9796a"
+    },
+    {
+      "file": "NodeChannel-hello-signature.json",
+      "gitBlob": "e7fce4f5904c8ad3230c437e568fa6f82dcb587d",
+      "sha256": "00e1e3354ad40c2f3bfc0826f35b793516268803a13e0c68f4ea655c0977a38d"
+    },
+    {
+      "file": "NodeChannel-lapsed.json",
+      "gitBlob": "cec2aae852143b0dbbccfc3247eb8a35bc6cb2a5",
+      "sha256": "c52415a722ee88297cedca152546b9f2557ff487cfc298ad866cd5cdab8d26c4"
+    },
+    {
+      "file": "NodeChannel-refused-account-session.json",
+      "gitBlob": "06f10ae5f353cb0db1d51766d7b4cbe361b84924",
+      "sha256": "4177ff825bec86107011ba0980bfc291770672585cd4b8ba60a28e4af040f664"
+    },
+    {
+      "file": "NodeChannel-refused-credential-revoked.json",
+      "gitBlob": "e9147da52e4389dd5304c0fee1c8915e525342c3",
+      "sha256": "652c7e3d1ce73f44d6f3a9ceffb2b9fa4a65a55e2dfb4fb4f96b92bbe97a5c23"
+    },
+    {
+      "file": "NodeChannel-refused-no-credential.json",
+      "gitBlob": "f035c419e4cef815a2142fcef3cb2fef72cf9ca4",
+      "sha256": "7c5399c6879a0d43d40d647c223ea9b288f5814845fa530000b1936ed3c1bbfd"
+    },
+    {
+      "file": "NodeChannel-refused-token-expired.json",
+      "gitBlob": "3a7fecfa8389d5ec012564256644fb5effb9918e",
+      "sha256": "67705ec4b6fadb795c8fc708825a0bcffd3c08c2ce365fbee903e6e8b39b097f"
+    },
+    {
+      "file": "NodeChannel-replaced.json",
+      "gitBlob": "a7731140b0e7ae94140f109cbd1354f9e0062f5a",
+      "sha256": "9a35ffc8401dcaeb84090fa60b04cff8b85cf96aee14a27c1b3c766bbfa412cf"
+    },
+    {
+      "file": "NodeChannel-revoked.json",
+      "gitBlob": "5f38da66195a40283158821d337979c22bcffd18",
+      "sha256": "b3f02543dd0ad967ebd8a5a7b015bed251cbda37245256740e6f55e577a36cb0"
+    },
+    {
+      "file": "NodeChannel-shutting-down.json",
+      "gitBlob": "22c35f2f2e87f2c587126cb5b1a7d2c3dc8a1897",
+      "sha256": "f31a21a3f1d5b7d10d992b306e560728cb0c7f58be3197f35400f9ca2f753cc2"
+    },
+    {
+      "file": "NodeChannel-token-expired.json",
+      "gitBlob": "c23a3b8df2cedf95e70b850d51f868aeda31dbf7",
+      "sha256": "ee4213e8707debc6840d46e89ccfc9a0498c72029bee7bf6e38045b65f5c94ca"
+    }
+  ]
+}

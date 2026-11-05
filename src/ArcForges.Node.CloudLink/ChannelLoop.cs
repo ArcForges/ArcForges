@@ -252,7 +252,6 @@ internal sealed class ChannelLoop : IAsyncDisposable
             try
             {
                 var wake = Volatile.Read(ref _wake).Task;
-                var rotated = Volatile.Read(ref _rotated).Task;
                 var (ticket, reason) = _host.Ticket();
                 if (ticket is null)
                 {
@@ -292,8 +291,14 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
                 if (end.State == Contracts.Node.V1.RelayState.Refused)
                 {
+                    // Only a refresh after the refusal retries early: one during the refused attempt (PN-14's, or a 4401's) does not.
+                    if (Volatile.Read(ref _rotated).Task.IsCompleted)
+                    {
+                        Interlocked.Exchange(ref _rotated, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+                    }
+
                     Set(end.State, end.Reason);
-                    await WaitAsync(ChannelPolicy.RefusedRetry, wake, rotated, stop).ConfigureAwait(false);
+                    await WaitAsync(ChannelPolicy.RefusedRetry, wake, Volatile.Read(ref _rotated).Task, stop).ConfigureAwait(false);
                     Reset();
                     continue;
                 }

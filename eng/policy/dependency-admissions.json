@@ -98,7 +98,7 @@
       "source": "https://github.com/ArcForges/Contracts",
       "sourceCommit": "e67a6b089a7270ab771a97c27aeba92c5d3b0469",
       "provenance": "nuget.org; nuspec repository commit e67a6b0, the AF-CTR-05 C2 merge on Contracts main (#129; cohort K2 1.0.0-ci.437.1, CI #437), an ancestor of Contracts main. The package is the internal relay contract (eng/contract-packages.json access internal; Plan decision Q4 keeps it internal and published to nuget.org as before). Depends on ArcForges.Contracts.Fleet, Foundation and Node 1.0.0-ci.437.1, Google.Protobuf 3.36.1 and Grpc.Core.Api 2.84.0, all already in the graph.",
-      "aot": "IsAotCompatible generated code (protobuf messages and the generated ContractShapeValidation checks, which use compiled regular expressions only through Regex.IsMatch on constant patterns); part of the zero-warning Native AOT publish of arcforges on linux-x64 (AF-CTR-05 N1).",
+      "aot": "IsAotCompatible generated code (protobuf messages and the generated ContractShapeValidation checks); part of the zero-warning Native AOT publish of arcforges on linux-x64 and win-x64 (AF-CTR-05 N1), whose closed-loop channel tests pass against the native linux-x64 host.",
       "reason": "arcforges.relay.v1: the frames and signed headers of the node channel to the center (AF-CTR-05 B.9, CTR5-NODE-01..07; C2 review: verifier pre-conditions, routedRefusal, the 1 MiB frame pin), whose golden vectors the node signs and verifies against (fixtures/internal/af-ctr-05-relay-vectors.json).",
       "admittedBy": "AF-CTR-05 N1",
       "reviewedOn": "2026-11-06"

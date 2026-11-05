@@ -200,6 +200,7 @@ public sealed class ChannelTests
     [InlineData(4429, RelayState.Backoff, ChannelReasons.RateLimited)]
     [InlineData(4413, RelayState.Backoff, ChannelReasons.FrameTooLarge)]
     [InlineData(4500, RelayState.Backoff, ChannelReasons.CenterShuttingDown)]
+    [InlineData(1000, RelayState.Backoff, ChannelReasons.CenterShuttingDown)]
     public async Task EachCloseCodeLeadsToItsState(int code, RelayState state, string reason)
     {
         // N1-3 (SM-RELAY): the closes of relay.proto RelayClose.
@@ -208,6 +209,22 @@ public sealed class ChannelTests
         {
             await connection.CloseAsync(code, "closed_by_test", null);
             await Eventually.TrueAsync(() => link.Service.Status() is var status && status.Relay == state && status.RelayReason == reason, code + " -> " + state);
+        }
+    }
+
+    [Fact]
+    public async Task AnUnexpectedNormalCloseIsTreatedLikeAShutdownAndBacksOff()
+    {
+        // Routed to N1 by the E1a merge: the Worker's Durable Object proxy turns an abnormal close of the center side (1006) into 1000. A
+        // center closes normally only at its shutdown, with 4500, so a bare 1000 from the center backs off as 4500 does and reconnects.
+        var (link, connection) = await ConnectedAsync();
+        await using (link)
+        {
+            await connection.CloseSocketAsync(1000);
+            await Eventually.TrueAsync(() => link.Service.Status() is { Relay: RelayState.Backoff, RelayReason: ChannelReasons.CenterShuttingDown }, "backoff as 4500");
+            Assert.Equal(1, link.Service.Channel!.Failures);
+            await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(10),
+                () => link.Center.Channel.Connections.Count(c => c.Proved) == 2, "the reconnect after the backoff");
         }
     }
 

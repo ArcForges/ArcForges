@@ -99,6 +99,15 @@ internal sealed class FakeChannelPeer(FakeCenter center)
     /// <summary>Answers the next upgrade with this HTTP status and refusal code instead of upgrading (Plan PN-3).</summary>
     public (int Status, string Code)? RefuseUpgrade { get; set; }
 
+    /// <summary>
+    /// Serves the next upgrade from a captured exchange of the real center (Cloud E1a captures): its HTTP refusal with its refusal header,
+    /// or the captured center frames byte for byte (the first before the node's hello, the rest after it) and the captured close code.
+    /// </summary>
+    public FakeChannelReplay? Replay { get; set; }
+
+    /// <summary>The frames the node sent during replays.</summary>
+    public ConcurrentQueue<byte[]> ReplayReceived { get; } = new();
+
     /// <summary>When false, the peer never answers a NodeHello (the node's handshake times out).</summary>
     public bool Accepting { get; set; } = true;
 
@@ -106,7 +115,10 @@ internal sealed class FakeChannelPeer(FakeCenter center)
     public bool AnswerNonces { get; set; } = true;
 
     /// <summary>The limits ChannelAccepted carries.</summary>
-    public ChannelLimits Limits { get; set; } = new()
+    public ChannelLimits Limits { get; set; } = DefaultLimits;
+
+    /// <summary>The policy defaults of the center's limits (relay.proto ChannelLimits).</summary>
+    public static ChannelLimits DefaultLimits => new()
     {
         MaxFrameBytes = 1_048_576,
         MaxInFlightCalls = 8,
@@ -278,6 +290,13 @@ internal sealed class FakeChannelPeer(FakeCenter center)
             return;
         }
 
+        if (Replay is { } replay)
+        {
+            Replay = null;
+            await ReplayAsync(context, replay);
+            return;
+        }
+
         if (RefuseUpgrade is { } refusal)
         {
             RefuseUpgrade = null;
@@ -297,6 +316,55 @@ internal sealed class FakeChannelPeer(FakeCenter center)
         var connection = new FakeChannelConnection(this, socket, identity.NodeId, identity.Installation, identity.Account, token);
         _connections.Enqueue(connection);
         await connection.RunAsync(center.Clock);
+    }
+
+    private async Task ReplayAsync(HttpContext context, FakeChannelReplay replay)
+    {
+        if (replay.Status != 101)
+        {
+            context.Response.StatusCode = replay.Status;
+            if (replay.Refusal is { } code)
+            {
+                context.Response.Headers[CenterChannelClient.RefusalHeader] = code;
+            }
+
+            return;
+        }
+
+        using var socket = await context.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext { SubProtocol = Subprotocol, DangerousEnableCompression = false });
+        var buffer = new byte[1_048_576];
+        try
+        {
+            await socket.SendAsync(replay.Frames[0], WebSocketMessageType.Binary, true, CancellationToken.None);
+            var length = 0;
+            ValueWebSocketReceiveResult received;
+            do
+            {
+                received = await socket.ReceiveAsync(buffer.AsMemory(length), CancellationToken.None);
+                length += received.Count;
+            }
+            while (!received.EndOfMessage && received.MessageType != WebSocketMessageType.Close);
+            ReplayReceived.Enqueue(buffer[..length]);
+            foreach (var frame in replay.Frames.Skip(1))
+            {
+                await socket.SendAsync(frame, WebSocketMessageType.Binary, true, CancellationToken.None);
+            }
+
+            await socket.CloseOutputAsync((WebSocketCloseStatus)replay.Close, null, CancellationToken.None);
+            while (socket.State is WebSocketState.Open or WebSocketState.CloseSent)
+            {
+                var more = await socket.ReceiveAsync(buffer.AsMemory(), CancellationToken.None);
+                if (more.MessageType == WebSocketMessageType.Close)
+                {
+                    break;
+                }
+
+                ReplayReceived.Enqueue(buffer[..more.Count]);
+            }
+        }
+        catch (Exception exception) when (exception is WebSocketException or IOException or ObjectDisposedException or OperationCanceledException)
+        {
+        }
     }
 
     /// <summary>Called by a connection whose hello verified: an older proved connection of the node is closed 4409.</summary>
@@ -390,6 +458,20 @@ internal sealed class FakeChannelConnection(FakeChannelPeer peer, WebSocket sock
         {
             await SendAsync(FakeChannelPeer.CloseFrame((uint)code, reason, reconnectAfterMs));
             await socket.CloseOutputAsync((WebSocketCloseStatus)code, reason, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or IOException)
+        {
+        }
+    }
+
+    /// <summary>Closes the WebSocket with <paramref name="code"/> and no RelayClose frame (what a proxy in front of the center may send).</summary>
+    public async Task CloseSocketAsync(int code)
+    {
+        Closed = true;
+        ClosedWith = code;
+        try
+        {
+            await socket.CloseOutputAsync((WebSocketCloseStatus)code, null, CancellationToken.None);
         }
         catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or IOException)
         {
@@ -560,3 +642,10 @@ internal sealed class FakeChannelConnection(FakeChannelPeer peer, WebSocket sock
         return FakeChannelPeer.Verify(key, input, hello.HelloSignature.ToByteArray());
     }
 }
+
+/// <summary>A captured exchange the channel peer replays (<see cref="FakeChannelPeer.Replay"/>).</summary>
+/// <param name="Status">101, or the HTTP status of a refusal before the upgrade.</param>
+/// <param name="Refusal">The captured refusal header, or <see langword="null"/>.</param>
+/// <param name="Frames">The captured center frames.</param>
+/// <param name="Close">The captured WebSocket close code.</param>
+internal sealed record FakeChannelReplay(int Status, string? Refusal, IReadOnlyList<byte[]> Frames, int Close);

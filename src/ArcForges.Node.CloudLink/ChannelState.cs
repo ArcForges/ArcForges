@@ -97,8 +97,10 @@ internal static class ChannelPolicy
             Delay: reconnectAfterMs is { } after ? TimeSpan.FromMilliseconds(Math.Min(after, MaxReconnectAfter.TotalMilliseconds)) : null),
         4503 => new ChannelEnd(RelayState.Refused, ChannelReasons.KillSwitch),
 
-        // An abnormal close (1006, 1011) is treated like 4500; anything else is a network failure.
-        1006 or 1011 => new ChannelEnd(RelayState.Backoff, ChannelReasons.CenterShuttingDown),
+        // An abnormal close (1006, 1011) is treated like 4500. So is a normal close (1000) from the center: the center closes normally only
+        // at its shutdown, with 4500, and the Worker's Durable Object proxy turns an abnormal close of the center side into 1000 (routed
+        // to N1). Anything else is a network failure.
+        1000 or 1006 or 1011 => new ChannelEnd(RelayState.Backoff, ChannelReasons.CenterShuttingDown),
         _ => new ChannelEnd(RelayState.Backoff, ChannelReasons.NetworkFailure),
     };
 
