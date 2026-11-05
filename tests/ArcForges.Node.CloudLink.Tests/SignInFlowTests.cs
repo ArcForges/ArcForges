@@ -373,6 +373,26 @@ public sealed class SignInFlowTests
     }
 
     [Fact]
+    public async Task AnExpiredPollReplyEndsTheFlowAtOnce()
+    {
+        // e.4 M-15: no poll after EXPIRED (the hard stop is only the backstop).
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var flow = (await BeginAsync(link, SignInMethod.DeviceCode)).Flow!;
+        var expired = new NodeEnrollmentServicePollDeviceAuthorizationResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new NodeEnrollmentServicePollDeviceAuthorizationValue { State = DeviceAuthorizationState.Expired },
+        };
+        link.Center.Script(Poll, new FakeFault.Raw([.. FakeCenter.DataFrame(expired), .. FakeCenter.TrailerFrame(0, null)]));
+        await Advance(link, TimeSpan.FromSeconds(30), () => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.Expired, "expired");
+        Assert.Single(link.Center.CallsOf(Poll));
+        link.Clock.Advance(TimeSpan.FromMinutes(2));
+        await Task.Delay(100, Cancel);
+        Assert.Single(link.Center.CallsOf(Poll));
+    }
+
+    [Fact]
     public async Task CompletedWithoutCredentialsFailsTheFlow()
     {
         await using var link = await LinkFixture.CreateAsync();
@@ -421,6 +441,9 @@ public sealed class SignInFlowTests
         Assert.Equal(CloudLinkPhase.SignedOut, link.Service.Phase);
         hold.SetResult();
         await Eventually.TrueAsync(() => link.Center.CallsOf("SignOutNode").Count == 1, "the late credentials revoked");
+
+        // Revoked as late credentials of an ended flow (the amendments' event), never offered to the adoption.
+        await Eventually.TrueAsync(() => ReadLog(link).Contains("cloud.sign_in.late_credentials_revoked", StringComparison.Ordinal), "the late-credentials event");
         Assert.False(link.Center.IsLive(link.Center.LatestDelivered!));
         Assert.Null(link.StoredRecord());
         Assert.False(link.Service.AccountLinked);
@@ -643,6 +666,14 @@ public sealed class SignInFlowTests
 
             return true;
         }
+    }
+
+    /// <summary>The fixture's node log, read as the log shares it.</summary>
+    internal static string ReadLog(LinkFixture link)
+    {
+        using var stream = new FileStream(link.Log.CurrentFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     internal static Task<SignInReply> BeginAsync(LinkFixture link, SignInMethod method) =>
