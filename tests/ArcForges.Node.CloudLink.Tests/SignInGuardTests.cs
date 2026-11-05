@@ -408,20 +408,76 @@ public sealed class SignInGuardTests
             var reader = Task.Run(() =>
             {
                 started.Release();
-                while (true)
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while (deadline.Elapsed < TimeSpan.FromSeconds(10))
                 {
                     if (link.Service.SignIn.Get(flow.FlowId)!.State != SignInFlowState.Pending)
                     {
                         return link.Service.Phase;
                     }
                 }
+
+                return (CloudLinkPhase?)null;
             }, Cancel);
             await started.WaitAsync(Cancel);
             link.Service.SignIn.Cancel(flow.FlowId);
-            seen.Add(await reader.WaitAsync(TimeSpan.FromSeconds(5), Cancel));
+            var phase = await reader.WaitAsync(TimeSpan.FromSeconds(20), Cancel);
+            Assert.True(phase is not null, "round " + round + ": the reader never saw the flow end within 10 s");
+            seen.Add(phase.Value);
         }
 
         Assert.All(seen, phase => Assert.Equal(CloudLinkPhase.SignedOut, phase));
+    }
+
+    [Fact]
+    public async Task AFlowBegunRightAfterAnotherEndedKeepsItsReservationAndTheHeldProbePaused()
+    {
+        // PR #71 review B-1: the ending flow released the reservation a second time after its lock, so a BeginSignIn in that gap lost its
+        // reservation (the phase read SignedOut and the probe of a held rejected credential resumed during the new flow; N2 R-2, F-1).
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await link.SignInAsync();
+        link.Center.Script("RefreshNodeSession", new FakeFault.Refusal(SignInFlowTests.Arc(ErrorCategory.Authentication, "unauthenticated")));
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45),
+            () => link.Service.Status().Warnings.Contains("center_rejected_credential"), "the rejection");
+
+        // The held credential's probe is due 50 to 60 minutes after the rejection (at least 49 minutes from here).
+        var rejected = link.Clock.GetTimestamp();
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(49),
+            () => link.Clock.GetElapsedTime(rejected) >= TimeSpan.FromMinutes(48.5), "48.5 minutes after the rejection");
+        var refreshes = link.Center.CallsOf("RefreshNodeSession").Count;
+
+        var first = (await SignInFlowTests.BeginAsync(link, SignInMethod.Browser)).Flow!;
+        SignInReply? next = null;
+        link.Service.SignIn.AfterEnd = () =>
+        {
+            // In the gap between the first flow's end and the rest of its ending: the new flow reserves.
+            link.Service.SignIn.AfterEnd = null;
+            next = SignInFlowTests.BeginAsync(link, SignInMethod.DeviceCode).GetAwaiter().GetResult();
+        };
+        Assert.Equal(SignInFlowState.Cancelled, link.Service.SignIn.Cancel(first.FlowId).Flow!.State);
+        Assert.NotNull(next?.Flow);
+        Assert.Equal(SignInFlowState.Pending, next.Flow.State);
+        Assert.Equal(CloudLinkPhase.SigningIn, link.Service.Phase);
+
+        // Through the new flow's whole life (its hard stop, past the probe's due time) the probe stays paused; it runs once the flow ended.
+        // The count is read before the state, so a count seen with the flow still pending was the count while it was pending.
+        var whilePending = refreshes;
+        await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(700), () =>
+        {
+            var count = link.Center.CallsOf("RefreshNodeSession").Count;
+            if (link.Service.SignIn.Get(next.Flow.FlowId)!.State == SignInFlowState.Pending)
+            {
+                whilePending = Math.Max(whilePending, count);
+                return false;
+            }
+
+            return true;
+        }, "the new flow's end");
+        Assert.Equal(refreshes, whilePending);
+        Assert.Equal(SignInFlowState.Expired, link.Service.SignIn.Get(next.Flow.FlowId)!.State);
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(15),
+            () => link.Center.CallsOf("RefreshNodeSession").Count > refreshes, "the probe after the flow");
     }
 
     [Fact]

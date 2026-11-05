@@ -96,6 +96,9 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     /// <summary>Replaces the loopback listener's construction (tests: a bind failure).</summary>
     internal Func<IPAddress, TcpListener>? Listen { get; set; }
 
+    /// <summary>Runs in a flow's end after the flow's lock was released and before anything else of it (tests: a BeginSignIn in that gap).</summary>
+    internal Action? AfterEnd { get; set; }
+
     /// <summary>The active flow's loopback receiver (tests).</summary>
     internal LoopbackReceiver? Receiver
     {
@@ -1066,7 +1069,10 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         Finish(run, FlowPhase.Failed, Unkept(refused, confirmed));
     }
 
-    /// <summary>Ends the flow once: its state, the receiver, the reservation (the phase is the link's own again, a held probe resumes).</summary>
+    /// <summary>
+    /// Ends the flow once: its state and the reservation in one step (the phase is the link's own again, a held probe resumes), then the
+    /// receiver and the loop's wake.
+    /// </summary>
     private void Finish(Run run, FlowPhase state, ArcError? error)
     {
         lock (_lock)
@@ -1085,10 +1091,13 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             _link.EndSignInReservation();
         }
 
+        // The reservation ended once, inside the lock: from here on it may already be a newer flow's (a BeginSignIn right after this
+        // flow's end), so nothing below touches it; the loop is only woken (PR #71 review B-1).
+        AfterEnd?.Invoke();
         run.Cancelled.TrySetResult();
         run.Started.TrySetResult();
         run.Receiver?.Stop();
-        _link.ReleaseSignIn();
+        _link.WakeAfterSignIn();
         _options.Log.Info("cloud.sign_in.ended", new LogField("state", StateName(state)),
             new LogField("error", error is null ? null : error.Category.ToString().ToLowerInvariant() + "/" + error.Code));
     }

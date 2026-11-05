@@ -13,6 +13,9 @@ public sealed class PrivateFilesSharingTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("arcforges-private-files-").FullName;
 
+    /// <summary>How long a test holds the file: well inside the retries' bound of about 0.6 s (PR #71 review N-6).</summary>
+    private static readonly TimeSpan Hold = TimeSpan.FromMilliseconds(50);
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     private string FilePath => Path.Combine(_root, "run", "cloud-link.json");
@@ -28,7 +31,7 @@ public sealed class PrivateFilesSharingTests : IDisposable
             var refused = Assert.ThrowsAny<IOException>(() => new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete).Dispose());
             Assert.True(PrivateFiles.Transient(refused, replacing: false), refused.GetType().Name + " " + refused.HResult);
             var read = Task.Run(() => PrivateFiles.ReadOrNull(FilePath), Cancel);
-            await Task.Delay(150, Cancel);
+            await Task.Delay(Hold, Cancel);
             Assert.False(read.IsCompleted);
             holder.Dispose();
             Assert.Equal("first"u8.ToArray(), await read.WaitAsync(TimeSpan.FromSeconds(5), Cancel));
@@ -46,7 +49,9 @@ public sealed class PrivateFilesSharingTests : IDisposable
         using var holder = new FileStream(FilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         var watch = Stopwatch.StartNew();
         Assert.ThrowsAny<IOException>(() => PrivateFiles.ReadOrNull(FilePath));
-        Assert.InRange(watch.Elapsed, PrivateFiles.RetryDelays.Aggregate(TimeSpan.Zero, (sum, delay) => sum + delay), TimeSpan.FromSeconds(5));
+        // A sleep may end up to one timer tick (about 16 ms on Windows) early.
+        var bound = PrivateFiles.RetryDelays.Aggregate(TimeSpan.Zero, (sum, delay) => sum + delay);
+        Assert.InRange(watch.Elapsed, bound - (PrivateFiles.RetryDelays.Length * TimeSpan.FromMilliseconds(16)), TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -58,7 +63,7 @@ public sealed class PrivateFilesSharingTests : IDisposable
         try
         {
             var write = Task.Run(() => PrivateFiles.WriteAtomic(FilePath, "second"u8), Cancel);
-            await Task.Delay(150, Cancel);
+            await Task.Delay(Hold, Cancel);
             holder.Dispose();
             await write.WaitAsync(TimeSpan.FromSeconds(5), Cancel);
         }
@@ -79,7 +84,7 @@ public sealed class PrivateFilesSharingTests : IDisposable
         try
         {
             var delete = Task.Run(() => PrivateFiles.Delete(FilePath), Cancel);
-            await Task.Delay(150, Cancel);
+            await Task.Delay(Hold, Cancel);
             holder.Dispose();
             Assert.True(await delete.WaitAsync(TimeSpan.FromSeconds(5), Cancel));
         }
@@ -99,11 +104,29 @@ public sealed class PrivateFilesSharingTests : IDisposable
         Assert.False(PrivateFiles.Transient(new FileNotFoundException(), replacing: true));
     }
 
-    [Fact]
-    public async Task AReportWhoseRecordFailsIsRecordedByTheNextReport()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(121)]
+    [InlineData(4096)]
+    [InlineData(100_000)]
+    public void AReadReturnsTheExactBytesInOneArray(int length)
     {
-        // ReporterAndHookTests' timeout on Windows: the report reached the center, the link write was refused, and the name was set in memory
-        // only, so no later report ever recorded it. Here the write is made to fail by a read-only run/ directory (Unix permissions).
+        // PR #71 review B-2: one array of the file's exact size, read straight into it (no pooled, stream or growing buffer of a private key).
+        var content = System.Security.Cryptography.RandomNumberGenerator.GetBytes(length);
+        PrivateFiles.WriteAtomic(FilePath, content);
+        var read = PrivateFiles.ReadOrNull(FilePath)!;
+        Assert.Equal(content.Length, read.Length);
+        Assert.Equal(content, read);
+        Assert.Null(PrivateFiles.ReadOrNull(FilePath + ".absent"));
+    }
+
+    [Fact]
+    public async Task AReportWhoseRecordFailsIsWrittenAtALaterLoopTurnWithoutAnotherReport()
+    {
+        // ReporterAndHookTests' timeout on Windows: the report reached the center, the link write was refused, and nothing ever wrote the
+        // name. Now the values stay pending and the loop writes the file again; the center is not called again (PR #71 review N-5). Here
+        // the write is made to fail by a read-only run/ directory (Unix permissions).
         Assert.SkipWhen(OperatingSystem.IsWindows() || Environment.UserName == "root", "needs Unix permissions that bind the test's user");
         if (OperatingSystem.IsWindows())
         {
@@ -131,7 +154,7 @@ public sealed class PrivateFilesSharingTests : IDisposable
 
         Assert.Null(link.Storage.ReadLink()!.ReportedName);
         await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5), () => link.Storage.ReadLink()!.ReportedName == "buildbox", "the name recorded");
-        Assert.Equal(2, link.Center.CallsOf("ReportNodeInfo").Count);
+        Assert.Single(link.Center.CallsOf("ReportNodeInfo"));
     }
 
     public void Dispose()

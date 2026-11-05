@@ -445,18 +445,45 @@ internal static class PrivateFiles
     {
         try
         {
-            return Retry(() =>
-            {
-                // Every sharing mode: a reader never makes this node's own replace or delete fail (Windows), nor waits on another reader.
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 0);
-                using var copy = new MemoryStream();
-                stream.CopyTo(copy);
-                return copy.ToArray();
-            }, replacing: false);
+            return Retry(() => ReadExact(path), replacing: false);
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// The file's bytes in ONE array of the file's exact size, read straight into it (no stream buffer, no pooled or growing buffer): the
+    /// node key's PKCS#8 bytes pass through here, and the caller zeroes the one array it gets (PR #71 review B-2). Opened with every sharing
+    /// mode, so this reader neither waits on another reader nor holds the node's own replace or delete off longer than the read. A file
+    /// that changes length while it is read (only another process can do that: this node replaces, never rewrites in place) is read again;
+    /// the abandoned array is zeroed first.
+    /// </summary>
+    private static byte[] ReadExact(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 0);
+        for (var attempt = 0; ; attempt++)
+        {
+            stream.Position = 0;
+            var bytes = new byte[checked((int)stream.Length)];
+            var read = 0;
+            while (read < bytes.Length && stream.Read(bytes, read, bytes.Length - read) is var count and > 0)
+            {
+                read += count;
+            }
+
+            // Complete and still the whole file (nothing more to read): done.
+            if (read == bytes.Length && stream.Length == bytes.Length)
+            {
+                return bytes;
+            }
+
+            CryptographicOperations.ZeroMemory(bytes);
+            if (attempt >= 3)
+            {
+                throw new IOException("The file " + Path.GetFileName(path) + " changed its length while it was read.");
+            }
         }
     }
 
@@ -476,20 +503,22 @@ internal static class PrivateFiles
     }
 
     /// <summary>
-    /// True for a refusal caused by another handle on the file, which ends when that handle closes: a sharing or lock violation (Windows;
-    /// on Unix the runtime's emulation of <see cref="FileShare.None"/> refuses the same way), and on Windows an access denial of a replace or
-    /// delete (the target is open without delete sharing, or its deletion is pending). A permission denial on Unix is not transient.
+    /// True for a refusal caused by another handle on the file, which ends when that handle closes; nothing else is retried (PR #71 review N-3).
+    /// Windows: the exact HRESULTs of ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION, and an access denial of a replace or delete (the
+    /// target is open without delete sharing, or its deletion is pending). Unix: only the exact code the runtime raises when its emulation of
+    /// <see cref="FileShare.None"/> (an advisory <c>flock</c>) refuses an open, which is the raw EWOULDBLOCK errno as the HResult (11 on Linux,
+    /// 35 on macOS); a masked errno would also match unrelated errors (EPIPE is 32, EDOM 33), and a permission denial is never transient.
     /// </summary>
     internal static bool Transient(Exception exception, bool replacing)
     {
-        const int SharingViolation = 32;
-        const int LockViolation = 33;
-        const int WouldBlock = 11;
+        const int SharingViolation = unchecked((int)0x80070020);
+        const int LockViolation = unchecked((int)0x80070021);
+        var wouldBlock = OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() || OperatingSystem.IsFreeBSD() ? 35 : 11;
         return exception switch
         {
             FileNotFoundException or DirectoryNotFoundException => false,
-            IOException io when OperatingSystem.IsWindows() => (io.HResult & 0xFFFF) is SharingViolation or LockViolation,
-            IOException io => io.HResult == WouldBlock || (io.HResult & 0xFFFF) is SharingViolation or LockViolation,
+            IOException io when OperatingSystem.IsWindows() => io.HResult is SharingViolation or LockViolation,
+            IOException io => io.HResult == wouldBlock,
             UnauthorizedAccessException => OperatingSystem.IsWindows() && replacing,
             _ => false,
         };

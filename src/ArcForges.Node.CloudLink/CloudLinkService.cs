@@ -150,6 +150,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     private string? _lastError;
     private bool _rejected;
     private bool _pendingWrite;
+    private CloudLinkFile? _reportedUnwritten;
     private CloudCredentialRecord? _pendingRecord;
     private string? _pendingTarget;
     private bool _signOutPending;
@@ -358,6 +359,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <summary>The account status (account.proto <c>AccountStatus</c>; AF-CTR-04 N1 d.2).</summary>
     public AccountStatus Status()
     {
+        // Read before the state lock: the key store may wait for another handle on its record (PrivateFiles' retries; PR #71 review N-1).
+        var recorded = _options.Keys.Recorded();
         lock (_stateLock)
         {
             var status = new AccountStatus
@@ -404,7 +407,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                 status.LastContactAt = ProtoTime.ToInstant(contact);
             }
 
-            if (_options.Keys.Recorded() is { } key && key.NodeId == _nodeHex)
+            if (recorded is { } key && key.NodeId == _nodeHex)
             {
                 status.NodeKeyFingerprint = key.Fingerprint;
             }
@@ -517,7 +520,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     /// <c>STATE/invalid_state</c> of BeginSignIn: not signed in (<c>signed_in</c>/<c>sign_in</c>); no link this node cannot use or is ending
     /// (<c>signed_out</c> and the warning's name, or <c>ending</c>), except a credential held as <c>center_rejected_credential</c>, which only
     /// a successful sign-in replaces; a configured center (<c>center_url</c>). On success the phase is <c>SigningIn</c> (the <c>center_url</c>
-    /// refusal) and the probe of a held credential pauses until <see cref="ReleaseSignIn"/>.
+    /// refusal) and the probe of a held credential pauses until the flow ends (<see cref="EndSignInReservation"/>).
     /// </summary>
     internal ArcError? ReserveSignIn(out CenterEndpoint? center)
     {
@@ -563,16 +566,13 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         return null;
     }
 
-    /// <summary>Ends the reservation (every end of a flow): the phase is the link's own again and a held credential's probe resumes.</summary>
-    internal void ReleaseSignIn()
-    {
-        EndSignInReservation();
-        Wake();
-    }
+    /// <summary>Wakes the loop after a flow's end (a held credential's probe resumes, unless a newer flow reserved meanwhile).</summary>
+    internal void WakeAfterSignIn() => Wake();
 
     /// <summary>
-    /// Ends the reservation without waking the loop: the flow's end calls it while it holds the flow's lock, so whoever sees the flow ended
-    /// also sees the link's own phase (no <c>SigningIn</c> after an EXPIRED, DENIED, FAILED or CANCELLED flow). Then <see cref="ReleaseSignIn"/>.
+    /// Ends the reservation, once per flow: the flow's end calls it while it holds the flow's lock, so whoever sees the flow ended also sees
+    /// the link's own phase (no <c>SigningIn</c> after an EXPIRED, DENIED, FAILED or CANCELLED flow). It is never called again for that flow:
+    /// a newer flow may have reserved by then (PR #71 review B-1). Then <see cref="WakeAfterSignIn"/>.
     /// </summary>
     internal void EndSignInReservation()
     {
@@ -988,6 +988,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
                         changed |= FlushPendingWrite();
                     }
 
+                    FlushReported();
+
                     if ((Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
                     {
                         changed |= await RefreshCoreAsync(work.Token).ConfigureAwait(false);
@@ -1032,25 +1034,42 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
     }
 
     /// <summary>
-    /// Records the reported name and version in the link file, and in memory only once the file has them: a write that fails (on Windows
-    /// another process may hold the file beyond the retries) leaves both unchanged, so the next report is not skipped as already done.
+    /// Records the reported name and version: in memory at once (the center has them; the report is done and is not sent again), and in the
+    /// link file. A write that fails (on Windows another process may hold the file beyond the retries) leaves the values pending: the loop
+    /// writes the link file again at its next turn, every minute, until it has them (no new center call; PR #71 review N-5). Any other write
+    /// of the link file meanwhile carries them too. The caller holds the gate.
     /// </summary>
-    private bool RecordReported(CloudLinkFile link, EnrollingNodeInfo info)
+    private void RecordReported(CloudLinkFile link, EnrollingNodeInfo info)
     {
-        var (name, version) = (link.ReportedName, link.ReportedVersion);
         link.ReportedName = info.Name;
         link.ReportedVersion = info.Version;
+        Volatile.Write(ref _reportedUnwritten, link);
+        FlushReported();
+    }
+
+    /// <summary>Writes the link file of a recorded report that is not yet in it (the caller holds the gate).</summary>
+    private void FlushReported()
+    {
+        if (Volatile.Read(ref _reportedUnwritten) is not { } link)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(link, _link))
+        {
+            // The link was ended, reloaded or replaced meanwhile: its file decides (a reload re-reports what it lacks).
+            Volatile.Write(ref _reportedUnwritten, null);
+            return;
+        }
+
         try
         {
             _store.WriteLink(link);
-            return true;
+            Volatile.Write(ref _reportedUnwritten, null);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            link.ReportedName = name;
-            link.ReportedVersion = version;
             _options.Log.Warning("cloud.report.record_failed", new LogField("errorType", exception.GetType().Name));
-            return false;
         }
     }
 
@@ -1084,7 +1103,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         lock (_stateLock)
         {
             next = _phase == CloudLinkPhase.SignedIn || (_rejected && !_signingIn) ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
-            if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter))
+            if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter) || Volatile.Read(ref _reportedUnwritten) is not null)
             {
                 next = Math.Min(next, now + Ticks(TimeSpan.FromSeconds(60)));
             }
@@ -1497,13 +1516,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IAsyncDisposable
         {
             case CenterOutcome.Value:
                 _reportCommand = null;
-                if (!RecordReported(link, info))
-                {
-                    // The report reached the center; only its record failed. The same report again later, so the file catches up (an
-                    // idempotent replay at the center: the same values under a new command ID).
-                    Interlocked.Exchange(ref _nextReport, _options.Clock.GetTimestamp() + Ticks(TimeSpan.FromMinutes(1) + Jitter(TimeSpan.FromMinutes(1))));
-                }
-
+                RecordReported(link, info);
                 var changed = RemoveWarning(Warnings.InfoRejected) | RemoveWarning(Warnings.Restricted);
                 Contact(true);
                 return changed;
