@@ -11,16 +11,17 @@ namespace ArcForges.Node.Store.Tests;
 public sealed partial class StoreCreationTests
 {
     [Fact]
-    public void ANewStoreHasEveryTableOfSchemaVersion1()
+    public void ANewStoreHasEveryTableOfEveryReleasedStep()
     {
         using var root = new TemporaryDataRoot();
         using (var store = root.Open(new ManualClock()))
         {
             Assert.True(store.Opening.Created);
-            Assert.Equal(1, store.Opening.SchemaVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Opening.SchemaVersion);
         }
 
-        var expected = CreateTable().Matches(StoreMigrations.Released.Steps[0].Sql).Select(match => match.Groups[1].Value).Order(StringComparer.Ordinal).ToList();
+        var expected = StoreMigrations.Released.Steps.SelectMany(step => CreateTable().Matches(step.Sql)).Select(match => match.Groups[1].Value)
+            .Order(StringComparer.Ordinal).ToList();
         using var connection = Open(root.Database);
         var tables = Query(connection, "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;");
 
@@ -65,7 +66,7 @@ public sealed partial class StoreCreationTests
             Assert.Equal(16, nodeId.Length);
             Assert.Equal(0x70, nodeId[6] & 0xF0); // UUIDv7
             Assert.Equal(NodeRole.Host, store.Metadata.Role);
-            Assert.Equal(1, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
             Assert.Equal(1, store.Metadata.MinReaderVersion);
             Assert.Equal(StoreTime.ToMicroseconds(clock.Now), store.Metadata.CreatedAt);
             Assert.True(store.Metadata.PreviousShutdownClean);

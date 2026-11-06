@@ -172,6 +172,9 @@ public static class NodeHost
     /// <summary>The shutdown budget (02 section 2).</summary>
     public static readonly TimeSpan ShutdownBudget = TimeSpan.FromSeconds(10);
 
+    /// <summary>How long past <see cref="ShutdownBudget"/> the shutdown may run before the process exits anyway (node.shutdown.overrun).</summary>
+    public static readonly TimeSpan OverrunGrace = TimeSpan.FromSeconds(2);
+
     private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMinutes(10);
 
     /// <summary>How long after READY the version directory check starts (AD-0007 section 8: off the startup path).</summary>
@@ -376,6 +379,10 @@ public static class NodeHost
             RefreshInterval = CloudLinkTestHooks.Refresh(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.RefreshSeconds)),
             Opener = options.Opener
                 ?? new BrowserOpener(options.TestMode, CloudLinkTestHooks.Browser(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.BrowserFile))),
+
+            // AF-CTR-05 N1: the node channel logs every received call in routed_call_log through the single writer.
+            RoutedCalls = new ProcessorRoutedCallStore(processor),
+            Version = NodeContract.ProductVersion,
         });
         await using var cloudScope = cloud.ConfigureAwait(false);
         node.CloudLink = cloud;
@@ -526,11 +533,17 @@ public static class NodeHost
         CommandProcessor processor, string dataRoot, CancellationTokenSource loops, Task[] background, CloudLinkService cloud)
     {
         var started = node.Clock.GetTimestamp();
+
+        // Review B N-9 of PR #72: the cloud link's stop is bounded from the shutdown's start, not from its turn below. No refresh or report
+        // starts from now on; a center call in flight runs to its answer or its own 10 s deadline and its rotation is stored; at the budget
+        // a call still running is cancelled (it fails closed). The link's DisposeAsync below then flushes (CTR4-NODE-05) within one more
+        // second, so it has ended by budget + 1 s (CloudLinkService.FlushReserve), before the force exit at budget + 2 s (OverrunGrace).
+        cloud.BeginStop(ShutdownBudget);
         using var overrun = new Timer(_ =>
         {
             node.Log.Error("node.shutdown.overrun", new LogField("budgetMs", (long)ShutdownBudget.TotalMilliseconds));
             Environment.Exit(NodeExitCodes.Success);
-        }, null, ShutdownBudget + TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+        }, null, ShutdownBudget + OverrunGrace, Timeout.InfiniteTimeSpan);
         if (!node.Lifecycle.IsStopping)
         {
             try
@@ -559,7 +572,7 @@ public static class NodeHost
         await loops.CancelAsync().ConfigureAwait(false);
         await Task.WhenAny(Task.WhenAll(background), Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
 
-        // The cloud link stops and flushes a rotated credential whose write failed (AF-CTR-04 CTR4-NODE-05).
+        // The cloud link stops within the bound begun above and flushes a rotated credential whose write failed (AF-CTR-04 CTR4-NODE-05).
         await cloud.DisposeAsync().ConfigureAwait(false);
 
         // Running attempts stay with their holders (their guards take over the disk limits); kill_with_node attempts end here.
@@ -615,10 +628,12 @@ public static class NodeHost
             {
                 try
                 {
-                    // Approvals past their TTL expire; decided approvals (90 days) and audit entries (1 year) are pruned (node-store.md).
+                    // Approvals past their TTL expire; decided approvals (90 days), audit entries (1 year) and routed calls (node-store.md section 2a)
+                    // are pruned (node-store.md).
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
-                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)).ConfigureAwait(false);
+                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
+                        + RoutedCallLog.Prune(context.Transaction)).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
 
                     // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.

@@ -19,12 +19,40 @@ public sealed class MigrationTests
     }
 
     [Fact]
+    public void TheReleasedStep2UpgradesAStep1StoreAndKeepsItsRows()
+    {
+        using var root = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        using (var store = root.Open(clock, Plan(1)))
+        {
+            Assert.Equal(1, store.Metadata.SchemaVersion);
+            store.Write(transaction => transaction.Execute("INSERT INTO node_setting (name, value_json, updated_at, rev) VALUES ('kept', '7', 0, 0);"));
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        using (var store = root.Open(clock))
+        {
+            Assert.Equal(1, store.Opening.MigratedFrom);
+            Assert.Equal(2, store.Metadata.SchemaVersion);
+            Assert.Equal(1, store.Metadata.MinReaderVersion);
+            Assert.Equal("7", store.Read(reader => reader.Scalar("SELECT value_json FROM node_setting WHERE name = 'kept';")));
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log;")));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM pragma_table_info('task') WHERE name = 'local_diagnostic' AND dflt_value = '0';")));
+            Assert.Single(StoreBackups.List(root.Path));
+        }
+
+        // A binary of version 1 still reads the expanded store (min_reader stays 1).
+        using var older = root.Open(clock, Plan(1));
+        Assert.Equal(2, older.Metadata.SchemaVersion);
+    }
+
+    [Fact]
     public void AnOlderStoreIsBackedUpThenMigratedForward()
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         byte[] nodeId;
-        using (var store = root.Open(clock))
+        using (var store = root.Open(clock, Plan(1)))
         {
             nodeId = store.Metadata.NodeId.ToArray();
             store.Write(transaction => transaction.Execute("INSERT INTO node_setting (name, value_json, updated_at, rev) VALUES ('kept', '42', 0, 0);"));
@@ -63,7 +91,7 @@ public sealed class MigrationTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        root.Open(clock).Dispose();
+        root.Open(clock, Plan(1)).Dispose();
         for (var version = 2; version <= 5; version++)
         {
             clock.Advance(TimeSpan.FromMinutes(1));
@@ -82,7 +110,7 @@ public sealed class MigrationTests
         root.Open(clock, Plan(3)).Dispose();
 
         // A rolled-back binary (schema 1) reads a store a newer node expanded while min_reader stays 1.
-        using var store = root.Open(clock);
+        using var store = root.Open(clock, Plan(1));
 
         Assert.Equal(3, store.Opening.SchemaVersion);
         Assert.Null(store.Opening.MigratedFrom);
@@ -95,13 +123,13 @@ public sealed class MigrationTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using (var store = root.Open(clock))
+        using (var store = root.Open(clock, Plan(1)))
         {
             store.Write(transaction => transaction.Execute("UPDATE store_meta SET schema_version = 3, min_reader_version = 2;"));
         }
 
         var before = SHA256.HashData(File.ReadAllBytes(root.Database));
-        var refused = Assert.Throws<StoreIncompatibleException>(() => root.Open(clock));
+        var refused = Assert.Throws<StoreIncompatibleException>(() => root.Open(clock, Plan(1)));
 
         Assert.Contains("schema version 2", refused.Message, StringComparison.Ordinal);
         SqliteConnection.ClearAllPools();
@@ -119,8 +147,8 @@ public sealed class MigrationTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        root.Open(clock).Dispose();
-        var failing = new MigrationPlan([.. StoreMigrations.Released.Steps,
+        root.Open(clock, Plan(1)).Dispose();
+        var failing = new MigrationPlan([.. StoreMigrations.Released.Steps.Take(1),
             new StoreMigration(2, 1, "0002-failing.sql", "CREATE TABLE half_done (id INTEGER PRIMARY KEY); INSERT INTO no_such_table VALUES (1);")]);
 
         Assert.Throws<SqliteException>(() => root.Open(clock, failing));
@@ -162,9 +190,12 @@ public sealed class MigrationTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new StoreMigration(2, 3, "c.sql", "SELECT 1;"));
     }
 
-    /// <summary>The released steps plus expand steps up to <paramref name="latest"/> (min_reader stays 1).</summary>
+    /// <summary>
+    /// The released step 1 plus expand test steps up to <paramref name="latest"/> (min_reader stays 1): the tests of the migration machinery
+    /// run on a version-1 binary and its synthetic successors; the released step 2 has its own tests.
+    /// </summary>
     internal static MigrationPlan Plan(int latest) => new([
-        .. StoreMigrations.Released.Steps,
+        .. StoreMigrations.Released.Steps.Take(1),
         .. Enumerable.Range(2, latest - 1).Select(version => new StoreMigration(version, 1, $"000{version}-test.sql",
             $"CREATE TABLE test_expansion_{version} (id BLOB NOT NULL PRIMARY KEY, note TEXT) STRICT; ALTER TABLE node_setting ADD COLUMN note_{version} TEXT;")),
     ]);

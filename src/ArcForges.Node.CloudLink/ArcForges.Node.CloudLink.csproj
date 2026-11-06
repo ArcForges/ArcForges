@@ -15,6 +15,7 @@
     <ProjectReference Include="../ArcForges.Node.Core/ArcForges.Node.Core.csproj" />
     <PackageReference Include="ArcForges.Contracts.Fleet" />
     <PackageReference Include="ArcForges.Contracts.Node" />
+    <PackageReference Include="ArcForges.Contracts.Relay" />
     <!-- The node's graph carries the DesktopPlatform 1.0.0-ci.141.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
     <PackageReference Include="Grpc.Net.Client" />

@@ -132,6 +132,12 @@ internal sealed class CloudLinkFile
 
     /// <summary>The last node version reported to the center.</summary>
     public string? ReportedVersion { get; set; }
+
+    /// <summary>
+    /// True after <c>SetCloudLink(false)</c> (AF-CTR-05 E.3); absent means on: the cloud link defaults to on after sign-in (Plan decision Q19),
+    /// and a node signed in before AF-CTR-05 connects after the upgrade.
+    /// </summary>
+    public bool? ChannelDisabled { get; set; }
 }
 
 /// <summary>One center public key as <c>run/cloud-keys.json</c> keeps it.</summary>

@@ -16,7 +16,7 @@ and the committed `packages.lock.json` files.
 | Grpc.Core.Api, Grpc.Net.Client, Grpc.Net.Client.Web, Grpc.Net.Common, Grpc.AspNetCore.Server | [grpc-dotnet](https://github.com/grpc/grpc-dotnet), Apache-2.0 |
 | ASP.NET Core (Kestrel, the `Microsoft.AspNetCore.App` shared framework) and Microsoft.Extensions.* abstractions | [dotnet/aspnetcore](https://github.com/dotnet/aspnetcore) and [dotnet/runtime](https://github.com/dotnet/runtime), MIT |
 | System.CommandLine | [dotnet/command-line-api](https://github.com/dotnet/command-line-api), MIT |
-| ArcForges.Contracts.*, ArcForges.Sdk.Contracts | [ArcForges Contracts](https://github.com/ArcForges/Contracts), Apache-2.0 |
+| ArcForges.Contracts.* (the internal ArcForges.Contracts.Relay included), ArcForges.Sdk.Contracts | [ArcForges Contracts](https://github.com/ArcForges/Contracts), Apache-2.0 |
 | ArcForges.LocalRpc, ArcForges.Observability, ArcForges.Capabilities, ArcForges.Security.Secrets, ArcForges.Security, ArcForges.Foundation | [ArcForges DesktopPlatform](https://github.com/ArcForges/DesktopPlatform), AGPL-3.0-only |
 | .NET runtime | [dotnet/runtime](https://github.com/dotnet/runtime), MIT plus third-party notices |
 | xUnit and Microsoft.Testing.Platform | Test-only dependencies; see their NuGet license metadata |

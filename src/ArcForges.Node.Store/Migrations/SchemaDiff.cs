@@ -183,27 +183,102 @@ public static partial class SchemaDiff
         return found;
     }
 
-    private static bool IsAppendOnly(TableSchema before, TableSchema after)
+    internal static bool IsAppendOnly(TableSchema before, TableSchema after)
     {
         if (string.Equals(before.Sql, after.Sql, StringComparison.Ordinal))
         {
             return after.Columns.Count == before.Columns.Count;
         }
 
-        // ALTER TABLE ... ADD COLUMN inserts ", <column definition>" at the closing parenthesis of the column list and keeps
-        // the rest of the stored text byte for byte.
+        // ALTER TABLE ... ADD COLUMN inserts ", <column definition>" after the last column definition (before any table constraint, or at
+        // the closing parenthesis of the column list when there is none) and keeps the rest of the stored text byte for byte. The text
+        // inserted must start with a comma at the top level of the column list (never inside a constraint, a comment or quoted text).
         var close = ClosingParenthesis(before.Sql);
-        if (close < 0 || after.Columns.Count <= before.Columns.Count)
+        var added = after.Sql.Length - before.Sql.Length;
+        if (close < 0 || after.Columns.Count <= before.Columns.Count || added <= 0)
         {
             return false;
         }
 
-        var head = before.Sql[..close];
-        var tail = before.Sql[close..];
-        return after.Sql.Length > head.Length + tail.Length
-            && after.Sql.StartsWith(head, StringComparison.Ordinal)
-            && after.Sql.EndsWith(tail, StringComparison.Ordinal)
-            && after.Sql.AsSpan(head.Length).TrimStart().StartsWith(",", StringComparison.Ordinal);
+        var prefix = 0;
+        while (prefix < before.Sql.Length && before.Sql[prefix] == after.Sql[prefix])
+        {
+            prefix++;
+        }
+
+        var suffix = 0;
+        while (suffix < before.Sql.Length && before.Sql[^(suffix + 1)] == after.Sql[^(suffix + 1)])
+        {
+            suffix++;
+        }
+
+        for (var at = before.Sql.Length - suffix; at <= Math.Min(prefix, close); at++)
+        {
+            if (at >= 0 && after.Sql.AsSpan(at, added).TrimStart().StartsWith(",", StringComparison.Ordinal) && TopLevelOfColumns(before.Sql, at))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // True when position <paramref name="at"/> of a CREATE TABLE text is at the top level of its column list (depth 1, outside comments
+    // and quoted text).
+    internal static bool TopLevelOfColumns(string sql, int at)
+    {
+        var depth = 0;
+        for (var index = 0; index < at; index++)
+        {
+            var character = sql[index];
+            if (character == '-' && index + 1 < sql.Length && sql[index + 1] == '-')
+            {
+                var end = sql.IndexOf('\n', index);
+                if (end < 0 || end >= at)
+                {
+                    return false;
+                }
+
+                index = end;
+                continue;
+            }
+
+            if (character == '/' && index + 1 < sql.Length && sql[index + 1] == '*')
+            {
+                var end = sql.IndexOf("*/", index + 2, StringComparison.Ordinal);
+                if (end < 0 || end + 1 >= at)
+                {
+                    return false;
+                }
+
+                index = end + 1;
+                continue;
+            }
+
+            if (character is '\'' or '"' or '`' or '[')
+            {
+                var closing = character == '[' ? ']' : character;
+                var end = sql.IndexOf(closing, index + 1);
+                if (end < 0 || end >= at)
+                {
+                    return false;
+                }
+
+                index = end;
+                continue;
+            }
+
+            if (character == '(')
+            {
+                depth++;
+            }
+            else if (character == ')')
+            {
+                depth--;
+            }
+        }
+
+        return depth == 1;
     }
 
     // The parenthesis that closes the column list, skipping comments and quoted text.

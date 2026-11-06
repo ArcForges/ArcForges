@@ -27,7 +27,7 @@ public sealed class AccountServiceTests
             Assert.False(status.SignedIn);
             Assert.Equal(center.Endpoint.Url, status.CenterUrl);
             Assert.Equal(RelayState.Disabled, status.Relay);
-            Assert.Equal("not_delivered", status.RelayReason);
+            Assert.Equal("signed_out", status.RelayReason);
             Assert.False(status.CloudLinkEnabled);
             Assert.Null(status.Entitlement);
             Assert.False(status.HasNodeKeyFingerprint);
@@ -297,7 +297,6 @@ public sealed class AccountServiceTests
     }
 
     [Theory]
-    [InlineData("SetCloudLink")]
     [InlineData("CreatePhonePairing")]
     [InlineData("GetPhonePairing")]
     [InlineData("ConfirmPhonePairing")]
@@ -310,7 +309,6 @@ public sealed class AccountServiceTests
         await using var human = await node.ChannelAsync(Origin.Human);
         var call = method switch
         {
-            "SetCloudLink" => human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "CreatePhonePairing" => human.Account.CreatePhonePairingAsync(new AccountServiceCreatePhonePairingRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "GetPhonePairing" => human.Account.GetPhonePairingAsync(new AccountServiceGetPhonePairingRequest(), cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
             "ConfirmPhonePairing" => human.Account.ConfirmPhonePairingAsync(new AccountServiceConfirmPhonePairingRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken).ResponseAsync,
@@ -318,6 +316,57 @@ public sealed class AccountServiceTests
         };
         var failed = await Assert.ThrowsAsync<RpcException>(() => call);
         Assert.Equal(StatusCode.Unimplemented, failed.StatusCode);
+    }
+
+    [Fact]
+    public async Task SetCloudLinkTogglesTheChannelHumanOnlyAndTheStatusShowsTheRelay()
+    {
+        // N1-17 (AF-CTR-05 E.3): HUMAN only, idempotent by command ID, STATE/not_signed_in while signed out; the status carries relay,
+        // relay_reason and cloud_link_enabled, and NodeInfo.features the center.channel.v1 token.
+        var ct = TestContext.Current.CancellationToken;
+        await using var center = await FakeCenter.StartAsync();
+        await using var node = CloudNode.Create(center.Endpoint.Url);
+        await node.StartAsync();
+        await using var human = await node.ChannelAsync(Origin.Human);
+        await using var script = await node.ChannelAsync(Origin.Script);
+        await using var agent = await node.ChannelAsync(Origin.Agent);
+        var info = (await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct)).Value.Node;
+        Assert.Contains(CloudLinkService.ChannelFeature, info.Features);
+
+        var signedOut = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command(), Enabled = false }, cancellationToken: ct);
+        Assert.Equal("not_signed_in", signedOut.Error.Code);
+
+        using (NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(node.Runtime.NodeId.Span, center.Endpoint.Origin, TimeProvider.System))
+        {
+            await node.Cloud.AdoptAsync(center.Issue(node.Runtime.NodeId.Span), center.Endpoint);
+        }
+
+        foreach (var refused in new[] { script, agent })
+        {
+            var denied = await refused.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command(), Enabled = false }, cancellationToken: ct);
+            Assert.Equal("permission_denied", denied.Error.Code);
+        }
+
+        Assert.True(node.Cloud.Status().CloudLinkEnabled);
+        var meta = CloudNode.Command();
+        var off = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = meta, Enabled = false }, cancellationToken: ct);
+        Assert.Null(off.Error);
+        Assert.False(off.Value.Status.CloudLinkEnabled);
+        await Eventually.TrueAsync(() => node.Cloud.Status() is { Relay: RelayState.Disabled, RelayReason: "cloud_link_disabled" }, "the channel is off");
+        var status = (await agent.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: ct)).Value.Status;
+        Assert.Equal((RelayState.Disabled, "cloud_link_disabled", false), (status.Relay, status.RelayReason, status.CloudLinkEnabled));
+
+        // The same command ID replays the recorded outcome; another payload under it is a conflict.
+        var replay = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = meta, Enabled = false }, cancellationToken: ct);
+        Assert.Null(replay.Error);
+        var reused = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = meta, Enabled = true }, cancellationToken: ct);
+        Assert.Equal("command_id_reused", reused.Error.Code);
+        var missing = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command() }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", missing.Error.Code);
+
+        var on = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command(), Enabled = true }, cancellationToken: ct);
+        Assert.True(on.Value.Status.CloudLinkEnabled);
+        await Eventually.TrueAsync(() => node.Cloud.Status().Relay != RelayState.Disabled, "the channel runs again");
     }
 
     [Fact]

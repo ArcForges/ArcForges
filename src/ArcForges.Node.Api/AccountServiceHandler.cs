@@ -12,7 +12,7 @@ namespace ArcForges.Node.Api;
 /// <summary>
 /// <c>AccountService</c> on the local endpoint (AF-CTR-04 CTR4-NODE-10/11 as amended; parts N1 and N2): <c>GetAccountStatus</c>, the sign-in
 /// methods <c>BeginSignIn</c>, <c>GetSignInFlow</c> and <c>CancelSignIn</c>, and <c>SignOut</c>; phone pairing
-/// (AF-CLD-02), the cloud link switch (AF-CTR-05) and the entitlement refresh (AF-CLD-03) are later tasks: they answer <c>UNIMPLEMENTED</c>.
+/// (AF-CLD-02) and the entitlement refresh (AF-CLD-03) are later tasks: they answer <c>UNIMPLEMENTED</c>; the cloud link switch <c>SetCloudLink</c> is AF-CTR-05's.
 /// <para><c>SignOut</c> follows the I/O rule of node-3: the permission gate and the replay check, then the cloud link's gate and the replay
 /// check again, then the center and secret-store I/O outside the single writer, then one short idempotent command that only records the
 /// outcome. The state change is journaled on topic ACCOUNT by the link afterwards.</para>
@@ -217,6 +217,56 @@ internal sealed class AccountServiceHandler : AccountService.AccountServiceBase
 
         await _cloud.PublishCurrentAsync().ConfigureAwait(false);
         return outcome;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// AF-CTR-05 E.3 (part N1): turns the cloud link, and with it the node channel (SM-RELAY), on or off. HUMAN only (Plan E.3; the matrix
+    /// row <c>integration.change</c>, fixed: the contract's SCRIPT=P is narrowed, a recorded deviation); <c>idempotency: command_id</c>;
+    /// <c>STATE/not_signed_in</c> while the node holds no credential. The switch is written by the link outside the single writer, then one short
+    /// idempotent command records the outcome, so a replay answers it without switching again.
+    /// </remarks>
+    public override async Task<AccountServiceSetCloudLinkResponse> SetCloudLink(AccountServiceSetCloudLinkRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        var response = new AccountServiceSetCloudLinkResponse { Meta = ApiCommands.Meta(request.Meta) };
+        var caller = _api.CallerOf(context);
+        var gate = new GateRequest(PermissionMatrix.Integrations, "AccountService.SetCloudLink", "turn the cloud link on or off", "node");
+        var refused = _api.Stopping() ?? Validation.CommandId(request.Meta) ?? (request.HasEnabled ? null : NodeErrors.InvalidArgument("enabled: required"));
+        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
+        if (refused is not null)
+        {
+            response.Error = refused;
+            return response;
+        }
+
+        bool? switched = null;
+        if (_api.Recorded(gate.Method, request, request.Meta))
+        {
+            _api.MarkReplayOnly(request.Meta);
+        }
+        else
+        {
+            switched = await _cloud.SetCloudLinkAsync(request.Enabled).ConfigureAwait(false);
+        }
+
+        return (await _api.IdempotentAsync(request, request.Meta, caller, "SetCloudLink", AccountServiceSetCloudLinkResponse.Parser,
+            failure => new AccountServiceSetCloudLinkResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure },
+            _ =>
+            {
+                var answer = new AccountServiceSetCloudLinkResponse { Meta = ApiCommands.Meta(request.Meta) };
+                if (switched ?? throw new InvalidOperationException("A replayed switch never executes."))
+                {
+                    answer.Value = new AccountServiceSetCloudLinkValue { Status = _cloud.Status() };
+                }
+                else
+                {
+                    answer.Error = NodeErrors.NotSignedIn();
+                }
+
+                return answer;
+            }, gate).ConfigureAwait(false)).Response;
     }
 
     /// <summary>

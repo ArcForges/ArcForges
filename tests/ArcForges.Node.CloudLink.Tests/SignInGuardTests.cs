@@ -435,13 +435,17 @@ public sealed class SignInGuardTests
         // PR #71 review B-1: the ending flow released the reservation a second time after its lock, so a BeginSignIn in that gap lost its
         // reservation (the phase read SignedOut and the probe of a held rejected credential resumed during the new flow; N2 R-2, F-1).
         await using var link = await LinkFixture.CreateAsync();
+
+        // PR #71 review N-10: no jitter, so the held credential's probe falls due exactly 50 minutes after the rejection, while the new
+        // flow (begun at 48.5 minutes, pending for at most 630 s) is pending: the probe half below is never trivially true.
+        link.LinkRandom = () => 0;
         await link.StartAsync();
         await link.SignInAsync();
         link.Center.Script("RefreshNodeSession", new FakeFault.Refusal(SignInFlowTests.Arc(ErrorCategory.Authentication, "unauthenticated")));
         await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45),
             () => link.Service.Status().Warnings.Contains("center_rejected_credential"), "the rejection");
 
-        // The held credential's probe is due 50 to 60 minutes after the rejection (at least 49 minutes from here).
+        // The held credential's probe is due 50 minutes after the rejection (no jitter).
         var rejected = link.Clock.GetTimestamp();
         await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(49),
             () => link.Clock.GetElapsedTime(rejected) >= TimeSpan.FromMinutes(48.5), "48.5 minutes after the rejection");
@@ -460,20 +464,25 @@ public sealed class SignInGuardTests
         Assert.Equal(SignInFlowState.Pending, next.Flow.State);
         Assert.Equal(CloudLinkPhase.SigningIn, link.Service.Phase);
 
-        // Through the new flow's whole life (its hard stop, past the probe's due time) the probe stays paused; it runs once the flow ended.
+        // Through the new flow's whole life (its hard stop, past the probe's due time at 50 minutes) the probe stays paused; it runs once
+        // the flow ended.
         // The count is read before the state, so a count seen with the flow still pending was the count while it was pending.
         var whilePending = refreshes;
+        var pendingFor = TimeSpan.Zero;
         await SignInFlowTests.Advance(link, TimeSpan.FromSeconds(700), () =>
         {
             var count = link.Center.CallsOf("RefreshNodeSession").Count;
+            var elapsed = link.Clock.GetElapsedTime(rejected);
             if (link.Service.SignIn.Get(next.Flow.FlowId)!.State == SignInFlowState.Pending)
             {
                 whilePending = Math.Max(whilePending, count);
+                pendingFor = elapsed;
                 return false;
             }
 
             return true;
         }, "the new flow's end");
+        Assert.True(pendingFor >= TimeSpan.FromMinutes(50), "the flow was pending past the probe's due time (" + pendingFor + ")");
         Assert.Equal(refreshes, whilePending);
         Assert.Equal(SignInFlowState.Expired, link.Service.SignIn.Get(next.Flow.FlowId)!.State);
         await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(15),

@@ -11,6 +11,9 @@ namespace ArcForges.Repository.Tests;
 public sealed partial class CenterSeamPolicyTests
 {
     private const string Seam = "src/ArcForges.Node.CloudLink/CenterHttpClient.cs";
+
+    /// <summary>The second reviewed seam (AF-CTR-05 N1, CTR5-NODE-01): the node channel's WebSocket, through the same authority guard.</summary>
+    private const string ChannelSeam = "src/ArcForges.Node.CloudLink/CenterChannelClient.cs";
     private const string Official = "src/ArcForges.Node.Core/CenterEndpoint.cs";
     private const string FakeCenterDirectory = "tests/ArcForges.Node.CloudLink.Tests/";
 
@@ -31,10 +34,10 @@ public sealed partial class CenterSeamPolicyTests
     }
 
     [Fact]
-    public void OnlyTheCenterHttpClientCreatesHttpClients()
+    public void OnlyTheTwoCenterSeamsCreateNetworkClients()
     {
         var offenders = new List<string>();
-        foreach (var path in Files("src").Where(path => path.EndsWith(".cs", StringComparison.Ordinal) && path != Seam))
+        foreach (var path in Files("src").Where(path => path.EndsWith(".cs", StringComparison.Ordinal) && path != Seam && path != ChannelSeam))
         {
             var text = File.ReadAllText(Path.Combine(RepositoryFiles.Root, path));
             if (OutboundHttp().IsMatch(text))
@@ -51,8 +54,8 @@ public sealed partial class CenterSeamPolicyTests
             }
         }
 
-        Assert.True(offenders.Count == 0, "Only " + Seam + " creates an HttpClient, an outbound handler, a GrpcChannel or a network socket: "
-            + string.Join(", ", offenders));
+        Assert.True(offenders.Count == 0, "Only " + Seam + " and " + ChannelSeam
+            + " create an HttpClient, an outbound handler, a GrpcChannel, a WebSocket client or a network socket: " + string.Join(", ", offenders));
         var seam = File.ReadAllText(Path.Combine(RepositoryFiles.Root, Seam));
         Assert.Matches(OutboundHttp(), seam);
         Assert.Contains("AllowAutoRedirect = false", seam, StringComparison.Ordinal);
@@ -60,7 +63,29 @@ public sealed partial class CenterSeamPolicyTests
         Assert.Contains("Timeout = Timeout.InfiniteTimeSpan", seam, StringComparison.Ordinal);
         Assert.DoesNotContain("ServerCertificateCustomValidationCallback", seam, StringComparison.Ordinal);
         Assert.All(UnixSocketSites, path => Assert.Matches(SocketConstruction(), File.ReadAllText(Path.Combine(RepositoryFiles.Root, path))));
+
+        // The channel seam (N1-1): one ClientWebSocket over HttpMessageInvoker(AuthorityGuardHandler(SocketsHttpHandler)), the HTTP seam's own
+        // guard and connect log, no redirect, no cookies, no compression, HTTP/1.1 only, the platform's certificate validation.
+        var channel = File.ReadAllText(Path.Combine(RepositoryFiles.Root, ChannelSeam));
+        Assert.Equal(1, Regex.Count(channel, @"\bnew\s+ClientWebSocket\b"));
+        Assert.Equal(1, Regex.Count(channel, @"\bnew\s+SocketsHttpHandler\b"));
+        Assert.Contains("new CenterHttpClient.AuthorityGuardHandler(center, connectLog) { InnerHandler = transport }", channel, StringComparison.Ordinal);
+        Assert.Contains("new HttpMessageInvoker(guard, disposeHandler: true)", channel, StringComparison.Ordinal);
+        Assert.Contains("ConnectAsync(ChannelUri(center), invoker,", channel, StringComparison.Ordinal);
+        Assert.Contains("AllowAutoRedirect = false", channel, StringComparison.Ordinal);
+        Assert.Contains("UseCookies = false", channel, StringComparison.Ordinal);
+        Assert.Contains("DangerousDeflateOptions = null", channel, StringComparison.Ordinal);
+        Assert.Contains("HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact", channel, StringComparison.Ordinal);
+        foreach (var forbidden in (string[])["ServerCertificateCustomValidationCallback", "RemoteCertificateValidationCallback", "SslOptions", "Credentials", "ClientCertificates"])
+        {
+            Assert.DoesNotContain(forbidden, channel, StringComparison.Ordinal);
+        }
     }
+
+    [Theory]
+    [InlineData("using var socket = new ClientWebSocket();")]
+    [InlineData("var invoker = new HttpMessageInvoker(handler);")]
+    public void TheSeamCheckCatchesAWebSocketClient(string source) => Assert.Matches(OutboundHttp(), source);
 
     [Fact]
     public void TheNodeNeverUsesTextModeGrpcWeb() =>
@@ -94,6 +119,7 @@ public sealed partial class CenterSeamPolicyTests
             && path != "tests/ArcForges.Repository.Tests/CenterSeamPolicyTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudLinkHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInHostTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/SignInSecretsTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/CloudChannelTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 
@@ -190,6 +216,82 @@ public sealed partial class CenterSeamPolicyTests
 
         Assert.Contains("bufferSize: 0", privateFiles, StringComparison.Ordinal);
         Assert.Contains("CryptographicOperations.ZeroMemory(bytes)", privateFiles, StringComparison.Ordinal);
+
+        // PR #71 review N-9: every stream of the region is unbuffered, no other file API reads there, and the node key's own reader
+        // (FileNodeKeyBackend.Open, before the region) reads through PrivateFiles.ReadOrNull and zeroes what it got.
+        foreach (Match stream in Regex.Matches(privateFiles, @"new\s+FileStream\((?<arguments>[^;]*)\);"))
+        {
+            Assert.Matches(@"bufferSize: 0|BufferSize = 0|\boptions\b", stream.Groups["arguments"].Value);
+        }
+
+        Assert.Contains("var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, BufferSize = 0 };",
+            privateFiles, StringComparison.Ordinal);
+        foreach (var forbidden in (string[])["File.Open", "OpenRead", "ReadAll", "File.OpenText"])
+        {
+            Assert.DoesNotContain(forbidden, privateFiles, StringComparison.Ordinal);
+        }
+
+        var open = source[source.IndexOf("public INodeKey? Open(string name)", StringComparison.Ordinal)..];
+        open = open[..open.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Assert.Contains("PrivateFiles.ReadOrNull(PathOf(name))", open, StringComparison.Ordinal);
+        Assert.Contains("CryptographicOperations.ZeroMemory(bytes)", open, StringComparison.Ordinal);
+        foreach (var forbidden in (string[])["FileStream", "File.", "MemoryStream", "StreamReader"])
+        {
+            Assert.DoesNotContain(forbidden, open, StringComparison.Ordinal);
+        }
+
+        // PR #71 review N-8: a read that throws zeroes the partly filled array.
+        var exact = privateFiles[privateFiles.IndexOf("private static byte[] ReadExact(string path)", StringComparison.Ordinal)..];
+        Assert.Matches(@"catch\s*\{\s*//[^\n]*\n\s*CryptographicOperations\.ZeroMemory\(bytes\);\s*throw;", exact);
+    }
+
+    [Fact]
+    public void EveryRelayReasonIsListedOnce()
+    {
+        // Review B N-5: AccountStatus.relay_reason is a closed vocabulary: every constant of ChannelReasons is in ChannelReasons.All once,
+        // and nothing else sets relay_reason (the status takes it from the channel only).
+        var source = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/ChannelState.cs"));
+        var block = source[source.IndexOf("internal static class ChannelReasons", StringComparison.Ordinal)..];
+        block = block[..block.IndexOf("\n}\n", StringComparison.Ordinal)];
+        var constants = Regex.Matches(block, @"public const string (\w+) = ""[a-z_]+"";").Select(match => match.Groups[1].Value).ToList();
+        var all = block[block.IndexOf("All { get; } =", StringComparison.Ordinal)..];
+        var listed = Regex.Matches(all, @"\b([A-Z]\w+)\b").Select(match => match.Groups[1].Value).Where(constants.Contains).ToList();
+        Assert.NotEmpty(constants);
+        Assert.Equal(constants.Order(StringComparer.Ordinal), listed.Order(StringComparer.Ordinal));
+        var setters = Files("src").Where(path => path.EndsWith(".cs", StringComparison.Ordinal)
+            && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"RelayReason\s*=")).ToList();
+        Assert.Equal(["src/ArcForges.Node.CloudLink/CloudLinkService.cs"], setters);
+        Assert.Contains("RelayReason = channel.Reason,", File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/CloudLinkService.cs")),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNodeBoundsTheCloudLinksStopFromTheShutdownsStart()
+    {
+        // Review B N-9 of PR #72: NodeHost.ShutdownAsync begins the cloud link's stop with its budget before anything else of the shutdown
+        // (before the local server stops), so the link has ended by budget + CloudLinkService.FlushReserve, before the force exit.
+        var host = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Api/NodeHost.cs"));
+        var shutdown = host[host.IndexOf("private static async Task<int> ShutdownAsync(", StringComparison.Ordinal)..];
+        var begin = shutdown.IndexOf("cloud.BeginStop(ShutdownBudget);", StringComparison.Ordinal);
+        Assert.True(begin >= 0, "ShutdownAsync begins the cloud link's stop");
+        foreach (var later in new[] { "using var overrun = new Timer(", "server.StopAsync(", "cloud.DisposeAsync()" })
+        {
+            var at = shutdown.IndexOf(later, StringComparison.Ordinal);
+            Assert.True(at > begin, later + " comes after the cloud link's stop begins");
+        }
+    }
+
+    [Fact]
+    public void TheChannelContractCohortIsThePinnedOne()
+    {
+        // The hello's contract_version names the cohort the node is built with: ChannelContract.Cohort equals Directory.Packages.props.
+        var packages = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "Directory.Packages.props"));
+        var service = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/CloudLinkService.cs"));
+        var cohort = Regex.Match(service, "public const string Cohort = \"(?<v>[^\"]+)\";").Groups["v"].Value;
+        foreach (var id in (string[])["ArcForges.Contracts.Relay", "ArcForges.Contracts.Fleet", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.Node"])
+        {
+            Assert.Contains("<PackageVersion Include=\"" + id + "\" Version=\"" + cohort + "\" />", packages, StringComparison.Ordinal);
+        }
     }
 
     private static IEnumerable<string> Files(params string[] roots) => roots.SelectMany(root =>
@@ -197,7 +299,7 @@ public sealed partial class CenterSeamPolicyTests
             .Select(path => Path.GetRelativePath(RepositoryFiles.Root, path).Replace('\\', '/'))
             .Where(path => !path.Split('/').Any(part => part is "bin" or "obj" or "Fixtures")));
 
-    [GeneratedRegex(@"\bnew\s+(?:HttpClient|SocketsHttpHandler|HttpClientHandler|TcpClient|HttpMessageInvoker)\b|:\s*(?:DelegatingHandler|HttpMessageHandler)\b|\bGrpcChannel\.ForAddress\b|\bWebRequest\.Create\b|\bHttpWebRequest\b")]
+    [GeneratedRegex(@"\bnew\s+(?:HttpClient|SocketsHttpHandler|HttpClientHandler|TcpClient|HttpMessageInvoker|ClientWebSocket)\b|:\s*(?:DelegatingHandler|HttpMessageHandler)\b|\bGrpcChannel\.ForAddress\b|\bWebRequest\.Create\b|\bHttpWebRequest\b")]
     private static partial Regex OutboundHttp();
 
     [GeneratedRegex(@"\bnew\s+Socket\([^)]*\)")]

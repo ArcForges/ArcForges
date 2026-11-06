@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Node.Store.Migrations;
 using ArcForges.Node.Store.Proto;
 using ArcForges.Tests;
 using Microsoft.Data.Sqlite;
@@ -61,7 +62,7 @@ public sealed class SecretPageErasureTests
             Assert.Equal(0, secrets.PurgeDue());
             Assert.False(ContainsCiphertext(root.Database, ciphertext));
             Assert.Equal("ok", store.Read(reader => reader.Scalar("PRAGMA integrity_check;")));
-            Assert.Equal(1, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
             if (valueLength > 4096)
             {
                 Assert.True(store.Read(reader => (long)reader.Scalar("PRAGMA freelist_count;")!) > 0);

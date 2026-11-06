@@ -30,7 +30,7 @@ public sealed class BackupSecretRetentionTests
 
             AssertBackup(backup, backend, taskId, ciphertext);
             Assert.Equal(UnsealStatus.Available, new TaskSecrets(store, keys).Unseal(taskId).Status);
-            Assert.Equal(1, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
             Assert.Null(store.Opening.MigratedFrom);
             Assert.Single(StoreBackups.List(root.Path));
             Assert.Empty(Directory.EnumerateFiles(StoreBackups.Directory(root.Path), "*.partial*"));
@@ -68,7 +68,7 @@ public sealed class BackupSecretRetentionTests
             using (var reopened = root.Open(clock))
             {
                 Assert.Null(reopened.Opening.MigratedFrom);
-                Assert.Equal(1, reopened.Metadata.SchemaVersion);
+                Assert.Equal(StoreMigrations.SupportedSchemaVersion, reopened.Metadata.SchemaVersion);
                 Assert.Equal(UnsealStatus.Available, new TaskSecrets(reopened, keys).Unseal(taskId).Status);
             }
 
@@ -122,7 +122,7 @@ public sealed class BackupSecretRetentionTests
             Assert.Contains("backup", error.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(UnsealStatus.Available, new TaskSecrets(store, keys).Unseal(taskId).Status);
             Assert.Equal("synthetic corrupt backup", File.ReadAllText(corrupt));
-            Assert.Equal(1, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
         }
         finally
         {
@@ -189,7 +189,7 @@ public sealed class BackupSecretRetentionTests
         using (var connection = StoreCreationTests.Open(backup))
         {
             Assert.Equal(["ok"], StoreCreationTests.Query(connection, "PRAGMA integrity_check;"));
-            Assert.Equal(["1"], StoreCreationTests.Query(connection, "SELECT schema_version FROM store_meta;"));
+            Assert.Equal([StoreMigrations.SupportedSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)], StoreCreationTests.Query(connection, "SELECT schema_version FROM store_meta;"));
             Assert.Equal(["42"], StoreCreationTests.Query(connection, "SELECT value_json FROM node_setting WHERE name = 'backup-kept';"));
             Assert.Equal([TaskSecrets.PurgedKeyId], StoreCreationTests.Query(connection, "SELECT key_id FROM task_secret;"));
             Assert.Equal(["00"], StoreCreationTests.Query(connection, "SELECT hex(ciphertext) FROM task_secret;"));

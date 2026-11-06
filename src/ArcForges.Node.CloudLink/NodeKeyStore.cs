@@ -468,9 +468,18 @@ internal static class PrivateFiles
             stream.Position = 0;
             var bytes = new byte[checked((int)stream.Length)];
             var read = 0;
-            while (read < bytes.Length && stream.Read(bytes, read, bytes.Length - read) is var count and > 0)
+            try
             {
-                read += count;
+                while (read < bytes.Length && stream.Read(bytes, read, bytes.Length - read) is var count and > 0)
+                {
+                    read += count;
+                }
+            }
+            catch
+            {
+                // PR #71 review N-8: a read that throws (another process's byte-range lock) never leaves a partly filled copy behind.
+                CryptographicOperations.ZeroMemory(bytes);
+                throw;
             }
 
             // Complete and still the whole file (nothing more to read): done.
