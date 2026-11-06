@@ -366,8 +366,20 @@ internal sealed class LinkFixture : IAsyncDisposable
     /// <summary>The stored credential record (test verification; the node reads it only through the link).</summary>
     public CloudCredentialRecord? StoredRecord()
     {
+        // The test reads the files while the link may be ending them: on Windows a read of a file whose deletion is pending is refused
+        // (UnauthorizedAccessException) for a moment. The test's read is retried for up to 2 s; the link's own reads run under its gate.
         var store = new CloudCredentialStore(DataRoot, Secrets.Selection);
-        return store.ReadLink() is { } link ? store.ReadRecord(link.Target) : null;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return store.ReadLink() is { } link ? store.ReadRecord(link.Target) : null;
+            }
+            catch (Exception exception) when (attempt < 40 && exception is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(50);
+            }
+        }
     }
 
     public CloudCredentialStore Storage => new(DataRoot, Secrets.Selection);
