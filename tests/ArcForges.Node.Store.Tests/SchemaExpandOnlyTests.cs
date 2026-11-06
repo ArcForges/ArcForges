@@ -137,7 +137,7 @@ public sealed class SchemaExpandOnlyTests
         Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("> 0", StringComparison.Ordinal)));
         Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("(,)", StringComparison.Ordinal) + 2));
         Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("(note", StringComparison.Ordinal) + 2));
-        Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf('(') ));
+        Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf('(')));
 
         var a = new ColumnSchema("a", "INTEGER", false, null, 0);
         var b = new ColumnSchema("b", "INTEGER", false, null, 0);
