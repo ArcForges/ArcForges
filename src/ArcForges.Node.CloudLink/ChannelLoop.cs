@@ -196,7 +196,10 @@ internal sealed class ChannelLoop : IAsyncDisposable
     {
         try
         {
-            await _host.RefreshAsync(session.Generation, session.Token).ConfigureAwait(false);
+            // Never cancelled by the connection's end or the node's shutdown (the Windows leg at e50b0e9): RefreshNodeSession rotates
+            // strictly, so a refresh cut off after the center committed loses the new tokens, and the spent one revokes the family at the
+            // next refresh. The call keeps its own deadline; the shutdown waits for it (DisposeAsync).
+            await _host.RefreshAsync(session.Generation, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
         {
@@ -309,7 +312,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
         Volatile.Read(ref _wake).TrySetResult();
         try
         {
-            await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            // Long enough for a refresh in flight to finish within its own 10 s deadline (it is never cancelled).
+            await _loop.WaitAsync(TimeSpan.FromSeconds(12)).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
@@ -354,7 +358,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 {
                     try
                     {
-                        await _host.RefreshAsync(ticket.Generation, stop).ConfigureAwait(false);
+                        // Not cancelled by the shutdown either (see RefreshKeysAsync).
+                        await _host.RefreshAsync(ticket.Generation, CancellationToken.None).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
                     {

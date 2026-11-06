@@ -340,6 +340,30 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public async Task ARefreshInFlightAtShutdownIsNeverCutOff()
+    {
+        // The Windows leg at e50b0e9 (CloudSignInHostTests): the PN-14 refresh right after a sign-in was cancelled by the node's stop after
+        // the center rotated, so the node kept the spent refresh token and its next refresh revoked the family. The refresh now finishes
+        // (within its own deadline) and its rotation is stored before the link ends.
+        await using var link = await LinkFixture.CreateAsync();
+        link.Channel = true;
+        link.Center.Channel.SigningKids.Add("cmd-rotated-0002");
+        var release = new TaskCompletionSource();
+        link.Center.Script("RefreshNodeSession", new FakeFault.Hold(release));
+        await link.StartAsync();
+        var issued = await link.SignInWithChannelAsync();
+        await Eventually.TrueAsync(() => link.Center.CallsOf("RefreshNodeSession").Count == 1, "the PN-14 refresh is at the center");
+        var stopping = link.StopAsync();
+        await Task.Delay(300, Cancel);
+        Assert.False(stopping.IsCompleted);
+        release.SetResult();
+        await stopping.WaitAsync(TimeSpan.FromSeconds(20), Cancel);
+        var stored = link.StoredRecord()!;
+        Assert.NotEqual(issued.RefreshToken, stored.RefreshToken);
+        Assert.True(link.Center.IsLive(stored.RefreshToken));
+    }
+
+    [Fact]
     public void TheRelayReasonsAreTheClosedVocabulary()
     {
         // Review B N-5: the exact list (part D routes it to Design: account.proto relay_reason and SM-RELAY).
