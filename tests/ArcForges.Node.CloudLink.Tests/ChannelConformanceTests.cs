@@ -16,7 +16,7 @@ namespace ArcForges.Node.CloudLink.Tests;
 /// </summary>
 public sealed class ChannelConformanceTests
 {
-    private const string SourceCommit = "c14156bf97aadce9165fd7762aaf482d68d23bd9";
+    private const string SourceCommit = "5c4c60744f2a269a4546d5e65a0870cb97feca21";
 
     /// <summary>What each captured exchange must leave the node in (SM-RELAY; relay.proto RelayClose; PN-3).</summary>
     private static readonly Dictionary<string, (RelayState State, string Reason)> Expected = new(StringComparer.Ordinal)
@@ -37,16 +37,24 @@ public sealed class ChannelConformanceTests
         ["token-expired"] = (RelayState.Backoff, ChannelReasons.CredentialExpired),
     };
 
+    /// <summary>
+    /// The exchanges of Cloud E1b (#145) whose center frames answer the node (a call, a relay nonce): their IDs and signatures are
+    /// normalized placeholders, so they are compared frame by frame and field by field, not replayed to the real client.
+    /// </summary>
+    private static readonly string[] Answered = ["call-executed", "call-refused", "call-unverifiable", "relay-nonce"];
+
     public static TheoryData<string> Cases() => [.. Expected.Keys.Order(StringComparer.Ordinal)];
+
+    public static TheoryData<string> AllCases() => [.. Expected.Keys.Concat(Answered).Order(StringComparer.Ordinal)];
 
     [Fact]
     public void TheVendoredChannelCapturesAreTheManifestsBytesOfTheCohortThisRepositoryUses()
     {
-        var root = FakeCenterConformanceTests.VendoredManifest("channel-exchanges", 14, SourceCommit);
+        var root = FakeCenterConformanceTests.VendoredManifest("channel-exchanges", 18, SourceCommit);
         Assert.Equal(ChannelContract.Cohort, root.GetProperty("contractsCohort").GetString());
         var cases = root.GetProperty("files").EnumerateArray().Select(file => file.GetProperty("file").GetString()!).ToList();
-        Assert.Equal(Expected.Keys.Select(name => "NodeChannel-" + name + ".json").Order(StringComparer.Ordinal), cases);
-        foreach (var name in Expected.Keys)
+        Assert.Equal(Expected.Keys.Concat(Answered).Select(name => "NodeChannel-" + name + ".json").Order(StringComparer.Ordinal), cases);
+        foreach (var name in Expected.Keys.Concat(Answered))
         {
             var capture = Load(name);
             Assert.Equal(ChannelContract.Cohort, capture.GetProperty("contractsCohort").GetString());
@@ -56,7 +64,7 @@ public sealed class ChannelConformanceTests
     }
 
     [Theory]
-    [MemberData(nameof(Cases))]
+    [MemberData(nameof(AllCases))]
     public void EveryCapturedCenterFrameIsValidAndThePeerSendsTheSameShapes(string name)
     {
         var capture = Load(name);
@@ -72,7 +80,9 @@ public sealed class ChannelConformanceTests
 
         var frames = Frames(reply).Select(bytes => (Bytes: bytes, Frame: RelayFrame.Parser.ParseFrom(bytes))).ToList();
         Assert.All(frames, frame => Assert.Equal(1U, frame.Frame.FrameVersion));
-        Assert.Equal(Enumerable.Range(1, frames.Count).Select(seq => (ulong)seq), frames.Select(frame => frame.Frame.FrameSeq));
+        // frame_seq only increases: the center's sequence may have gaps (abandoned frames, a refused enqueue, RelayClose; Cloud
+        // center-fleet.md), and the node never checks contiguity.
+        Assert.All(frames.Zip(frames.Skip(1)), pair => Assert.True(pair.Second.Frame.FrameSeq > pair.First.Frame.FrameSeq));
 
         // The center's first frame is the challenge, in the shape the peer sends.
         var challenge = frames[0].Frame;
@@ -112,6 +122,20 @@ public sealed class ChannelConformanceTests
                     close.FrameSeq = frame.FrameSeq;
                     Assert.Equal(bytes, close.ToByteArray());
                     Assert.Equal(reply.GetProperty("trailers").GetString(), "websocket-close: " + frame.Close.Code);
+                    break;
+                case RelayFrame.FrameOneofCase.Call:
+                    // A routed call (E1b): the frame's shape, and the peer's framing of the same call is the hub's bytes.
+                    Assert.True(RelayShapes.IsValid(frame.Call));
+                    Assert.Equal(bytes, new RelayFrame { FrameVersion = 1, FrameSeq = frame.FrameSeq, Call = frame.Call }.ToByteArray());
+                    Assert.True(RelayShapes.IsValid(CallHeader.Parser.ParseFrom(frame.Call.Header.Header)));
+                    break;
+                case RelayFrame.FrameOneofCase.RelayNonce:
+                    Assert.True(RelayShapes.IsValid(frame.RelayNonce));
+                    var nonce = FakeChannelPeer.NonceFrame(frame.RelayNonce.RequestId, frame.RelayNonce.Nonce.ToByteArray(),
+                        ArcForges.Client.ProtoTime.ToDateTimeOffset(frame.RelayNonce.ExpiresAt)!.Value);
+                    nonce.FrameVersion = 1;
+                    nonce.FrameSeq = frame.FrameSeq;
+                    Assert.Equal(bytes, nonce.ToByteArray());
                     break;
                 default:
                     Assert.Fail("an unexpected center frame " + frame.FrameCase + " in " + name);
@@ -188,6 +212,54 @@ public sealed class ChannelConformanceTests
             Assert.Equal(1, link.Center.Channel.Upgrades);
         }
     }
+
+    [Theory]
+    [InlineData("call-executed")]
+    [InlineData("call-refused")]
+    [InlineData("relay-nonce")]
+    public void TheNodesFramesHaveTheShapesTheHubAccepted(string name)
+    {
+        // The node side of the E1b captures (the center's nodetest peer): the ArcForges node's result for the captured call carries the
+        // same ResultHeader fields, and its relay nonce request is the captured frame byte for byte.
+        var capture = Load(name);
+        var sent = Frames(capture.GetProperty("request")).Select(bytes => (Bytes: bytes, Frame: RelayFrame.Parser.ParseFrom(bytes))).ToList();
+        var received = Frames(capture.GetProperty("reply")).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).ToList();
+        if (name == "relay-nonce")
+        {
+            var request = sent.Single(frame => frame.Frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest);
+            var built = new RelayFrame { FrameVersion = 1, FrameSeq = request.Frame.FrameSeq, RelayNonceRequest = new RelayNonceRequest { RequestId = request.Frame.RelayNonceRequest.RequestId } };
+            Assert.Equal(request.Bytes, built.ToByteArray());
+            Assert.Equal(request.Frame.RelayNonceRequest.RequestId, received.Single(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonce).RelayNonce.RequestId);
+            return;
+        }
+
+        var call = CallHeader.Parser.ParseFrom(received.Single(frame => frame.FrameCase == RelayFrame.FrameOneofCase.Call).Call.Header.Header);
+        var captured = sent.Single(frame => frame.Frame.FrameCase == RelayFrame.FrameOneofCase.CallResult).Frame.CallResult;
+        var capturedHeader = ResultHeader.Parser.ParseFrom(captured.Header.Header);
+        Assert.True(RelayShapes.IsValid(capturedHeader));
+        var root = Directory.CreateTempSubdirectory("arcforges-conformance-").FullName;
+        try
+        {
+            using var key = NodeKeyStores.ForTestDataRoot(root).Create(capturedHeader.NodeId.Value.ToByteArray(), "https://center.example.test", TimeProvider.System);
+            var signer = new ResultSigner(key, capturedHeader.NodeId.Value.ToByteArray(), TimeProvider.System);
+            var ours = capturedHeader.Outcome == RoutedOutcome.Executed
+                ? signer.Executed(call, captured.Payload)
+                : signer.Refused(call, capturedHeader.Outcome, RoutedRefusals.Policy(RoutedRefusals.Operation(call.Method), RoutedRefusals.DispatchUnavailable, signer.NewCorrelation()));
+            var oursHeader = ResultHeader.Parser.ParseFrom(ours.Header.Header);
+            Assert.Equal(Present(capturedHeader), Present(oursHeader));
+            Assert.Equal(Present(captured.Header), Present(ours.Header));
+            Assert.Equal((capturedHeader.CallId, capturedHeader.Method, capturedHeader.RequestSha256), (oursHeader.CallId, oursHeader.Method, oursHeader.RequestSha256));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>The fields a message carries (presence, by field number).</summary>
+    private static List<int> Present(IMessage message) =>
+        [.. message.Descriptor.Fields.InFieldNumberOrder().Where(field => field.HasPresence ? field.Accessor.HasValue(message) : field.Accessor.GetValue(message) is not null)
+            .Select(field => field.FieldNumber)];
 
     /// <summary>Whether the link published <paramref name="state"/> with <paramref name="reason"/> (the transitions, not only the last one).</summary>
     private static bool Reached(LinkFixture link, RelayState state, string reason)

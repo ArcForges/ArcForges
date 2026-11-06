@@ -1,18 +1,33 @@
 {
   "source": "https://github.com/ArcForges/Cloud",
-  "sourceCommit": "c14156bf97aadce9165fd7762aaf482d68d23bd9",
+  "sourceCommit": "5c4c60744f2a269a4546d5e65a0870cb97feca21",
   "sourcePath": "center/internal/hub/testdata/exchanges",
-  "producer": "center/internal/hub/capture_integration_test.go TestChannelExchangeCapture (REAL PostgreSQL, the REAL Go hub of Cloud E1a #144 behind its upgrade admission; the node side is center/internal/nodetest; normalized placeholders; a committed file that differs fails the Cloud test)",
-  "centerCommit": "250f93a",
+  "producer": "center/internal/hub/capture_integration_test.go TestChannelExchangeCapture (REAL PostgreSQL, the REAL Go hub of Cloud E1a #144 and E1b #145 behind its upgrade admission; the node side is center/internal/nodetest; normalized placeholders; a committed file that differs fails the Cloud test)",
+  "centerCommit": "250f93a, d5325e1dafd4e3cb2116d53906b193fa28744f67",
   "contractsCohort": "1.0.0-ci.437.1",
   "schemaVersion": 2,
   "licence": "AGPL-3.0-only (Cloud and ArcForges alike); data files copied byte for byte, no Cloud source is built or referenced",
-  "listingSha256": "c3691cd1f9400085c4d730b1995ad6a826f656b411eb9fe64976f02924f91c0d",
+  "listingSha256": "9ed2beb77a9289843656861e836d0cb357dc63a6e7a57ab03fea0e79bdf29665",
   "files": [
     {
       "file": "NodeChannel-accepted.json",
       "gitBlob": "ab79f745ba89d0a8c1727062ac9facee8e982df3",
       "sha256": "a94e2741230ee64a3abce78841f0c4f7d7e8553d3e8d68bf9a5c4f2f98dbe61d"
+    },
+    {
+      "file": "NodeChannel-call-executed.json",
+      "gitBlob": "b75ad924ccae674d92f4ed4936343b69bb3a5f28",
+      "sha256": "235d4f492d0d9480ab1b5f20988fb902408165fdc215382f14e1a8ce492c654c"
+    },
+    {
+      "file": "NodeChannel-call-refused.json",
+      "gitBlob": "748f2081c7d876b7e9f5f5aca45b60da99c835bc",
+      "sha256": "d3b452a2b06c2ce0d8fd17af9e585fe5a5a29b549fa0183c1f68ef6a3b4f4d90"
+    },
+    {
+      "file": "NodeChannel-call-unverifiable.json",
+      "gitBlob": "5771b1aa7f3dc9ed1a36da4fd152ec4774893f74",
+      "sha256": "1fc6d22ec07d32bf95eac79fe91e8e9f2ce577a853ee792b9ccb05a28487e83c"
     },
     {
       "file": "NodeChannel-hello-deadline.json",
@@ -58,6 +73,11 @@
       "file": "NodeChannel-refused-token-expired.json",
       "gitBlob": "3a7fecfa8389d5ec012564256644fb5effb9918e",
       "sha256": "67705ec4b6fadb795c8fc708825a0bcffd3c08c2ce365fbee903e6e8b39b097f"
+    },
+    {
+      "file": "NodeChannel-relay-nonce.json",
+      "gitBlob": "39dfa429affdfdc2b6719276170507be2ee79393",
+      "sha256": "18ab63ae9c397d54f02fc99a319dc3ef416fbce43deede3c2aabeed5c7de0527"
     },
     {
       "file": "NodeChannel-replaced.json",

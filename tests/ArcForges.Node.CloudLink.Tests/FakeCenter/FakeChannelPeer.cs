@@ -275,6 +275,12 @@ internal sealed class FakeChannelPeer(FakeCenter center)
         Challenge = new ChannelChallenge { Nonce = ByteString.CopyFrom(nonce), ConnectionId = connectionId, HelloDeadline = ProtoTime.ToInstant(helloDeadline) },
     };
 
+    /// <summary>The relay nonce the peer sends for a request.</summary>
+    public static RelayFrame NonceFrame(Id requestId, byte[] nonce, DateTimeOffset expires) => new()
+    {
+        RelayNonce = new RelayNonce { RequestId = requestId, Nonce = ByteString.CopyFrom(nonce), ExpiresAt = ProtoTime.ToInstant(expires) },
+    };
+
     /// <summary>The acceptance the peer sends after a proved hello.</summary>
     public static RelayFrame AcceptedFrame(Id connectionId, ChannelLimits limits, IEnumerable<string> kids, string? nodeName)
     {
@@ -675,15 +681,7 @@ internal sealed class FakeChannelConnection(FakeChannelPeer peer, WebSocket sock
 
                 break;
             case RelayFrame.FrameOneofCase.RelayNonceRequest when peer.AnswerNonces:
-                await SendAsync(new RelayFrame
-                {
-                    RelayNonce = new RelayNonce
-                    {
-                        RequestId = frame.RelayNonceRequest.RequestId,
-                        Nonce = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(32)),
-                        ExpiresAt = ProtoTime.ToInstant(clock.GetUtcNow() + TimeSpan.FromSeconds(60)),
-                    },
-                });
+                await SendAsync(FakeChannelPeer.NonceFrame(frame.RelayNonceRequest.RequestId, RandomNumberGenerator.GetBytes(32), clock.GetUtcNow() + TimeSpan.FromSeconds(60)));
                 break;
             case RelayFrame.FrameOneofCase.CallResult:
                 var result = frame.CallResult;
