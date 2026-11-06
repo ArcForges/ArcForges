@@ -276,6 +276,82 @@ public sealed class ChannelTests
         await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "connected");
     }
 
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(429)]
+    public async Task AnAnswerWithoutTheCentersRefusalHeaderIsANetworkFailure(int status)
+    {
+        // Review A N-4: an edge's or a proxy's 401, 403 or 429 (no ArcForges-Refusal header) backs off normally: no REFUSED for an hour, no
+        // refresh first; the next attempt follows the backoff.
+        await using var link = await LinkFixture.CreateAsync();
+        link.Channel = true;
+        link.ChannelRandom = () => 0;
+        link.Center.Channel.RefuseUpgrade = (status, null);
+        await link.StartAsync();
+        await link.SignInWithChannelAsync();
+        await Eventually.TrueAsync(() => link.Service.Status() is { Relay: RelayState.Backoff, RelayReason: ChannelReasons.NetworkFailure }, status + " -> network failure");
+        Assert.Empty(link.Center.CallsOf("RefreshNodeSession"));
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(10),
+            () => link.Center.Channel.Connections.Any(connection => connection.Proved), "the reconnect after the backoff");
+    }
+
+    [Fact]
+    public async Task ACentersReconnectHintOfZeroStillWaitsTheFloor()
+    {
+        // Review A N-1: 4500 with reconnect_after_ms 0 waits at least 1 s (plus the node's jitter), never reconnects at once.
+        var (link, connection) = await ConnectedAsync();
+        await using (link)
+        {
+            await connection.CloseAsync(4500, "shutting_down", 0);
+            await Eventually.TrueAsync(() => link.Service.Status().RelayReason == ChannelReasons.CenterShuttingDown, "backoff");
+            await Task.Delay(300, Cancel);
+            Assert.Equal(1, link.Center.Channel.Upgrades);
+            link.Clock.Advance(TimeSpan.FromMilliseconds(900));
+            await Task.Delay(300, Cancel);
+            Assert.Equal(1, link.Center.Channel.Upgrades);
+            await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5),
+                () => link.Center.Channel.Upgrades == 2, "the reconnect after the floor");
+            Assert.Equal(TimeSpan.FromSeconds(1), ChannelPolicy.CenterDelay(TimeSpan.Zero, 0));
+            Assert.Equal(TimeSpan.FromSeconds(2), ChannelPolicy.CenterDelay(TimeSpan.Zero, 1));
+            Assert.Equal(TimeSpan.FromSeconds(16), ChannelPolicy.CenterDelay(TimeSpan.FromSeconds(15), 1));
+        }
+    }
+
+    [Fact]
+    public async Task ThePn14RefreshIsBoundedAndItsNewTokenIsSentAtOnce()
+    {
+        // Review A N-1 and N-2: an unknown signing kid at every acceptance refreshes once (then TokenRefresh carries the new token on the
+        // accepted connection), and not again on the next connection within 10 minutes.
+        var (link, connection) = await ConnectedAsync(fixture => fixture.Center.Channel.SigningKids.Add("cmd-rotated-0002"));
+        await using (link)
+        {
+            await Eventually.TrueAsync(() => connection.TokenRefreshes.Count == 1, "TokenRefresh after the handshake's refresh");
+            Assert.Equal(link.StoredRecord()!.AccessToken, connection.TokenRefreshes[0]);
+            Assert.Single(link.Center.CallsOf("RefreshNodeSession"));
+
+            await connection.CloseAsync(4500, "shutting_down", 0);
+            await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(10),
+                () => link.Center.Channel.Connections.Count(c => c.Proved) == 2, "the reconnect");
+            await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "connected again");
+            await Task.Delay(300, Cancel);
+            Assert.Single(link.Center.CallsOf("RefreshNodeSession"));
+        }
+    }
+
+    [Fact]
+    public void TheRelayReasonsAreTheClosedVocabulary()
+    {
+        // Review B N-5: the exact list (part D routes it to Design: account.proto relay_reason and SM-RELAY).
+        Assert.Equal(
+            [
+                "signed_out", "cloud_link_disabled", "credential_unusable", "node_key_missing", "channel_not_configured", "connecting", "connected",
+                "network_failure", "credential_expired", "heartbeat_timeout", "replaced", "frame_too_large", "rate_limited", "center_shutting_down",
+                "protocol_error", "refused", "kill_switch",
+            ], ChannelReasons.All);
+        Assert.All(ChannelReasons.All, reason => Assert.Matches("^[a-z_]{1,40}$", reason));
+    }
+
     [Fact]
     public async Task AReplacedChannelRaisesANotification()
     {

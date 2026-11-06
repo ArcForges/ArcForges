@@ -115,14 +115,16 @@ internal sealed class CenterChannelClient : IAsyncDisposable
         catch (Exception exception) when (exception is WebSocketException or HttpRequestException or IOException
             || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            var failure = socket.HttpStatusCode switch
+            // Review A N-4: a 401, 403 or 429 is the center's refusal only with the center's refusal header; an edge's or a proxy's answer
+            // without it is a network failure (normal backoff, never REFUSED for an hour).
+            var code = socket.HttpResponseHeaders?.TryGetValue(RefusalHeader, out var values) == true ? ClosedCode(values.FirstOrDefault()) : null;
+            var failure = code is null ? ChannelConnectFailure.Network : socket.HttpStatusCode switch
             {
                 HttpStatusCode.Unauthorized => ChannelConnectFailure.Unauthenticated,
                 HttpStatusCode.Forbidden => ChannelConnectFailure.Refused,
                 HttpStatusCode.TooManyRequests => ChannelConnectFailure.RateLimited,
                 _ => ChannelConnectFailure.Network,
             };
-            var code = socket.HttpResponseHeaders?.TryGetValue(RefusalHeader, out var values) == true ? ClosedCode(values.FirstOrDefault()) : null;
             socket.Dispose();
             invoker.Dispose();
             throw new ChannelConnectException(failure, code, exception);

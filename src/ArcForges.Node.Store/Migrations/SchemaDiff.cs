@@ -183,7 +183,7 @@ public static partial class SchemaDiff
         return found;
     }
 
-    private static bool IsAppendOnly(TableSchema before, TableSchema after)
+    internal static bool IsAppendOnly(TableSchema before, TableSchema after)
     {
         if (string.Equals(before.Sql, after.Sql, StringComparison.Ordinal))
         {
@@ -225,7 +225,7 @@ public static partial class SchemaDiff
 
     // True when position <paramref name="at"/> of a CREATE TABLE text is at the top level of its column list (depth 1, outside comments
     // and quoted text).
-    private static bool TopLevelOfColumns(string sql, int at)
+    internal static bool TopLevelOfColumns(string sql, int at)
     {
         var depth = 0;
         for (var index = 0; index < at; index++)

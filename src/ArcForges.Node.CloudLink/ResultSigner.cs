@@ -31,9 +31,10 @@ internal static partial class RoutedRefusals
 
     /// <summary>
     /// The <c>state.reason</c> of the refusal every verified call gets until part N2 dispatches routed calls (AF-CTR-05 N1: the closed loop
-    /// runs, nothing executes).
+    /// runs, nothing executes): the catalogued <c>center_routed_disabled</c> of <c>AUTHORIZATION/permission_denied</c> ("any routed call while
+    /// the target's center-routed policy is off"; review A N-5), which N1's node is until N2. Transient: N2 replaces the dispatcher.
     /// </summary>
-    public const string DispatchUnavailable = "routed_dispatch_unavailable";
+    public const string DispatchUnavailable = "center_routed_disabled";
 
     /// <summary>A verification refusal: <c>AUTHENTICATION/signature_invalid</c> with the step, or <c>STATE/expired</c>.</summary>
     public static ArcError Verification(CallRefusal refusal, Id correlation)
@@ -217,7 +218,7 @@ internal interface IRoutedDispatcher
 
 /// <summary>
 /// Part N1's dispatcher: every verified call is refused by policy, signed, without parsing its payload or any effect
-/// (<c>AUTHORIZATION/permission_denied</c>, <c>state.reason</c> <c>routed_dispatch_unavailable</c>), so the closed loop runs end to end.
+/// (<c>AUTHORIZATION/permission_denied</c>, <c>state.reason</c> <c>center_routed_disabled</c>), so the closed loop runs end to end.
 /// </summary>
 internal sealed class RefusingDispatcher(TimeProvider clock) : IRoutedDispatcher
 {

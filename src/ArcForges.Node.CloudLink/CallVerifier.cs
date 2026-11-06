@@ -51,11 +51,13 @@ internal sealed record CallRefusal(string Step, string Code, Id? CallId)
 /// <item>the kid is a command key of the set bound to this node's center and installation, valid at now plus or minus 120 s (<c>unknown_key</c>;
 /// a key set of another center or installation is no key set);</item>
 /// <item>ES256 P1363 low-S over the call domain string followed by the exact header bytes received (<c>signature</c>);</item>
-/// <item>only then is the header decoded, and its shape checked (<c>header_shape</c>: lengths, method 1..6, the 300 s lifetime);</item>
-/// <item>the header's kid, center, account, target and call ID equal the signed frame's and this link's (<c>kid_mismatch</c>,
-/// <c>center_mismatch</c>, <c>account_mismatch</c>, <c>target_mismatch</c>, <c>call_id_mismatch</c>); the request size and SHA-256 equal the
-/// payload's (<c>request_digest</c>);</item>
-/// <item>the windows: <c>issued_at &lt;= now + 120 s</c> (<c>not_yet_valid</c>) and <c>expires_at + 120 s &gt; now</c> (<c>STATE/expired</c>);</item>
+/// <item>only then is the header decoded, and each field's length and presence checked (<c>header_shape</c>);</item>
+/// <item>in the binding order of CTR5-NODE-05 (Plan E.2): the header's kid equals the signed frame's (<c>kid_mismatch</c>); the center
+/// (<c>center_mismatch</c>); the target node (<c>target_mismatch</c>); the account, the caller's included (<c>account_mismatch</c>); the
+/// windows: <c>issued_at &lt;= now + 120 s</c> (<c>not_yet_valid</c>), <c>expires_at + 120 s &gt; now</c> (<c>STATE/expired</c>), and at
+/// most 300 s of lifetime with the deadline inside it (<c>lifetime</c>); the request size and SHA-256 (<c>request_digest</c>); the method
+/// 1..6 with a command ID exactly for submit and cancel (<c>method</c>); the frame's call ID (<c>call_id_mismatch</c>); the contract's own
+/// validator as a backstop (<c>header_shape</c>);</item>
 /// <item>the call ID is not already logged (<c>call_replayed</c>, also after a restart), and the pending row is written in the same step.</item>
 /// </list>
 /// The payload is never parsed here. Every refusal is logged in <c>routed_call_log</c> by frame digest only.
@@ -74,17 +76,27 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
     /// <summary>The refusal steps, in verification order (the closed vocabulary of <c>routed_call_log.refusal_step</c>).</summary>
     public static IReadOnlyList<string> Steps { get; } =
     [
-        "frame_shape", "algorithm", "unknown_key", "signature", "header_shape", "kid_mismatch", "center_mismatch", "account_mismatch",
-        "target_mismatch", "call_id_mismatch", "request_digest", "not_yet_valid", "expired", RoutedCallLog.Replayed,
+        "frame_shape", "algorithm", "unknown_key", "signature", "header_shape", "kid_mismatch", "center_mismatch", "target_mismatch",
+        "account_mismatch", "not_yet_valid", "expired", "lifetime", "request_digest", "method", "call_id_mismatch", RoutedCallLog.Replayed,
     ];
 
     /// <summary>Verifies <paramref name="call"/> (decoded from <paramref name="frame"/>, the received RelayFrame bytes) against <paramref name="binding"/>.</summary>
-    public async Task<(VerifiedCall? Call, CallRefusal? Refusal)> VerifyAsync(ReadOnlyMemory<byte> frame, ChannelCall call, CallBinding binding)
+    /// <remarks>
+    /// <paramref name="refreshKeys"/> (Plan PN-14): when the only failure so far is <c>unknown_key</c> (the frame's shape and algorithm
+    /// passed), it is asked once for a refreshed binding, and the checks run again; it returns <see langword="null"/> when it refreshed nothing.
+    /// </remarks>
+    public async Task<(VerifiedCall? Call, CallRefusal? Refusal)> VerifyAsync(ReadOnlyMemory<byte> frame, ChannelCall call, CallBinding binding,
+        Func<Task<CallBinding?>>? refreshKeys = null)
     {
         ArgumentNullException.ThrowIfNull(call);
         ArgumentNullException.ThrowIfNull(binding);
         var frameSha = SHA256.HashData(frame.Span);
         var (header, refusal) = Check(call, binding);
+        if (refusal is { Step: "unknown_key" } && refreshKeys is not null && await refreshKeys().ConfigureAwait(false) is { } refreshed)
+        {
+            (header, refusal) = Check(call, refreshed);
+        }
+
         if (refusal is not null)
         {
             await log.RecordRefusalAsync(frameSha, refusal.Step, refusal.LogCode).ConfigureAwait(false);
@@ -108,14 +120,6 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         return (new VerifiedCall(header, call.Payload, logId), null);
-    }
-
-    /// <summary>True when the call's kid is absent from the key set (the channel then refreshes once before refusing; Plan PN-14).</summary>
-    public static bool UnknownKid(ChannelCall call, CallBinding binding)
-    {
-        ArgumentNullException.ThrowIfNull(call);
-        ArgumentNullException.ThrowIfNull(binding);
-        return call.Header is { HasKid: true } signed && Key(binding, signed.Kid, DateTimeOffset.MinValue, any: true) is null;
     }
 
     /// <summary>The checks before the replay check, in order (pure; the clock is read once).</summary>
@@ -147,7 +151,7 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
             return (null, Refuse("signature"));
         }
 
-        // Only bytes whose signature verified are decoded.
+        // Only bytes whose signature verified are decoded; then each field's exact length and presence (no rule between fields yet).
         CallHeader header;
         try
         {
@@ -158,11 +162,12 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
             return (null, Refuse("header_shape"));
         }
 
-        if (!RelayShapes.IsValid(header))
+        if (!Shaped(header))
         {
             return (null, Refuse("header_shape"));
         }
 
+        // Then the binding order of CTR5-NODE-05 (Plan E.2): kid, center, target, account, the windows, the request, the method, the call.
         if (header.Kid != signed.Kid)
         {
             return (null, Refuse("kid_mismatch"));
@@ -173,19 +178,34 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
             return (null, Refuse("center_mismatch"));
         }
 
-        if (binding.AccountId.Length != 16 || !header.AccountId.Value.Span.SequenceEqual(binding.AccountId.Span))
-        {
-            return (null, Refuse("account_mismatch"));
-        }
-
         if (!header.TargetNodeId.Value.Span.SequenceEqual(binding.NodeId.Span))
         {
             return (null, Refuse("target_mismatch"));
         }
 
-        if (!header.CallId.Equals(call.CallId))
+        if (binding.AccountId.Length != 16 || !header.AccountId.Value.Span.SequenceEqual(binding.AccountId.Span)
+            || !header.Caller.AccountId.Value.Span.SequenceEqual(binding.AccountId.Span))
         {
-            return (null, Refuse("call_id_mismatch"));
+            return (null, Refuse("account_mismatch"));
+        }
+
+        var issued = ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
+        var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
+        var deadline = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value;
+        if (issued > now + Skew)
+        {
+            return (null, Refuse("not_yet_valid"));
+        }
+
+        if (!StillValid(expires, now))
+        {
+            return (null, Refuse("expired"));
+        }
+
+        // AD-0021 section 10: issued_at < expires_at <= issued_at + 300 s, and issued_at < deadline <= expires_at.
+        if (expires <= issued || expires - issued > MaxLifetime || deadline <= issued || deadline > expires)
+        {
+            return (null, Refuse("lifetime"));
         }
 
         if (header.RequestSize != call.Payload.Length || !header.RequestSha256.Span.SequenceEqual(SHA256.HashData(call.Payload.Span)))
@@ -193,18 +213,48 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
             return (null, Refuse("request_digest"));
         }
 
-        if (ProtoTime.ToDateTimeOffset(header.IssuedAt) is not { } issued || issued > now + Skew)
+        var method = (int)header.Method;
+        if (method is < 1 or > 6 || (header.CommandId is not null) != (method is 1 or 6))
         {
-            return (null, Refuse("not_yet_valid"));
+            return (null, Refuse("method"));
         }
 
-        if (ProtoTime.ToDateTimeOffset(header.ExpiresAt) is not { } expires || !StillValid(expires, now))
+        if (!header.CallId.Equals(call.CallId))
         {
-            return (null, Refuse("expired"));
+            return (null, Refuse("call_id_mismatch"));
+        }
+
+        // The contract's own validator agrees with every rule above (a backstop: a header it refuses is never verified).
+        if (!RelayShapes.IsValid(header))
+        {
+            return (null, Refuse("header_shape"));
         }
 
         return (header, null);
     }
+
+    /// <summary>The longest a call may live (AD-0021 section 10).</summary>
+    public static readonly TimeSpan MaxLifetime = TimeSpan.FromSeconds(300);
+
+    /// <summary>
+    /// The header's fields one by one (relay.proto CallHeader, "Verifier pre-conditions"): every ID present where required, 16 bytes and
+    /// not all zero; the digests 32 bytes; the kid's pattern; the size 1..253,952; the instants well-formed; the caller's own shape; the
+    /// relay assertion digest exactly for a node-relayed caller. The relations of the binding order (windows, method) come after.
+    /// </summary>
+    private static bool Shaped(CallHeader header) =>
+        ValidId(header.CallId) && header.HasKid && KidShape(header.Kid) && header.HasCenterUrlSha256 && header.CenterUrlSha256.Length == 32
+        && ValidId(header.AccountId) && ValidId(header.TargetNodeId) && header.Caller is { } caller && RelayShapes.IsValid(caller)
+        && (header.CommandId is null || ValidId(header.CommandId)) && header.HasMethod && header.HasRequestSha256 && header.RequestSha256.Length == 32
+        && header.HasRequestSize && header.RequestSize is >= 1 and <= MaxPayloadBytes
+        && ValidInstant(header.IssuedAt) && ValidInstant(header.ExpiresAt) && ValidInstant(header.Deadline)
+        && header.HasRelayAssertionSha256 == (caller.Kind == ArcForges.Contracts.Node.V1.CenterCallerKind.NodeRelay)
+        && (!header.HasRelayAssertionSha256 || header.RelayAssertionSha256.Length == 32);
+
+    private static bool ValidId(Id? id) => id is not null && RelaySignatures.ValidId(id.Value.Span);
+
+    private static bool ValidInstant(Instant? instant) => instant is not null && RelayShapes.IsValid(instant) && ProtoTime.ToDateTimeOffset(instant) is not null;
+
+    private static bool KidShape(string kid) => kid.Length is >= 8 and <= 64 && kid.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-');
 
     /// <summary>The expiry window (and the re-check immediately before the effect, Plan PN-15): <c>expires_at + 120 s</c> has not passed.</summary>
     public static bool StillValid(DateTimeOffset expires, DateTimeOffset now) => expires + Skew > now;
@@ -222,13 +272,14 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
 
         foreach (var entry in keys.CommandKeys)
         {
-            if (entry.Kid != kid || entry.Key is null || (entry.Algorithm is not null && entry.Algorithm != Algorithm))
+            if (entry.Kid != kid || entry.Key is null || entry.Algorithm != Algorithm)
             {
                 continue;
             }
 
-            if (!any && ((entry.NotBeforeMs > 0 && DateTimeOffset.FromUnixTimeMilliseconds(entry.NotBeforeMs) > now + Skew)
-                || (entry.NotAfterMs > 0 && DateTimeOffset.FromUnixTimeMilliseconds(entry.NotAfterMs) < now - Skew)))
+            // Review A N-6: a key without its validity dates is not valid (fail closed); the dates are those the center delivered.
+            if (!any && (entry.NotBeforeMs <= 0 || entry.NotAfterMs <= 0 || DateTimeOffset.FromUnixTimeMilliseconds(entry.NotBeforeMs) > now + Skew
+                || DateTimeOffset.FromUnixTimeMilliseconds(entry.NotAfterMs) < now - Skew))
             {
                 continue;
             }

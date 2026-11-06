@@ -32,8 +32,10 @@ public sealed class CloudSignInTests
 
     /// <summary>
     /// AF-CTR-05 N1-20: with <c>ARCFORGES_E2E_CHANNEL=1</c> (a center that serves the node channel, Cloud E1a and later), each case also
-    /// checks that the node holds a CONNECTED channel after the sign-in, still CONNECTED after its refreshes (TokenRefresh in band), and
-    /// DISABLED after node-approve's revocation; otherwise those steps are not run.
+    /// checks, from the node's <c>AccountStatus.relay</c>: CONNECTED after the sign-in (a step of the case's result); still CONNECTED after
+    /// its two refreshes (a step; this does not observe a TokenRefresh frame: the center would close 4401 without one only near the token's
+    /// expiry); CONNECTED again after the restart (a step); and DISABLED, reason <c>signed_out</c>, after node-approve's revocation (written
+    /// to <c>&lt;case&gt;.channel.json</c>). Without the variable none of these is checked.
     /// </summary>
     private const string ChannelVariable = "ARCFORGES_E2E_CHANNEL";
 
@@ -71,6 +73,19 @@ public sealed class CloudSignInTests
                 Assert.False(status.HasNodeKeyFingerprint, name + ": the key is deleted with the revoked credential");
                 var notifications = await human.Node.ListNotificationsAsync(new NodeServiceListNotificationsRequest(), cancellationToken: Ct);
                 Assert.Contains(notifications.Value.Notifications, item => item.Kind == "account_signed_out");
+                if (Environment.GetEnvironmentVariable(ChannelVariable) == "1")
+                {
+                    await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status
+                        is { Relay: RelayState.Disabled, RelayReason: "signed_out" }, TimeSpan.FromSeconds(60), name + ": the channel is DISABLED (signed_out) after the revocation");
+                    var relay = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
+                    Write(handshake, name + ".channel.json", new JsonObject
+                    {
+                        ["case"] = name,
+                        ["afterRevocation"] = relay.Relay.ToString(),
+                        ["reason"] = relay.RelayReason,
+                        ["passed"] = true,
+                    });
+                }
             }
 
             foreach (var (name, node) in nodes)
@@ -202,6 +217,12 @@ public sealed class CloudSignInTests
         {
             var status = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
             Step("a restart keeps credential and key", status.SignedIn && status.NodeKeyFingerprint == flow.NodeKeyFingerprint, "same fingerprint");
+            if (Environment.GetEnvironmentVariable(ChannelVariable) == "1")
+            {
+                await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status.Relay == RelayState.Connected,
+                    TimeSpan.FromSeconds(60), name + ": the channel reconnects after the restart");
+                Step("the channel reconnects after the restart", true, "CONNECTED");
+            }
         }
 
         var authority = center.Host + ":" + center.EffectivePort;

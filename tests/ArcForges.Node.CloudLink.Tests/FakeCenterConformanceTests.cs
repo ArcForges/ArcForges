@@ -43,8 +43,10 @@ public sealed class FakeCenterConformanceTests
     internal static readonly Dictionary<(string Captured, string Built), string> WireIdenticalCohorts = new()
     {
         [("1.0.0-ci.424.1", "1.0.0-ci.437.1")] =
-            "AF-CTR-05 C2 (Contracts a5bc52f..e67a6b0) is additive: in fleet.proto it changes only comments of NodeEnrollmentService and its messages, "
-            + "and adds FleetService methods and FleetNode.reported_name, which no NodeEnrollmentService method carries; the Cloud captures stay at 424.1",
+            "AF-CTR-05 C2 (Contracts a5bc52f..e67a6b0) changes no field of NodeEnrollmentService's messages: it adds one validation rule "
+            + "(approve required) on the two browser-side approval requests, which no capture holds, and otherwise only comments (new error codes "
+            + "and a state transition documented); it adds FleetService methods and FleetNode.reported_name, which no NodeEnrollmentService method "
+            + "carries. The wire bytes of the 53 captured exchanges are identical; the Cloud captures stay at 424.1",
     };
 
     public static TheoryData<string> Captures() =>

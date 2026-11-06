@@ -127,6 +127,29 @@ public sealed class SchemaExpandOnlyTests
     }
 
     [Fact]
+    public void AnInsertionOutsideTheTopLevelOfTheColumnListIsNotAnAppend()
+    {
+        // Review B N-6: the position of an insertion is at the top level of the column list only, never inside a constraint, a quoted
+        // default or a comment; and the rest of the text must be unchanged byte for byte.
+        const string Sql = "CREATE TABLE t (a INTEGER CHECK (a > 0), b TEXT DEFAULT '(,)' -- (note)\n, c INTEGER)";
+        Assert.True(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf(", b", StringComparison.Ordinal)));
+        Assert.True(SchemaDiff.TopLevelOfColumns(Sql, Sql.LastIndexOf(')')));
+        Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("> 0", StringComparison.Ordinal)));
+        Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("(,)", StringComparison.Ordinal) + 2));
+        Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("(note", StringComparison.Ordinal) + 2));
+        Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf('(') ));
+
+        var a = new ColumnSchema("a", "INTEGER", false, null, 0);
+        var b = new ColumnSchema("b", "INTEGER", false, null, 0);
+        var c = new ColumnSchema("c", "INTEGER", false, null, 0);
+        var before = new TableSchema("t", [a, b], "CREATE TABLE t (a INTEGER, b INTEGER CHECK (b IN (1, 2)))");
+        Assert.True(SchemaDiff.IsAppendOnly(before, new TableSchema("t", [a, b, c], "CREATE TABLE t (a INTEGER, b INTEGER CHECK (b IN (1, 2)), c INTEGER)")));
+        Assert.False(SchemaDiff.IsAppendOnly(before, new TableSchema("t", [a, b, c], "CREATE TABLE t (a INTEGER, b INTEGER CHECK (b IN (1, 2), c INTEGER))")));
+        Assert.False(SchemaDiff.IsAppendOnly(before, new TableSchema("t", [a, b, c], "CREATE TABLE t (a INTEGER, b INTEGER CHECK (b IN (1, 3)), c INTEGER)")));
+        Assert.False(SchemaDiff.IsAppendOnly(before, new TableSchema("t", [a, b, c], "CREATE TABLE t (a INTEGER, b INTEGER CHECK (b IN (1, 2)) c INTEGER)")));
+    }
+
+    [Fact]
     public void ANotNullColumnWithoutDefaultIsAViolation()
     {
         var before = Snapshot(StoreMigrations.Released.Steps);

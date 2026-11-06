@@ -83,7 +83,9 @@ public sealed class CallVerifierTests
         Assert.Equal("center_mismatch", Step(Build(change: header => header.CenterUrlSha256 = ByteString.CopyFrom(SHA256.HashData(Encoding.UTF8.GetBytes("https://other.example.test/api"))))));
         Assert.Equal("call_id_mismatch", Step(Build(change: header => header.CallId = CommandIds.New())));
         Assert.Equal("request_digest", Step(Build(change: header => header.RequestSize += 1)));
-        Assert.Equal("header_shape", Step(Build(change: header => header.Method = RoutedMethod.ListNodes)));
+        Assert.Equal("method", Step(Build(change: header => header.Method = RoutedMethod.ListNodes)));
+        Assert.Equal("method", Step(Build(change: header => header.CommandId = CommandIds.New())));
+        Assert.Equal("lifetime", Step(Build(change: header => header.Deadline = Add(header.ExpiresAt, 1))));
     }
 
     [Fact]
@@ -105,7 +107,7 @@ public sealed class CallVerifierTests
     [InlineData(-180, 60, "expired")]
     [InlineData(-300, 300, null)]
     [InlineData(0, 300, null)]
-    [InlineData(0, 301, "header_shape")]
+    [InlineData(0, 301, "lifetime")]
     public void TheWindowsAllow120SecondsOfSkewAndAtMost300SecondsOfLifetime(int issuedOffset, int lifetime, string? step)
     {
         // N1-10: issued_at <= now + 120 s; expires_at + 120 s > now; expires_at - issued_at <= 300 s (the contract's validator).
@@ -123,7 +125,88 @@ public sealed class CallVerifierTests
         Assert.Equal("unknown_key", Step(call, Binding() with { Keys = future }));
         Assert.Null(Check(call, Binding() with { Keys = edge }).Refusal);
         Assert.Equal("unknown_key", Step(call, Binding() with { Keys = Keys(entry: Entry(algorithm: "ES384")) }));
+
+        // Review A N-6: the algorithm is required, and a key without its validity dates is not valid.
+        Assert.Equal("unknown_key", Step(call, Binding() with { Keys = Keys(entry: Entry(algorithm: null)) }));
+        var undated = Entry();
+        undated.NotAfterMs = 0;
+        Assert.Equal("unknown_key", Step(call, Binding() with { Keys = Keys(entry: undated) }));
+        var unstarted = Entry();
+        unstarted.NotBeforeMs = 0;
+        Assert.Equal("unknown_key", Step(call, Binding() with { Keys = Keys(entry: unstarted) }));
     }
+
+    /// <summary>
+    /// Review A B-1: CTR5-NODE-05's order after the signature, pinned pair by pair: a call with the faults of two adjacent steps is refused
+    /// by the earlier one (for example an expired call with a wrong digest gets STATE/expired).
+    /// </summary>
+    [Theory]
+    [InlineData("kid", "center", "kid_mismatch")]
+    [InlineData("center", "target", "center_mismatch")]
+    [InlineData("target", "account", "target_mismatch")]
+    [InlineData("account", "not_yet_valid", "account_mismatch")]
+    [InlineData("account", "expired", "account_mismatch")]
+    [InlineData("expired", "lifetime", "expired")]
+    [InlineData("not_yet_valid", "lifetime", "not_yet_valid")]
+    [InlineData("expired", "request_digest", "expired")]
+    [InlineData("lifetime", "request_digest", "lifetime")]
+    [InlineData("request_digest", "method", "request_digest")]
+    [InlineData("method", "call_id", "method")]
+    public void OfTwoFaultsTheEarlierStepOfTheBindingOrderWins(string first, string second, string step)
+    {
+        var call = Build(change: header =>
+        {
+            Fault(header, first);
+            Fault(header, second);
+        }, alterPayload: first == "request_digest" || second == "request_digest" ? bytes => Flip(bytes, 0) : null);
+        Assert.Equal(step, Step(call));
+        Assert.Equal(step == "expired" ? RoutedRefusals.Expired : RoutedRefusals.SignatureInvalid, Check(call).Refusal!.Code);
+    }
+
+    private static void Fault(CallHeader header, string step)
+    {
+        switch (step)
+        {
+            case "kid":
+                header.Kid = "cmd-other-001";
+                break;
+            case "center":
+                header.CenterUrlSha256 = ByteString.CopyFrom(SHA256.HashData(Encoding.UTF8.GetBytes("https://other.example.test/api")));
+                break;
+            case "target":
+                header.TargetNodeId = Id(RandomNumberGenerator.GetBytes(16));
+                break;
+            case "account":
+                header.AccountId = Id(RandomNumberGenerator.GetBytes(16));
+                header.Caller.AccountId = header.AccountId;
+                break;
+            case "not_yet_valid":
+                header.IssuedAt = Add(header.IssuedAt, 200);
+                header.ExpiresAt = Add(header.ExpiresAt, 200);
+                header.Deadline = Add(header.Deadline, 200);
+                break;
+            case "expired":
+                header.IssuedAt = Add(header.IssuedAt, -400);
+                header.ExpiresAt = Add(header.ExpiresAt, -400);
+                header.Deadline = Add(header.Deadline, -400);
+                break;
+            case "lifetime":
+                header.Deadline = Add(header.ExpiresAt, 1);
+                break;
+            case "request_digest":
+                break;
+            case "method":
+                header.Method = RoutedMethod.ListNodes;
+                break;
+            case "call_id":
+                header.CallId = CommandIds.New();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(step));
+        }
+    }
+
+    private static Instant Add(Instant instant, int seconds) => new() { UnixSeconds = instant.UnixSeconds + seconds, Nanos = instant.Nanos };
 
     [Fact]
     public void EveryStepIsInTheClosedVocabularyAndFitsTheLogColumn()
@@ -187,7 +270,7 @@ public sealed class CallVerifierTests
         CommandKeys = [entry ?? Entry()],
     };
 
-    private static CloudKeyEntry Entry(DateTimeOffset? notBefore = null, DateTimeOffset? notAfter = null, string algorithm = "ES256") => new()
+    private static CloudKeyEntry Entry(DateTimeOffset? notBefore = null, DateTimeOffset? notAfter = null, string? algorithm = "ES256") => new()
     {
         Kid = Kid,
         Algorithm = algorithm,

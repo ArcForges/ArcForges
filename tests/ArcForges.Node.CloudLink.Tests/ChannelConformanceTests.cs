@@ -10,8 +10,9 @@ namespace ArcForges.Node.CloudLink.Tests;
 /// <summary>
 /// N1-19: FakeCenter's channel peer and the node's channel against the 14 exchanges captured from the REAL center's hub (Cloud E1a #144 at
 /// <c>c14156bf</c>, <c>center/internal/hub/testdata/exchanges/NodeChannel-*.json</c>, cohort 1.0.0-ci.437.1; vendored with a drift
-/// check). The peer's frames have the captured center frames' shapes and bytes, and the REAL node client, served each captured exchange
-/// byte for byte, ends in the state the center meant.
+/// check). The peer's own frame builders (the ones it sends) produce the captured center frames' bytes, and the REAL node client, served
+/// each captured exchange (its frames and refusal header, and the JSON body of a refusal) in the captured order, answers the captured
+/// challenge with a hello that proves against its registered key and records the state the center meant (its status publications).
 /// </summary>
 public sealed class ChannelConformanceTests
 {
@@ -20,7 +21,7 @@ public sealed class ChannelConformanceTests
     /// <summary>What each captured exchange must leave the node in (SM-RELAY; relay.proto RelayClose; PN-3).</summary>
     private static readonly Dictionary<string, (RelayState State, string Reason)> Expected = new(StringComparer.Ordinal)
     {
-        ["accepted"] = (RelayState.Backoff, ChannelReasons.CenterShuttingDown),
+        ["accepted"] = (RelayState.Disabled, ChannelReasons.LinkDisabled),
         ["hello-deadline"] = (RelayState.Backoff, ChannelReasons.HeartbeatTimeout),
         ["hello-malformed"] = (RelayState.Refused, ChannelReasons.Refused),
         ["hello-mismatch"] = (RelayState.Refused, ChannelReasons.Refused),
@@ -77,12 +78,10 @@ public sealed class ChannelConformanceTests
         var challenge = frames[0].Frame;
         Assert.Equal(RelayFrame.FrameOneofCase.Challenge, challenge.FrameCase);
         Assert.True(RelayShapes.IsValid(challenge.Challenge));
-        var peerChallenge = new RelayFrame
-        {
-            FrameVersion = 1,
-            FrameSeq = 1,
-            Challenge = new ChannelChallenge { Nonce = challenge.Challenge.Nonce, ConnectionId = challenge.Challenge.ConnectionId, HelloDeadline = challenge.Challenge.HelloDeadline },
-        };
+        var peerChallenge = FakeChannelPeer.ChallengeFrame(challenge.Challenge.Nonce.ToByteArray(), challenge.Challenge.ConnectionId,
+            ArcForges.Client.ProtoTime.ToDateTimeOffset(challenge.Challenge.HelloDeadline)!.Value);
+        peerChallenge.FrameVersion = 1;
+        peerChallenge.FrameSeq = 1;
         Assert.Equal(frames[0].Bytes, peerChallenge.ToByteArray());
 
         foreach (var (bytes, frame) in frames.Skip(1))
@@ -98,7 +97,12 @@ public sealed class ChannelConformanceTests
                     var center = frame.Accepted.Limits;
                     Assert.Equal((peer.MaxFrameBytes, peer.MaxInFlightCalls, peer.MaxRelayNonces), (center.MaxFrameBytes, center.MaxInFlightCalls, center.MaxRelayNonces));
                     Assert.True(center.HasHeartbeatIntervalMs && center.HasHeartbeatDeadlineMs && peer.HasHeartbeatIntervalMs && peer.HasHeartbeatDeadlineMs);
-                    Assert.True(RelayShapes.IsValid(new ChannelAccepted { ConnectionId = frame.Accepted.ConnectionId, Limits = peer, SigningKids = { frame.Accepted.SigningKids } }));
+                    // The peer's own acceptance with the hub's values is the hub's frame byte for byte (no node_name, as the hub sends).
+                    var peerAccepted = FakeChannelPeer.AcceptedFrame(frame.Accepted.ConnectionId, center, frame.Accepted.SigningKids, null);
+                    peerAccepted.FrameVersion = 1;
+                    peerAccepted.FrameSeq = frame.FrameSeq;
+                    Assert.Equal(bytes, peerAccepted.ToByteArray());
+                    Assert.True(RelayShapes.IsValid(FakeChannelPeer.AcceptedFrame(frame.Accepted.ConnectionId, peer, frame.Accepted.SigningKids, null).Accepted));
                     Assert.Equal(challenge.Challenge.ConnectionId, frame.Accepted.ConnectionId);
                     break;
                 case RelayFrame.FrameOneofCase.Close:
@@ -128,18 +132,36 @@ public sealed class ChannelConformanceTests
         await using var link = await LinkFixture.CreateAsync();
         link.Channel = true;
         link.ChannelRandom = () => 0;
-        link.Center.Channel.Replay = new FakeChannelReplay(status, refusal, status == 101 ? Frames(reply) : [], close);
+
+        // The "accepted" capture's close is the hub's echo of the node's own close: it is held until the node closes (here, SetCloudLink).
+        link.Center.Channel.Replay = new FakeChannelReplay(status, refusal, Frames(reply), close, HoldAfter: name == "accepted" ? 1 : 0);
         await link.StartAsync();
         await link.SignInWithChannelAsync();
+        if (name == "accepted")
+        {
+            await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "CONNECTED on the captured acceptance");
+            Assert.True(await link.Service.SetCloudLinkAsync(false));
+        }
+
         var (state, reason) = Expected[name];
-        await Eventually.TrueAsync(() => link.Service.Status() is var now && now.Relay == state && now.RelayReason == reason,
-            name + " -> " + state + " " + reason + " (now " + link.Service.Status().Relay + " " + link.Service.Status().RelayReason + ")");
+        await Eventually.TrueAsync(() => Reached(link, state, reason), name + " -> " + state + " " + reason);
         if (status == 101)
         {
-            // The node answered the captured challenge with its hello (its proof over that nonce and connection ID).
+            // The node's hello to the captured challenge proves, by the center's own check, against the key the sign-in registered.
+            var challenge = RelayFrame.Parser.ParseFrom(Frames(reply)[0]).Challenge;
             var hello = RelayFrame.Parser.ParseFrom(link.Center.Channel.ReplayReceived.First());
             Assert.Equal(RelayFrame.FrameOneofCase.NodeHello, hello.FrameCase);
-            Assert.Equal(64, hello.NodeHello.HelloSignature.Length);
+            var installation = hello.NodeHello.InstallationId.Value.ToByteArray();
+            Assert.Null(FakeChannelPeer.HelloFailure(hello.NodeHello, link.NodePublicKey, challenge.Nonce.ToByteArray(), challenge.ConnectionId,
+                link.Center.Endpoint.Url, link.NodeId, installation));
+        }
+
+        if (name == "accepted")
+        {
+            // The node's own close, as the capture's node sent it: RelayClose 1000 node_closed.
+            var closed = link.Center.Channel.ReplayReceived.Skip(1).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).First();
+            var captured = RelayFrame.Parser.ParseFrom(Frames(capture.GetProperty("request"))[^1]);
+            Assert.Equal(captured.Close, closed.Close);
         }
 
         if (name == "replaced")
@@ -150,6 +172,25 @@ public sealed class ChannelConformanceTests
         if (reason == ChannelReasons.CredentialExpired)
         {
             await Eventually.TrueAsync(() => link.Center.CallsOf("RefreshNodeSession").Count >= 1, "a refresh first (4401 or a 401)");
+        }
+
+        // The state lasts: no new upgrade while the node's clock stands still (BACKOFF waits at least 1 s of it, REFUSED an hour).
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        Assert.Equal(1, link.Center.Channel.Upgrades);
+        if (state == RelayState.Refused)
+        {
+            link.Clock.Advance(TimeSpan.FromMinutes(59));
+            await Task.Delay(300, TestContext.Current.CancellationToken);
+            Assert.Equal(1, link.Center.Channel.Upgrades);
+        }
+    }
+
+    /// <summary>Whether the link published <paramref name="state"/> with <paramref name="reason"/> (the transitions, not only the last one).</summary>
+    private static bool Reached(LinkFixture link, RelayState state, string reason)
+    {
+        lock (link.Publications)
+        {
+            return link.Publications.Any(publication => publication.Status.Relay == state && publication.Status.RelayReason == reason);
         }
     }
 

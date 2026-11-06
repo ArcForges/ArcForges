@@ -36,7 +36,7 @@ internal static class ChannelReasons
     public const string Refused = "refused";
     public const string KillSwitch = "kill_switch";
 
-    /// <summary>Every reason (a repository and a unit test pin the list).</summary>
+    /// <summary>Every reason (pinned by <c>ChannelTests.TheRelayReasonsAreTheClosedVocabulary</c> and the repository rule on its source).</summary>
     public static IReadOnlyList<string> All { get; } =
     [
         SignedOut, LinkDisabled, CredentialUnusable, NodeKeyMissing, NotConfigured, Connecting, Connected, NetworkFailure, CredentialExpired,
@@ -71,6 +71,16 @@ internal static class ChannelPolicy
 
     /// <summary>The longest <c>reconnect_after_ms</c> honoured (relay.proto: 0..300,000).</summary>
     public static readonly TimeSpan MaxReconnectAfter = TimeSpan.FromMinutes(5);
+
+    /// <summary>The window in which the node refreshes at most once for an unknown signing kid (Plan PN-14; review A N-1).</summary>
+    public static readonly TimeSpan KeysRefreshWindow = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// The delay a center asked for (4500 <c>reconnect_after_ms</c>), floored at 1 s, plus the node's own jitter of up to 1 s (review A
+    /// N-1): a hint of 0 never makes the node reconnect at once. <paramref name="unit"/> in [0, 1] is the random draw.
+    /// </summary>
+    public static TimeSpan CenterDelay(TimeSpan asked, double unit) =>
+        (asked < BackoffBounds.First ? BackoffBounds.First : asked) + BackoffBounds.First * Math.Clamp(unit, 0, 1);
 
     /// <summary>
     /// The backoff before attempt <paramref name="failures"/> (1 for the first failure): full jitter between 1 s and the ceiling

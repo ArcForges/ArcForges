@@ -75,6 +75,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
     private Session? _session;
     private Task _loop = Task.CompletedTask;
     private int _failures;
+    private long _keysRefreshGeneration = long.MinValue;
+    private long? _keysRefreshAt;
 
     /// <summary>Creates the loop (nothing runs until <see cref="Start"/>).</summary>
     public ChannelLoop(IChannelHost host, RoutedCallLog log, IRoutedDispatcher dispatcher, NodeLog nodeLog, TimeProvider clock, string? connectLog,
@@ -146,21 +148,67 @@ internal sealed class ChannelLoop : IAsyncDisposable
             session = _session;
         }
 
-        if (session is { Accepted: true } && _host.Ticket().Ticket is { } ticket && ticket.Generation != session.Generation
-            && ticket.InstallationId.Span.SequenceEqual(session.Ticket.InstallationId.Span))
+        if (session is { Accepted: true })
         {
-            session.Generation = ticket.Generation;
-            _ = SendQuietlyAsync(session, new RelayFrame { TokenRefresh = new TokenRefresh { Token = ticket.AccessToken } });
+            SendTokenRefresh(session);
         }
 
         Volatile.Read(ref _rotated).TrySetResult();
     }
 
     /// <summary>
+    /// Sends TokenRefresh when the link's token is newer than the one <paramref name="session"/> holds and of the same center and
+    /// installation (relay.proto TokenRefresh; review A N-8: the center is compared too).
+    /// </summary>
+    private void SendTokenRefresh(Session session)
+    {
+        if (_host.Ticket().Ticket is { } ticket && ticket.Generation != session.Generation && ticket.Center.Url == session.Ticket.Center.Url
+            && ticket.InstallationId.Span.SequenceEqual(session.Ticket.InstallationId.Span))
+        {
+            session.Generation = ticket.Generation;
+            _ = SendQuietlyAsync(session, new RelayFrame { TokenRefresh = new TokenRefresh { Token = ticket.AccessToken } });
+        }
+    }
+
+    /// <summary>
+    /// Plan PN-14's refresh for an unknown signing kid, bounded (review A N-1): at most once per credential generation and once in
+    /// <see cref="ChannelPolicy.KeysRefreshWindow"/>, so a center (or a path in front of it) that keeps naming an unknown kid cannot drive a
+    /// reconnect-and-refresh loop. True when the caller may refresh now (and the attempt is recorded).
+    /// </summary>
+    private bool TakeKeysRefresh(long generation)
+    {
+        lock (_gate)
+        {
+            var now = _clock.GetTimestamp();
+            if (generation == _keysRefreshGeneration || (_keysRefreshAt is { } at && _clock.GetElapsedTime(at, now) < ChannelPolicy.KeysRefreshWindow))
+            {
+                return false;
+            }
+
+            _keysRefreshGeneration = generation;
+            _keysRefreshAt = now;
+            return true;
+        }
+    }
+
+    /// <summary>The PN-14 refresh itself, its failure logged (never thrown into the frame's answer).</summary>
+    private async Task RefreshKeysAsync(Session session)
+    {
+        try
+        {
+            await _host.RefreshAsync(session.Generation, session.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
+        {
+            _nodeLog.Warning("cloud.channel.refresh_failed", new LogField("errorType", exception.GetType().Name));
+        }
+    }
+
+    /// <summary>
     /// A one-use relay nonce from the center on this node's open channel (Plan addendum C-N2), or <see langword="null"/> when the channel is
     /// not connected or the center does not answer within 10 s. Part N3's local proxy asks for one per relayed call.
     /// </summary>
-    public async Task<RelayNonce?> RequestRelayNonceAsync(CancellationToken cancellationToken)
+    public Task<RelayNonce?> RequestRelayNonceAsync(CancellationToken cancellationToken)
     {
         Session? session;
         lock (_gate)
@@ -168,10 +216,12 @@ internal sealed class ChannelLoop : IAsyncDisposable
             session = _session;
         }
 
-        if (session is not { Accepted: true })
-        {
-            return null;
-        }
+        return session is { Accepted: true } ? RequestRelayNonceAsync(session, cancellationToken) : Task.FromResult<RelayNonce?>(null);
+    }
+
+    /// <summary>A relay nonce of <paramref name="session"/>'s connection only (review A N-7); null when that connection is no longer the live one.</summary>
+    private async Task<RelayNonce?> RequestRelayNonceAsync(Session session, CancellationToken cancellationToken)
+    {
 
         var requestId = new Id { Value = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)) };
         var waiter = new TaskCompletionSource<RelayNonce>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -180,6 +230,14 @@ internal sealed class ChannelLoop : IAsyncDisposable
         {
             await session.Client.SendAsync(new RelayFrame { RelayNonceRequest = new RelayNonceRequest { RequestId = requestId } }, cancellationToken).ConfigureAwait(false);
             var nonce = await waiter.Task.WaitAsync(NonceTimeout, _clock, cancellationToken).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (_session != session)
+                {
+                    return null;
+                }
+            }
+
             var now = _clock.GetUtcNow();
             return ProtoTime.ToDateTimeOffset(nonce.ExpiresAt) is { } expires && expires > now && expires <= now + RelaySignatures.AssertionLifetime + CallVerifier.Skew
                 ? nonce
@@ -210,7 +268,22 @@ internal sealed class ChannelLoop : IAsyncDisposable
             session = _session;
         }
 
-        if (session is not { Accepted: true } || await RequestRelayNonceAsync(cancellationToken).ConfigureAwait(false) is not { } nonce)
+        if (session is not { Accepted: true })
+        {
+            return null;
+        }
+
+        // Review A N-7: the nonce, the ticket and the key are of one connection, and that connection keeps its key until the signing ends.
+        var signing = SignRelayAssertionAsync(session, localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken);
+        return session.Calls.Add(signing) ? await signing.ConfigureAwait(false) : null;
+    }
+
+    private async Task<RelayAssertion?> SignRelayAssertionAsync(Session session, Contracts.Node.V1.Origin localOrigin, Id localSessionId, RoutedMethod method,
+        ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session.Token);
+        if (await RequestRelayNonceAsync(session, linked.Token).ConfigureAwait(false) is not { } nonce)
         {
             return null;
         }
@@ -304,7 +377,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 }
 
                 var failures = Interlocked.Increment(ref _failures);
-                var delay = end.Delay ?? ChannelPolicy.Backoff(failures, _random());
+                var delay = end.Delay is { } asked ? ChannelPolicy.CenterDelay(asked, _random()) : ChannelPolicy.Backoff(failures, _random());
                 Set(Contracts.Node.V1.RelayState.Backoff, end.Reason);
                 _nodeLog.Info("cloud.channel.backoff", new LogField("reason", end.Reason), new LogField("delayMs", (long)delay.TotalMilliseconds),
                     new LogField("failures", failures));
@@ -499,20 +572,17 @@ internal sealed class ChannelLoop : IAsyncDisposable
         session.Limits = accepted.Limits;
 
         // Plan PN-14: a signing kid the node does not hold makes it refresh its session once before it accepts calls.
-        if (_host.Binding() is { } binding && accepted.SigningKids.Any(kid => binding.Keys?.CommandKeys.All(key => key.Kid != kid) ?? true))
+        if (_host.Binding() is { } binding && accepted.SigningKids.Any(kid => binding.Keys?.CommandKeys.All(key => key.Kid != kid) ?? true)
+            && TakeKeysRefresh(session.Generation))
         {
             session.RefreshedForKeys = true;
-            try
-            {
-                await _host.RefreshAsync(session.Generation, session.Token).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
-            {
-                _nodeLog.Warning("cloud.channel.refresh_failed", new LogField("errorType", exception.GetType().Name));
-            }
+            await RefreshKeysAsync(session).ConfigureAwait(false);
         }
 
         session.Accepted = true;
+
+        // Review A N-2: a refresh during the handshake rotated the token this connection is bound to: TokenRefresh at once.
+        SendTokenRefresh(session);
         return null;
     }
 
@@ -560,7 +630,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
                         break;
                     case RelayFrame.FrameOneofCase.Call:
                         await calls.WaitAsync(session.Token).ConfigureAwait(false);
-                        session.Calls.Add(Task.Run(async () =>
+                        _ = session.Calls.Add(Task.Run(async () =>
                         {
                             try
                             {
@@ -627,16 +697,22 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 return;
             }
 
-            // Plan PN-14: an unknown kid makes the node refresh its key set once per connection before it refuses.
-            if (CallVerifier.UnknownKid(call, binding) && !session.RefreshedForKeys)
+            // Plan PN-14 (review A N-3): only a call whose shape and algorithm passed and whose kid is unknown makes the node refresh its
+            // key set, once per connection and within the bound of TakeKeysRefresh, before it refuses.
+            async Task<CallBinding?> RefreshKeysForCallAsync()
             {
+                if (session.RefreshedForKeys || !TakeKeysRefresh(session.Generation))
+                {
+                    return null;
+                }
+
                 session.RefreshedForKeys = true;
-                await _host.RefreshAsync(session.Generation, session.Token).ConfigureAwait(false);
-                binding = _host.Binding() ?? binding;
+                await RefreshKeysAsync(session).ConfigureAwait(false);
+                return _host.Binding();
             }
 
             var signer = new ResultSigner(session.Key, session.Ticket.NodeId, _clock);
-            var (verified, refusal) = await _verifier.VerifyAsync(frame, call, binding).ConfigureAwait(false);
+            var (verified, refusal) = await _verifier.VerifyAsync(frame, call, binding, RefreshKeysForCallAsync).ConfigureAwait(false);
             if (refusal is not null)
             {
                 _nodeLog.Warning("cloud.channel.call_refused", new LogField("step", refusal.Step), new LogField("code", refusal.LogCode));
@@ -807,13 +883,21 @@ internal sealed class ChannelLoop : IAsyncDisposable
     private sealed class CallTasks
     {
         private readonly List<Task> _tasks = [];
+        private bool _closed;
 
-        public void Add(Task task)
+        /// <summary>Adds a task the connection waits for before it disposes its key; false once the connection is ending.</summary>
+        public bool Add(Task task)
         {
             lock (_tasks)
             {
+                if (_closed)
+                {
+                    return false;
+                }
+
                 _tasks.RemoveAll(running => running.IsCompleted);
                 _tasks.Add(task);
+                return true;
             }
         }
 
@@ -821,6 +905,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
         {
             lock (_tasks)
             {
+                _closed = true;
                 return Task.WhenAll(_tasks);
             }
         }

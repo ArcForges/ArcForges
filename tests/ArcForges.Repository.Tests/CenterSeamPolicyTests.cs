@@ -246,6 +246,26 @@ public sealed partial class CenterSeamPolicyTests
     }
 
     [Fact]
+    public void EveryRelayReasonIsListedOnce()
+    {
+        // Review B N-5: AccountStatus.relay_reason is a closed vocabulary: every constant of ChannelReasons is in ChannelReasons.All once,
+        // and nothing else sets relay_reason (the status takes it from the channel only).
+        var source = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/ChannelState.cs"));
+        var block = source[source.IndexOf("internal static class ChannelReasons", StringComparison.Ordinal)..];
+        block = block[..block.IndexOf("\n}\n", StringComparison.Ordinal)];
+        var constants = Regex.Matches(block, @"public const string (\w+) = ""[a-z_]+"";").Select(match => match.Groups[1].Value).ToList();
+        var all = block[block.IndexOf("All { get; } =", StringComparison.Ordinal)..];
+        var listed = Regex.Matches(all, @"\b([A-Z]\w+)\b").Select(match => match.Groups[1].Value).Where(constants.Contains).ToList();
+        Assert.NotEmpty(constants);
+        Assert.Equal(constants.Order(StringComparer.Ordinal), listed.Order(StringComparer.Ordinal));
+        var setters = Files("src").Where(path => path.EndsWith(".cs", StringComparison.Ordinal)
+            && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"RelayReason\s*=")).ToList();
+        Assert.Equal(["src/ArcForges.Node.CloudLink/CloudLinkService.cs"], setters);
+        Assert.Contains("RelayReason = channel.Reason,", File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/CloudLinkService.cs")),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheChannelContractCohortIsThePinnedOne()
     {
         // The hello's contract_version names the cohort the node is built with: ChannelContract.Cohort equals Directory.Packages.props.
