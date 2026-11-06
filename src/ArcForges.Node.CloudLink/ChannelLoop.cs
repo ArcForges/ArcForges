@@ -129,7 +129,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
             var (ticket, _) = _host.Ticket();
             if (ticket is null || ticket.Center.Url != session.Ticket.Center.Url || !ticket.InstallationId.Span.SequenceEqual(session.Ticket.InstallationId.Span))
             {
-                session.Cancel();
+                _ = EndSessionAsync(session);
             }
         }
 
@@ -506,8 +506,9 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
             session.Cancel();
             await session.Calls.WaitAsync().ConfigureAwait(false);
-            if (session.Accepted && client.CloseStatus is null)
+            if (session.Accepted && client.CloseStatus is null && !session.SentClose)
             {
+                session.SentClose = true;
                 // The node's own end of an accepted connection, as the center's nodetest peer sends it: RelayClose 1000, then the close.
                 await SendQuietlyAsync(client, new RelayFrame { Close = new RelayClose { Code = 1000, Reason = "node_closed" } }, CancellationToken.None).ConfigureAwait(false);
             }
@@ -811,6 +812,22 @@ internal sealed class ChannelLoop : IAsyncDisposable
         return new ChannelEnd(Contracts.Node.V1.RelayState.Backoff, ChannelReasons.ProtocolError);
     }
 
+    /// <summary>
+    /// The node ends a connection itself (the link ended or was switched off): RelayClose 1000 first, while the connection is still whole
+    /// (cancelling its pending receive aborts a ClientWebSocket), then the session's cancellation.
+    /// </summary>
+    private static async Task EndSessionAsync(Session session)
+    {
+        if (session.Accepted && session.Client.CloseStatus is null && !session.SentClose)
+        {
+            session.SentClose = true;
+            await SendQuietlyAsync(session.Client, new RelayFrame { Close = new RelayClose { Code = 1000, Reason = "node_closed" } }, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+
+        session.Cancel();
+    }
+
     private static Task SendQuietlyAsync(Session session, RelayFrame frame) => SendQuietlyAsync(session.Client, frame, session.Token);
 
     private static async Task SendQuietlyAsync(CenterChannelClient client, RelayFrame frame, CancellationToken cancellationToken = default)
@@ -860,6 +877,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
         public bool Accepted { get; set; }
 
         public bool RefreshedForKeys { get; set; }
+
+        public bool SentClose { get; set; }
 
         public ChannelLimits? Limits { get; set; }
 
