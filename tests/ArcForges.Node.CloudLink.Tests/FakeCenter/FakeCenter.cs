@@ -315,6 +315,15 @@ internal sealed class FakeCenter : IAsyncDisposable
         }
     }
 
+    /// <summary>True when a rotation has spent <paramref name="refresh"/> (the center committed a refresh that presented it).</summary>
+    public bool IsSpent(string refresh)
+    {
+        lock (_gate)
+        {
+            return _byRefresh.GetValueOrDefault(refresh) is { } session && session.Spent.Contains(refresh);
+        }
+    }
+
     /// <summary>The calls of one method.</summary>
     public List<FakeCall> CallsOf(string method) => [.. _calls.Where(call => call.Method == method)];
 

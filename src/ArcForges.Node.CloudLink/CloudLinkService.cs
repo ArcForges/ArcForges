@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Fleet.V1;
@@ -159,6 +160,15 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     /// <summary>The shortest and longest wait a report's <c>retry_at</c> can ask for (<c>node_report_installation</c>: 12 per hour).</summary>
     public static readonly (TimeSpan Floor, TimeSpan Cap) ReportRetryBounds = (TimeSpan.FromMinutes(1), TimeSpan.FromHours(1));
 
+    /// <summary>
+    /// The bound of a stop that <see cref="BeginStop"/> did not start (a direct <see cref="DisposeAsync"/>): the node's shutdown budget
+    /// (02 section 2; <c>NodeHost.ShutdownBudget</c>), which is also the deadline of one center call.
+    /// </summary>
+    public static readonly TimeSpan StopBound = TimeSpan.FromSeconds(10);
+
+    /// <summary>The time a stop keeps after its bound for the CTR4-NODE-05 flush (the gate, then one record write).</summary>
+    public static readonly TimeSpan FlushReserve = TimeSpan.FromSeconds(1);
+
     private static readonly TimeSpan SkewTolerance = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ReportDebounce = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan KeyPruneAge = TimeSpan.FromDays(7);
@@ -168,6 +178,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _stateLock = new();
     private readonly CancellationTokenSource _stop = new();
+    private readonly CancellationTokenSource _halt = new();
     private readonly HashSet<string> _warnings = new(StringComparer.Ordinal);
     private readonly string _nodeHex;
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -197,6 +208,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     private Id? _reportCommand;
     private Task _loop = Task.CompletedTask;
     private int _disposed;
+    private long _stopDeadline;
     private int _idle;
     private bool _signingIn;
     private ChannelLoop? _channel;
@@ -788,7 +800,8 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         bool changed;
         using (await EnterAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (Generation != seenGeneration || Phase != CloudLinkPhase.SignedIn)
+            // No refresh starts once the stop began (BeginStop).
+            if (Stopping || Generation != seenGeneration || Phase != CloudLinkPhase.SignedIn)
             {
                 return;
             }
@@ -923,7 +936,47 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     /// <summary>Publishes the current state (after a sign-out the handler calls it, outside the gate).</summary>
     public Task PublishCurrentAsync() => PublishAsync(TakeNotice());
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Starts the stop (review B N-9 of PR #72; the host calls it when its shutdown begins, before the local server stops). From now on no
+    /// refresh and no report starts, neither the scheduled ones nor a refresh the channel asks for. A center call in flight keeps running to
+    /// its answer or its own 10 s deadline, and a rotation it brings is stored (or kept pending for the flush). At
+    /// <paramref name="bound"/> every center call still running is cancelled. <see cref="DisposeAsync"/> then waits for the channel and
+    /// the loop until the bound, and for the gate at most <see cref="FlushReserve"/> more, for the CTR4-NODE-05 flush. A second call
+    /// changes nothing.
+    /// </summary>
+    public void BeginStop(TimeSpan bound)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(bound.TotalSeconds * Stopwatch.Frequency);
+        if (Interlocked.CompareExchange(ref _stopDeadline, deadline, 0) != 0)
+        {
+            return;
+        }
+
+        _halt.CancelAfter(bound);
+        Wake();
+    }
+
+    /// <summary>Whether the stop began (<see cref="BeginStop"/>): no refresh and no report starts.</summary>
+    internal bool Stopping => Interlocked.Read(ref _stopDeadline) != 0;
+
+    /// <summary>The time left to the stop's bound (zero once it passed).</summary>
+    private TimeSpan StopLeft()
+    {
+        var left = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), Interlocked.Read(ref _stopDeadline));
+        return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// Stops the link within the bound of <see cref="BeginStop"/> (<see cref="StopBound"/> from now when the stop had not begun) plus
+    /// <see cref="FlushReserve"/>. An active sign-in ends first; the channel and the refresh loop get the time left to the bound, so a
+    /// refresh in flight that answers by then has its rotated token stored. At the bound a center call still running is cancelled.
+    /// Then the CTR4-NODE-05 flush writes a rotated credential whose write failed; it is never skipped for the channel or the loop, since
+    /// both end at the bound. In the host (<c>NodeHost.ShutdownAsync</c>) the bound is the 10 s shutdown budget from the shutdown's start,
+    /// so the link has stopped by 11 s, before the force exit at 12 s.
+    /// <para>Fails closed past the bound (review A C-N3): a refresh the center committed but whose answer had not arrived at the bound
+    /// leaves the spent token stored, and so does a record write still running when the flush's reserve ends; the next refresh presents
+    /// that token, the center revokes the family as a reuse, and the node is signed out (<c>credential_revoked</c>).</para>
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -931,25 +984,36 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
             return;
         }
 
-        // An active sign-in ends first: its receiver closes and no new center call starts (a restart cancels a flow).
-        await SignIn.DisposeAsync().ConfigureAwait(false);
+        BeginStop(StopBound);
+
+        // An active sign-in ends first: its work is cancelled, its receiver closes and no new center call starts (a restart cancels a flow).
+        // Waited for until the bound at most; a sign-in still closing then goes on alone (the flush below takes the gate it would need).
+        try
+        {
+            await SignIn.DisposeAsync().AsTask().WaitAsync(StopLeft()).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+        }
+
         if (_channel is not null)
         {
-            await _channel.DisposeAsync().ConfigureAwait(false);
+            await _channel.StopAsync(StopLeft()).ConfigureAwait(false);
         }
 
         await _stop.CancelAsync().ConfigureAwait(false);
         Wake();
         try
         {
-            await _loop.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            await _loop.WaitAsync(StopLeft()).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
         }
 
-        // The shutdown sequence flushes a rotated credential whose write failed (CTR4-NODE-05).
-        if (await _gate.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false))
+        // The shutdown sequence flushes a rotated credential whose write failed (CTR4-NODE-05). Every center call has ended or been
+        // cancelled by now (the bound), so the gate is free within the reserve unless a record write still runs.
+        if (await _gate.WaitAsync(StopLeft() + FlushReserve).ConfigureAwait(false))
         {
             try
             {
@@ -1164,6 +1228,13 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         {
             try
             {
+                if (Stopping)
+                {
+                    // No refresh and no report starts once the stop began (BeginStop); DisposeAsync flushes and ends the loop.
+                    Volatile.Write(ref _idle, 1);
+                    await Task.Delay(Timeout.InfiniteTimeSpan, stop).ConfigureAwait(false);
+                }
+
                 var wake = Volatile.Read(ref _wake).Task;
                 var delay = NextWake();
                 if (delay > TimeSpan.Zero)
@@ -1183,7 +1254,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
                 var changed = false;
                 var now = _options.Clock.GetTimestamp();
                 using (await EnterAsync(stop).ConfigureAwait(false))
-                using (var work = BeginWork(stop))
+                using (var work = BeginWork(CancellationToken.None))
                 {
                     if (_reload || (_link?.State == LinkStates.Ending) || OwnCenterConfiguredAgain())
                     {
@@ -1213,14 +1284,17 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
 
                     FlushReported();
 
-                    if ((Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
+                    // Review B N-9 (b) of PR #72: the refresh is not cancelled by the stop (its work ends only at a sign-out or at the stop's
+                    // bound), since a refresh cut off after the center committed its strict rotation leaves the spent token. None starts once
+                    // the stop began.
+                    if (!Stopping && (Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
                     {
                         changed |= await RefreshCoreAsync(work.Token).ConfigureAwait(false);
                     }
                 }
 
                 // The gate is released between the refresh and the report, so a sign-out waits for one center call at most (R-5).
-                if (Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
+                if (!Stopping && Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
                 {
                     using (await EnterAsync(stop).ConfigureAwait(false))
                     using (var work = BeginWork(stop))
@@ -2098,9 +2172,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         }
     }
 
+    /// <summary>The work of one center call: cancelled by <paramref name="outer"/>, a sign-out (R-5) or the stop's bound (<see cref="BeginStop"/>).</summary>
     private WorkScope BeginWork(CancellationToken outer)
     {
-        var work = CancellationTokenSource.CreateLinkedTokenSource(outer);
+        var work = CancellationTokenSource.CreateLinkedTokenSource(outer, _halt.Token);
         lock (_stateLock)
         {
             _work = work;

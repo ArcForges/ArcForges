@@ -8,8 +8,8 @@ using RelayShapes = ArcForges.Contracts.Relay.Shapes.ContractShapeValidation;
 namespace ArcForges.Node.CloudLink.Tests;
 
 /// <summary>
-/// N1-19: FakeCenter's channel peer and the node's channel against the 14 exchanges captured from the REAL center's hub (Cloud E1a #144 at
-/// <c>c14156bf</c>, <c>center/internal/hub/testdata/exchanges/NodeChannel-*.json</c>, cohort 1.0.0-ci.437.1; vendored with a drift
+/// N1-19: FakeCenter's channel peer and the node's channel against the 18 exchanges captured from the REAL center's hub (Cloud E1a #144 and
+/// E1b #145, at <c>5c4c607</c>, <c>center/internal/hub/testdata/exchanges/NodeChannel-*.json</c>, cohort 1.0.0-ci.437.1; vendored with a drift
 /// check). The peer's own frame builders (the ones it sends) produce the captured center frames' bytes, and the REAL node client, served
 /// each captured exchange (its frames and refusal header, and the JSON body of a refusal) in the captured order, answers the captured
 /// challenge with a hello that proves against its registered key and records the state the center meant (its status publications).

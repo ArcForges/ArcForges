@@ -66,7 +66,7 @@ internal sealed record FakeCallSpec
 /// NodeHello proof with its OWN verifier (independent of the node's builder) against the node key registered for the token's installation,
 /// replaces an older proved connection (4409), answers relay nonce requests, records TokenRefresh frames and results, and verifies every
 /// result's signature independently. Heartbeats and calls are sent only when a test asks. It never stands in for an end-to-end result;
-/// its frames are conformance-tested against the Contracts golden vectors and the 14 captures of the real hub (Cloud E1a, c14156bf).
+/// its frames are conformance-tested against the Contracts golden vectors and the 18 captures of the real hub (Cloud E1a/E1b, 5c4c607).
 /// </summary>
 internal sealed class FakeChannelPeer(FakeCenter center)
 {

@@ -340,11 +340,11 @@ public sealed class ChannelTests
     }
 
     [Fact]
-    public async Task ARefreshInFlightAtShutdownIsNeverCutOff()
+    public async Task ARefreshInFlightAtShutdownIsNotCutOffInsideTheStopsBound()
     {
         // The Windows leg at e50b0e9 (CloudSignInHostTests): the PN-14 refresh right after a sign-in was cancelled by the node's stop after
         // the center rotated, so the node kept the spent refresh token and its next refresh revoked the family. The refresh now finishes
-        // (within its own deadline) and its rotation is stored before the link ends.
+        // (within its own deadline and the stop's bound, StopBoundTests) and its rotation is stored before the link ends.
         await using var link = await LinkFixture.CreateAsync();
         link.Channel = true;
         link.Center.Channel.SigningKids.Add("cmd-rotated-0002");

@@ -196,9 +196,9 @@ internal sealed class ChannelLoop : IAsyncDisposable
     {
         try
         {
-            // Never cancelled by the connection's end or the node's shutdown (the Windows leg at e50b0e9): RefreshNodeSession rotates
-            // strictly, so a refresh cut off after the center committed loses the new tokens, and the spent one revokes the family at the
-            // next refresh. The call keeps its own deadline; the shutdown waits for it (DisposeAsync).
+            // Not cancelled by the connection's end (the Windows leg at e50b0e9): RefreshNodeSession rotates strictly, so a refresh cut off
+            // after the center committed loses the new tokens, and the spent one revokes the family at the next refresh. The call keeps its
+            // own 10 s deadline; the node's stop waits for it until the stop's bound and starts none itself (CloudLinkService.BeginStop).
             await _host.RefreshAsync(session.Generation, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)
@@ -306,14 +306,19 @@ internal sealed class ChannelLoop : IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => StopAsync(CloudLinkService.StopBound);
+
+    /// <summary>
+    /// Ends the channel and waits at most <paramref name="wait"/> for its loop: the link passes the time left to its stop's bound
+    /// (<see cref="CloudLinkService.BeginStop"/>), by which a refresh the channel asked for has answered or been cancelled.
+    /// </summary>
+    public async ValueTask StopAsync(TimeSpan wait)
     {
         await _stop.CancelAsync().ConfigureAwait(false);
         Volatile.Read(ref _wake).TrySetResult();
         try
         {
-            // Long enough for a refresh in flight to finish within its own 10 s deadline (it is never cancelled).
-            await _loop.WaitAsync(TimeSpan.FromSeconds(12)).ConfigureAwait(false);
+            await _loop.WaitAsync(wait).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
@@ -358,7 +363,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 {
                     try
                     {
-                        // Not cancelled by the shutdown either (see RefreshKeysAsync).
+                        // Not cancelled by the connection's end either; bounded by the node's stop (see RefreshKeysAsync).
                         await _host.RefreshAsync(ticket.Generation, CancellationToken.None).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OutOfMemoryException and not OperationCanceledException)

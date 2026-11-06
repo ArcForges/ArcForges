@@ -266,6 +266,22 @@ public sealed partial class CenterSeamPolicyTests
     }
 
     [Fact]
+    public void TheNodeBoundsTheCloudLinksStopFromTheShutdownsStart()
+    {
+        // Review B N-9 of PR #72: NodeHost.ShutdownAsync begins the cloud link's stop with its budget before anything else of the shutdown
+        // (before the local server stops), so the link has ended by budget + CloudLinkService.FlushReserve, before the force exit.
+        var host = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Api/NodeHost.cs"));
+        var shutdown = host[host.IndexOf("private static async Task<int> ShutdownAsync(", StringComparison.Ordinal)..];
+        var begin = shutdown.IndexOf("cloud.BeginStop(ShutdownBudget);", StringComparison.Ordinal);
+        Assert.True(begin >= 0, "ShutdownAsync begins the cloud link's stop");
+        foreach (var later in new[] { "using var overrun = new Timer(", "server.StopAsync(", "cloud.DisposeAsync()" })
+        {
+            var at = shutdown.IndexOf(later, StringComparison.Ordinal);
+            Assert.True(at > begin, later + " comes after the cloud link's stop begins");
+        }
+    }
+
+    [Fact]
     public void TheChannelContractCohortIsThePinnedOne()
     {
         // The hello's contract_version names the cohort the node is built with: ChannelContract.Cohort equals Directory.Packages.props.
