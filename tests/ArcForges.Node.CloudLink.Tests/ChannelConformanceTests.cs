@@ -133,13 +133,14 @@ public sealed class ChannelConformanceTests
         link.Channel = true;
         link.ChannelRandom = () => 0;
 
-        // The "accepted" capture's close is the hub's echo of the node's own close: it is held until the node closes (here, SetCloudLink).
+        // The "accepted" capture's close is the hub's echo of the node's own close: it is held until the node closes (here, SetCloudLink),
+        // after the node's TokenRefresh for the refresh its unknown signing kid made (PN-14), as in the capture.
         link.Center.Channel.Replay = new FakeChannelReplay(status, refusal, Frames(reply), close, HoldAfter: name == "accepted" ? 1 : 0);
         await link.StartAsync();
         await link.SignInWithChannelAsync();
         if (name == "accepted")
         {
-            await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "CONNECTED on the captured acceptance");
+            await Eventually.TrueAsync(() => Reached(link, RelayState.Connected, ChannelReasons.Connected), "CONNECTED on the captured acceptance");
             Assert.True(await link.Service.SetCloudLinkAsync(false));
         }
 
@@ -159,9 +160,10 @@ public sealed class ChannelConformanceTests
         if (name == "accepted")
         {
             // The node's own close, as the capture's node sent it: RelayClose 1000 node_closed.
-            var closed = link.Center.Channel.ReplayReceived.Skip(1).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).First();
-            var captured = RelayFrame.Parser.ParseFrom(Frames(capture.GetProperty("request"))[^1]);
-            Assert.Equal(captured.Close, closed.Close);
+            var sent = link.Center.Channel.ReplayReceived.Skip(1).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).ToList();
+            var captured = Frames(capture.GetProperty("request")).Skip(1).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).ToList();
+            Assert.Equal(captured.Select(frame => frame.FrameCase), sent.Select(frame => frame.FrameCase));
+            Assert.Equal(captured[^1].Close, sent[^1].Close);
         }
 
         if (name == "replaced")
@@ -174,12 +176,13 @@ public sealed class ChannelConformanceTests
             await Eventually.TrueAsync(() => link.Center.CallsOf("RefreshNodeSession").Count >= 1, "a refresh first (4401 or a 401)");
         }
 
-        // The state lasts: no new upgrade while the node's clock stands still (BACKOFF waits at least 1 s of it, REFUSED an hour).
+        // The state lasts: no new upgrade while the node's clock stands still (BACKOFF waits at least 1 s of it); REFUSED waits past the
+        // backoff's 60 s cap (30 minutes here: before the credential's own refresh, which also ends a REFUSED wait, at two thirds of 60).
         await Task.Delay(300, TestContext.Current.CancellationToken);
         Assert.Equal(1, link.Center.Channel.Upgrades);
         if (state == RelayState.Refused)
         {
-            link.Clock.Advance(TimeSpan.FromMinutes(59));
+            link.Clock.Advance(TimeSpan.FromMinutes(30));
             await Task.Delay(300, TestContext.Current.CancellationToken);
             Assert.Equal(1, link.Center.Channel.Upgrades);
         }

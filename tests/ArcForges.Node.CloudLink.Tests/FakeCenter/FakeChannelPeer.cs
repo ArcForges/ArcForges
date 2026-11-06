@@ -417,10 +417,20 @@ internal sealed class FakeChannelPeer(FakeCenter center)
                 // own close) holds them until the node's next frame, so they are replayed in the captured order.
                 if (++index == replay.HoldAfter + 1 && replay.HoldAfter > 0)
                 {
-                    var echo = await socket.ReceiveAsync(buffer.AsMemory(), CancellationToken.None);
-                    if (echo.MessageType != WebSocketMessageType.Close)
+                    // Until the node's own RelayClose (its other frames, a TokenRefresh, are recorded on the way).
+                    while (true)
                     {
+                        var echo = await socket.ReceiveAsync(buffer.AsMemory(), CancellationToken.None);
+                        if (echo.MessageType == WebSocketMessageType.Close)
+                        {
+                            break;
+                        }
+
                         ReplayReceived.Enqueue(buffer[..echo.Count]);
+                        if (RelayFrame.Parser.ParseFrom(buffer, 0, echo.Count).FrameCase == RelayFrame.FrameOneofCase.Close)
+                        {
+                            break;
+                        }
                     }
                 }
 
