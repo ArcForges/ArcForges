@@ -160,6 +160,7 @@ public sealed class ChannelConformanceTests
         if (name == "accepted")
         {
             // The node's own close, as the capture's node sent it: RelayClose 1000 node_closed.
+            await Eventually.TrueAsync(() => link.Center.Channel.ReplayReceived.Count == 3, "the node's TokenRefresh and close at the replaying hub");
             var sent = link.Center.Channel.ReplayReceived.Skip(1).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).ToList();
             var captured = Frames(capture.GetProperty("request")).Skip(1).Select(bytes => RelayFrame.Parser.ParseFrom(bytes)).ToList();
             Assert.Equal(captured.Select(frame => frame.FrameCase), sent.Select(frame => frame.FrameCase));
