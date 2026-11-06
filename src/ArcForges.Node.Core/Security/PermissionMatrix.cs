@@ -91,6 +91,12 @@ public static class PermissionMatrix
     /// <summary>Change <c>permissions</c> (11 section 1: editable only by HUMAN).</summary>
     public const string PolicyPermissions = "policy.permissions";
 
+    /// <summary>
+    /// Change <c>center_routed</c>, the center-routed policy with its cross-node relay opt-in <c>relayed_from</c> (11 section 1, "Operation
+    /// names": HUMAN-edited, fixed; AF-CTR-05 Plan decision PB-2).
+    /// </summary>
+    public const string PolicyCenterRouted = "policy.center_routed";
+
     /// <summary>Decide an approval.</summary>
     public const string ApprovalDecide = "approval.decide";
 
@@ -151,6 +157,8 @@ public static class PermissionMatrix
         new(PolicyChange, "Change other policy, create or delete pools", A, P, P, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(PolicyRetrySafety, "Change retry_safety rules (HUMAN-edited)", A, D, D, null, RiskClass.Unspecified, D, true, RiskClass.High),
         new(PolicyPermissions, "Change the permission overrides (HUMAN-edited)", A, D, D, null, RiskClass.Unspecified, D, true, RiskClass.High),
+        new(PolicyCenterRouted, "Change the center-routed policy and its cross-node relay opt-in (HUMAN-edited)", A, D, D, null, RiskClass.Unspecified, D, true,
+            RiskClass.High),
         new(ApprovalDecide, "Decide an approval", A, D, D, "decide_approval", RiskClass.High, D, true, RiskClass.High),
         new(CleanupPlan, "Plan cleanup", A, A, A, null, RiskClass.Unspecified, D, false, RiskClass.Low),
         new(CleanupExecute, "Execute cleanup", A, P, P, null, RiskClass.Unspecified, D, false, RiskClass.High),
@@ -207,6 +215,60 @@ public static class PermissionMatrix
 
         return verdict;
     }
+
+    /// <summary>The source text of a center-routed decision (11 section 1, "Center-routed operations").</summary>
+    public const string RoutedSource = "center-routed policy (11 section 1)";
+
+    /// <summary>
+    /// The routed column of 11 section 1, "Center-routed operations": the node's default for a center-routed caller. Submit, the reads and
+    /// cancelling the caller's own task are A, cancelling another owner's task is P (a local HUMAN decides), and anything else is D: in
+    /// particular <c>process.terminate</c>, the routed cancel of an ADOPTED task, fixed for REMOTE (MR-08).
+    /// </summary>
+    public static PermissionDecision RoutedDefault(string operation) => operation switch
+    {
+        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn => A,
+        TaskCancelOthers => P,
+        _ => D,
+    };
+
+    /// <summary>
+    /// The decision for a center-routed caller (AF-CTR-05 CTR5-NODE-09): the narrower of the routed column (<see cref="RoutedDefault"/>) and,
+    /// for <paramref name="cells"/> HUMAN, SCRIPT or AGENT, that origin's cell under the overrides (<see cref="CenterRouting.CellsOrigin"/>);
+    /// a REMOTE override may then only deny. Never the HUMAN cells alone, and nothing reaches <c>process.terminate</c>.
+    /// </summary>
+    public static PermissionVerdict DecideRouted(string operation, Origin cells, IReadOnlyList<PermissionOverride> overrides)
+    {
+        ArgumentNullException.ThrowIfNull(overrides);
+        _ = Find(operation) ?? throw new ArgumentException($"Unknown operation '{operation}'.", nameof(operation));
+        var verdict = new PermissionVerdict(RoutedDefault(operation), RoutedSource, RiskClass.Unspecified);
+        if (cells is Origin.Human or Origin.Script or Origin.Agent)
+        {
+            var cell = Decide(cells, operation, overrides);
+            if (Rank(cell.Decision) < Rank(verdict.Decision))
+            {
+                verdict = verdict with { Decision = cell.Decision, Source = cell.Source + " (" + Name(cells) + " cells of the relayed caller)" };
+            }
+        }
+
+        for (var index = overrides.Count - 1; index >= 0; index--)
+        {
+            var rule = overrides[index];
+            if (rule.Origin == Origin.Remote && string.Equals(rule.Operation, operation, StringComparison.Ordinal) && Valid(rule) is null)
+            {
+                return verdict with { Decision = D, Source = string.Create(CultureInfo.InvariantCulture, $"policy permissions[{index}]") };
+            }
+        }
+
+        return verdict;
+    }
+
+    /// <summary>The narrowness order DENY &lt; APPROVAL &lt; ALLOW (anything else counts as DENY).</summary>
+    private static int Rank(PermissionDecision decision) => decision switch
+    {
+        A => 2,
+        P => 1,
+        _ => 0,
+    };
 
     /// <summary>
     /// Why an override is not valid, or <see langword="null"/>: the operation must be a matrix row that is not fixed; the origin SCRIPT, AGENT

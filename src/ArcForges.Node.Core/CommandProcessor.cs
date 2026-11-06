@@ -133,7 +133,8 @@ public sealed class CommandProcessor : IAsyncDisposable
                 case DedupStatus.Conflict:
                     return new IdempotentOutcome(false, null, decision.Error);
                 case DedupStatus.InProgress:
-                    throw new InvalidOperationException("The command is still executing.");
+                    // Unreachable while Begin and Complete share one transaction; answered as the in-progress duplicate (AF-CTR-05 Q2) if it occurs.
+                    return new IdempotentOutcome(false, null, NodeErrors.CommandInProgress());
                 default:
                     var outcome = command(context);
                     CommandDeduplication.Complete(context.Transaction, commandId.Span, outcome);

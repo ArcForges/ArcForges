@@ -208,6 +208,18 @@ public sealed class CallVerifierTests
 
     private static Instant Add(Instant instant, int seconds) => new() { UnixSeconds = instant.UnixSeconds + seconds, Nanos = instant.Nanos };
 
+    /// <summary>
+    /// AF-CTR-05 N2b decisions Q12: a caller of kind AGENT_GRANT (reserved for AF-CTR-07) or of no kind never passes verification; the
+    /// contract's shape of CenterCaller admits ACCOUNT_SESSION and NODE_RELAY only.
+    /// </summary>
+    [Fact]
+    public void AnAgentGrantCallerIsRefusedAtVerification()
+    {
+        Assert.Equal("header_shape", Step(Build(header => header.Caller.Kind = CenterCallerKind.AgentGrant)));
+        Assert.Equal("header_shape", Step(Build(header => header.Caller.ClearKind())));
+        Assert.Null(Step(Build()));
+    }
+
     [Fact]
     public void EveryStepIsInTheClosedVocabularyAndFitsTheLogColumn()
     {

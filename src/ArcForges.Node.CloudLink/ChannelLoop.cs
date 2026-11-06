@@ -25,8 +25,14 @@ internal interface IChannelHost
     /// <summary>The credential the channel may use now, or <see langword="null"/> and the DISABLED reason.</summary>
     (ChannelTicket? Ticket, string Reason) Ticket();
 
-    /// <summary>What calls are verified against now (re-read for every call: the key sets change at each refresh).</summary>
+    /// <summary>
+    /// What calls are verified against now (re-read for every call: the key sets change at each refresh), or <see langword="null"/> while the
+    /// link gives the channel no credential: signed out, the cloud link off, or stranded (AF-CTR-05 N1 review A C-N1).
+    /// </summary>
     CallBinding? Binding();
+
+    /// <summary>True once the node's stop began (<see cref="CloudLinkService.BeginStop"/>; N1 review B N-12).</summary>
+    bool Stopping { get; }
 
     /// <summary>The node key of the ticket's center, or <see langword="null"/> (the caller disposes it).</summary>
     INodeKey? OpenKey(ChannelTicket ticket);
@@ -93,6 +99,12 @@ internal sealed class ChannelLoop : IAsyncDisposable
         _contractVersion = contractVersion;
         _random = random ?? Random.Shared.NextDouble;
     }
+
+    /// <summary>
+    /// A test hook awaited at the named steps of a call's answer (<c>verified</c>: after the verification and its pending row; <c>dispatch</c>:
+    /// immediately before the dispatcher), so a test can flip the link's state at that step (AF-CTR-05 decisions B-3). Never set by the host.
+    /// </summary>
+    internal Func<string, Task>? StepHook { get; init; }
 
     /// <summary>The SM-RELAY state and reason now.</summary>
     public ChannelStatus Status
@@ -735,7 +747,38 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 return;
             }
 
-            var answer = await _dispatcher.DispatchAsync(verified!, session.Token).ConfigureAwait(false);
+            // Decisions B-3 (N1 review A C-N1, B N-12): the verification may have waited on a key refresh, so the link's state is read again
+            // after it and immediately before the dispatch; a link switched off, signed out or ending drops the call (its row stays pending:
+            // verified, no outcome, nothing executed). The dispatcher reads it a third time immediately before the effect.
+            var link = new SessionLink(this, session);
+            if (StepHook is { } verifiedHook)
+            {
+                await verifiedHook("verified").ConfigureAwait(false);
+            }
+
+            if (!link.Usable)
+            {
+                _nodeLog.Info("cloud.channel.call_dropped", new LogField("step", "verified"));
+                return;
+            }
+
+            if (StepHook is { } dispatchHook)
+            {
+                await dispatchHook("dispatch").ConfigureAwait(false);
+            }
+
+            if (!link.Usable)
+            {
+                _nodeLog.Info("cloud.channel.call_dropped", new LogField("step", "dispatch"));
+                return;
+            }
+
+            if (await _dispatcher.DispatchAsync(verified!, link, session.Token).ConfigureAwait(false) is not { } answer)
+            {
+                _nodeLog.Info("cloud.channel.call_dropped", new LogField("step", "effect"));
+                return;
+            }
+
             ChannelResult result;
             RoutedCallDecision decision;
             switch (answer.Outcome)
@@ -756,7 +799,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
                     throw new InvalidOperationException("A dispatcher answers EXECUTED with a response, or a refusal with its error.");
             }
 
-            var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : null;
+            var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
             await _log.CompleteAsync(verified!.LogId, decision, code, answer.TaskId, answer.Risk,
                 decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null,
                 decision == RoutedCallDecision.Executed ? answer.Response!.Length : null).ConfigureAwait(false);
@@ -828,6 +871,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
     /// </summary>
     private static async Task EndSessionAsync(Session session)
     {
+        // N1 review A C-N1: a call that arrives while the close is sent is not dispatched.
+        session.Ending = true;
         if (session.Accepted && session.Client.CloseStatus is null && !session.SentClose)
         {
             session.SentClose = true;
@@ -890,6 +935,15 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public bool SentClose { get; set; }
 
+        /// <summary>Set before the node's own close is sent: no call of this session is dispatched any more.</summary>
+        public bool Ending
+        {
+            get => Volatile.Read(ref _ending);
+            set => Volatile.Write(ref _ending, value);
+        }
+
+        private bool _ending;
+
         public ChannelLimits? Limits { get; set; }
 
         public CallTasks Calls { get; } = new();
@@ -906,6 +960,14 @@ internal sealed class ChannelLoop : IAsyncDisposable
         }
 
         public void Dispose() => cancel.Dispose();
+    }
+
+    /// <summary>The link of one session's call (decisions B-3): usable while the session is not ending or cancelled and the link gives a binding.</summary>
+    private sealed class SessionLink(ChannelLoop loop, Session session) : IRoutedLink
+    {
+        public bool Usable => !session.Ending && !session.Token.IsCancellationRequested && loop._host.Binding() is not null;
+
+        public bool Stopping => loop._host.Stopping;
     }
 
     /// <summary>The call tasks of one connection (awaited before the connection's key is disposed).</summary>

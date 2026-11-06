@@ -81,6 +81,12 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// </summary>
     public bool LiveMachine { get; set; }
 
+    /// <summary>
+    /// Whether the node admits local SCRIPT submissions (AD-0021 section 5; CTR5-NODE-14: the node's own tests): true by default here, false
+    /// for the tests of the local bound itself (a node that is not test-mode-allowed).
+    /// </summary>
+    public bool AllowLocalScriptSubmit { get; set; } = true;
+
     /// <summary>Sets <see cref="LiveMachine"/>.</summary>
     public InProcessNode WithLiveMachine()
     {
@@ -182,6 +188,9 @@ internal sealed class InProcessNode : IAsyncDisposable
             ConfigPath = ConfigPath,
             Endpoint = Endpoint,
             StreamBuffer = StreamBuffer,
+
+            // AD-0021 section 5 (Plan decision Q8): the node's own tests submit through local SCRIPT connections (CTR5-NODE-14); never an AGENT.
+            AllowLocalScriptSubmit = AllowLocalScriptSubmit,
             Ready = runtime => _ready.TrySetResult(runtime),
             SecretStore = _ => Secrets.Selection,
             NodeKeys = ArcForges.Node.CloudLink.NodeKeyStores.ForTestDataRoot,

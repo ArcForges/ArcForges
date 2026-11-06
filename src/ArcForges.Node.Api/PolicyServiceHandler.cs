@@ -309,11 +309,14 @@ public sealed class PolicyServiceHandler : PolicyService.PolicyServiceBase
 
     /// <summary>
     /// The HUMAN-edited section a change from <paramref name="caller"/> would alter, or <see langword="null"/>: <c>retry_safety</c> (AD-0006
-    /// section 4) and <c>permissions</c> (11 section 1) are edited only by HUMAN callers; an approval cannot lend another origin that right.
+    /// section 4), <c>permissions</c> (11 section 1) and <c>center_routed</c> (11 section 1, <c>policy.center_routed</c>; AF-CTR-05 PB-2: the
+    /// cross-node relay opt-in) are edited only by HUMAN callers, by an update or a restored revision alike (verifier N-6); an approval cannot
+    /// lend another origin that right.
     /// </summary>
     private string? HumanSection(Caller caller, PolicyDocument current, PolicyDocument proposed)
     {
-        if (_api.Allowed(caller, PermissionMatrix.PolicyRetrySafety) && _api.Allowed(caller, PermissionMatrix.PolicyPermissions))
+        if (_api.Allowed(caller, PermissionMatrix.PolicyRetrySafety) && _api.Allowed(caller, PermissionMatrix.PolicyPermissions)
+            && _api.Allowed(caller, PermissionMatrix.PolicyCenterRouted))
         {
             return null;
         }
@@ -321,6 +324,11 @@ public sealed class PolicyServiceHandler : PolicyService.PolicyServiceBase
         if (!Equals(current.RetrySafety ?? new RetrySafetyPolicy(), proposed.RetrySafety ?? new RetrySafetyPolicy()))
         {
             return PermissionMatrix.PolicyRetrySafety;
+        }
+
+        if (!Equals(current.CenterRouted ?? new CenterRoutedPolicy(), proposed.CenterRouted ?? new CenterRoutedPolicy()))
+        {
+            return PermissionMatrix.PolicyCenterRouted;
         }
 
         return current.Permissions.SequenceEqual(proposed.Permissions) ? null : PermissionMatrix.PolicyPermissions;

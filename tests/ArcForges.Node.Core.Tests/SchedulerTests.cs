@@ -979,11 +979,16 @@ public sealed class SchedulerTests
         Assert.Equal(1u, (await EndedAsync(channel, Failing("unknown", null, 5))).AttemptCount);
         Assert.Equal(1u, (await EndedAsync(channel, Failing("side-effecting", SideEffectClass.SideEffecting, 5))).AttemptCount);
 
-        // An agent's assertion is not accepted by default.
-        var submitted = await Tasks.SubmitRawAsync(agent, Failing("agent", SideEffectClass.Pure));
+        // An agent's assertion is not accepted by default. A local AGENT submits nothing (AD-0021 section 5), so the agent is relayed through the
+        // center from this node, where its AGENT rules apply (AF-CTR-05 decisions B-4).
+        var routed = new RoutedCalls(node);
+        var relayedAgent = routed.Relay(Origin.Agent);
+        async Task<TaskServiceSubmitTaskResponse> AgentSubmitAsync(TaskSpec spec) =>
+            (await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
+        var submitted = await AgentSubmitAsync(Failing("agent", SideEffectClass.Pure));
         Assert.Null(submitted.Error);
         Assert.Contains(submitted.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
-        var agentTask = await Tasks.WaitAsync(agent, submitted.Value.TaskId);
+        var agentTask = await Tasks.WaitAsync(channel, submitted.Value.TaskId);
         Assert.Equal(SideEffectClass.Unknown, agentTask.SideEffect);
         Assert.Equal(1u, agentTask.AttemptCount);
 
@@ -998,7 +1003,8 @@ public sealed class SchedulerTests
         });
         Assert.True(accepted.Error is null, $"UpdatePolicy: {accepted.Error?.Code} {accepted.Error?.Details}");
 
-        var asserted = await EndedAsync(agent, Failing("agent-accepted", SideEffectClass.Pure));
+        var asserted = await Tasks.WaitAsync(channel, (await AgentSubmitAsync(Failing("agent-accepted", SideEffectClass.Pure))).Value.TaskId);
+        Assert.Equal(TaskState.Failed, asserted.State);
         Assert.Equal(SideEffectClass.Pure, asserted.SideEffect);
         Assert.Equal(3u, asserted.AttemptCount);
 

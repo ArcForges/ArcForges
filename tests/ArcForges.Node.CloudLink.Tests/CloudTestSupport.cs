@@ -234,6 +234,9 @@ internal sealed class LinkFixture : IAsyncDisposable
     /// <summary>The routed dispatch of the channel (<see langword="null"/>: part N1's refusing dispatcher).</summary>
     public IRoutedDispatcher? Dispatcher { get; set; }
 
+    /// <summary>The channel's step hook (AF-CTR-05 decisions B-3).</summary>
+    public Func<string, Task>? StepHook { get; set; }
+
     /// <summary>The channel backoff's random draw.</summary>
     public Func<double>? ChannelRandom { get; set; }
 
@@ -264,6 +267,7 @@ internal sealed class LinkFixture : IAsyncDisposable
         {
             RoutedCalls = store is null ? null : new DirectRoutedCallStore(store),
             Dispatcher = Dispatcher,
+            ChannelStepHook = StepHook,
             ChannelRandom = ChannelRandom,
             DataRoot = DataRoot,
             NodeId = NodeId,

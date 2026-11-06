@@ -41,7 +41,9 @@ public static class NodeApiServer
         var approvals = new ApprovalServiceHandler(node, sessions, executors);
         builder.AddService(new NodeServiceHandler(node, sessions, executors, images ?? ClientImages.ForNode(testMode: false)));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
-        builder.AddService(new TaskServiceHandler(node, sessions, executors));
+        var tasks = new TaskServiceHandler(node, sessions, executors);
+        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks);
+        builder.AddService(tasks);
         builder.AddService(new ResourceServiceHandler(node, sessions, executors));
         builder.AddService(new QueueServiceHandler(node, sessions, executors));
         builder.AddService(new PolicyServiceHandler(node, sessions, executors));

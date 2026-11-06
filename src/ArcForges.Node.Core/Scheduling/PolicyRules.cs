@@ -307,6 +307,12 @@ public static class PolicyRules
             Error("privacy.secret_name_patterns", "patterns are non-empty");
         }
 
+        // AF-CTR-05 (policy.proto CenterRoutedPolicy): relayed_from is OWN_NODE (UNSPECIFIED reads as OWN_NODE) or ACCOUNT, the cross-node opt-in.
+        if (document.CenterRouted is { HasRelayedFrom: true } routed && routed.RelayedFrom is not (RelayedFrom.Unspecified or RelayedFrom.OwnNode or RelayedFrom.Account))
+        {
+            Error("center_routed.relayed_from", "OWN_NODE or ACCOUNT");
+        }
+
         return issues;
     }
 

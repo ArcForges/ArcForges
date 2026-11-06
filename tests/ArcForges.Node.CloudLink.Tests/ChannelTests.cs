@@ -528,10 +528,10 @@ public sealed class ChannelTests
 
         public int Calls => Volatile.Read(ref _calls);
 
-        public Task<RoutedAnswer> DispatchAsync(VerifiedCall call, CancellationToken cancellationToken)
+        public Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _calls);
-            return new RefusingDispatcher(TimeProvider.System).DispatchAsync(call, cancellationToken);
+            return new RefusingDispatcher(TimeProvider.System).DispatchAsync(call, link, cancellationToken);
         }
     }
 

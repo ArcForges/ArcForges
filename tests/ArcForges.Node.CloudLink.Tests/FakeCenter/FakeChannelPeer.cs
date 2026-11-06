@@ -57,6 +57,12 @@ internal sealed record FakeCallSpec
 
     /// <summary>Raw header bytes instead of an encoded CallHeader (then signed as given).</summary>
     public byte[]? RawHeader { get; init; }
+
+    /// <summary>The center caller the header states (default: a new account session of the connection's account).</summary>
+    public CenterCaller? Caller { get; init; }
+
+    /// <summary>The routed command ID of a submit or cancel (default: a new one); a real center states the payload's.</summary>
+    public Id? CommandId { get; init; }
 }
 
 /// <summary>
@@ -189,7 +195,7 @@ internal sealed class FakeChannelPeer(FakeCenter center)
                 CenterUrlSha256 = ByteString.CopyFrom(SHA256.HashData(Encoding.UTF8.GetBytes(spec.CenterUrl ?? center.Endpoint.Url))),
                 AccountId = new Id { Value = ByteString.CopyFrom(spec.AccountId ?? connection.AccountId) },
                 TargetNodeId = new Id { Value = ByteString.CopyFrom(spec.TargetNodeId ?? connection.NodeId) },
-                Caller = new CenterCaller
+                Caller = spec.Caller?.Clone() ?? new CenterCaller
                 {
                     Kind = CenterCallerKind.AccountSession,
                     AccountId = new Id { Value = ByteString.CopyFrom(spec.AccountId ?? connection.AccountId) },
@@ -205,7 +211,13 @@ internal sealed class FakeChannelPeer(FakeCenter center)
             };
             if (commanded)
             {
-                header.CommandId = CommandIds.New();
+                header.CommandId = spec.CommandId ?? CommandIds.New();
+            }
+
+            if (header.Caller.Kind == CenterCallerKind.NodeRelay)
+            {
+                // The center signs the SHA-256 of the relay assertion the routed request carried (the target cannot check it; review A N-8).
+                header.RelayAssertionSha256 = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(32));
             }
 
             headerBytes = header.ToByteArray();

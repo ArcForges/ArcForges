@@ -140,6 +140,26 @@ public static class NodeErrors
         return error;
     }
 
+    /// <summary>
+    /// <c>AUTHORIZATION/permission_denied</c> for a local <c>TaskService.SubmitTask</c> from a caller that is not HUMAN (AD-0021 section 5, Plan
+    /// decision Q8; tasks.proto): <c>state.state</c> <c>task.submit</c>, <c>state.reason</c> <c>local_submission_human_only</c>.
+    /// </summary>
+    public static ArcError LocalSubmissionHumanOnly() =>
+        Create(ErrorCategory.Authorization, "permission_denied", RetryMode.Never, new StateFailure { State = "task.submit", Reason = "local_submission_human_only" });
+
+    /// <summary>
+    /// The answer to a duplicate of a command still being admitted or executed (AF-CTR-05 decisions Q2, Q3 and B-2; Cloud center-fleet.md
+    /// "Plan departures", binding for N2): <c>EXECUTION/operation_failed</c> with effect UNKNOWN and retry SAME_COMMAND (a catalogued pair),
+    /// <c>state.state</c> <c>command_dedup</c>, <c>state.reason</c> <c>command_in_progress</c>. Never a final answer: the same command, sent
+    /// again later, receives the recorded outcome.
+    /// </summary>
+    public static ArcError CommandInProgress()
+    {
+        var error = Create(ErrorCategory.Execution, "operation_failed", RetryMode.SameCommand, new StateFailure { State = "command_dedup", Reason = "command_in_progress" });
+        error.Effect = EffectCertainty.Unknown;
+        return error;
+    }
+
     private static ArcError Create(ErrorCategory category, string code, RetryMode retry, StateFailure? state)
     {
         var error = new ArcError

@@ -54,6 +54,7 @@ public sealed class PermissionTests
         { PermissionMatrix.NotificationsMarkRead, A, D, D, null },
         { PermissionMatrix.PolicyRetrySafety, A, D, D, null },
         { PermissionMatrix.PolicyPermissions, A, D, D, null },
+        { PermissionMatrix.PolicyCenterRouted, A, D, D, null },
     };
 
     [Theory]
@@ -329,7 +330,14 @@ public sealed class PermissionTests
             return spec;
         }
 
-        var refused = await Tasks.SubmitRawAsync(agent, Pure());
+        // A local AGENT submits nothing (AD-0021 section 5); its assertions are those of an AGENT relayed through the center from this node
+        // (decisions B-4): not accepted while accept_agent_assertions is false.
+        var routed = new RoutedCalls(node);
+        var relayedAgent = routed.Relay(Origin.Agent);
+        async Task<TaskServiceSubmitTaskResponse> AgentSubmitAsync(TaskSpec spec) =>
+            (await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
+        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, Pure())).Error?.Details.State.Reason);
+        var refused = await AgentSubmitAsync(Pure());
         Assert.Contains(refused.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
         var unknown = await Tasks.GetAsync(human, refused.Value.TaskId);
         Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (unknown.SideEffect, unknown.SideEffectSource));
@@ -338,7 +346,7 @@ public sealed class PermissionTests
 
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.RetrySafety.AcceptAgentAssertions = true)).Error);
         await Tasks.WaitForAsync(() => node.Runtime.Execution!.Settings.AcceptAgentAssertions, TimeSpan.FromSeconds(30), "the policy to take effect");
-        var accepted = await Tasks.GetAsync(human, (await Tasks.SubmitRawAsync(agent, Pure())).Value.TaskId);
+        var accepted = await Tasks.GetAsync(human, (await AgentSubmitAsync(Pure())).Value.TaskId);
         Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (accepted.SideEffect, accepted.SideEffectSource));
 
         // The refusals of the HUMAN-only sections are audited.

@@ -140,6 +140,12 @@ public sealed class SubmitPlan
     /// <summary>The owner's session (set by the node; sessions arrive with AF-AI-01), or <see langword="null"/>.</summary>
     public byte[]? SessionId { get; init; }
 
+    /// <summary>A diagnostic local submission (AD-0021 section 5, <c>task.local_diagnostic</c>); a center-routed submission never is one.</summary>
+    public bool LocalDiagnostic { get; init; }
+
+    /// <summary>The routed command ID of a center-routed submission (<c>task.remote_command_id</c>), or <see langword="null"/>.</summary>
+    public byte[]? RemoteCommandId { get; init; }
+
     /// <summary>The task's workspace (the longest registered root containing the working directory), or <see langword="null"/>.</summary>
     public byte[]? WorkspaceId { get; init; }
 }
@@ -179,7 +185,14 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private static readonly TimeSpan CallerPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>The tolerance between a process start time read now and the one the session recorded.</summary>
-    private static readonly TimeSpan CallerStartTolerance = TimeSpan.FromMilliseconds(50);
+    /// <summary>
+    /// How far a caller's recorded start may be from its process's start and still be that process. The recorded start is the peer's, as the
+    /// local endpoint read it at the hello (on Linux from <c>/proc/&lt;pid&gt;/stat</c> and the boot time in whole seconds), so it differs from
+    /// <see cref="System.Diagnostics.Process.StartTime"/> by up to a second there; the hello's own peer check allows the same second
+    /// (<c>Validation</c>). AF-CTR-05 N2b (found by N2a review N-2's stronger assertion): at 50 ms a live caller's bindings were cancelled at its
+    /// disconnect, as if the process had ended.
+    /// </summary>
+    internal static readonly TimeSpan CallerStartTolerance = TimeSpan.FromSeconds(1);
 
     private readonly NodeStore _store;
     private readonly CommandProcessor _processor;
@@ -729,16 +742,17 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             """
             INSERT INTO task (task_id, state, state_reason, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, owner_session_id,
                               workspace_id, pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint, command_digest, created_at,
-                              queued_at, pinned, labels_json, rev)
+                              queued_at, pinned, labels_json, local_diagnostic, remote_command_id, rev)
             VALUES ($id, $state, $reason, $kind, $title, $summary, $spec, $env, $specDigest, $owner, $origin, $session, $workspace, $pool, $priority, $priority,
-                    $sideEffect, $source, $fingerprint, $digest, $now, $now, $pinned, $labels, 0);
+                    $sideEffect, $source, $fingerprint, $digest, $now, $now, $pinned, $labels, $localDiagnostic, $remoteCommand, 0);
             """,
             ("$id", taskId), ("$state", waiting ? (int)TaskState.WaitingDependency : (int)TaskState.Queued), ("$reason", waiting ? Scheduling.BlockingReasons.Dependency : null),
             ("$kind", (int)plan.Kind), ("$title", plan.Title), ("$summary", plan.Summary), ("$spec", specBytes), ("$env", envDigest),
             ("$specDigest", System.Security.Cryptography.SHA256.HashData(specBytes)), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
             ("$session", plan.SessionId), ("$workspace", plan.WorkspaceId), ("$pool", plan.Pool), ("$priority", (int)plan.Priority), ("$sideEffect", (int)plan.SideEffect),
             ("$source", (int)plan.SideEffectSource), ("$fingerprint", plan.Fingerprint), ("$digest", plan.CommandDigest), ("$now", now),
-            ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels));
+            ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels), ("$localDiagnostic", plan.LocalDiagnostic ? 1 : 0),
+            ("$remoteCommand", plan.RemoteCommandId));
         foreach (var (dependsOn, condition) in plan.Dependencies)
         {
             transaction.Execute("INSERT INTO task_dependency (task_id, depends_on_task_id, condition) VALUES ($id, $on, $condition);",

@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Client;
+using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Node.V1;
+using ArcForges.Contracts.Relay.V1;
+using Google.Protobuf;
+
+namespace ArcForges.Node.CloudLink.Tests;
+
+/// <summary>
+/// AF-CTR-05 part N2b at the channel (the HARD item of N1 review A C-N1 and B N-12; decisions B-3): after verification, which may wait on a
+/// key refresh, and immediately before the dispatch, the link is read again, and a link switched off or a session ending drops the call; the
+/// dispatcher is told when the node's stop began; its answers are signed with their closed fields and logged with their codes.
+/// </summary>
+public sealed class RoutedChannelTests
+{
+    private static CancellationToken Cancel => TestContext.Current.CancellationToken;
+
+    [Theory]
+    [InlineData("verified")]
+    [InlineData("dispatch")]
+    public async Task ACallIsNotDispatchedOnceTheLinkIsSwitchedOffBeforeItsDispatch(string step)
+    {
+        var dispatcher = new Recording();
+        LinkFixture? fixture = null;
+        var flipped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (link, connection) = await ChannelTests.ConnectedAsync(configured =>
+        {
+            fixture = configured;
+            configured.Dispatcher = dispatcher;
+            configured.StepHook = async at =>
+            {
+                if (at == step && !flipped.Task.IsCompleted)
+                {
+                    Assert.True(await fixture!.Service.SetCloudLinkAsync(false));
+                    flipped.TrySetResult();
+                }
+            };
+        });
+        await using (link)
+        {
+            var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.GetNodeTask });
+            await connection.SendCallAsync(call);
+            await flipped.Task.WaitAsync(TimeSpan.FromSeconds(15), Cancel);
+            await connection.Done.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+
+            // Verified and logged pending, never dispatched, never answered (N1-15's rule: nothing else happens).
+            Assert.Equal(0, dispatcher.Calls);
+            Assert.Empty(connection.VerifiedResults);
+            Assert.Equal((5L, (string?)null, (string?)null, true), Assert.Single(link.RoutedLog()));
+        }
+    }
+
+    [Fact]
+    public async Task ThereIsNoBindingWhileTheLinkIsOff()
+    {
+        // N1 review A C-N1: Binding() is null while the cloud link is off (and after a sign-out), so a call in the close window is dropped
+        // unverified; the hook tests above show the drop of a call already verified.
+        var (link, _) = await ChannelTests.ConnectedAsync(configured => configured.Dispatcher = new Recording());
+        await using (link)
+        {
+            Assert.NotNull(((IChannelHost)link.Service).Binding());
+            Assert.True(await link.Service.SetCloudLinkAsync(false));
+            Assert.Null(((IChannelHost)link.Service).Binding());
+            Assert.True(await link.Service.SetCloudLinkAsync(true));
+            Assert.NotNull(((IChannelHost)link.Service).Binding());
+            Assert.False(((IChannelHost)link.Service).Stopping);
+            link.Service.BeginStop(TimeSpan.FromSeconds(10));
+            Assert.True(((IChannelHost)link.Service).Stopping);
+        }
+    }
+
+    [Fact]
+    public async Task TheDispatcherIsToldTheStopBeganAndItsAnswersAreSignedAndLoggedWithTheirCodes()
+    {
+        var dispatcher = new Recording
+        {
+            Answer = call => call.Header.Method == RoutedMethod.CancelNodeTask
+                ? new RoutedAnswer(RoutedOutcome.RefusedByPolicy, null, RoutedRefusals.ApprovalRequired("task.cancel_others", CommandIds.New(), CommandIds.New()), null, 2)
+                : new RoutedAnswer(RoutedOutcome.Executed,
+                    new TaskServiceGetTaskResponse { Error = NodeErrorsForTest.InvalidArgument() }.ToByteString(), null, null, 1, "VALIDATION/invalid_argument"),
+        };
+        var (link, connection) = await ChannelTests.ConnectedAsync(configured => configured.Dispatcher = dispatcher);
+        await using (link)
+        {
+            var (get, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.GetNodeTask });
+            await connection.SendCallAsync(get);
+            await connection.ResultOfAsync(get.CallId);
+            Assert.False(dispatcher.LastStopping);
+
+            var cancel = new TaskServiceCancelTaskRequest { Meta = new RequestMeta { CommandId = CommandIds.New() }, TaskId = CommandIds.New() };
+            var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.CancelNodeTask, Payload = cancel.ToByteArray() });
+            link.Service.BeginStop(TimeSpan.FromSeconds(10));
+            await connection.SendCallAsync(call);
+            await connection.ResultOfAsync(call.CallId);
+            Assert.True(dispatcher.LastStopping);
+
+            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 2, "both results verified at the peer");
+            var refused = connection.VerifiedResults.Single(result => result.Header.Method == RoutedMethod.CancelNodeTask).Header;
+            Assert.Equal(("approval_required", "approval"), (refused.Error.Code, refused.Error.Details.State.Resource.Kind));
+            Assert.Equal(new List<(long, string?, string?, bool)> { (1L, null, "VALIDATION/invalid_argument", true), (2L, null, "AUTHORIZATION/approval_required", true) },
+                link.RoutedLog());
+        }
+    }
+
+    /// <summary>Records the calls it sees and the link's state at the dispatch.</summary>
+    private sealed class Recording : IRoutedDispatcher
+    {
+        private int _calls;
+
+        public Func<VerifiedCall, RoutedAnswer>? Answer { get; init; }
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public bool LastStopping { get; private set; }
+
+        public Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            LastStopping = link.Stopping;
+            return Answer is { } answer
+                ? Task.FromResult<RoutedAnswer?>(answer(call))
+                : new RefusingDispatcher(TimeProvider.System).DispatchAsync(call, link, cancellationToken);
+        }
+    }
+
+    private static class NodeErrorsForTest
+    {
+        public static ArcError InvalidArgument() => ArcForges.Node.Core.NodeErrors.InvalidArgument("request: a test");
+    }
+}
