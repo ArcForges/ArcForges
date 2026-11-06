@@ -162,7 +162,17 @@ public sealed class RelayVectorTests
         {
             CenterUrl = Audience.Url,
             InstallationId = Convert.ToHexStringLower(Id("installation")),
-            CommandKeys = [new CloudKeyEntry { Kid = Root.GetProperty("keys").GetProperty("center").GetProperty("kid").GetString(), Algorithm = "ES256", Key = Convert.ToBase64String(Key(centerKey)) }],
+            CommandKeys =
+            [
+                new CloudKeyEntry
+                {
+                    Kid = Root.GetProperty("keys").GetProperty("center").GetProperty("kid").GetString(),
+                    Algorithm = "ES256",
+                    Key = Convert.ToBase64String(Key(centerKey)),
+                    NotBeforeMs = (Root.GetProperty("routedCall").GetProperty("issuedAt")[0].GetInt64() - 86_400) * 1000,
+                    NotAfterMs = (Root.GetProperty("routedCall").GetProperty("issuedAt")[0].GetInt64() + 86_400) * 1000,
+                },
+            ],
         },
     };
 

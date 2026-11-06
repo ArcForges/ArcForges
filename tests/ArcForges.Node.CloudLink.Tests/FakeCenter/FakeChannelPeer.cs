@@ -415,7 +415,7 @@ internal sealed class FakeChannelPeer(FakeCenter center)
             {
                 // A capture whose later center frames answered the node (the "accepted" capture's close is the hub's echo of the node's
                 // own close) holds them until the node's next frame, so they are replayed in the captured order.
-                if (++index == replay.HoldAfter + 1)
+                if (++index == replay.HoldAfter + 1 && replay.HoldAfter > 0)
                 {
                     var echo = await socket.ReceiveAsync(buffer.AsMemory(), CancellationToken.None);
                     if (echo.MessageType != WebSocketMessageType.Close)
