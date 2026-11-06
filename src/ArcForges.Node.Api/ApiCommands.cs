@@ -14,24 +14,94 @@ namespace ArcForges.Node.Api;
 /// <summary>
 /// Who calls a method: the connection's session (its origin assigned at the hello), or, when an approved request executes, the requester
 /// the approval captured. <see cref="ApprovalId"/> is set only for the latter, and then an APPROVAL cell of the matrix lets the call through.
+/// <see cref="CenterCaller"/> is the slot of a center-routed caller (AF-CTR-05 CTR5-NODE-08, origin REMOTE, no local session); nothing sets it
+/// yet (part N2a), and a caller of a local connection can never carry one: building or copying a caller with a center caller and a local
+/// session, or with any origin but REMOTE, throws.
 /// </summary>
-/// <param name="Origin">The origin.</param>
-/// <param name="Kind">The client kind.</param>
-/// <param name="Session">The connection's session, or <see langword="null"/> (no hello, or an approved request executing).</param>
-/// <param name="ApprovalId">The approval under which the request executes, or <see langword="null"/>.</param>
-public sealed record Caller(Origin Origin, ClientKind Kind, ClientSession? Session, byte[]? ApprovalId = null)
+public sealed record Caller
 {
+    /// <summary>Creates a caller; a center caller needs origin REMOTE and no local session.</summary>
+    /// <param name="origin">The origin.</param>
+    /// <param name="kind">The client kind.</param>
+    /// <param name="session">The connection's session, or <see langword="null"/> (no hello, an approved request executing, or a center caller).</param>
+    /// <param name="approvalId">The approval under which the request executes, or <see langword="null"/>.</param>
+    /// <param name="centerCaller">The center-routed caller, or <see langword="null"/> (always, until the routed path of part N2b).</param>
+    public Caller(Origin origin, ClientKind kind, ClientSession? session, byte[]? approvalId = null, CenterCaller? centerCaller = null)
+    {
+        Origin = origin;
+        Kind = kind;
+        Session = session;
+        ApprovalId = approvalId;
+        CenterCaller = centerCaller;
+    }
+
+    /// <summary>The origin.</summary>
+    public Origin Origin
+    {
+        get;
+        init
+        {
+            field = value;
+            Check();
+        }
+    }
+
+    /// <summary>The client kind.</summary>
+    public ClientKind Kind { get; init; }
+
+    /// <summary>The connection's session, or <see langword="null"/> (no hello, an approved request executing, or a center caller).</summary>
+    public ClientSession? Session
+    {
+        get;
+        init
+        {
+            field = value;
+            Check();
+        }
+    }
+
+    /// <summary>The approval under which the request executes, or <see langword="null"/>.</summary>
+    public byte[]? ApprovalId { get; init; }
+
+    /// <summary>The center-routed caller (origin REMOTE, no local session), or <see langword="null"/>; never set in part N2a.</summary>
+    public CenterCaller? CenterCaller
+    {
+        get;
+        init
+        {
+            field = value;
+            Check();
+        }
+    }
+
     /// <summary>The caller as an <see cref="ActorRef"/> (task owners, policy revisions, the audit log).</summary>
     public ActorRef Actor => new() { Origin = Origin, ClientKind = Kind };
 
     /// <summary>True while an approved request executes.</summary>
     public bool Approved => ApprovalId is not null;
 
+    /// <summary>
+    /// The caller of a local connection's call, exactly as the node derived it before part N2a: the session's origin and kind, or SCRIPT
+    /// with no kind for a connection that sent no hello; never a center caller.
+    /// </summary>
+    public static Caller OfConnection(ClientSession? session) =>
+        new(session?.Origin ?? Origin.Script, session?.Kind ?? ClientKind.Unspecified, session);
+
     /// <summary>The caller of an approval's request.</summary>
     public static Caller OfApproval(ActorRef requester, byte[] approvalId)
     {
         ArgumentNullException.ThrowIfNull(requester);
         return new Caller(requester.Origin, requester.ClientKind, null, approvalId);
+    }
+
+    /// <summary>A center caller is REMOTE and never comes with a local connection's session.</summary>
+    private void Check()
+    {
+        if (CenterCaller is not null && (Session is not null || Origin != Origin.Remote))
+        {
+            throw new ArgumentException("A center caller has origin REMOTE and no local session: a local connection's caller never carries one.",
+                nameof(CenterCaller));
+        }
     }
 }
 
@@ -111,12 +181,8 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     /// <summary>The caller's origin.</summary>
     public Origin OriginOf(ServerCallContext context) => sessions.OriginOf(context);
 
-    /// <summary>The caller of a connection's call.</summary>
-    public Caller CallerOf(ServerCallContext context)
-    {
-        var session = sessions.SessionOf(context);
-        return new Caller(session?.Origin ?? Origin.Script, session?.Kind ?? ClientKind.Unspecified, session);
-    }
+    /// <summary>The caller of a connection's call (<see cref="Caller.OfConnection"/> of the connection's session).</summary>
+    public Caller CallerOf(ServerCallContext context) => Caller.OfConnection(sessions.SessionOf(context));
 
     /// <summary>The matrix decision for <paramref name="caller"/> on <paramref name="operation"/> under the current policy.</summary>
     public PermissionVerdict Decide(Caller caller, string operation) =>

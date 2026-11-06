@@ -779,6 +779,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         Kick();
     }
 
+    /// <summary>The caller process a task is bound to by <c>cancel_when_caller_gone</c>, or <see langword="null"/> (tests read it).</summary>
+    internal CallerKey? BindingOf(ReadOnlySpan<byte> taskId) => _bindings.TryGetValue(IdText.Format(taskId), out var key) ? key : null;
+
     // ------------------------------------------------------------------------------------------------------------------- control
 
     /// <summary>Cancels a task in the writer; returns its state and the attempt to stop afterwards (04 section 6).</summary>
