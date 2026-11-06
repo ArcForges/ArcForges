@@ -13,9 +13,9 @@
     <PackageVersion Include="ArcForges.LocalRpc" Version="1.0.0-ci.138.1" />
     <PackageVersion Include="ArcForges.Observability" Version="1.0.0-ci.141.1" />
     <PackageVersion Include="ArcForges.Security.Secrets" Version="1.0.0-ci.141.1" />
-    <PackageVersion Include="Avalonia.Desktop" Version="12.1.4" />
-    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
-    <PackageVersion Include="Avalonia.Headless" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.5" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.5" />
+    <PackageVersion Include="Avalonia.Headless" Version="12.1.5" />
     <PackageVersion Include="CsCheck" Version="4.9.1" />
     <PackageVersion Include="Grpc.Net.Client" Version="2.84.0" />
     <PackageVersion Include="Grpc.Net.Client.Web" Version="2.84.0" />
