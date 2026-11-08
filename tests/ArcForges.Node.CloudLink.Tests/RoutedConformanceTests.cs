@@ -20,8 +20,8 @@ namespace ArcForges.Node.CloudLink.Tests;
 /// </summary>
 public sealed class RoutedConformanceTests
 {
-    /// <summary>The Cloud commit the captures were vendored from (the E2b branch head until its merge; re-vendored then).</summary>
-    private const string SourceCommit = "571fa8576a36f94a12190692553d9d38fe78466b";
+    /// <summary>The merged Cloud E2b commit whose captures were verified byte for byte.</summary>
+    private const string SourceCommit = "b7743b931aba21465aceb12861502c5fe27699e4";
 
     private static readonly string Directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "routed-exchanges");
 
