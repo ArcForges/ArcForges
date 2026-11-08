@@ -44,6 +44,12 @@ internal sealed class CloudNode : IAsyncDisposable
     /// </summary>
     public bool AllowLocalScriptSubmit { get; set; } = true;
 
+    /// <summary>The wall clock for this node (the real clock unless a test supplies a controllable one).</summary>
+    public TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    /// <summary>Wraps the real routed dispatcher for fault injection in an in-process test.</summary>
+    public Func<IRoutedDispatcher, IRoutedDispatcher>? WrapRoutedDispatcher { get; set; }
+
     public LocalRpcEndpoint Endpoint { get; }
 
     /// <summary>The <c>arcforges</c> executable whose helper roles the node starts: <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
@@ -89,6 +95,8 @@ internal sealed class CloudNode : IAsyncDisposable
         var options = new NodeHostOptions
         {
             ConfigPath = ConfigPath,
+            Clock = Clock,
+            WrapRoutedDispatcher = WrapRoutedDispatcher,
             Endpoint = Endpoint,
 
             // AD-0021 section 5 (Plan decision Q8): the node's own tests submit through local SCRIPT connections (CTR5-NODE-14); never an AGENT.

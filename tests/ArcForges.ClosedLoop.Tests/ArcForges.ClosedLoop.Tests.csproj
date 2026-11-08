@@ -25,6 +25,9 @@
     <Compile Include="../ArcForges.Node.CloudLink.Tests/FakeCenter/FakeCenter.cs" Link="Shared/FakeCenter.cs" />
     <Compile Include="../ArcForges.Node.CloudLink.Tests/FakeCenter/FakeChannelPeer.cs" Link="Shared/FakeChannelPeer.cs" />
     <Compile Include="../ArcForges.Node.CloudLink.Tests/ScriptedBrowser.cs" Link="Shared/ScriptedBrowser.cs" />
+    <!-- Q8: an isolated in-process real node is the real-center relay; no OS secret store or supervisor. -->
+    <Compile Include="../ArcForges.Node.CloudLink.Tests/CloudNode.cs" Link="Shared/CloudNode.cs" />
+    <Compile Include="../Shared/IsolatedSecretStore.cs" Link="Shared/IsolatedSecretStore.cs" />
     <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
     <ProjectReference Include="../../src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
     <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />

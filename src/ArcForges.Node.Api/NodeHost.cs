@@ -93,6 +93,12 @@ public sealed record NodeHostOptions
     internal IBrowserOpener? Opener { get; init; }
 
     /// <summary>
+    /// Test seam, set only by in-process tests: wraps routed dispatch to hold a result after the real effect, before the channel sends it.
+    /// The executable never sets it.
+    /// </summary>
+    internal Func<IRoutedDispatcher, IRoutedDispatcher>? WrapRoutedDispatcher { get; init; }
+
+    /// <summary>
     /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
     /// executable beside this one (04 section 3: helpers are invoked by path); component tests name the host built next to them.
     /// </summary>
@@ -397,7 +403,7 @@ public static class NodeHost
 
             // AF-CTR-05 N1: the node channel logs every received call in routed_call_log through the single writer.
             RoutedCalls = new ProcessorRoutedCallStore(processor),
-            Dispatcher = routed,
+            Dispatcher = options.WrapRoutedDispatcher?.Invoke(routed) ?? routed,
             Version = NodeContract.ProductVersion,
         });
         await using var cloudScope = cloud.ConfigureAwait(false);

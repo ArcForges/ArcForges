@@ -229,6 +229,59 @@ public sealed class RoutedDispatchTests
         Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM remote_command_log;")));
     }
 
+    /// <summary>Two own-node relayed caller origins share the same queue, resource budget and fixed global parallelism.</summary>
+    [Fact(Timeout = 120_000)]
+    public async Task RelayedHumanAndScriptShareQueueAndBudget()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        await Sched.SetParallelismAsync(human, ParallelismScope.Global, string.Empty, ParallelismMode.Fixed, 1);
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        var routed = new RoutedCalls(node);
+        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "120000");
+        spec.Resources = new ResourceSpec { Hint = new ResourceDemand { CpuMillicores = 100, MemExpectedBytes = 64UL << 20 } };
+        var first = (await routed.SubmitAsync(routed.Relay(Origin.Human), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
+        var second = (await routed.SubmitAsync(routed.Relay(Origin.Script), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
+        Assert.Null(first.Error);
+        Assert.Null(second.Error);
+        var watch = Stopwatch.StartNew();
+        QueueServiceGetQueueValue queue;
+        while (true)
+        {
+            queue = await Sched.QueueAsync(human);
+            if (queue.Entries.Count(entry => entry.TaskId.Equals(first.Value.TaskId) || entry.TaskId.Equals(second.Value.TaskId)) == 2)
+            {
+                break;
+            }
+
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30), "both routed tasks appear in the shared queue");
+            await Task.Delay(50, Ct);
+        }
+
+        var entries = queue.Entries.Where(entry => entry.TaskId.Equals(first.Value.TaskId) || entry.TaskId.Equals(second.Value.TaskId)).ToArray();
+        Assert.Equal(2, entries.Length);
+        Assert.NotEqual(entries[0].Queue.Position, entries[1].Queue.Position);
+        Assert.Equal(Origin.Human, entries.Single(entry => entry.TaskId.Equals(first.Value.TaskId)).Owner.CenterCaller.LocalOrigin);
+        Assert.Equal(Origin.Script, entries.Single(entry => entry.TaskId.Equals(second.Value.TaskId)).Owner.CenterCaller.LocalOrigin);
+        Assert.All(entries, entry => Assert.Equal((100u, 64UL << 20), (entry.Request.CpuMillicores, entry.Request.MemExpectedBytes)));
+        var policy = await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct);
+        Assert.Null(policy.Error);
+        Assert.Contains(policy.Value.Document.Parallelism, rule => rule.Scope == ParallelismScope.Global && rule.Mode == ParallelismMode.Fixed && rule.Fixed == 1);
+        Assert.True(queue.Budget.GlobalMaxRunning > 0);
+        Assert.Null((await human.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        await Tasks.WaitForAsync(() => node.Runtime.Execution.RunningAttempts.Count() == 1, TimeSpan.FromSeconds(30), "one task in the shared budget");
+        var running = await Sched.QueueAsync(human);
+        Assert.Equal(1u, running.Budget.GlobalRunning);
+        Assert.Equal(queue.Budget.GlobalMaxRunning, running.Budget.GlobalMaxRunning);
+        Assert.True(running.Budget.AccountedMemBytes > 0);
+        var states = new[] { (await Tasks.GetAsync(human, first.Value.TaskId)).State, (await Tasks.GetAsync(human, second.Value.TaskId)).State };
+        Assert.Equal(new[] { TaskState.Queued, TaskState.Running }, states.OrderBy(state => state));
+        await Sched.CancelAsync(human, first.Value.TaskId);
+        await Sched.CancelAsync(human, second.Value.TaskId);
+    }
+
     /// <summary>N2-1 (PB-2): cross-node relay refused by default; the opt-in gives the SCRIPT cells; an AGENT never crosses; off refuses all.</summary>
     [Fact(Timeout = 180_000)]
     public async Task ACrossNodeRelayIsRefusedByDefaultAndAClaimedHumanFromAnotherNodeGetsNoMoreThanScript()
@@ -459,8 +512,10 @@ public sealed class RoutedDispatchTests
         changed.Spec.Title = "another";
         Assert.Equal("command_id_reused", TaskServiceSubmitTaskResponse.Parser.ParseFrom((await routed.SubmitAsync(caller, changed)).Answer!.Response).Error?.Code);
         var reordered = Reorder(request);
-        Assert.Equal(request, TaskServiceSubmitTaskRequest.Parser.ParseFrom(reordered));
+        var parsed = TaskServiceSubmitTaskRequest.Parser.ParseFrom(reordered);
+        Assert.Equal(request, parsed);
         Assert.NotEqual(request.ToByteArray(), reordered);
+        Assert.Equal(request.ToByteArray(), parsed.ToByteArray()); // a re-encoder would erase exactly this wire-order difference
         var reencoded = (await routed.SubmitAsync(caller, request, raw: reordered)).Answer!;
         Assert.Equal("command_id_reused", TaskServiceSubmitTaskResponse.Parser.ParseFrom(reencoded.Response).Error?.Code);
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
@@ -749,8 +804,8 @@ public sealed class RoutedDispatchTests
     /// </summary>
     private static byte[] Reorder(TaskServiceSubmitTaskRequest request)
     {
-        var spec = Fields(request.Spec.ToByteArray());
-        spec.Reverse();
+        // Reverse field groups, not individual repeated/map entries: parsing and re-encoding then produces the original bytes.
+        var spec = Fields(request.Spec.ToByteArray()).GroupBy(field => field.Number).Reverse().SelectMany(group => group).ToList();
         var output = new MemoryStream();
         foreach (var (number, field) in Fields(request.ToByteArray()))
         {
