@@ -57,8 +57,8 @@ internal static class RunCommand
         var priority = new Option<string?>("--priority") { Description = "interactive, high, normal, low or background", HelpName = "class" };
         priority.AcceptOnlyFromAmong("interactive", "high", "normal", "low", "background");
         var cpuLimit = new Option<string?>("--cpu-limit-time") { Description = "CPU-time limit (for example 10m)", HelpName = "dur" };
-        var env = new Option<string[]>("--env") { Description = "Set a variable (repeatable)", HelpName = "K=V" };
-        var inherit = new Option<string?>("--env-inherit") { Description = "caller (default), node or none", HelpName = "mode" };
+        var env = new Option<string[]>("--env") { Description = "Set a variable (repeatable; routed secrets and other-node values are refused)", HelpName = "K=V" };
+        var inherit = new Option<string?>("--env-inherit") { Description = "caller, node or none (routed default: node; --local default: caller)", HelpName = "mode" };
         inherit.AcceptOnlyFromAmong("caller", "node", "none");
         var unset = new Option<string[]>("--unset") { Description = "Remove an inherited variable (repeatable)", HelpName = "K" };
         var stdin = new Option<string?>("--stdin") { Description = "none (default), file:<target path> or stream", HelpName = "mode" };
@@ -106,7 +106,7 @@ internal static class RunCommand
         {
             var spec = new TaskSpec
             {
-                Environment = Environment(result.GetValue(inherit), result.GetValue(env) ?? [], result.GetValue(unset) ?? []),
+                Environment = Environment(result.GetValue(inherit) ?? (result.GetValue(localOption) ? "caller" : "node"), result.GetValue(env) ?? [], result.GetValue(unset) ?? []),
             };
             var tokens = result.GetValue(program) ?? [];
             if (result.GetValue(shell) is { } shellName)
@@ -746,7 +746,8 @@ internal static class RunCommand
     private static (string Key, string Value) Pair(string text, string option)
     {
         var equals = text.IndexOf('=', StringComparison.Ordinal);
-        return equals > 0 ? (text[..equals], text[(equals + 1)..]) : throw new UsageException($"{option}: '{text}' is not NAME=VALUE.");
+        return equals > 0 ? (text[..equals], text[(equals + 1)..])
+            : throw new UsageException(option == "--env" ? "--env: expected NAME=VALUE." : $"{option}: '{text}' is not NAME=VALUE.");
     }
 
     private static ShellKind ShellKindOf(string name) => name switch

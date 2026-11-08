@@ -7,6 +7,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Scheduling;
 using Google.Protobuf;
 using Grpc.Core;
 
@@ -88,6 +89,13 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             {
                 invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
             }
+        }
+        if (invalid is null)
+        {
+            // A direct Fleet caller can bypass the CLI. Classify the original bytes before requesting a nonce or opening relay transport.
+            invalid = RoutedEnvironmentGuard.Check(forwarded.Request, forwarded.NodeId.Value.Span.SequenceEqual(node.NodeId.Span),
+                request.Meta?.CorrelationId, node.Clock,
+                () => node.Store.Read(PolicyRules.Current).Document.Privacy?.SecretNamePatterns.ToArray() ?? []);
         }
         if (invalid is not null)
         {

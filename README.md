@@ -89,12 +89,18 @@ target to validate. For this node, including an explicit `--node` that resolves 
 retain their local behavior. `output --json` writes one protobuf `TaskServiceReadTaskOutputValue` per JSON line, with binary data encoded
 as base64 and stream index, next offset, retention and EOF metadata. For routed commands `--timeout` sets the unary RPC deadline;
 `tasks wait` also bounds its target wait, while `run --timeout` sets the task's execution limit. Add `--local` for the local diagnostic
-path. Local submissions require a HUMAN caller; local task reads remain available for management and recovery. Routed `run --stdin stream`
-is not supported; use the local diagnostic path when a streamed stdin is needed.
+path. Routed `run` defaults to the target node's environment; `run --local` defaults to the caller's environment. Explicit `--env-inherit`
+`caller` is not filtered: a routed submission to this node is refused if any carried name matches the default or local secret policy.
+For another node, its policy is unknown, so routed submissions cannot carry caller environment or `--env` values; use target-side
+`--env-inherit node` or `none`. Explicit values are never silently removed. Local submissions require a HUMAN caller; local task reads
+remain available for management and recovery. Routed `run --stdin stream` is not supported; use the local diagnostic path when a streamed
+stdin is needed.
 
 A node that is signed out, cannot reach the center or has no channel exits 4 with diagnostic guidance. A target reported offline exits
-75. An uncertain routed mutation retains its command ID and request bytes for bounded retries; if its outcome remains uncertain, the
-CLI prints the command ID so the existing operation can be investigated rather than submitted again.
+75. An uncertain routed mutation retains its command ID and request bytes for at most five transport retries within two minutes; if its
+outcome remains uncertain, the CLI prints the command ID so the existing operation can be investigated rather than submitted again.
+An explicit `--wait-approval` may wait for a human decision separately and restart that retry window; its wait is not included in the
+two-minute transport bound.
 
 On Windows the auto-start launches `arcforges-supervisor.exe` beside `arcforges.exe`; on Linux it runs
 `systemctl --user start arcforges-node.service` (see `eng/systemd/arcforges-node.service` for a development unit),

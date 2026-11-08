@@ -353,7 +353,8 @@ public sealed class RealCenterRoutedTests
             begun = true;
             await AwaitSignInAsync(human, flow, "N3 CLI node");
 
-            var pty = await CliAsync(node, pty: true, "run", "--wait", "--env-inherit", "none", "--cwd", node.Root,
+            // The routed default must inherit on the target, not carry the CLI process's environment through the center.
+            var pty = await CliAsync(node, pty: true, "run", "--wait", "--cwd", node.Root,
                 "--title", "n3-pty-check", "--", "/bin/sh", "-c", "printf human-pty; /bin/sleep 1; exit 7");
             Assert.True(pty.ExitCode == 7, "PTY run: " + pty);
             Assert.Equal("human-pty", pty.Output);
@@ -362,6 +363,15 @@ public sealed class RealCenterRoutedTests
             var ptyTask = Assert.Single(localList.Value.Tasks, task => task.Title == "n3-pty-check");
             Assert.Equal(Origin.Remote, ptyTask.Owner.Origin);
             Assert.Equal(Origin.Human, ptyTask.Owner.CenterCaller.LocalOrigin);
+            var ptyDetail = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest
+            {
+                Meta = CloudNode.Command(),
+                TaskId = ptyTask.TaskId,
+                Detail = TaskDetail.Full,
+            }, cancellationToken: Ct);
+            Assert.Null(ptyDetail.Error);
+            Assert.Equal(EnvironmentInherit.Node, ptyDetail.Value.Task.Spec.Environment.Inherit);
+            Assert.Empty(ptyDetail.Value.Task.Spec.Environment.Set);
 
             var submitted = await CliAsync(node, pty: false, "run", "--detach", "--env-inherit", "none", "--cwd", node.Root,
                 "--", "/bin/sh", "-c", "printf alpha; /bin/sleep 5; printf omega");

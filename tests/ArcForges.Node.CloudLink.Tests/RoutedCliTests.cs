@@ -7,7 +7,9 @@ using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
+using ArcForges.Node.Core.Scheduling;
 using Google.Protobuf;
 
 namespace ArcForges.Node.CloudLink.Tests;
@@ -15,6 +17,334 @@ namespace ArcForges.Node.CloudLink.Tests;
 /// <summary>REAL CLI process, local endpoint and node proxy; the scripted center is MOCKED and never claimed as task execution.</summary>
 public sealed class RoutedCliTests
 {
+    private const string SyntheticEnvironmentValue = "fixture-only-d3-sentinel";
+
+    [Theory(Timeout = 60000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DefaultRoutedRunNeverExportsSyntheticCallerSecrets(bool foreign)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        var target = foreign ? CommandIds.New() : fixture.NodeId;
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(target, CommandIds.New())));
+        var args = new List<string> { "run", "--detach" };
+        if (foreign)
+        {
+            args.AddRange(["--node", new Guid(target.Value.Span, bigEndian: true).ToString("D"), "--cwd", "/target/work"]);
+        }
+        args.AddRange(["--", "test-program"]);
+        var result = await fixture.CliSyntheticAsync(args.ToArray());
+        Assert.True(result.ExitCode == 0, "safe default submission should be accepted");
+        var outer = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(fixture.Center.CallsOf("SubmitNodeTask")).Body));
+        var environment = TaskServiceSubmitTaskRequest.Parser.ParseFrom(outer.Request).Spec.Environment;
+        Assert.False(outer.Request.Span.IndexOf(Encoding.UTF8.GetBytes(SyntheticEnvironmentValue)) >= 0, "no synthetic secret may cross the center");
+        Assert.Equal(EnvironmentInherit.Node, environment.Inherit);
+        Assert.Empty(environment.CallerEnvironment);
+    }
+
+    [Theory(Timeout = 60000)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitSecretEnvironmentIsRefusedBeforeRelay(bool caller)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var nonceCount = NonceRequests(fixture.Center);
+        var args = caller
+            ? new[] { "run", "--detach", "--env-inherit", "caller", "--", "test-program" }
+            : new[] { "run", "--detach", "--env-inherit", "none", "--env", "AF_SYNTH_TOKEN=" + SyntheticEnvironmentValue, "--", "test-program" };
+        var result = await fixture.CliSyntheticAsync(args);
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "secret-shaped values must be refused before center send");
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(result.ExitCode is not 0 and not 131, "explicit unsafe environment must be refused by the product, not by runtime startup");
+        Assert.True(result.Stderr.Contains("environment", StringComparison.OrdinalIgnoreCase)
+            && result.Stderr.Contains("center", StringComparison.OrdinalIgnoreCase), "refusal explains the center environment restriction");
+        Assert.False(result.Stdout.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+        Assert.False(result.Stderr.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task MalformedEnvironmentDiagnosticDoesNotEchoItsInput()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        var result = await fixture.CliSyntheticAsync("run", "--detach", "--env", SyntheticEnvironmentValue, "--", "test-program");
+        Assert.Equal(2, result.ExitCode);
+        Assert.True(result.Stderr.Contains("--env", StringComparison.Ordinal));
+        Assert.False(result.Stdout.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+        Assert.False(result.Stderr.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0);
+    }
+
+    [Theory(Timeout = 60000)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DirectFleetSubmitCannotBypassTheEnvironmentBoundary(bool foreign, bool unusedCallerField)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        var target = foreign ? CommandIds.New() : fixture.NodeId;
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(target, CommandIds.New())));
+        var nonceCount = NonceRequests(fixture.Center);
+        var environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node };
+        if (unusedCallerField)
+        {
+            environment.CallerEnvironment["AF_SYNTH_TOKEN"] = SyntheticEnvironmentValue;
+        }
+        else
+        {
+            environment.Set[foreign ? "AF_SAFE_VALUE" : "AF_SYNTH_TOKEN"] = SyntheticEnvironmentValue;
+        }
+        var answer = await DirectSubmitAsync(fixture, target, environment);
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "direct Fleet caller must not send unsafe or unclassifiable values");
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(answer.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen }, "direct refusal must be definite");
+        Assert.Equal(RetryMode.Never, answer.Error.Retry.Mode);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(answer.Error));
+        Assert.True(answer.Error.Details.State.Reason.Contains("environment", StringComparison.OrdinalIgnoreCase));
+        Assert.False(answer.Error.ToString().Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task DirectFleetUsesCustomAndDefaultSecretPatterns()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        await using (var human = await fixture.Node.ChannelAsync(Origin.Human))
+        {
+            var current = await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Null(current.Error);
+            var document = current.Value.Document.Clone();
+            document.Privacy.SecretNamePatterns.Clear();
+            document.Privacy.SecretNamePatterns.Add("AF_ZEBRA_*");
+            var meta = CloudNode.Command();
+            meta.ExpectedRev = current.Value.Revision.Revision;
+            var changed = await human.Policy.UpdatePolicyAsync(new PolicyServiceUpdatePolicyRequest { Meta = meta, Document = document }, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Null(changed.Error);
+        }
+        foreach (var name in new[] { "AF_ZEBRA_VALUE", "AF_SYNTH_TOKEN" })
+        {
+            fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+            var nonceCount = NonceRequests(fixture.Center);
+            var environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+            environment.Set[name] = SyntheticEnvironmentValue;
+            var answer = await DirectSubmitAsync(fixture, fixture.NodeId, environment);
+            Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "custom and default patterns must both stop at local boundary");
+            Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+            Assert.True(answer.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen });
+            Assert.Equal(RetryMode.Never, answer.Error.Retry.Mode);
+            Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(answer.Error));
+            Assert.False(answer.Error.ToString().Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void MissingPolicyFailsClosedWithoutClaimingASecretWasSupplied()
+    {
+        var meta = CloudNode.Command();
+        var environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+        environment.Set["AF_DISPLAY"] = "blue";
+        var request = new TaskServiceSubmitTaskRequest { Meta = meta, Spec = new TaskSpec { Environment = environment } };
+        var error = RoutedEnvironmentGuard.Check(request.ToByteString(), ownNode: true, meta.CorrelationId, TimeProvider.System,
+            () => throw new InvalidOperationException("synthetic policy read failure"));
+        Assert.True(error is { Code: "invalid_state", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(RetryMode.Never, error.Retry.Mode);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(error));
+        Assert.True(error.Details.State.Reason.Contains("policy", StringComparison.OrdinalIgnoreCase));
+        Assert.False(error.Details.State.Reason.Contains("secret values", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task UnknownEnvironmentFieldCannotCarryUnclassifiedBytes()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var encoded = Encode(output => { output.WriteTag(42); output.WriteString(SyntheticEnvironmentValue); });
+        var environment = EnvironmentSpec.Parser.ParseFrom(encoded);
+        var nonceCount = NonceRequests(fixture.Center);
+        var answer = await DirectSubmitAsync(fixture, fixture.NodeId, environment);
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "unknown environment fields must fail closed");
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(answer.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen });
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(answer.Error));
+        Assert.False(answer.Error.ToString().Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task DuplicateMapKeysCannotHideSecretBytesFromTheBoundary()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var meta = CloudNode.Command();
+        var entry = Encode(output =>
+        {
+            output.WriteTag(10); output.WriteString("AF_SYNTH_TOKEN");
+            output.WriteTag(18); output.WriteString(SyntheticEnvironmentValue);
+            output.WriteTag(10); output.WriteString("AF_SAFE_VALUE");
+        });
+        var environment = Encode(output => { output.WriteTag(18); output.WriteBytes(ByteString.CopyFrom(entry)); });
+        var spec = Encode(output => { output.WriteTag(26); output.WriteBytes(ByteString.CopyFrom(environment)); });
+        var request = Encode(output =>
+        {
+            output.WriteTag(10); output.WriteMessage(meta);
+            output.WriteTag(82); output.WriteBytes(ByteString.CopyFrom(spec));
+        });
+        var nonceCount = NonceRequests(fixture.Center);
+        var answer = await DirectRawSubmitAsync(fixture, fixture.NodeId, meta, ByteString.CopyFrom(request));
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "the original wire bytes must not hide a secret-shaped key");
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(answer.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen });
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(answer.Error));
+        Assert.False(answer.Error.ToString().Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+    }
+
+    private static byte[] Encode(Action<CodedOutputStream> write)
+    {
+        using var stream = new MemoryStream();
+        using (var output = new CodedOutputStream(stream, leaveOpen: true))
+        {
+            write(output);
+            output.Flush();
+        }
+        return stream.ToArray();
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task ClosedPolicyStoreFailsClosedWithoutFallingBackToDefaults()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        var store = fixture.Node.Runtime.Store;
+        await fixture.Node.StopAsync();
+        Assert.Throws<ObjectDisposedException>(() => store.Read(PolicyRules.Current));
+        var meta = CloudNode.Command();
+        var environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+        environment.Set["AF_DISPLAY"] = "blue";
+        var request = new TaskServiceSubmitTaskRequest { Meta = meta, Spec = new TaskSpec { Environment = environment } };
+        var error = RoutedEnvironmentGuard.Check(request.ToByteString(), ownNode: true, meta.CorrelationId, TimeProvider.System,
+            () => store.Read(PolicyRules.Current).Document.Privacy?.SecretNamePatterns.ToArray() ?? []);
+        Assert.True(error is { Code: "invalid_state", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(RetryMode.Never, error.Retry.Mode);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(error));
+        Assert.True(error.Details.State.Reason.Contains("policy", StringComparison.OrdinalIgnoreCase));
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task SafeNonCanonicalWireAndUnrelatedUnknownFieldsKeepExactBytesOnRetry()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var meta = CloudNode.Command();
+        var entry = Encode(output =>
+        {
+            output.WriteTag(18); output.WriteString("blue"); // value before key is valid protobuf
+            output.WriteTag(10); output.WriteString("AF_DISPLAY");
+        });
+        var environment = Encode(output => { output.WriteTag(18); output.WriteBytes(ByteString.CopyFrom(entry)); output.WriteTag(8); output.WriteEnum((int)EnvironmentInherit.None); });
+        var spec = Encode(output =>
+        {
+            output.WriteTag(192); output.WriteUInt32(1); // unrelated future TaskSpec field
+            output.WriteTag(26); output.WriteBytes(ByteString.CopyFrom(environment));
+        });
+        var request = ByteString.CopyFrom(Encode(output =>
+        {
+            output.WriteTag(82); output.WriteBytes(ByteString.CopyFrom(spec)); // spec before meta
+            output.WriteTag(10); output.WriteMessage(meta);
+            output.WriteTag(128); output.WriteUInt32(1); // unrelated future request field
+        }));
+        var error = await Assert.ThrowsAsync<Grpc.Core.RpcException>(async () => await DirectRawSubmitAsync(fixture, fixture.NodeId, meta, request));
+        Assert.Equal(Grpc.Core.StatusCode.Unavailable, error.StatusCode);
+        var answer = await DirectRawSubmitAsync(fixture, fixture.NodeId, meta, request);
+        Assert.NotNull(answer.Value);
+        var calls = fixture.Center.CallsOf("SubmitNodeTask").Select(call => FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body))).ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.All(calls, call => Assert.True(call.Request.Equals(request), "the exact accepted wire bytes must be retained"));
+        Assert.All(calls, call => Assert.Equal(meta.CommandId, call.Meta.CommandId));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task SafeOwnEnvironmentRetriesTheSameBytesAndCommand()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var result = await fixture.CliSyntheticAsync("run", "--detach", "--env-inherit", "none", "--env", "AF_DISPLAY=blue", "--", "test-program");
+        Assert.Equal(0, result.ExitCode);
+        var calls = fixture.Center.CallsOf("SubmitNodeTask").Select(call => FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body))).ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.True(calls[0].Request.Equals(calls[1].Request), "safe retries preserve the exact inner bytes");
+        Assert.Equal(calls[0].Meta.CommandId, calls[1].Meta.CommandId);
+        Assert.False(calls[0].Request.Span.IndexOf(Encoding.UTF8.GetBytes(SyntheticEnvironmentValue)) >= 0);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task ExplicitSafeCallerEnvironmentCanReachItsOwnNode()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var result = await fixture.CliSyntheticSafeAsync("run", "--detach", "--env-inherit", "caller", "--", "test-program");
+        Assert.Equal(0, result.ExitCode);
+        var outer = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(fixture.Center.CallsOf("SubmitNodeTask")).Body));
+        var environment = TaskServiceSubmitTaskRequest.Parser.ParseFrom(outer.Request).Spec.Environment;
+        Assert.Equal(EnvironmentInherit.Caller, environment.Inherit);
+        Assert.True(environment.CallerEnvironment.TryGetValue("AF_DISPLAY", out var value) && value == "blue", "safe caller entry remains intact");
+        Assert.False(outer.Request.Span.IndexOf(Encoding.UTF8.GetBytes(SyntheticEnvironmentValue)) >= 0);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task LocalDiagnosticCanStillSubmitWithCallerInheritance()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        var result = await fixture.CliSyntheticAsync("run", "--local", "--detach", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
+        Assert.True(result.ExitCode == 0, "local diagnostic caller inheritance remains available");
+        Assert.True(IdText.TryParse(result.Stdout.Trim(), out var taskId));
+        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
+        var task = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest
+        {
+            Meta = CloudNode.Command(),
+            TaskId = new Id { Value = ByteString.CopyFrom(taskId) },
+            Detail = TaskDetail.Full,
+        }, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(task.Error);
+        Assert.Equal(EnvironmentInherit.Caller, task.Value.Task.Spec.Environment.Inherit);
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0);
+        Assert.False(result.Stdout.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+        Assert.False(result.Stderr.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+    }
+
+    private static int NonceRequests(FakeCenter center) => center.Channel.Connections.SelectMany(connection => connection.Received)
+        .Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest);
+
+    private static async Task<FleetServiceSubmitNodeTaskResponse> DirectSubmitAsync(Fixture fixture, Id target, EnvironmentSpec environment)
+    {
+        await using var script = await fixture.Node.ChannelAsync(Origin.Script);
+        var meta = CloudNode.Command();
+        var inner = new TaskServiceSubmitTaskRequest { Meta = meta.Clone(), Spec = new TaskSpec { Environment = environment } };
+        var fleet = new FleetService.FleetServiceClient(script.CallInvoker);
+        return await fleet.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = target, Request = inner.ToByteString() },
+            deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<FleetServiceSubmitNodeTaskResponse> DirectRawSubmitAsync(Fixture fixture, Id target, RequestMeta meta, ByteString request)
+    {
+        await using var script = await fixture.Node.ChannelAsync(Origin.Script);
+        var fleet = new FleetService.FleetServiceClient(script.CallInvoker);
+        return await fleet.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = target, Request = request },
+            deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: TestContext.Current.CancellationToken);
+    }
+
     [Fact(Timeout = 60000)]
     public async Task TheDefaultRunRefusesWithoutAConnectedAccount()
     {
@@ -903,7 +1233,13 @@ public sealed class RoutedCliTests
             return fixture;
         }
 
-        public async Task<(int ExitCode, string Stdout, string Stderr)> CliAsync(params string[] args)
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliAsync(params string[] args) => StartCliAsync(false, false, args);
+
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticAsync(params string[] args) => StartCliAsync(true, true, args);
+
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticSafeAsync(params string[] args) => StartCliAsync(true, false, args);
+
+        private async Task<(int ExitCode, string Stdout, string Stderr)> StartCliAsync(bool synthetic, bool includeMarker, string[] args)
         {
             var start = new ProcessStartInfo(CloudNode.HelperExecutable)
             {
@@ -919,6 +1255,32 @@ public sealed class RoutedCliTests
                 start.ArgumentList.Add(arg);
             }
 
+            if (synthetic)
+            {
+                // Never copy the host environment into these privacy tests; only this deliberately synthetic child receives the marker.
+                start.Environment.Clear();
+                if (includeMarker)
+                {
+                    start.Environment["AF_SYNTH_TOKEN"] = SyntheticEnvironmentValue;
+                }
+                start.Environment["AF_DISPLAY"] = "blue";
+                // The installed runtime can live outside the machine-wide default; derive its root from this test process, not the host environment.
+                start.Environment["DOTNET_ROOT"] = new DirectoryInfo(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory()).Parent!.Parent!.Parent!.FullName;
+                start.Environment["HOME"] = Node.Root;
+                start.Environment["TMP"] = Node.Root;
+                start.Environment["TEMP"] = Node.Root;
+                start.Environment["TMPDIR"] = Node.Root;
+                if (OperatingSystem.IsWindows())
+                {
+                    start.Environment["SystemRoot"] = @"C:\Windows";
+                    start.Environment["WINDIR"] = @"C:\Windows";
+                    start.Environment["PATH"] = @"C:\Windows\System32";
+                }
+                else
+                {
+                    start.Environment["PATH"] = "/usr/bin:/bin";
+                }
+            }
             start.Environment[NodeLocations.EndpointVariable] = Node.Endpoint.Address;
             start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(Node.ConfigPath)!;
             start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");

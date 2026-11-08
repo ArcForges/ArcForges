@@ -111,7 +111,7 @@ internal sealed class GlobalOptions
     public Option<string?> WaitApproval { get; } = new("--wait-approval")
     {
         Recursive = true,
-        Description = "When a mutation needs an approval, wait this long for the decision and print the outcome (for example 10m)",
+        Description = "Wait for an approval decision (for example 10m); this human wait is outside the routed retry window",
         HelpName = "dur",
     };
 

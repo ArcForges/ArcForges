@@ -133,6 +133,19 @@ public sealed class CommandLineTests
         Assert.Contains(third, output.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunHelpExplainsEnvironmentAndApprovalWaitBoundaries()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(0, await CliApplication.RunAsync(["run", "--help"], NoNode, output, error));
+        var help = System.Text.RegularExpressions.Regex.Replace(output.ToString(), @"\s+", " ");
+        Assert.Contains("routed default: node", help, StringComparison.Ordinal);
+        Assert.Contains("--local default: caller", help, StringComparison.Ordinal);
+        Assert.Contains("other-node values are refused", help, StringComparison.Ordinal);
+        Assert.Contains("human wait is outside the routed retry window", help, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("not_signed_in", EffectCertainty.DidNotHappen, 4, "not signed in")]
     [InlineData("cloud_unreachable", EffectCertainty.DidNotHappen, 4, "unavailable")]
