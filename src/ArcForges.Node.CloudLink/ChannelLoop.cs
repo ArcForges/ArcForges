@@ -105,7 +105,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
     /// <summary>
     /// A test hook awaited at the named steps of a call's answer (<c>verified</c>: after the verification and its pending row; <c>dispatch</c>:
-    /// immediately before the dispatcher), or before registering a relay signing operation (<c>relay.before_register</c>). Never set by the host.
+    /// immediately before the dispatcher), after a call's key refresh (<c>refresh.completed</c>), before sending a verification refusal
+    /// (<c>refusal.send</c>), or before registering a relay signing operation (<c>relay.before_register</c>). Never set by the host.
     /// </summary>
     internal Func<string, Task>? StepHook { get; init; }
 
@@ -767,6 +768,11 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
                 session.RefreshedForKeys = true;
                 await RefreshKeysAsync(session).ConfigureAwait(false);
+                if (StepHook is { } refreshHook)
+                {
+                    await refreshHook("refresh.completed").ConfigureAwait(false);
+                }
+
                 return _host.Binding();
             }
 
@@ -777,6 +783,24 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 _nodeLog.Warning("cloud.channel.call_refused", new LogField("step", refusal.Step), new LogField("code", refusal.LogCode));
                 if (refusal.CallId is not null)
                 {
+                    // Verification may have waited on a key refresh while the link was switched off. A missing binding must drop the
+                    // refusal just as it drops a verified call: the old session is no longer allowed to answer.
+                    var refusalLink = new SessionLink(this, session);
+                    if (!refusalLink.Usable)
+                    {
+                        return;
+                    }
+
+                    if (StepHook is { } refusalHook)
+                    {
+                        await refusalHook("refusal.send").ConfigureAwait(false);
+                    }
+
+                    if (!refusalLink.Usable)
+                    {
+                        return;
+                    }
+
                     await session.Client.SendAsync(new RelayFrame { CallResult = signer.RefusedVerification(refusal) }, session.Token).ConfigureAwait(false);
                 }
 

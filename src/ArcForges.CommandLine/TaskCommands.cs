@@ -70,7 +70,7 @@ internal static class TaskCommands
             var remaining = budget - TimeProvider.System.GetElapsedTime(started);
             if (remaining <= TimeSpan.Zero)
             {
-                cli.Output.Error.WriteLine($"arcforges: the wait for task {IdText.Format(taskId)} ended before it reached {target.ToString().ToUpperInvariant()}");
+                cli.Output.Error.WriteLine($"arcforges: task {IdText.Format(taskId)}; the wait ended before it reached {target.ToString().ToUpperInvariant()}");
                 return TaskText.WaitNotReached;
             }
 
@@ -93,7 +93,7 @@ internal static class TaskCommands
             catch (RpcException exception) when (exception.StatusCode == StatusCode.DeadlineExceeded && !cancellationToken.IsCancellationRequested
                 && TimeProvider.System.GetElapsedTime(started) >= budget - TimeSpan.FromMilliseconds(100))
             {
-                cli.Output.Error.WriteLine($"arcforges: the wait for task {IdText.Format(taskId)} ended before it reached {target.ToString().ToUpperInvariant()}");
+                cli.Output.Error.WriteLine($"arcforges: task {IdText.Format(taskId)}; the wait ended before it reached {target.ToString().ToUpperInvariant()}");
                 return TaskText.WaitNotReached;
             }
             if (response.Error is { } error)

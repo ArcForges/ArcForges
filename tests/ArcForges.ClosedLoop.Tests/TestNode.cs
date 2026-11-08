@@ -287,6 +287,67 @@ internal sealed class TestNode : IAsyncDisposable
         return process;
     }
 
+    /// <summary>Applies the local diagnostic option used by legacy local-only closed-loop fixtures.</summary>
+    internal static void AddLocalDiagnosticOption(List<string> arguments)
+    {
+        var separator = arguments.IndexOf("--");
+        var end = separator < 0 ? arguments.Count : separator;
+        var root = CommandPosition(arguments, 0, end);
+        if (root < 0 || root == end || arguments.Take(end).Any(value => value is "--local" or "--node"
+            || value.StartsWith("--local=", StringComparison.Ordinal) || value.StartsWith("--node=", StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        if (arguments[root] is "run" or "output")
+        {
+            arguments.Insert(root + 1, "--local");
+        }
+        else if (arguments[root] == "tasks")
+        {
+            var sub = CommandPosition(arguments, root + 1, end);
+            if (sub == end)
+            {
+                arguments.Insert(root + 1, "--local");
+            }
+            else if (sub >= 0 && arguments[sub] is "list" or "show" or "wait" or "cancel")
+            {
+                arguments.Insert(sub + 1, "--local");
+            }
+        }
+    }
+
+    /// <summary>Finds the command after known global options; never searches option values for command names.</summary>
+    private static int CommandPosition(List<string> arguments, int start, int end)
+    {
+        var i = start;
+        while (i < end)
+        {
+            var value = arguments[i];
+            var equals = value.IndexOf('=', StringComparison.Ordinal);
+            var name = equals < 0 ? value : value[..equals];
+            if (name is "--timeout" or "--wait-approval")
+            {
+                if (equals < 0 && ++i == end)
+                {
+                    return -1;
+                }
+
+                i++;
+            }
+            else if (name is "--json" or "--quiet" or "-q" or "--verbose" or "-v" or "--yes" or "-y" or "--no-color" or "--test-mode")
+            {
+                i++;
+            }
+            else
+            {
+                return value.StartsWith('-') ? -1 : i;
+            }
+        }
+
+        return end;
+    }
+
     /// <summary>
     /// Starts a process with the environment's variables; it is tracked and killed at the end if it still runs. The node, CLI and
     /// supervisor binaries start only with <c>--test-mode</c> (16-testing-strategy section 1: a test never starts a node without it),
@@ -303,29 +364,7 @@ internal sealed class TestNode : IAsyncDisposable
 
         if (binary == "arcforges" && UseLocalDiagnosticCli)
         {
-            var separator = argumentList.IndexOf("--");
-            var prefixCount = separator < 0 ? argumentList.Count : separator;
-            var root = argumentList.FindIndex(0, prefixCount, value => value is "run" or "tasks" or "output" or "node" or "status" or "account" or "login");
-            if (root >= 0 && !argumentList.Take(prefixCount).Contains("--local", StringComparer.Ordinal)
-                && !argumentList.Take(prefixCount).Contains("--node", StringComparer.Ordinal))
-            {
-                if (argumentList[root] is "run" or "output")
-                {
-                    argumentList.Insert(root + 1, "--local");
-                }
-                else if (argumentList[root] == "tasks")
-                {
-                    var sub = root + 1 < prefixCount ? argumentList[root + 1] : string.Empty;
-                    if (sub is "list" or "show" or "wait" or "cancel")
-                    {
-                        argumentList.Insert(root + 2, "--local");
-                    }
-                    else if (sub.Length == 0 || sub.StartsWith('-'))
-                    {
-                        argumentList.Insert(root + 1, "--local");
-                    }
-                }
-            }
+            AddLocalDiagnosticOption(argumentList);
         }
 
         arguments = argumentList;

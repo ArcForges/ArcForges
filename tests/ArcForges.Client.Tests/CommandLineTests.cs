@@ -26,6 +26,22 @@ public sealed class CommandLineTests
             "The hand-off time does not restart when the attach begins.");
     }
 
+    [Fact]
+    public async Task AnAlreadyExhaustedTaskWaitReportsTheTaskAndReturnsNine()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var task = CommandIds.New();
+
+        var exit = await TaskCommands.WaitAsync(cli, null!, task, WaitTarget.Terminal, TimeSpan.Zero, "none", CancellationToken.None);
+
+        Assert.Equal(9, exit);
+        Assert.Contains("the wait ended", error.ToString(), StringComparison.Ordinal);
+        Assert.Contains(IdText.Format(task), error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, output.ToString());
+    }
+
     [Theory]
     [InlineData("status")]
     [InlineData("status --json")]
