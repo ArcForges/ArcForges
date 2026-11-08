@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
@@ -310,6 +311,175 @@ public sealed class RealCenterRoutedTests
         }
     }
 
+    /// <summary>Actual SCRIPT CLI retry after a root-controlled local-center interruption; the target node is in process.</summary>
+    [Fact(Timeout = 900_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task RealCliRetriesTheSameSubmissionAfterTheCenterRestarts()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var url = Environment.GetEnvironmentVariable("ARCFORGES_E2E_CENTER_URL");
+        Assert.SkipUnless(!string.IsNullOrEmpty(url), "ARCFORGES_E2E_CENTER_URL is not set");
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the real local-center retry acceptance requires Linux");
+        Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
+        Assert.True(CenterEndpoint.TryParse(url, out var center, out var reason), reason);
+        Assert.True(center.Scheme == "http" && (center.Host == "localhost" || (IPAddress.TryParse(center.Host, out var address) && IPAddress.IsLoopback(address)))
+            && center.PathBase.Length == 0, "the isolated acceptance center must be loopback");
+        var directory = Environment.GetEnvironmentVariable("ARCFORGES_E2E_DIR");
+        Assert.True(!string.IsNullOrEmpty(directory) && Path.IsPathFullyQualified(directory), "ARCFORGES_E2E_DIR must be absolute");
+        Directory.CreateDirectory(directory);
+        foreach (var name in new[] { "x-retry-crash.request.json", "x-retry-crash.ack.json", "x-retry-restart.request.json", "x-retry-restart.ack.json", "x-retry-observed.json" })
+        {
+            Assert.False(File.Exists(Path.Combine(directory, name)), "the retry requires a fresh handshake directory");
+        }
+
+        var delay = new DelayResult();
+        await using var node = CloudNode.Create(center.Url);
+        node.TestMode = true;
+        node.AllowLocalScriptSubmit = false;
+        node.WrapRoutedDispatcher = inner => new DelayedDispatcher(inner, delay);
+        await node.StartAsync();
+        await using var human = await node.ChannelAsync(Origin.Human);
+        var begun = false;
+        var resultWritten = false;
+        using var cliStop = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        Task<ProcessRun>? cli = null;
+        try
+        {
+            var flow = await BeginAsync(node, human, center, directory, "x-retry");
+            begun = true;
+            await AwaitSignInAsync(human, flow, "X retry node");
+            delay.ArmNextSubmit();
+            cli = CliWithBudgetAsync(node, pty: false, TimeSpan.FromMinutes(3), cliStop.Token, "--verbose", "run", "--detach", "--cwd", node.Root,
+                "--title", "x-retry-command", "--", "/bin/sh", "-c", "printf x-first; /bin/sleep 12; printf x-last");
+            await delay.Held.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            var delivery = await delay.FirstDelivery.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+            var commandUuid = new Guid(delivery.Command.Value.Span, bigEndian: true).ToString("D");
+            var requestSha256 = Convert.ToHexStringLower(SHA256.HashData(delivery.Request));
+            ManagedTask? task = null;
+            await TestNode.WaitAsync(async () =>
+            {
+                var list = await human.Tasks.ListTasksAsync(new TaskServiceListTasksRequest { Meta = CloudNode.Command(), Filter = new TaskFilter() }, cancellationToken: Ct);
+                Assert.Null(list.Error);
+                task = list.Value.Tasks.SingleOrDefault(item => item.Title == "x-retry-command");
+                return task is not null;
+            }, TimeSpan.FromSeconds(30), "the first routed submit committed its task");
+            Assert.NotNull(task);
+            Assert.Equal(Origin.Script, task.Owner.CenterCaller.LocalOrigin);
+            Assert.Equal(delivery.Command, task.Owner.RemoteCommandId);
+            var started = await WaitLocalAsync(human, task.TaskId, WaitTarget.Started);
+            var firstBytes = System.Text.Encoding.UTF8.GetBytes("x-first");
+            TaskServiceReadTaskOutputResponse? first = null;
+            await TestNode.WaitAsync(async () =>
+            {
+                first = await human.Tasks.ReadTaskOutputAsync(new TaskServiceReadTaskOutputRequest
+                {
+                    Meta = CloudNode.Command(),
+                    AttemptId = started.CurrentAttempt.AttemptId,
+                    FromOffset = 0,
+                    MaxBytes = (uint)firstBytes.Length,
+                }, cancellationToken: Ct);
+                Assert.Null(first.Error);
+                return first.Value.Data.Length == firstBytes.Length;
+            }, TimeSpan.FromSeconds(30), "the first output chunk before the center interruption");
+            Assert.NotNull(first);
+            Assert.Equal(firstBytes, first.Value.Data.ToByteArray());
+            Assert.Equal((ulong)firstBytes.Length, first.Value.NextOffset);
+
+            var nodeUuid = new Guid(node.Runtime.NodeId.Span, bigEndian: true).ToString("D");
+            var taskUuid = new Guid(task.TaskId.Value.Span, bigEndian: true).ToString("D");
+            JsonObject Request() => new()
+            {
+                ["case"] = "x-retry",
+                ["nodeId"] = nodeUuid,
+                ["commandId"] = commandUuid,
+                ["taskId"] = taskUuid,
+                ["requestSha256"] = requestSha256,
+            };
+            Write(directory, "x-retry-crash.request.json", Request());
+            var crashed = await AwaitRetryAckAsync(directory, "x-retry-crash.ack.json", "crashed", nodeUuid, taskUuid, commandUuid, requestSha256, healthy: false);
+            delay.Release.TrySetResult();
+            await TestNode.WaitAsync(async () => (await StatusAsync(human)).Relay != RelayState.Connected, ConnectedTimeout, "the node observed the center interruption");
+            Write(directory, "x-retry-restart.request.json", Request());
+            var restarted = await AwaitRetryAckAsync(directory, "x-retry-restart.ack.json", "restarted", nodeUuid, taskUuid, commandUuid, requestSha256, healthy: true);
+            Assert.NotEqual(crashed, restarted);
+            await AwaitConnectedAsync(human, "the node after center restart");
+            var retried = await cli;
+            Assert.True(retried.ExitCode == 0, "automatic CLI retry: " + retried);
+            Assert.Contains("retrying the same routed command", retried.Error, StringComparison.Ordinal);
+            Assert.True(IdText.TryParse(retried.Output.Trim(), out var returnedBytes), "the CLI did not return a task ID");
+            Assert.Equal(task.TaskId.Value.ToByteArray(), returnedBytes);
+            Assert.True(delay.Deliveries.Count >= 2, "the real node must receive the automatic retry");
+            Assert.All(delay.Deliveries, item =>
+            {
+                Assert.Equal(delivery.Command, item.Command);
+                Assert.Equal(delivery.Request, item.Request);
+            });
+            Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE remote_command_id = $id;",
+                ("$id", delivery.Command.Value.ToByteArray()))));
+            var tail = await CliAsync(node, pty: false, "output", IdText.Format(task.TaskId), "--from-offset", first.Value.NextOffset.ToString(System.Globalization.CultureInfo.InvariantCulture), "--follow");
+            Assert.True(tail.ExitCode == 0, "resuming routed output: " + tail);
+            Assert.Equal("x-last", tail.Output);
+            Assert.Equal("x-firstx-last", System.Text.Encoding.UTF8.GetString(firstBytes) + tail.Output);
+            Assert.Equal(TaskState.Succeeded, (await WaitLocalAsync(human, task.TaskId, WaitTarget.Terminal)).State);
+            Write(directory, "x-retry-observed.json", new JsonObject
+            {
+                ["nodeId"] = nodeUuid,
+                ["commandId"] = commandUuid,
+                ["taskId"] = taskUuid,
+                ["requestSha256"] = requestSha256,
+                ["nodeDeliveries"] = delay.Deliveries.Count,
+                ["firstNextOffset"] = first.Value.NextOffset,
+                ["combinedBytes"] = firstBytes.Length + System.Text.Encoding.UTF8.GetByteCount(tail.Output),
+            });
+            WriteResult(directory, "x-retry", passed: true, "actual SCRIPT CLI automatically retried after root-owned center restart");
+            resultWritten = true;
+        }
+        finally
+        {
+            delay.Release.TrySetResult();
+            if (cli is { IsCompleted: false })
+            {
+                await cliStop.CancelAsync();
+                try
+                {
+                    await cli;
+                }
+                catch (OperationCanceledException)
+                {
+                    // The helper terminates and waits for the exact CLI process it started.
+                }
+            }
+
+            if (begun && !resultWritten)
+            {
+                WriteResult(directory, "x-retry", passed: false, "interrupted");
+            }
+
+            await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
+        }
+    }
+
+    private static async Task<(int Pid, string StartTicks)> AwaitRetryAckAsync(string directory, string name, string phase, string nodeId, string taskId,
+        string commandId, string requestSha256, bool healthy)
+    {
+        var path = Path.Combine(directory, name);
+        await TestNode.WaitAsync(() => File.Exists(path), TimeSpan.FromSeconds(90), "the root-owned center " + phase + " acknowledgement");
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path, Ct));
+        var ack = document.RootElement;
+        Assert.True(ack.GetProperty("ok").GetBoolean());
+        Assert.Equal(phase, ack.GetProperty("phase").GetString());
+        Assert.Equal(0, ack.GetProperty("operationExit").GetInt32());
+        Assert.Equal(nodeId, ack.GetProperty("nodeId").GetString());
+        Assert.Equal(taskId, ack.GetProperty("taskId").GetString());
+        Assert.Equal(commandId, ack.GetProperty("commandId").GetString());
+        Assert.Equal(requestSha256, ack.GetProperty("requestSha256").GetString());
+        Assert.Equal(healthy, ack.GetProperty("healthy").GetBoolean());
+        var pid = ack.GetProperty("pid").GetInt32();
+        var startTicks = ack.GetProperty("startTicks").GetString();
+        Assert.True(pid > 0 && !string.IsNullOrEmpty(startTicks), "the acknowledgement must identify the owned center process");
+        return (pid, startTicks);
+    }
+
     /// <summary>
     /// N3-10: a literal HUMAN CLI in a Linux PTY and SCRIPT CLIs use the actual node proxy, loopback center and PostgreSQL.
     /// The browser passkey and node secret store are isolated test substitutes, never hosted or owner-device proof.
@@ -559,7 +729,10 @@ public sealed class RealCenterRoutedTests
         }
     }
 
-    private static async Task<ProcessRun> CliAsync(CloudNode node, bool pty, params string[] args)
+    private static Task<ProcessRun> CliAsync(CloudNode node, bool pty, params string[] args) =>
+        CliWithBudgetAsync(node, pty, TimeSpan.FromSeconds(60), Ct, args);
+
+    private static async Task<ProcessRun> CliWithBudgetAsync(CloudNode node, bool pty, TimeSpan budget, CancellationToken cancellationToken, params string[] args)
     {
         static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
         var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
@@ -594,11 +767,11 @@ public sealed class RealCenterRoutedTests
         }
 
         using var process = Process.Start(start) ?? throw new InvalidOperationException("The acceptance CLI did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync(Ct);
-        var stderr = process.StandardError.ReadToEndAsync(Ct);
+        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
         try
         {
-            await process.WaitForExitAsync(Ct).WaitAsync(TimeSpan.FromSeconds(60), Ct);
+            await process.WaitForExitAsync(cancellationToken).WaitAsync(budget, cancellationToken);
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
@@ -751,11 +924,43 @@ public sealed class RealCenterRoutedTests
     {
         private Id? _command;
         private Id? _stopCommand;
+        private int _nextSubmit;
+        private int _captureDeliveries;
+        private readonly ConcurrentQueue<(Id Command, byte[] Request)> _deliveries = new();
         public TaskCompletionSource Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public void Arm(Id command) => _command = command;
+        public TaskCompletionSource<(Id Command, byte[] Request)> FirstDelivery { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public IReadOnlyList<(Id Command, byte[] Request)> Deliveries => [.. _deliveries];
+        public void Arm(Id command) => Volatile.Write(ref _command, command);
+        public void ArmNextSubmit()
+        {
+            Volatile.Write(ref _captureDeliveries, 1);
+            Volatile.Write(ref _nextSubmit, 1);
+        }
         public void StopOnce(Id command) => Volatile.Write(ref _stopCommand, command);
-        public bool Matches(VerifiedCall call) => _command is not null && Equals(call.Header.CommandId, _command);
+        public bool Matches(VerifiedCall call)
+        {
+            if (call.Header.Method == RoutedMethod.SubmitNodeTask && call.Header.CommandId is { } next
+                && Interlocked.CompareExchange(ref _nextSubmit, 0, 1) == 1)
+            {
+                Volatile.Write(ref _command, next.Clone());
+            }
+
+            if (Volatile.Read(ref _command) is not { } command || !Equals(call.Header.CommandId, command))
+            {
+                return false;
+            }
+
+            if (Volatile.Read(ref _captureDeliveries) == 1)
+            {
+                // Keep the synthetic request only in memory; the control handshake carries only its digest.
+                var delivery = (command.Clone(), call.Payload.ToByteArray());
+                _deliveries.Enqueue(delivery);
+                FirstDelivery.TrySetResult(delivery);
+            }
+
+            return true;
+        }
 
         public bool TakeStop(VerifiedCall call)
         {
