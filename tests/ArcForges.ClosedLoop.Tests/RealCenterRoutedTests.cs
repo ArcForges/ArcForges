@@ -13,6 +13,7 @@ using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.CloudLink.Tests;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Security;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -420,7 +421,68 @@ public sealed class RealCenterRoutedTests
             Assert.True(ended.State == TaskState.Cancelled, "hold did not cancel; cancel=" + cancelled + "; task=" + ended);
             Assert.Equal(Origin.Remote, ended.Owner.Origin);
             Assert.Equal(Origin.Script, ended.Owner.CenterCaller.LocalOrigin);
-            WriteResult(directory, "n3-cli", passed: true, "PTY HUMAN and SCRIPT through actual proxy, center and node");
+
+            // X-7: two literal CLIs, not just independently constructed relay identities, share the same one-wide pool and budget.
+            Assert.Null((await human.Queue.SetParallelismAsync(new QueueServiceSetParallelismRequest
+            {
+                Meta = CloudNode.Command(),
+                Scope = ParallelismScope.Pool,
+                Target = "default",
+                Mode = ParallelismMode.Fixed,
+                Fixed = 1,
+            }, cancellationToken: Ct)).Error);
+            Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: Ct)).Error);
+            var queuedHuman = await CliAsync(node, pty: true, "run", "--detach", "--cwd", node.Root, "--title", "x-pool-human",
+                "--cpu", "0.1", "--mem", "64MiB", "--", "/bin/sleep", "120");
+            var queuedScript = await CliAsync(node, pty: false, "run", "--detach", "--cwd", node.Root, "--title", "x-pool-script",
+                "--cpu", "0.1", "--mem", "64MiB", "--", "/bin/sleep", "120");
+            Assert.True(queuedHuman.ExitCode == 0, "PTY pool submission: " + queuedHuman);
+            Assert.True(queuedScript.ExitCode == 0, "SCRIPT pool submission: " + queuedScript);
+            Assert.True(IdText.TryParse(queuedHuman.Output.Trim(), out var humanBytes));
+            Assert.True(IdText.TryParse(queuedScript.Output.Trim(), out var scriptBytes));
+            var humanId = new Id { Value = ByteString.CopyFrom(humanBytes) };
+            var scriptId = new Id { Value = ByteString.CopyFrom(scriptBytes) };
+            await TestNode.WaitAsync(async () =>
+            {
+                var snapshot = await human.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+                Assert.Null(snapshot.Error);
+                return snapshot.Value.Entries.Count(entry => entry.TaskId.Equals(humanId) || entry.TaskId.Equals(scriptId)) == 2;
+            }, TimeSpan.FromSeconds(30), "the PTY and SCRIPT tasks share the pool queue");
+            var queued = await human.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+            Assert.Null(queued.Error);
+            var entries = queued.Value.Entries.Where(entry => entry.TaskId.Equals(humanId) || entry.TaskId.Equals(scriptId)).ToArray();
+            Assert.Equal(2, entries.Length);
+            Assert.NotEqual(entries[0].Queue.Position, entries[1].Queue.Position);
+            Assert.All(entries, entry => Assert.Equal(("default", 100u, 64UL << 20), (entry.Pool, entry.Request.CpuMillicores, entry.Request.MemExpectedBytes)));
+            Assert.Equal(Origin.Human, entries.Single(entry => entry.TaskId.Equals(humanId)).Owner.CenterCaller.LocalOrigin);
+            Assert.Equal(Origin.Script, entries.Single(entry => entry.TaskId.Equals(scriptId)).Owner.CenterCaller.LocalOrigin);
+            var pool = Assert.Single(queued.Value.Pools, item => item.Name == "default");
+            Assert.Equal((ParallelismMode.Fixed, 1u), (pool.MaxParallelMode, pool.MaxParallelFixed));
+            Assert.Null((await human.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: Ct)).Error);
+            await TestNode.WaitAsync(async () =>
+            {
+                var snapshot = await human.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+                return snapshot.Error is null && snapshot.Value.Budget.GlobalRunning == 1
+                    && snapshot.Value.Pools.Any(item => item.Name == "default" && item.Running == 1);
+            }, TimeSpan.FromSeconds(30), "exactly one task running in the one-wide pool");
+            var one = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = humanId }, cancellationToken: Ct);
+            var two = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = scriptId }, cancellationToken: Ct);
+            Assert.Null(one.Error);
+            Assert.Null(two.Error);
+            Assert.Equal(new[] { TaskState.Queued, TaskState.Running }, new[] { one.Value.Task.State, two.Value.Task.State }.OrderBy(state => state));
+            var budget = await human.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+            Assert.Null(budget.Error);
+            Assert.Equal(1u, budget.Value.Budget.GlobalRunning);
+            Assert.True(budget.Value.Budget.AccountedMemBytes > 0);
+            foreach (var (queuedId, isPty) in new[] { (humanId, true), (scriptId, false) })
+            {
+                var cancellation = await CliAsync(node, pty: isPty, "tasks", "cancel", IdText.Format(queuedId.Value.Span));
+                Assert.True(cancellation.ExitCode == 0, "pool task cancellation: " + cancellation);
+                Assert.Equal(TaskState.Cancelled, (await WaitLocalAsync(human, queuedId, WaitTarget.Terminal)).State);
+            }
+
+            await AdoptedProcessCannotBeCancelledThroughCenterAsync(node, human, directory);
+            WriteResult(directory, "n3-cli", passed: true, "PTY HUMAN and SCRIPT through actual proxy, center and node; shared pool and adopted-process refusal");
             resultWritten = true;
         }
         finally
@@ -431,6 +493,69 @@ public sealed class RealCenterRoutedTests
             }
 
             await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
+        }
+    }
+
+    /// <summary>A test-owned Linux child is really adopted from a HUMAN PTY, then a SCRIPT CLI asks the real center to cancel it.</summary>
+    private static async Task AdoptedProcessCannotBeCancelledThroughCenterAsync(CloudNode node, NodeChannel human, string directory)
+    {
+        using var child = Process.Start(new ProcessStartInfo("/bin/sleep", ["150"])
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        }) ?? throw new InvalidOperationException("The owned adoption child did not start.");
+        var identity = ArcForges.Tests.ProcessIdentity.Capture(child.Id);
+        Assert.True(identity.HasValue, "the adoption child needs a PID and start identity");
+        var owned = identity.Value;
+        try
+        {
+            var adopted = await CliAsync(node, pty: true, "adopt", child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), "--title", "x-adopted");
+            Assert.True(adopted.ExitCode == 0, "PTY adopt: " + adopted);
+            const string prefix = "adopted as task ";
+            var index = adopted.Output.IndexOf(prefix, StringComparison.Ordinal);
+            Assert.True(index >= 0, "adopt did not report a task ID");
+            var idText = adopted.Output[(index + prefix.Length)..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            Assert.True(IdText.TryParse(idText, out var bytes));
+            var id = new Id { Value = ByteString.CopyFrom(bytes) };
+            var before = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = id, Detail = TaskDetail.Full }, cancellationToken: Ct);
+            Assert.Null(before.Error);
+            Assert.Equal((TaskState.Running, TaskKind.Adopted, AttemptKind.Adopted), (before.Value.Task.State, before.Value.Task.Spec.Kind, before.Value.Task.CurrentAttempt.Kind));
+            Assert.True(owned.IsRunning(), "the recorded adopted child is still alive");
+
+            var denied = await CliAsync(node, pty: false, "--json", "tasks", "cancel", idText);
+            Assert.Equal(5, denied.ExitCode);
+            using var document = JsonDocument.Parse(denied.Output);
+            var error = document.RootElement.GetProperty("error");
+            Assert.Equal("permission_denied", error.GetProperty("code").GetString());
+            Assert.Equal("EFFECT_CERTAINTY_DID_NOT_HAPPEN", error.GetProperty("effect").GetString());
+            Assert.Equal("process.terminate", error.GetProperty("details").GetProperty("state").GetProperty("state").GetString());
+            Assert.True(owned.IsRunning(), "the routed refusal must not terminate the recorded child");
+            var after = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = id }, cancellationToken: Ct);
+            Assert.Null(after.Error);
+            Assert.Equal(TaskState.Running, after.Value.Task.State);
+            var denial = Assert.Single(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == PermissionDecision.Deny
+                && entry.TargetId is { } target && target.AsSpan().SequenceEqual(id.Value.Span)
+                && entry.Actor.Origin == Origin.Remote && entry.Actor.CenterCaller?.LocalOrigin == Origin.Script);
+            Assert.NotNull(denial.Actor.RemoteCommandId);
+            Assert.Equal(16, denial.Actor.RemoteCommandId.Value.Length);
+            // Non-secret IDs let the coordinator inspect the matching center audit and final routing row in its own fixture.
+            Write(directory, "x-adopt-audit.json", new JsonObject
+            {
+                ["targetNodeId"] = new Guid(node.Runtime.NodeId.Span, bigEndian: true).ToString("D"),
+                ["taskId"] = new Guid(id.Value.Span, bigEndian: true).ToString("D"),
+                ["commandId"] = new Guid(denial.Actor.RemoteCommandId.Value.Span, bigEndian: true).ToString("D"),
+                ["nodeDecision"] = "DENY",
+                ["nodeOperation"] = PermissionMatrix.ProcessTerminate,
+            });
+        }
+        finally
+        {
+            if (owned.IsRunning())
+            {
+                Assert.True(owned.Kill(), "the test-owned adoption child must be cleaned up by its recorded identity");
+            }
         }
     }
 
