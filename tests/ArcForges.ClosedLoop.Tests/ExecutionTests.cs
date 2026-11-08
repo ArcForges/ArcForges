@@ -41,7 +41,7 @@ public sealed class ExecutionTests
         var direct = Direct(workload);
         Assert.Equal(direct.ExitCode, managed.ExitCode);
         Assert.Equal(SHA256.HashData(direct.Stdout), SHA256.HashData(managed.Stdout));
-        Assert.Equal(SHA256.HashData(direct.Stderr), SHA256.HashData(managed.Stderr));
+        Assert.Equal(SHA256.HashData(direct.Stderr), SHA256.HashData(TestNode.WithoutLocalDiagnosticBanner(managed.Stderr)));
 
         string[] args = [TestNode.TestLoad, "args", "two words", "quote\"inside", "back\\\\\"slash", "unicode äöü 中文", "%PATH%", ""];
         var argsRun = await node.CliBytesAsync(Bound, ["run", "--", .. args]);

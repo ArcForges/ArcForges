@@ -48,6 +48,16 @@ public sealed class CommandLineTests
     [InlineData("jobs cancel 01m4zrxnr8e7d81pn7xnwfqw14")]
     [InlineData("version")]
     [InlineData("completion bash")]
+    [InlineData("run --wait -- /bin/echo ok")]
+    [InlineData("run --detach --wait 3s -- /bin/echo ok")]
+    [InlineData("run --node build-box -- /bin/echo ok")]
+    [InlineData("run --local -- /bin/echo ok")]
+    [InlineData("tasks")]
+    [InlineData("tasks list --local")]
+    [InlineData("tasks show 01m4zr --node build-box")]
+    [InlineData("tasks wait 01m4zr --node build-box")]
+    [InlineData("tasks cancel 01m4zr --node build-box")]
+    [InlineData("output 01m4zr --from-offset 42 --follow --node build-box")]
     [InlineData("status --test-mode")]
     public void TheSpecifiedGrammarParses(string line)
     {
@@ -107,6 +117,40 @@ public sealed class CommandLineTests
         using var version = new StringWriter();
         Assert.Equal(0, await CliApplication.RunAsync(["--version"], NoNode, version, error));
         Assert.Equal(NodeContract.ProductVersion, version.ToString().Trim());
+    }
+
+    [Theory]
+    [InlineData("run", "--node", "--local", "--wait")]
+    [InlineData("tasks", "--node", "--local", "list")]
+    [InlineData("output", "--node", "--local", "--from-offset")]
+    public async Task RoutedCommandHelpDescribesItsOptions(string command, string first, string second, string third)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(0, await CliApplication.RunAsync([command, "--help"], NoNode, output, error));
+        Assert.Contains(first, output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(second, output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(third, output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not_signed_in", EffectCertainty.DidNotHappen, 4, "not signed in")]
+    [InlineData("cloud_unreachable", EffectCertainty.DidNotHappen, 4, "unavailable")]
+    [InlineData("node_offline", EffectCertainty.DidNotHappen, 75, "node_offline")]
+    [InlineData("node_unreachable", EffectCertainty.Unknown, 1, "may have run")]
+    public void RoutedStateExitsDistinguishOfflineFromUncertain(string code, EffectCertainty effect, int expected, string diagnostic)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var command = CommandIds.New();
+        var refusal = new ArcError { Category = ErrorCategory.State, Code = code, MessageKey = "error.state." + code, Effect = effect };
+        Assert.Equal(expected, TaskRoute.Fail(cli, refusal, null, command, submission: true));
+        Assert.Contains(diagnostic, error.ToString(), StringComparison.Ordinal);
+        if (effect == EffectCertainty.Unknown)
+        {
+            Assert.Contains(IdText.Format(command), error.ToString(), StringComparison.Ordinal);
+        }
     }
 
     [Theory]
@@ -384,6 +428,10 @@ public sealed class CommandLineTests
     [InlineData("arcforges config get ", "telemetryOptIn")]
     [InlineData("arcforges events --topic no", "notifications")]
     [InlineData("arcforges completion ", "pwsh")]
+    [InlineData("arcforges run --n", "--node")]
+    [InlineData("arcforges run --l", "--local")]
+    [InlineData("arcforges tasks wait --n", "--node")]
+    [InlineData("arcforges output --l", "--local")]
     public async Task TheSuggestDirectiveCompletesTheGrammar(string line, string expected)
     {
         using var output = new StringWriter();

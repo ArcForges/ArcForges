@@ -152,6 +152,12 @@ internal sealed class CenterClient(CenterHttpClient http, TimeProvider clock)
         }, TimeSpan.FromSeconds(10), bearer: null, cancellationToken);
     }
 
+    /// <summary>Forwards one already-signed fleet request without parsing or re-encoding its inner node request.</summary>
+    internal Task<CenterReply<T>> RelayAsync<T>(Func<FleetService.FleetServiceClient, CallOptions, Task<T>> call, TimeSpan deadline, string bearer,
+        CancellationToken cancellationToken)
+        where T : class =>
+        CallAsync(async options => (await call(http.RoutedFleet, options).ConfigureAwait(false), (ArcError?)null, false), deadline, bearer, cancellationToken);
+
     /// <summary>Classifies a gRPC failure (AF-CTR-04 N1 (b), N1 decision R-6): the parsed <c>grpc-message</c> decides, never the status alone.</summary>
     internal static (CenterOutcome Outcome, string? Code, bool MaybeApplied, string Detail) Classify(RpcException exception)
     {

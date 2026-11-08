@@ -28,7 +28,7 @@ public sealed class LocalDiagnosticTests
         node.Environment[LocalSubmission.Variable] = null;
         await node.StartNodeAsync();
         await AssertScriptRefusedAsync(node);
-        using var cli = CloudSignInHostTests.Pty(node, "run -- /bin/echo n2b-local-diagnostic");
+        using var cli = CloudSignInHostTests.Pty(node, "run --local -- /bin/echo n2b-local-diagnostic");
         Assert.Equal(0, await cli.WaitExitAsync(TimeSpan.FromSeconds(90)));
         Assert.Contains("n2b-local-diagnostic", cli.Text, StringComparison.Ordinal);
         await using var human = await node.HumanChannelAsync();

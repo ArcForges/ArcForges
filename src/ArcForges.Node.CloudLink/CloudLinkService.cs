@@ -9,6 +9,7 @@ using ArcForges.Node.Core;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
 using Google.Protobuf;
+using Grpc.Core;
 
 namespace ArcForges.Node.CloudLink;
 
@@ -976,9 +977,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     /// Stops the link within the bound of <see cref="BeginStop"/> (<see cref="StopBound"/> from now when the stop had not begun) plus
     /// <see cref="FlushReserve"/>. An active sign-in ends first; the channel and the refresh loop get the time left to the bound, so a
     /// refresh in flight that answers by then has its rotated token stored. At the bound a center call still running is cancelled.
-    /// Then the CTR4-NODE-05 flush writes a rotated credential whose write failed; it is never skipped for the channel or the loop, since
-    /// both end at the bound. In the host (<c>NodeHost.ShutdownAsync</c>) the bound is the 10 s shutdown budget from the shutdown's start,
-    /// so the link has stopped by 11 s, before the force exit at 12 s.
+    /// Then the CTR4-NODE-05 flush tries to write a rotated credential whose write failed. If a record write still holds the gate for the
+    /// whole reserve, the flush is skipped and logged. In the host (<c>NodeHost.ShutdownAsync</c>) the bound is the 10 s shutdown budget from
+    /// the shutdown's start, so the link has stopped by 11 s, leaving up to 1 s for the other shutdown work before force exit at 12 s.
     /// <para>Fails closed past the bound (review A C-N3): a refresh the center committed but whose answer had not arrived at the bound
     /// leaves the spent token stored, and so does a record write still running when the flush's reserve ends; the next refresh presents
     /// that token, the center revokes the family as a reuse, and the node is signed out (<c>credential_revoked</c>).</para>
@@ -1030,6 +1031,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
                 _gate.Release();
             }
         }
+        else
+        {
+            _options.Log.Warning("cloud.credential_flush_skipped");
+        }
 
         _http?.Dispose();
     }
@@ -1070,11 +1075,39 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     /// Signs a relay assertion for a local caller over a fresh center-sent relay nonce of the open channel (Plan addendum D0-B1, C-N2; part N3's
     /// local proxy relays with it); <see langword="null"/> without a connected channel.
     /// </summary>
-    internal Task<ArcForges.Contracts.Relay.V1.RelayAssertion?> SignRelayAssertionAsync(Origin localOrigin, Id localSessionId,
+    internal async Task<ArcForges.Contracts.Relay.V1.RelayAssertion?> SignRelayAssertionAsync(Origin localOrigin, Id localSessionId,
+        ArcForges.Contracts.Relay.V1.RoutedMethod method, ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken) =>
+        (await SignBoundRelayAssertionAsync(localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
+            .ConfigureAwait(false))?.Assertion;
+
+    /// <summary>Signs with the channel and retains its canonical center for the subsequent forwarding check.</summary>
+    internal Task<BoundRelayAssertion?> SignBoundRelayAssertionAsync(Origin localOrigin, Id localSessionId,
         ArcForges.Contracts.Relay.V1.RoutedMethod method, ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken) =>
         _channel is { } channel
             ? channel.SignRelayAssertionAsync(localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
-            : Task.FromResult<ArcForges.Contracts.Relay.V1.RelayAssertion?>(null);
+            : Task.FromResult<BoundRelayAssertion?>(null);
+
+    /// <summary>
+    /// Sends one already-signed fleet request through the guarded center transport using this link's bound credential. The operation owns
+    /// its channel so a concurrent sign-out or center change cannot dispose an in-flight request's transport. The node never exposes the
+    /// credential to its local caller. A changed center or installation is refused before sending; the center verifies the nonce against the connection.
+    /// </summary>
+    internal async Task<CenterReply<T>> ForwardRelayAsync<T>(BoundRelayAssertion signed,
+        Func<FleetService.FleetServiceClient, CallOptions, Task<T>> call, TimeSpan deadline, CancellationToken cancellationToken)
+        where T : class
+    {
+        var (ticket, reason) = ((IChannelHost)this).Ticket();
+        var assertion = signed.Assertion;
+        if (Stopping || ticket is null || !signed.Center.Equals(ticket.Center) || assertion.RelayingNodeId is null || assertion.RelayingInstallationId is null
+            || !assertion.RelayingNodeId.Value.Span.SequenceEqual(ticket.NodeId.Span)
+            || !assertion.RelayingInstallationId.Value.Span.SequenceEqual(ticket.InstallationId.Span))
+        {
+            return new CenterReply<T>(CenterOutcome.Unreachable, null, null, null, false, reason);
+        }
+
+        using var transport = new CenterHttpClient(ticket.Center, _options.ConnectLog);
+        return await new CenterClient(transport, _options.Clock).RelayAsync(call, deadline, ticket.AccessToken, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <inheritdoc />
     (ChannelTicket? Ticket, string Reason) IChannelHost.Ticket()

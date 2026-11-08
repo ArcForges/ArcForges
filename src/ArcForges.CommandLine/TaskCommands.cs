@@ -19,6 +19,26 @@ internal static class TaskCommands
     public static Command Build(Func<ParseResult, Cli> factory)
     {
         var tasks = new Command("tasks", "List, inspect, wait for and control tasks");
+        var (nodeOption, localOption) = AddRouteOptions(tasks);
+        Actions.Set(tasks, factory, async (cli, result, cancellationToken) =>
+        {
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (route, exit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return exit;
+            }
+
+            var request = new TaskServiceListTasksRequest { Meta = Cli.Meta(), Filter = new TaskFilter() };
+            var response = await route.ListAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId);
+            }
+
+            return RenderList(cli, response.Value);
+        });
         tasks.Subcommands.Add(List(factory));
         tasks.Subcommands.Add(Show(factory));
         tasks.Subcommands.Add(Wait(factory));
@@ -41,19 +61,21 @@ internal static class TaskCommands
     /// task's output is printed (<paramref name="output"/>: tail, all or none) and its exit code returned; 9 when not reached.
     /// </summary>
     public static async Task<int> WaitAsync(Cli cli, NodeSession session, Id taskId, WaitTarget target, TimeSpan budget, string output,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, TaskRoute? route = null)
     {
         var started = TimeProvider.System.GetTimestamp();
         while (true)
         {
             var remaining = budget - TimeProvider.System.GetElapsedTime(started);
-            var waitMs = (ulong)Math.Clamp(remaining.TotalMilliseconds, 0, 55_000);
+            var waitMs = (ulong)Math.Clamp(remaining.TotalMilliseconds, 0, route is { Local: false } ? 50_000 : 55_000);
             var request = new TaskServiceWaitTaskRequest { Meta = Cli.Meta(), TaskId = taskId, Target = target, WaitMs = waitMs };
-            var response = await cli.CallAsync("WaitTask", request.Meta, () => session.Channel.Tasks.WaitTaskAsync(request,
-                deadline: DateTime.UtcNow.AddMilliseconds(waitMs + 5_000), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            var response = route is null || route.Local
+                ? await cli.CallAsync("WaitTask", request.Meta, () => session.Channel.Tasks.WaitTaskAsync(request,
+                    deadline: DateTime.UtcNow.AddMilliseconds(waitMs + 5_000), cancellationToken: cancellationToken)).ConfigureAwait(false)
+                : await route.WaitAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.Error is { } error)
             {
-                return cli.Output.Fail(error, request.Meta.CorrelationId);
+                return route is null || route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId);
             }
 
             var task = response.Value.Task;
@@ -79,7 +101,11 @@ internal static class TaskCommands
                 }
                 else
                 {
-                    await PrintOutputAsync(cli, session, task, output, cancellationToken).ConfigureAwait(false);
+                    var outputExit = await PrintOutputAsync(cli, session, task, output, route, cancellationToken).ConfigureAwait(false);
+                    if (outputExit != ExitCodes.Success)
+                    {
+                        return outputExit;
+                    }
                 }
 
                 return TaskText.ExitCode(task.CurrentAttempt?.Result, cli.Output);
@@ -99,6 +125,15 @@ internal static class TaskCommands
         }
     }
 
+    private static (Option<string?> Node, Option<bool> Local) AddRouteOptions(Command command)
+    {
+        var node = new Option<string?>("--node") { Description = "Target node UUID or exact name (default: this node)", HelpName = "name-or-id" };
+        var local = new Option<bool>("--local") { Description = "Use the local diagnostic path" };
+        command.Options.Add(node);
+        command.Options.Add(local);
+        return (node, local);
+    }
+
     private static Command List(Func<ParseResult, Cli> factory)
     {
         var state = new Option<string[]>("--state") { Description = "Only tasks in this state (repeatable)", HelpName = "s" };
@@ -108,6 +143,7 @@ internal static class TaskCommands
         var since = new Option<string?>("--since") { Description = "Only tasks created within this period (for example 2h)", HelpName = "dur" };
         var limit = new Option<int?>("--limit") { Description = "At most this many tasks (1..500; default 100)", HelpName = "n" };
         var command = new Command("list", "List tasks, newest first") { state, pool, label, since, limit };
+        var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             var filter = new TaskFilter();
@@ -142,29 +178,156 @@ internal static class TaskCommands
             }
 
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var response = await cli.CallAsync("ListTasks", request.Meta, () => session.Channel.Tasks.ListTasksAsync(request,
-                deadline: cli.Deadline(TaskText.Unary), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
+            var response = route.Local
+                ? await cli.CallAsync("ListTasks", request.Meta, () => session.Channel.Tasks.ListTasksAsync(request,
+                    deadline: cli.Deadline(TaskText.Unary), cancellationToken: cancellationToken)).ConfigureAwait(false)
+                : await route.ListAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.Error is { } error)
             {
-                return cli.Output.Fail(error, request.Meta.CorrelationId);
+                return route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId);
             }
 
-            if (cli.Output.Json)
-            {
-                cli.Output.Document(response.Value);
-                return ExitCodes.Success;
-            }
+            return RenderList(cli, response.Value);
+        });
+        return command;
+    }
 
-            if (response.Value.Tasks.Count == 0)
-            {
-                cli.Output.Line("No tasks.");
-                return ExitCodes.Success;
-            }
-
+    private static int RenderList(Cli cli, TaskServiceListTasksValue value)
+    {
+        if (cli.Output.Json)
+        {
+            cli.Output.Document(value);
+        }
+        else if (value.Tasks.Count == 0)
+        {
+            cli.Output.Line("No tasks.");
+        }
+        else
+        {
             cli.Output.Table(["ID", "STATE", "EXIT", "POOL", "CREATED", "COMMAND"],
-                [.. response.Value.Tasks.Select(task => (IReadOnlyList<string>)[IdText.Format(task.TaskId), TaskText.Word(task.State), Exit(task),
-                    task.Pool, CliOutput.When(task.CreatedAt), task.Title])]);
-            return ExitCodes.Success;
+                [.. value.Tasks.Select(task => (IReadOnlyList<string>)[IdText.Format(task.TaskId), TaskText.Word(task.State), Exit(task),
+                    Messages.Plain(task.Pool), CliOutput.When(task.CreatedAt), Messages.Plain(task.Title)])]);
+        }
+
+        return ExitCodes.Success;
+    }
+
+    /// <summary>Prints task output from a resumable byte offset through the center by default.</summary>
+    public static Command Output(Func<ParseResult, Cli> factory)
+    {
+        var id = new Argument<string>("id") { Description = "Task ID or unique prefix" };
+        var stream = new Option<string?>("--stream") { Description = "stdout, stderr or merged (default)", HelpName = "stream" };
+        stream.AcceptOnlyFromAmong("stdout", "stderr", "merged");
+        var offsetOption = new Option<ulong?>("--from-offset") { Description = "Resume from this byte offset", HelpName = "offset" };
+        var follow = new Option<bool>("--follow") { Description = "Follow output until the task ends" };
+        var command = new Command("output", "Print a task's captured output") { id, stream, offsetOption, follow };
+        var (nodeOption, localOption) = AddRouteOptions(command);
+        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
+        {
+            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
+
+            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken, route).ConfigureAwait(false);
+            if (taskId is null)
+            {
+                return exit;
+            }
+
+            var selected = result.GetValue(stream) switch { "stdout" => OutputStream.Stdout, "stderr" => OutputStream.Stderr, _ => OutputStream.Merged };
+            var offset = result.GetValue(offsetOption) ?? 0;
+            Id? lastAttempt = null;
+            var follows = result.GetValue(follow);
+            using var mirror = new TaskText.Mirror();
+            while (true)
+            {
+                var get = new TaskServiceGetTaskRequest { Meta = Cli.Meta(), TaskId = taskId, Detail = TaskDetail.Summary };
+                var task = await route.GetAsync(get, cancellationToken).ConfigureAwait(false);
+                if (task.Error is { } taskError)
+                {
+                    return route.Local ? cli.Output.Fail(taskError, get.Meta.CorrelationId) : TaskRoute.Fail(cli, taskError, get.Meta.CorrelationId);
+                }
+
+                if (task.Value?.Task?.CurrentAttempt?.AttemptId is not { } attempt)
+                {
+                    if (!follows || task.Value?.Task is { } emptyTask && TaskText.IsTerminal(emptyTask.State))
+                    {
+                        return ExitCodes.Success;
+                    }
+
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (lastAttempt is not null && !lastAttempt.Equals(attempt))
+                {
+                    offset = 0;
+                }
+
+                lastAttempt = attempt.Clone();
+                var read = new TaskServiceReadTaskOutputRequest
+                {
+                    Meta = Cli.Meta(), AttemptId = attempt, Stream = selected, FromOffset = offset,
+                    MaxBytes = route.Local ? 1024U * 1024 : 262_144U, WaitMs = follows && !TaskText.IsTerminal(task.Value.Task.State) ? 1000U : 0U,
+                };
+                var output = await route.ReadAsync(read, cancellationToken).ConfigureAwait(false);
+                if (output.Error is { } outputError)
+                {
+                    return route.Local ? cli.Output.Fail(outputError, read.Meta.CorrelationId) : TaskRoute.Fail(cli, outputError, read.Meta.CorrelationId);
+                }
+
+                if (output.Value is not { } value || value.NextOffset < offset && !value.Data.IsEmpty
+                    || !value.TruncatedByRetention && value.NextOffset >= offset && value.NextOffset - offset != (ulong)value.Data.Length)
+                {
+                    cli.Output.Error.WriteLine("error: invalid output continuation from the node");
+                    return ExitCodes.Failed;
+                }
+
+                // The node clamps an offset beyond the currently indexed end. Keep the requested future position while following so
+                // bytes below it are never replayed when new output arrives. A completed or one-shot read has nothing further to print.
+                if (value.NextOffset < offset)
+                {
+                    if (!follows || value.Eof || TaskText.IsTerminal(task.Value.Task.State))
+                    {
+                        return ExitCodes.Success;
+                    }
+
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (value.TruncatedByRetention)
+                {
+                    cli.Output.Error.WriteLine("arcforges: earlier output was removed by retention");
+                }
+
+                Mirror(mirror, value);
+                offset = value.NextOffset;
+                if (value.Eof)
+                {
+                    return ExitCodes.Success;
+                }
+
+                if (value.Data.Length == 0)
+                {
+                    if (!follows || TaskText.IsTerminal(task.Value.Task.State))
+                    {
+                        return ExitCodes.Success;
+                    }
+
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                }
+            }
         });
         return command;
     }
@@ -174,21 +337,30 @@ internal static class TaskCommands
         var id = new Argument<string>("id") { Description = "The task ID or a unique prefix (at least 6 characters)" };
         var full = new Option<bool>("--full") { Description = "Include the stored specification (secret-shaped values are omitted)" };
         var command = new Command("show", "Show one task") { id, full };
+        var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
+            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken, route).ConfigureAwait(false);
             if (taskId is null)
             {
                 return exit;
             }
 
             var request = new TaskServiceGetTaskRequest { Meta = Cli.Meta(), TaskId = taskId, Detail = result.GetValue(full) ? TaskDetail.Full : TaskDetail.Summary };
-            var response = await cli.CallAsync("GetTask", request.Meta, () => session.Channel.Tasks.GetTaskAsync(request,
-                deadline: cli.Deadline(TaskText.Unary), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            var response = route.Local
+                ? await cli.CallAsync("GetTask", request.Meta, () => session.Channel.Tasks.GetTaskAsync(request,
+                    deadline: cli.Deadline(TaskText.Unary), cancellationToken: cancellationToken)).ConfigureAwait(false)
+                : await route.GetAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.Error is { } error)
             {
-                return cli.Output.Fail(error, request.Meta.CorrelationId);
+                return route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId);
             }
 
             if (cli.Output.Json)
@@ -213,6 +385,11 @@ internal static class TaskCommands
                 ("attempts", task.AttemptCount.ToString(CultureInfo.InvariantCulture)),
                 ("pinned", task.Pinned ? "yes" : "no"),
             };
+            if (task.LocalDiagnostic)
+            {
+                rows.Add(("routing", "local-diagnostic"));
+            }
+
             if (task.Queue is { } queue)
             {
                 rows.Add(("queue", $"position {queue.Position} ({queue.BlockingReason})"));
@@ -242,7 +419,7 @@ internal static class TaskCommands
                 rows.Add(("label " + key, value));
             }
 
-            cli.Output.KeyValues(rows);
+            cli.Output.KeyValues([.. rows.Select(row => (Messages.Plain(row.Key), Messages.Plain(row.Value)))]);
             return ExitCodes.Success;
         });
         return command;
@@ -256,10 +433,17 @@ internal static class TaskCommands
         var output = new Option<string?>("--output") { Description = "tail (default: the last 4 KiB), all or none", HelpName = "what" };
         output.AcceptOnlyFromAmong("tail", "all", "none");
         var command = new Command("wait", "Wait for a task; print its output and exit with its exit code (9 when the wait ends first)") { id, target, output };
+        var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
+            var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken, route).ConfigureAwait(false);
             if (taskId is null)
             {
                 return exit;
@@ -271,7 +455,7 @@ internal static class TaskCommands
                 "ready" => WaitTarget.Ready,
                 _ => WaitTarget.Terminal,
             };
-            return await WaitAsync(cli, session, taskId, waitTarget, cli.Timeout ?? TimeSpan.FromDays(30), result.GetValue(output) ?? "tail", cancellationToken)
+            return await WaitAsync(cli, session, taskId, waitTarget, cli.Timeout ?? TimeSpan.FromDays(30), result.GetValue(output) ?? "tail", cancellationToken, route)
                 .ConfigureAwait(false);
         });
         return command;
@@ -393,13 +577,20 @@ internal static class TaskCommands
         var reason = new Option<string?>("--reason") { Description = "Why (recorded)" };
         var grace = new Option<string?>("--grace") { Description = "The grace period before the forced phase (0s..300s; default the task's)", HelpName = "dur" };
         var command = new Command("cancel", "Cancel queued or running tasks (graceful phase, grace period, then forced)") { ids, reason, grace };
+        var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
             var worst = ExitCodes.Success;
             foreach (var text in result.GetValue(ids) ?? [])
             {
-                var (taskId, exit) = await TaskText.ResolveAsync(cli, session, text, cancellationToken).ConfigureAwait(false);
+                var (taskId, exit) = await TaskText.ResolveAsync(cli, session, text, cancellationToken, route).ConfigureAwait(false);
                 if (taskId is null)
                 {
                     worst = Math.Max(worst, exit);
@@ -419,11 +610,13 @@ internal static class TaskCommands
                 }
 
                 var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
-                var response = await cli.MutateAsync("CancelTask", request.Meta.CommandId, action, r => session.Channel.Tasks.CancelTaskAsync(r,
-                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+                var response = route.Local
+                    ? await cli.MutateAsync("CancelTask", request.Meta.CommandId, action, r => session.Channel.Tasks.CancelTaskAsync(r,
+                        deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false)
+                    : await route.CancelAsync(action.RequestForAttempt(), cancellationToken).ConfigureAwait(false);
                 if (response.Error is { } error)
                 {
-                    worst = Math.Max(worst, cli.Output.Fail(error, request.Meta.CorrelationId));
+                    worst = Math.Max(worst, route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId));
                     continue;
                 }
 
@@ -742,11 +935,11 @@ internal static class TaskCommands
         return command;
     }
 
-    private static async Task PrintOutputAsync(Cli cli, NodeSession session, ManagedTask task, string output, CancellationToken cancellationToken)
+    private static async Task<int> PrintOutputAsync(Cli cli, NodeSession session, ManagedTask task, string output, TaskRoute? route, CancellationToken cancellationToken)
     {
         if (output == "none" || task.CurrentAttempt is not { } attempt)
         {
-            return;
+            return ExitCodes.Success;
         }
 
         using var mirror = new TaskText.Mirror();
@@ -754,34 +947,65 @@ internal static class TaskCommands
         if (output == "tail")
         {
             var meta = Cli.Meta();
-            var end = await cli.CallAsync("ReadTaskOutput", meta, () => session.Channel.Tasks.ReadTaskOutputAsync(new TaskServiceReadTaskOutputRequest
+            var request = new TaskServiceReadTaskOutputRequest
             {
                 Meta = meta,
                 AttemptId = attempt.AttemptId,
                 Stream = OutputStream.Merged,
                 FromOffset = ulong.MaxValue / 2,
                 MaxBytes = 1,
-            }, deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            };
+            var end = route is null || route.Local
+                ? await cli.CallAsync("ReadTaskOutput", meta, () => session.Channel.Tasks.ReadTaskOutputAsync(request,
+                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken)).ConfigureAwait(false)
+                : await route.ReadAsync(request, cancellationToken).ConfigureAwait(false);
+            if (end.Error is { } endError)
+            {
+                return route is null || route.Local ? cli.Output.Fail(endError, meta.CorrelationId) : TaskRoute.Fail(cli, endError, meta.CorrelationId);
+            }
+
             offset = (end.Value?.NextOffset ?? 0) > 4096 ? end.Value!.NextOffset - 4096 : 0;
         }
 
         while (true)
         {
-            var read = new TaskServiceReadTaskOutputRequest { Meta = Cli.Meta(), AttemptId = attempt.AttemptId, Stream = OutputStream.Merged, FromOffset = offset, MaxBytes = 1024 * 1024 };
-            var response = await cli.CallAsync("ReadTaskOutput", read.Meta, () => session.Channel.Tasks.ReadTaskOutputAsync(read,
-                deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken)).ConfigureAwait(false);
-            if (response.Value is null || response.Value.Data.Length == 0)
+            var read = new TaskServiceReadTaskOutputRequest
             {
-                return;
+                Meta = Cli.Meta(), AttemptId = attempt.AttemptId, Stream = OutputStream.Merged, FromOffset = offset,
+                MaxBytes = route is { Local: false } ? 262_144U : 1024U * 1024,
+            };
+            var response = route is null || route.Local
+                ? await cli.CallAsync("ReadTaskOutput", read.Meta, () => session.Channel.Tasks.ReadTaskOutputAsync(read,
+                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken)).ConfigureAwait(false)
+                : await route.ReadAsync(read, cancellationToken).ConfigureAwait(false);
+            if (response.Error is { } error)
+            {
+                return route is null || route.Local ? cli.Output.Fail(error, read.Meta.CorrelationId) : TaskRoute.Fail(cli, error, read.Meta.CorrelationId);
             }
 
-            Mirror(mirror, response.Value);
-            offset = response.Value.NextOffset;
+            if (response.Value is not { } value || value.NextOffset < offset && !(value.Data.IsEmpty && value.Eof)
+                || !value.TruncatedByRetention && value.NextOffset >= offset && value.NextOffset - offset != (ulong)value.Data.Length)
+            {
+                cli.Output.Error.WriteLine("error: invalid output continuation from the node");
+                return ExitCodes.Failed;
+            }
+
+            if (value.TruncatedByRetention)
+            {
+                cli.Output.Error.WriteLine("arcforges: earlier output was removed by retention");
+            }
+
+            Mirror(mirror, value);
+            offset = value.NextOffset;
+            if (value.Eof || value.Data.Length == 0)
+            {
+                return ExitCodes.Success;
+            }
         }
     }
 
     /// <summary>Writes a read's bytes to stdout and stderr in index order.</summary>
-    private static void Mirror(TaskText.Mirror mirror, TaskServiceReadTaskOutputValue value)
+    internal static void Mirror(TaskText.Mirror mirror, TaskServiceReadTaskOutputValue value)
     {
         var data = value.Data.Span;
         var position = 0;

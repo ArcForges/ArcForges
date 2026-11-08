@@ -165,6 +165,12 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>The <c>arcforges</c> that <see cref="StartNodeAsync"/> runs as the node: <see cref="Host"/>, or a copy in a version directory.</summary>
     public string NodeExecutable { get; set; } = Host;
 
+    /// <summary>
+    /// Existing local execution regression tests explicitly exercise the diagnostic path. A center-routed test sets this false so its
+    /// unmodified CLI arguments use the product default. The node's separate test-mode SCRIPT allowance remains independently checked.
+    /// </summary>
+    public bool UseLocalDiagnosticCli { get; set; } = true;
+
     public string Root { get; }
 
     public string ConfigDirectory { get; }
@@ -218,6 +224,14 @@ internal sealed class TestNode : IAsyncDisposable
     {
         using var process = Start(Host, [NodeLocations.TestModeOption, .. args]);
         return await BytesAsync(process, timeout);
+    }
+
+    /// <summary>Checks and removes the explicit local diagnostic banner before comparing the task's own stderr bytes.</summary>
+    public static byte[] WithoutLocalDiagnosticBanner(byte[] stderr)
+    {
+        var banner = Encoding.UTF8.GetBytes("arcforges: local diagnostic task; ordinary execution uses the center" + System.Environment.NewLine);
+        Assert.True(stderr.AsSpan().StartsWith(banner), "the local diagnostic banner is required");
+        return stderr[banner.Length..];
     }
 
     /// <summary>Collects a started process's streams as bytes until it exits (bounded).</summary>
@@ -285,6 +299,33 @@ internal sealed class TestNode : IAsyncDisposable
         if (binary is "arcforges" or "arcforges-supervisor" && !argumentList.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal))
         {
             throw new InvalidOperationException($"{executable} must be started with {NodeLocations.TestModeOption} in a test.");
+        }
+
+        if (binary == "arcforges" && UseLocalDiagnosticCli)
+        {
+            var separator = argumentList.IndexOf("--");
+            var prefixCount = separator < 0 ? argumentList.Count : separator;
+            var root = argumentList.FindIndex(0, prefixCount, value => value is "run" or "tasks" or "output" or "node" or "status" or "account" or "login");
+            if (root >= 0 && !argumentList.Take(prefixCount).Contains("--local", StringComparer.Ordinal)
+                && !argumentList.Take(prefixCount).Contains("--node", StringComparer.Ordinal))
+            {
+                if (argumentList[root] is "run" or "output")
+                {
+                    argumentList.Insert(root + 1, "--local");
+                }
+                else if (argumentList[root] == "tasks")
+                {
+                    var sub = root + 1 < prefixCount ? argumentList[root + 1] : string.Empty;
+                    if (sub is "list" or "show" or "wait" or "cancel")
+                    {
+                        argumentList.Insert(root + 2, "--local");
+                    }
+                    else if (sub.Length == 0 || sub.StartsWith('-'))
+                    {
+                        argumentList.Insert(root + 1, "--local");
+                    }
+                }
+            }
         }
 
         arguments = argumentList;

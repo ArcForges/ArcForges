@@ -9,6 +9,7 @@ using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.CloudLink.Tests;
 using ArcForges.Node.Core;
@@ -306,6 +307,172 @@ public sealed class RealCenterRoutedTests
             await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
             await relayHuman.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
         }
+    }
+
+    /// <summary>
+    /// N3-10: a literal HUMAN CLI in a Linux PTY and SCRIPT CLIs use the actual node proxy, loopback center and PostgreSQL.
+    /// The browser passkey and node secret store are isolated test substitutes, never hosted or owner-device proof.
+    /// </summary>
+    [Fact(Timeout = 600_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task RealCliRoutesThroughTheLocalNodeAndCenter()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var url = Environment.GetEnvironmentVariable("ARCFORGES_E2E_CENTER_URL");
+        Assert.SkipUnless(!string.IsNullOrEmpty(url), "ARCFORGES_E2E_CENTER_URL is not set");
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "the real center PTY acceptance requires Linux and script");
+        Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
+        Assert.True(CenterEndpoint.TryParse(url, out var center, out var reason), reason);
+        Assert.True(center.Scheme == "http" && (center.Host == "localhost" || (IPAddress.TryParse(center.Host, out var address) && IPAddress.IsLoopback(address)))
+            && center.PathBase.Length == 0, "the isolated acceptance center must be loopback");
+        var directory = Environment.GetEnvironmentVariable("ARCFORGES_E2E_DIR");
+        Assert.True(!string.IsNullOrEmpty(directory) && Path.IsPathFullyQualified(directory), "ARCFORGES_E2E_DIR must be absolute");
+        Directory.CreateDirectory(directory);
+        await using var node = CloudNode.Create(center.Url);
+        node.TestMode = true;
+        node.AllowLocalScriptSubmit = false;
+        // The existing isolated test-mode image hook verifies this real CLI executable as HUMAN when it has a PTY.
+        // This fact is exclusive and the process environment is restored immediately after startup.
+        var imageBefore = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+            await node.StartAsync();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ClientImages.TestVariable, imageBefore);
+        }
+
+        await using var human = await node.ChannelAsync(Origin.Human);
+        var begun = false;
+        var resultWritten = false;
+        try
+        {
+            var flow = await BeginAsync(node, human, center, directory, "n3-cli");
+            begun = true;
+            await AwaitSignInAsync(human, flow, "N3 CLI node");
+
+            var pty = await CliAsync(node, pty: true, "run", "--wait", "--env-inherit", "none", "--cwd", node.Root,
+                "--title", "n3-pty-check", "--", "/bin/sh", "-c", "printf human-pty; /bin/sleep 1; exit 7");
+            Assert.True(pty.ExitCode == 7, "PTY run: " + pty);
+            Assert.Equal("human-pty", pty.Output);
+            var localList = await human.Tasks.ListTasksAsync(new TaskServiceListTasksRequest { Meta = CloudNode.Command(), Filter = new TaskFilter() }, cancellationToken: Ct);
+            Assert.Null(localList.Error);
+            var ptyTask = Assert.Single(localList.Value.Tasks, task => task.Title == "n3-pty-check");
+            Assert.Equal(Origin.Remote, ptyTask.Owner.Origin);
+            Assert.Equal(Origin.Human, ptyTask.Owner.CenterCaller.LocalOrigin);
+
+            var submitted = await CliAsync(node, pty: false, "run", "--detach", "--env-inherit", "none", "--cwd", node.Root,
+                "--", "/bin/sh", "-c", "printf alpha; /bin/sleep 5; printf omega");
+            Assert.True(submitted.ExitCode == 0, "script submission: " + submitted);
+            var id = submitted.Output.Trim();
+            Assert.True(IdText.TryParse(id, out _), "script submission did not return a task ID");
+            var followed = await CliAsync(node, pty: false, "output", id, "--follow");
+            Assert.True(followed.ExitCode == 0, "output follow: " + followed);
+            Assert.Equal("alphaomega", followed.Output);
+            Assert.Empty(followed.Error);
+            var waited = await CliAsync(node, pty: false, "tasks", "wait", id, "--output", "all");
+            Assert.True(waited.ExitCode == 0, "tasks wait: " + waited);
+            Assert.Equal("alphaomega", waited.Output);
+            var listed = await CliAsync(node, pty: false, "tasks");
+            Assert.True(listed.ExitCode == 0, "tasks list: " + listed);
+            Assert.Contains(id, listed.Output, StringComparison.Ordinal);
+            var shown = await CliAsync(node, pty: false, "tasks", "show", id);
+            Assert.True(shown.ExitCode == 0, "tasks show: " + shown);
+            Assert.Contains(id, shown.Output, StringComparison.Ordinal);
+            var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+            Assert.Null(info.Error);
+            var byName = await CliAsync(node, pty: false, "tasks", "list", "--node", info.Value.Node.Node.Name);
+            Assert.True(byName.ExitCode == 0, "tasks list by name: " + byName);
+            Assert.Contains(id, byName.Output, StringComparison.Ordinal);
+            var uuid = new Guid(node.Runtime.NodeId.Span, bigEndian: true).ToString("D");
+            var byId = await CliAsync(node, pty: false, "tasks", "list", "--node", uuid);
+            Assert.True(byId.ExitCode == 0, "tasks list by UUID: " + byId);
+            Assert.Contains(id, byId.Output, StringComparison.Ordinal);
+
+            // Unlike the framework-dependent testload, this system program needs no runtime variables in the deliberately empty environment.
+            var holding = await CliAsync(node, pty: false, "run", "--detach", "--env-inherit", "none", "--cwd", node.Root,
+                "--", "/bin/sleep", "120");
+            Assert.True(holding.ExitCode == 0, "hold submission: " + holding);
+            var held = holding.Output.Trim();
+            Assert.True(IdText.TryParse(held, out var heldBytes), "hold submission did not return a task ID");
+            var started = await CliAsync(node, pty: false, "tasks", "wait", held, "--for", "started", "--output", "none");
+            Assert.True(started.ExitCode == 0, "hold start: " + started);
+            var heldId = new Id { Value = ByteString.CopyFrom(heldBytes) };
+            var beforeCancel = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = heldId }, cancellationToken: Ct);
+            Assert.Null(beforeCancel.Error);
+            Assert.True(beforeCancel.Value.Task.State == TaskState.Running,
+                "hold was not running before cancellation; wait=" + started + "; task=" + beforeCancel.Value.Task);
+            var cancelled = await CliAsync(node, pty: false, "tasks", "cancel", held);
+            Assert.True(cancelled.ExitCode == 0, "hold cancellation: " + cancelled);
+            var ended = await WaitLocalAsync(human, heldId, WaitTarget.Terminal);
+            Assert.True(ended.State == TaskState.Cancelled, "hold did not cancel; cancel=" + cancelled + "; task=" + ended);
+            Assert.Equal(Origin.Remote, ended.Owner.Origin);
+            Assert.Equal(Origin.Script, ended.Owner.CenterCaller.LocalOrigin);
+            WriteResult(directory, "n3-cli", passed: true, "PTY HUMAN and SCRIPT through actual proxy, center and node");
+            resultWritten = true;
+        }
+        finally
+        {
+            if (begun && !resultWritten)
+            {
+                WriteResult(directory, "n3-cli", passed: false, "interrupted");
+            }
+
+            await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
+        }
+    }
+
+    private static async Task<ProcessRun> CliAsync(CloudNode node, bool pty, params string[] args)
+    {
+        static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+        var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, CreateNoWindow = true,
+        };
+        if (pty)
+        {
+            start.ArgumentList.Add("-qefc");
+            start.ArgumentList.Add(string.Join(' ', new[] { CloudNode.HelperExecutable, NodeLocations.TestModeOption }.Concat(args).Select(ShellQuote)));
+            start.ArgumentList.Add("/dev/null");
+        }
+        else
+        {
+            start.ArgumentList.Add(NodeLocations.TestModeOption);
+            foreach (var arg in args)
+            {
+                start.ArgumentList.Add(arg);
+            }
+        }
+
+        start.Environment[NodeLocations.EndpointVariable] = node.Endpoint.Address;
+        start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(node.ConfigPath)!;
+        start.Environment.Remove(ArcForges.Security.Secrets.OsSecretStoreGuard.OptInVariable);
+        foreach (var name in ClientProcess.CiVariables)
+        {
+            start.Environment.Remove(name);
+        }
+
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("The acceptance CLI did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync(Ct);
+        var stderr = process.StandardError.ReadToEndAsync(Ct);
+        try
+        {
+            await process.WaitForExitAsync(Ct).WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        }
+        catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+
+        return new ProcessRun(process.ExitCode, await stdout, await stderr);
     }
 
     private static TaskSpec Spec(CloudNode node, params string[] args)

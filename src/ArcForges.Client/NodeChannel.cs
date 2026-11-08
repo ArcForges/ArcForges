@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using Grpc.Core;
 
 namespace ArcForges.Client;
 
@@ -29,6 +30,9 @@ public sealed class NodeChannel : IAsyncDisposable
         Approvals = new ApprovalService.ApprovalServiceClient(_channel.CallInvoker);
         Account = new AccountService.AccountServiceClient(_channel.CallInvoker);
     }
+
+    /// <summary>The call invoker for additional services served on this same authenticated local connection.</summary>
+    public CallInvoker CallInvoker => _channel.CallInvoker;
 
     /// <summary>The endpoint.</summary>
     public LocalRpcEndpoint Endpoint { get; }

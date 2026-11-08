@@ -19,6 +19,7 @@ public static class NodeApiServer
     private const string Tasks = "arcforges.node.v1.TaskService";
     private const string Resources = "arcforges.node.v1.ResourceService";
     private const string Approvals = "arcforges.node.v1.ApprovalService";
+    private const string Fleet = "arcforges.fleet.v1.FleetService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -53,6 +54,13 @@ public static class NodeApiServer
             // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s, BeginSignIn 15 s, GetSignInFlow 5 s, CancelSignIn 5 s; the methods of later
             // tasks answer UNIMPLEMENTED.
             builder.AddService(new AccountServiceHandler(node, sessions, cloud));
+            builder.AddService(new FleetServiceHandler(node, sessions, cloud));
+            foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask"])
+            {
+                builder.RegisterMethod(Fleet, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(40)));
+            }
+
+            builder.RegisterMethod(Fleet, "WaitNodeTask", new LocalRpcCallProfile(TimeSpan.FromSeconds(65), TimeSpan.FromSeconds(65)));
             builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetAccountStatus", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
             builder.RegisterMethod(AccountServiceHandler.ServiceName, "SignOut", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
             builder.RegisterMethod(AccountServiceHandler.ServiceName, "BeginSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));

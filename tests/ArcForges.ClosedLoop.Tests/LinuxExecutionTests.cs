@@ -44,7 +44,7 @@ public sealed class LinuxExecutionTests
         var direct = Direct(workload);
         Assert.Equal(direct.ExitCode, managed.ExitCode);
         Assert.Equal(SHA256.HashData(direct.Stdout), SHA256.HashData(managed.Stdout));
-        Assert.Equal(SHA256.HashData(direct.Stderr), SHA256.HashData(managed.Stderr));
+        Assert.Equal(SHA256.HashData(direct.Stderr), SHA256.HashData(TestNode.WithoutLocalDiagnosticBanner(managed.Stderr)));
 
         // The argument vector arrives exactly: systemd's own $VAR, $$ and %-specifier expansion never touches it.
         string[] args = [TestNode.TestLoad, "args", "two words", "quote\"inside", "back\\\\\"slash", "unicode äöü 中文", "$$", "${HOME}", "$PATH", "%h", "%%", ""];

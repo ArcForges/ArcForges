@@ -77,8 +77,10 @@ internal static class RunCommand
         var mem = new Option<string?>("--mem") { Description = "Expected memory (for example 512MiB)", HelpName = "size" };
         var memMax = new Option<string?>("--mem-max") { Description = "Memory ceiling (for example 4GiB)", HelpName = "size" };
         var require = new Option<string?>("--require-enforcement") { Description = "Refuse unless enforced: cpu,memory,pids", HelpName = "list" };
+        var nodeOption = new Option<string?>("--node") { Description = "Target node UUID or exact name (default: this node)", HelpName = "name-or-id" };
+        var localOption = new Option<bool>("--local") { Description = "Submit locally for HUMAN diagnostics" };
         var detach = new Option<bool>("--detach") { Description = "Submit and print the task ID without attaching" };
-        var wait = new Option<string?>("--wait") { Description = "With --detach: wait up to this long for the task to finish", HelpName = "dur" };
+        var wait = new Option<string?>("--wait") { Arity = ArgumentArity.ZeroOrOne, Description = "Attach (default); with --detach, wait up to the given duration", HelpName = "dur" };
         var sessionOption = new Option<string?>("--session") { Description = "The agent session (sessions arrive with their task)", HelpName = "id" };
         var agent = new Option<string?>("--agent") { Description = "The agent ID within the session", HelpName = "id" };
         var shell = new Option<string?>("--shell") { Description = "Run a script with bash, sh, pwsh, powershell or cmd", HelpName = "kind" };
@@ -97,7 +99,7 @@ internal static class RunCommand
         var command = new Command("run", "Run a command under the node and mirror its output")
         {
             program, cwd, pool, priority, cpuLimit, env, inherit, unset, stdin, label, title, kind, sideEffect, retries, placement, clientTimeout, join,
-            cpu, mem, memMax, require, detach, wait, sessionOption, agent, shell, dependsOn, exclusive, shared, exclusiveWorkspace, readyRegex, readyPort, readyFile,
+            cpu, mem, memMax, require, nodeOption, localOption, detach, wait, sessionOption, agent, shell, dependsOn, exclusive, shared, exclusiveWorkspace, readyRegex, readyPort, readyFile,
             readyTimeout,
         };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
@@ -249,10 +251,37 @@ internal static class RunCommand
             var waitFor = result.GetValue(wait) is { } waitText ? Duration(waitText, "--wait") : (TimeSpan?)null;
             if (waitFor is not null && !result.GetValue(detach))
             {
-                throw new UsageException("--wait needs --detach.");
+                throw new UsageException("--wait <duration> needs --detach.");
+            }
+
+            if (result.GetResult(wait) is not null && waitFor is null && result.GetValue(detach))
+            {
+                throw new UsageException("--wait without a duration cannot be combined with --detach.");
             }
 
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
+
+            if (route.Local)
+            {
+                cli.Output.Error.WriteLine("arcforges: local diagnostic task; ordinary execution uses the center");
+            }
+            else
+            {
+                if (stdinMode == "stream")
+                {
+                    throw new UsageException("--stdin stream needs --local; routed input is not available.");
+                }
+
+                // Routed callers have no local process binding; a hand-off leaves the task running and names it explicitly.
+                request.CancelWhenCallerGone = false;
+            }
+
             foreach (var dependency in result.GetValue(dependsOn) ?? [])
             {
                 var colon = dependency.LastIndexOf(':');
@@ -264,7 +293,7 @@ internal static class RunCommand
                     "ready" => DependencyCondition.Ready,
                     _ => throw new UsageException($"--depends-on: '{conditionText}' is not succeeded, finished or ready."),
                 };
-                var (dependencyId, exit) = await TaskText.ResolveAsync(cli, session, idText, cancellationToken).ConfigureAwait(false);
+                var (dependencyId, exit) = await TaskText.ResolveAsync(cli, session, idText, cancellationToken, route).ConfigureAwait(false);
                 if (dependencyId is null)
                 {
                     return exit;
@@ -274,17 +303,20 @@ internal static class RunCommand
             }
 
             var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
-            var submitted = await cli.MutateAsync("SubmitTask", request.Meta.CommandId, action, r => session.Channel.Tasks.SubmitTaskAsync(r,
-                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+            var submitted = route.Local
+                ? await cli.MutateAsync("SubmitTask", request.Meta.CommandId, action, r => session.Channel.Tasks.SubmitTaskAsync(r,
+                    deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false)
+                : await route.SubmitAsync(action.RequestForAttempt(), cancellationToken).ConfigureAwait(false);
             if (submitted.Error is { } error)
             {
-                return TaskText.Refused(error, request.Meta.CorrelationId, cli.Output);
+                return route.Local ? TaskText.Refused(error, request.Meta.CorrelationId, cli.Output)
+                    : TaskRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId, submission: true);
             }
 
             var taskId = submitted.Value.TaskId;
             foreach (var warning in submitted.Value.Warnings)
             {
-                cli.Output.Trace("warning: " + warning);
+                cli.Output.Trace("warning: " + Messages.Plain(warning));
             }
 
             cli.Output.Trace($"submitted task {IdText.Format(taskId)} ({TaskText.Word(submitted.Value.State)})");
@@ -300,11 +332,13 @@ internal static class RunCommand
                 }
 
                 return waitFor is { } budget
-                    ? await TaskCommands.WaitAsync(cli, session, taskId, WaitTarget.Terminal, budget, "none", cancellationToken).ConfigureAwait(false)
+                    ? await TaskCommands.WaitAsync(cli, session, taskId, WaitTarget.Terminal, budget, "none", cancellationToken, route).ConfigureAwait(false)
                     : ExitCodes.Success;
             }
 
-            return await AttachAsync(cli, session, taskId, stdinMode == "stream", handoff, fromStart: true, cancellationToken).ConfigureAwait(false);
+            return route.Local
+                ? await AttachAsync(cli, session, taskId, stdinMode == "stream", handoff, fromStart: true, cancellationToken).ConfigureAwait(false)
+                : await route.FollowAsync(taskId, handoff, cancellationToken).ConfigureAwait(false);
         });
         return command;
     }
@@ -694,7 +728,7 @@ internal static class RunCommand
     };
 
     /// <summary>Counts Ctrl+C presses without letting them end the CLI (the first cancels the task, the second detaches).</summary>
-    private sealed class Interrupts : IDisposable
+    internal sealed class Interrupts : IDisposable
     {
         private readonly PosixSignalRegistration? _registration;
         private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);

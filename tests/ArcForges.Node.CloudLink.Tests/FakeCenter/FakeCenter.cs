@@ -91,6 +91,9 @@ internal sealed class FakeCenter : IAsyncDisposable
         Channel = new FakeChannelPeer(this);
     }
 
+    /// <summary>Allows scripted FleetService replies for proxy tests; no unscripted fleet behavior is claimed.</summary>
+    public bool ScriptedFleet { get; set; }
+
     /// <summary>The node channel peer (AF-CTR-05 N1), served at <c>&lt;path base&gt;/fleet/v1/node</c>.</summary>
     public FakeChannelPeer Channel { get; }
 
@@ -350,7 +353,11 @@ internal sealed class FakeCenter : IAsyncDisposable
             return;
         }
 
-        if (context.Request.Method != "POST" || !path.StartsWith(_pathBase + Service, StringComparison.Ordinal))
+        var enrollmentPrefix = _pathBase + Service;
+        var fleetPrefix = _pathBase + "/arcforges.fleet.v1.FleetService/";
+        var prefix = path.StartsWith(enrollmentPrefix, StringComparison.Ordinal) ? enrollmentPrefix :
+            ScriptedFleet && path.StartsWith(fleetPrefix, StringComparison.Ordinal) ? fleetPrefix : null;
+        if (context.Request.Method != "POST" || prefix is null)
         {
             context.Response.StatusCode = 404;
             return;
@@ -363,7 +370,7 @@ internal sealed class FakeCenter : IAsyncDisposable
             return;
         }
 
-        var method = path[(_pathBase + Service).Length..];
+        var method = path[prefix.Length..];
         using var buffer = new MemoryStream();
         await context.Request.Body.CopyToAsync(buffer);
         var body = buffer.ToArray();
