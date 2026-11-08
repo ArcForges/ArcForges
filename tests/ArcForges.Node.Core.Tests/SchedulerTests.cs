@@ -1003,10 +1003,14 @@ public sealed class SchedulerTests
         });
         Assert.True(accepted.Error is null, $"UpdatePolicy: {accepted.Error?.Code} {accepted.Error?.Details}");
 
-        var asserted = await Tasks.WaitAsync(channel, (await AgentSubmitAsync(Failing("agent-accepted", SideEffectClass.Pure))).Value.TaskId);
+        // B-4: even when the local setting is true, a relayed AGENT's PURE claim stays UNKNOWN and is not retried.
+        var relayed = await AgentSubmitAsync(Failing("agent-assertion", SideEffectClass.Pure));
+        Assert.Null(relayed.Error);
+        Assert.Contains(relayed.Value.Warnings, warning => warning.Contains("treated as false for a center-routed AGENT", StringComparison.Ordinal));
+        var asserted = await Tasks.WaitAsync(channel, relayed.Value.TaskId);
         Assert.Equal(TaskState.Failed, asserted.State);
-        Assert.Equal(SideEffectClass.Pure, asserted.SideEffect);
-        Assert.Equal(3u, asserted.AttemptCount);
+        Assert.Equal(SideEffectClass.Unknown, asserted.SideEffect);
+        Assert.Equal(1u, asserted.AttemptCount);
 
         var ruled = await EndedAsync(channel, Failing("ruled-marker", null));
         Assert.Equal(SideEffectClass.Idempotent, ruled.SideEffect);

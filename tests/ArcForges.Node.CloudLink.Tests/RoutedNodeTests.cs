@@ -24,6 +24,7 @@ public sealed class RoutedNodeTests
         await using var center = await FakeCenter.StartAsync();
         await using var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
         var nodeId = node.Runtime.NodeId.ToArray();
+        var credentials = center.Issue(nodeId);
         using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Load(nodeId, center.Endpoint.Origin)
             ?? NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(nodeId, center.Endpoint.Origin, TimeProvider.System))
         {
@@ -32,7 +33,6 @@ public sealed class RoutedNodeTests
                 center.CommandKeys.Add(center.Channel.CommandPublicKey);
             }
 
-            var credentials = center.Issue(nodeId);
             center.Channel.RegisterNodeKey(credentials.AccessToken, key.PublicKey);
             await node.Cloud.AdoptAsync(credentials, center.Endpoint);
         }
@@ -94,6 +94,40 @@ public sealed class RoutedNodeTests
         Assert.Equal(RoutedOutcome.Executed, cancelled.Outcome);
         Assert.Null(TaskServiceCancelTaskResponse.Parser.ParseFrom(cancelPayload).Error);
         Assert.Equal(TaskState.Cancelled, (await WaitAsync(human, held, WaitTarget.Terminal)).State);
+
+        // N2-25: a successful routed task actually receives both an argv marker and a secret-shaped environment marker. Its legitimate
+        // task output contains them; the node's structured logs must contain neither marker nor either synthetic center credential.
+        var argvMarker = "N2BARGV" + Guid.NewGuid().ToString("N");
+        var envMarker = "N2BENV" + Guid.NewGuid().ToString("N");
+        var marked = OperatingSystem.IsWindows()
+            ? Spec(node.Root, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), "/d", "/c", "echo %N2B_SENSITIVE_TOKEN% & echo " + argvMarker)
+            : Spec(node.Root, "/bin/sh", "-c", "printf '%s\\n' \"$N2B_SENSITIVE_TOKEN\" \"$1\"", "n2b", argvMarker);
+        marked.Environment.Set["N2B_SENSITIVE_TOKEN"] = envMarker;
+        var markedRequest = new TaskServiceSubmitTaskRequest { Meta = CloudNode.Command(), Spec = marked };
+        var (markedHeader, markedPayload) = await RouteAsync(RoutedMethod.SubmitNodeTask, markedRequest, markedRequest.Meta.CommandId);
+        Assert.Equal(RoutedOutcome.Executed, markedHeader.Outcome);
+        var markedSubmit = TaskServiceSubmitTaskResponse.Parser.ParseFrom(markedPayload);
+        Assert.Null(markedSubmit.Error);
+        var markedTask = await WaitAsync(human, markedSubmit.Value.TaskId, WaitTarget.Terminal);
+        Assert.Equal(TaskState.Succeeded, markedTask.State);
+        var markedRead = new TaskServiceReadTaskOutputRequest { Meta = CloudNode.Command(), AttemptId = markedTask.CurrentAttempt.AttemptId, FromOffset = 0, MaxBytes = 4096 };
+        var markedOutput = TaskServiceReadTaskOutputResponse.Parser.ParseFrom((await RouteAsync(RoutedMethod.ReadNodeTaskOutput, markedRead)).Payload);
+        Assert.Null(markedOutput.Error);
+        var outputText = markedOutput.Value.Data.ToStringUtf8();
+        Assert.True(outputText.Contains(argvMarker, StringComparison.Ordinal), "the child received its argv marker");
+        Assert.True(outputText.Contains(envMarker, StringComparison.Ordinal), "the child received its environment marker");
+        var logs = Directory.EnumerateFiles(Path.Combine(node.DataRoot, "logs", "node"), "*", SearchOption.AllDirectories).ToArray();
+        Assert.NotEmpty(logs);
+        foreach (var file in logs)
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            var content = reader.ReadToEnd();
+            Assert.False(content.Contains(argvMarker, StringComparison.Ordinal), "the routed argv appeared in a node log");
+            Assert.False(content.Contains(envMarker, StringComparison.Ordinal), "the routed environment value appeared in a node log");
+            Assert.False(content.Contains(credentials.AccessToken, StringComparison.Ordinal), "a synthetic access credential appeared in a node log");
+            Assert.False(content.Contains(credentials.RefreshToken, StringComparison.Ordinal), "a synthetic refresh credential appeared in a node log");
+        }
 
         // Every routed call has its completed routed_call_log row (N2-10): executed, with the response's digest.
         Assert.All(node.Runtime.Store.Read(reader =>
