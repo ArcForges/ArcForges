@@ -132,6 +132,8 @@ public sealed class CloudSignInHostTests
         await using var node = TestNode.Create();
         node.UseLocalDiagnosticCli = false;
         node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
+        const string sentinel = "fixture-only-aot-d3-sentinel";
+        node.Environment["AF_SYNTH_TOKEN"] = sentinel;
         using var host = await node.StartNodeAsync();
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         Assert.Equal(Path.GetFullPath(TestNode.Host), Path.GetFullPath(host.MainModule!.FileName), comparer);
@@ -173,6 +175,50 @@ public sealed class CloudSignInHostTests
         Assert.Equal(Origin.Script, assertion.LocalOrigin);
         Assert.Equal(SHA256.HashData(request.Request.Span), assertion.RequestSha256.ToByteArray());
         Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
+
+        // Exercise the submit guard inside the selected node executable, not only the managed test process or a CLI binary.
+        var nonceCount = connection.Received.Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest);
+        var meta = Command();
+        var unsafeEnvironment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+        unsafeEnvironment.Set["AF_SYNTH_TOKEN"] = sentinel;
+        var inner = new TaskServiceSubmitTaskRequest { Meta = meta.Clone(), Spec = new TaskSpec { Environment = unsafeEnvironment } };
+        var fleet = new FleetService.FleetServiceClient(human.CallInvoker);
+        var refused = await fleet.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = nodeId, Request = inner.ToByteString() },
+            deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: Ct);
+        Assert.True(refused.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(RetryMode.Never, refused.Error.Retry.Mode);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(refused.Error));
+        Assert.False(refused.Error.ToString().Contains(sentinel, StringComparison.Ordinal));
+        Assert.Equal(nonceCount, connection.Received.Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest));
+        Assert.True(center.CallsOf("SubmitNodeTask").Count == 0);
+
+        var taskId = CommandIds.New();
+        var accepted = new FleetServiceSubmitNodeTaskResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceSubmitNodeTaskValue
+            {
+                NodeId = nodeId,
+                Response = new TaskServiceSubmitTaskResponse
+                {
+                    Meta = new ResponseMeta(),
+                    Value = new TaskServiceSubmitTaskValue { TaskId = taskId, State = TaskState.Queued },
+                }.ToByteString(),
+            },
+        };
+        center.Script("SubmitNodeTask", new FakeFault.Raw([.. FakeCenter.DataFrame(accepted), .. FakeCenter.TrailerFrame(0, null)]));
+        using var run = node.Start(TestNode.Host, [NodeLocations.TestModeOption, "run", "--detach", "--", "test-program"]);
+        var runResult = await TestNode.CompleteAsync(run, TimeSpan.FromSeconds(30));
+        Assert.True(runResult.ExitCode == 0, "routed default submit must succeed against the scripted center");
+        var submitted = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("SubmitNodeTask")).Body));
+        var submittedEnvironment = TaskServiceSubmitTaskRequest.Parser.ParseFrom(submitted.Request).Spec.Environment;
+        Assert.Equal(EnvironmentInherit.Node, submittedEnvironment.Inherit);
+        Assert.Empty(submittedEnvironment.Set);
+        Assert.Empty(submittedEnvironment.CallerEnvironment);
+        Assert.False(submitted.Request.Span.IndexOf(Encoding.UTF8.GetBytes(sentinel)) >= 0);
+        Assert.False(runResult.Output.Contains(sentinel, StringComparison.Ordinal));
+        Assert.False(runResult.Error.Contains(sentinel, StringComparison.Ordinal));
+
         Assert.Null((await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() }, cancellationToken: Ct)).Error);
         await node.StopNodeAsync();
     }
