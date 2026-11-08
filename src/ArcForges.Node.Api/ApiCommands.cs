@@ -346,7 +346,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             {
                 Approvals.Expire(context);
                 if (caller.CenterCaller is not null && RecordedIn(context.Transaction, service + "/" + gate.Method[(gate.Method.LastIndexOf('.') + 1)..],
-                    capture.RequestDigest, meta))
+                    capture.RequestDigest, meta, caller))
                 {
                     // Decisions B-2 and verifier N-1, inside the writer: an outcome recorded since the check (an approved execution whose approval
                     // record was deferred included) answers before any approval rule; the idempotent command replays it.
@@ -475,24 +475,54 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
 
         var name = method[(method.LastIndexOf('.') + 1)..];
         var digest = caller is null ? PayloadDigest.Compute(request) : Digest(caller, request);
-        return node.Store.Read(reader => RecordedIn(reader, service + "/" + name, digest, meta)
+        return node.Store.Read(reader => RecordedIn(reader, service + "/" + name, digest, meta, caller)
             || (Approvals.ByCommand(reader, id.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome.Length: > 0 } approval
-                && SameRequest(approval, name, digest)));
+                && SameRequest(approval, name, digest)
+                && (caller?.CenterCaller is not { } center || CenterRouting.SameClass(approval.View.Requester?.CenterCaller, center))));
     }
 
     /// <summary>True when <c>command_dedup</c> holds an unexpired outcome of <paramref name="meta"/>'s command ID for this method and digest.</summary>
-    private static bool RecordedIn(StoreReader reader, string method, ReadOnlySpan<byte> digest, RequestMeta meta)
+    private static bool RecordedIn(StoreReader reader, string method, ReadOnlySpan<byte> digest, RequestMeta meta, Caller? caller)
     {
         if (meta.CommandId is not { } id || id.Value.Length != 16)
         {
             return false;
         }
 
-        using var command = reader.CreateCommand("SELECT method, payload_digest, outcome, expires_at FROM command_dedup WHERE command_id = $id;");
-        command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
-        using var row = command.ExecuteReader();
-        return row.Read() && row.GetInt64(3) > reader.NowMicroseconds && !row.IsDBNull(2) && row.GetString(0) == method
-            && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest);
+        bool recorded;
+        using (var command = reader.CreateCommand("SELECT method, payload_digest, outcome, expires_at FROM command_dedup WHERE command_id = $id;"))
+        {
+            command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
+            using var row = command.ExecuteReader();
+            recorded = row.Read() && row.GetInt64(3) > reader.NowMicroseconds && !row.IsDBNull(2) && row.GetString(0) == method
+                && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest);
+        }
+
+        if (!recorded || caller?.CenterCaller is not { } center)
+        {
+            return recorded;
+        }
+
+        // The generic gate is reached by a different caller after the dispatcher declined to replay. Never let that caller use another
+        // caller's command to skip its own policy. The current pending row is not evidence of the original caller.
+        using var first = reader.CreateCommand("""
+            SELECT caller FROM routed_call_log WHERE command_id = $id AND decision IN (1, 5) AND log_id <> $log ORDER BY log_id LIMIT 1;
+            """);
+        first.Parameters.AddWithValue("$id", id.Value.ToByteArray());
+        first.Parameters.AddWithValue("$log", caller.Routed?.LogId ?? 0);
+        if (first.ExecuteScalar() is not byte[] original)
+        {
+            return false;
+        }
+
+        try
+        {
+            return CenterRouting.SameClass(CenterCaller.Parser.ParseFrom(original), center);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Marks the call of <paramref name="meta"/>'s command ID as replay-only (its gate was skipped as a replay).</summary>

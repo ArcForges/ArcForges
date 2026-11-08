@@ -473,6 +473,77 @@ public sealed class RoutedDispatchTests
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
     }
 
+    /// <summary>A stopped node refuses even a recorded replay before looking up the previous outcome (decisions B-2 and B-3).</summary>
+    [Fact(Timeout = 180_000)]
+    public async Task ARecordedRoutedCommandIsNotReplayedAfterStopping()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        var routed = new RoutedCalls(node);
+        var caller = RoutedCalls.Session();
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
+        Assert.Null((await routed.SubmitAsync(caller, request)).Response!.Error);
+
+        routed.Link.Reset(notStoppingFor: 0);
+        var stopped = (await routed.SubmitAsync(caller, request)).Response!.Error;
+        Assert.Equal(("node_stopping", EffectCertainty.DidNotHappen, RetryMode.AfterTime), (stopped?.Code, stopped?.Effect, stopped?.Retry.Mode));
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+    }
+
+    /// <summary>A different caller cannot use another caller's recorded command to bypass the routed policy gate.</summary>
+    [Theory(Timeout = 180_000)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ARecordedRoutedCommandDoesNotBypassAnotherCallersPolicy(bool adopted)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        var routed = new RoutedCalls(node);
+        var owner = RoutedCalls.Session();
+        var other = RoutedCalls.Session();
+        other.UserId = CommandIds.New();
+        var task = new Id { Value = ByteString.CopyFrom(await node.Runtime.Processor.ExecuteAsync(context => GateAndReplayTests.SeedAdopted(context, node.Runtime.NodeId.ToArray()))) };
+        if (!adopted)
+        {
+            // Exercise the approval cell as well as the fixed adopted-process deny; no effect is executed in this fixture.
+            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
+                ("$kind", (int)TaskKind.Command), ("$id", task.Value.ToByteArray())));
+        }
+
+        var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = task };
+        var bytes = request.ToByteArray();
+        var digest = PayloadDigest.Compute(bytes);
+
+        // Seed a recorded prior outcome and its verified caller. The adopted task remains active, so the other caller must reach process.terminate's fixed denial.
+        var log = new RoutedCallLog(new ProcessorRoutedCallStore(node.Runtime.Processor), node.Runtime.Clock);
+        var prior = await log.RecordVerifiedAsync(new VerifiedCallRow
+        {
+            FrameSha256 = System.Security.Cryptography.SHA256.HashData(bytes),
+            CallId = CommandIds.New().Value.ToByteArray(),
+            Kid = "routed-test-key",
+            Method = (int)RoutedMethod.CancelNodeTask,
+            Caller = owner.ToByteArray(),
+            CommandId = request.Meta.CommandId.Value.ToByteArray(),
+            RequestSha256 = System.Security.Cryptography.SHA256.HashData(bytes),
+            RequestSize = bytes.Length,
+        });
+        Assert.NotNull(prior);
+        var result = new TaskServiceCancelTaskResponse { Value = new TaskServiceCancelTaskValue { State = TaskState.Running } }.ToByteArray();
+        await node.Runtime.Processor.ExecuteIdempotentAsync(request.Meta.CommandId.Value.Memory, "arcforges.node.v1.TaskService/CancelTask", digest,
+            Origin.Remote, _ => result);
+        await log.CompleteAsync(prior.Value, RoutedCallDecision.Executed, null, task.Value.ToByteArray(), 2,
+            System.Security.Cryptography.SHA256.HashData(result), result.Length);
+
+        var (answer, _) = await routed.CallAsync(other, RoutedMethod.CancelNodeTask, bytes, request.Meta.CommandId);
+        Assert.Equal((RoutedOutcome.RefusedByPolicy, adopted ? "permission_denied" : "approval_required",
+                adopted ? PermissionMatrix.ProcessTerminate : PermissionMatrix.TaskCancelOthers),
+            (answer!.Outcome, answer.Error?.Code, answer.Error?.Details.State.State));
+    }
+
     /// <summary>Decisions B-2: a duplicate while the first call is admitted answers effect UNKNOWN; the first then completes and replays.</summary>
     [Fact(Timeout = 180_000)]
     public async Task ADuplicateWhileTheFirstIsAdmittedAnswersEffectUnknownAndNeverFinal()
@@ -501,6 +572,12 @@ public sealed class RoutedDispatchTests
             var error = TaskServiceSubmitTaskResponse.Parser.ParseFrom(duplicate.Response).Error;
             Assert.Equal((RoutedOutcome.Executed, "operation_failed", EffectCertainty.Unknown, RetryMode.SameCommand, "command_in_progress"),
                 (duplicate.Outcome, error?.Code, error?.Effect ?? EffectCertainty.Unspecified, error?.Retry.Mode ?? RetryMode.Unspecified, error?.Details.State.Reason));
+
+            // Once stopping begins, even a duplicate of an in-progress command is refused before replay/in-progress lookup.
+            routed.Link.Reset(notStoppingFor: 0);
+            var afterStop = (await routed.SubmitAsync(caller, request, record: false)).Response!.Error;
+            Assert.Equal(("node_stopping", EffectCertainty.DidNotHappen, RetryMode.AfterTime), (afterStop?.Code, afterStop?.Effect, afterStop?.Retry.Mode));
+            routed.Link.Reset();
         }
         finally
         {
@@ -571,7 +648,7 @@ public sealed class RoutedDispatchTests
 
         // The link ends immediately before the effect: the call is dropped, nothing is stored and its row stays pending.
         var dropped = Request();
-        routed.Link.Reset(usableFor: 1);
+        routed.Link.Reset(usableFor: 2);
         var (gone, goneLog) = await routed.CallAsync(caller, RoutedMethod.SubmitNodeTask, dropped.ToByteArray(), dropped.Meta.CommandId);
         Assert.Null(gone);
         Assert.Equal((5L, (string?)null), Row(goneLog));
@@ -628,6 +705,8 @@ public sealed class RoutedDispatchTests
         Assert.False(TaskServiceWaitTaskResponse.Parser.ParseFrom(bounded.Response).Value.Reached);
         Assert.InRange(clock.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(4));
         Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = holding }, cancellationToken: Ct)).Error);
+        var ended = await Tasks.WaitAsync(human, holding);
+        Assert.Equal(TaskState.Cancelled, ended.State);
     }
 
     /// <summary>N2-11, N2-12, N2-13 (AD-0021 section 5, Q8): a local submission is HUMAN only and diagnostic; the test allowance needs test mode.</summary>

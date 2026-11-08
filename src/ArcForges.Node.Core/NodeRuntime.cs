@@ -106,7 +106,7 @@ public sealed class NodeRuntime : IDisposable
 
     /// <summary>
     /// True when a local SCRIPT caller may submit a task (AD-0021 section 5, Plan decision Q8): only a <c>--test-mode</c> node with
-    /// <c>ARCFORGES_TEST_ALLOW_LOCAL_SCRIPT_SUBMIT=1</c> (<see cref="LocalSubmission.ScriptAllowed"/>), and in-process test nodes; never an AGENT.
+    /// the test allowance (<see cref="LocalSubmission.Variable"/> and <see cref="LocalSubmission.ScriptAllowed"/>), and in-process test nodes; never an AGENT.
     /// </summary>
     public bool LocalScriptSubmit { get; init; }
 

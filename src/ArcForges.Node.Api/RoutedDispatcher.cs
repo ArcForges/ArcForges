@@ -57,7 +57,7 @@ internal sealed class RoutedAbortException : Exception
 /// The context of one center-routed call on its way through a TaskService body (AF-CTR-05 N2b): the link it arrived on, its expiry, its
 /// wait budget on the local monotonic clock, and the closed operation and reason of a refusal the body made (the dispatcher signs it).
 /// </summary>
-internal sealed class RoutedContext(IRoutedLink link, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock)
+internal sealed class RoutedContext(IRoutedLink link, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long logId)
 {
     /// <summary>The margin a routed answer keeps before the call's deadline.</summary>
     public static readonly TimeSpan Margin = TimeSpan.FromSeconds(1);
@@ -66,6 +66,9 @@ internal sealed class RoutedContext(IRoutedLink link, DateTimeOffset expiresAt, 
 
     /// <summary>The link of the call.</summary>
     public IRoutedLink Link { get; } = link;
+
+    /// <summary>The current verified call's row, excluded when comparing a prior caller for replay.</summary>
+    public long LogId { get; } = logId;
 
     /// <summary>The matrix operation of the body's refusal, for its closed <c>state.state</c>.</summary>
     public string? Operation { get; private set; }
@@ -120,10 +123,10 @@ internal sealed class RoutedContext(IRoutedLink link, DateTimeOffset expiresAt, 
 /// <item>the link, read again (decisions B-3): a link switched off, signed out or ending drops the call unanswered;</item>
 /// <item>the caller's shape (verifier N-4) and the payload as the method's TaskService request (the exact bytes are kept); a mutation's inner
 /// <c>meta.command_id</c> must be the routed one;</item>
+/// <item>the node's stop: <c>STATE/node_stopping</c>, the handler's own answer (DID_NOT_HAPPEN, AFTER_TIME);</item>
 /// <item>for Submit and Cancel, the same caller class's duplicate (the account and user of an account session, the relaying node and local
 /// origin of a relay; E2b review C2-N3): still in flight here or approved and executing answers the in-progress
 /// <c>EXECUTION/operation_failed</c> (UNKNOWN, SAME_COMMAND); a recorded outcome over the same exact bytes is replayed byte for byte (Q-5);</item>
-/// <item>the node's stop: <c>STATE/node_stopping</c>, the handler's own answer (DID_NOT_HAPPEN, AFTER_TIME);</item>
 /// <item>the expiry, again (EXPIRED, decision 4);</item>
 /// <item>the caller-level center-routed policy (<see cref="CenterRouting"/>), then the operation's routed cells for Submit and the reads;</item>
 /// <item>the shared TaskService body with a center-routed <see cref="Caller"/> (origin REMOTE, the center caller, its cells), whose effect
@@ -183,6 +186,17 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             return Executed(method, meta, NodeErrors.InvalidArgument("meta.command_id: equals the routed call's command ID"), TaskIdOf(request), risk);
         }
 
+        // A stop or an ending link takes precedence over an in-progress or recorded replay (decisions B-2/B-3).
+        if (!link.Usable)
+        {
+            return null;
+        }
+
+        if (link.Stopping || node.Lifecycle.IsStopping)
+        {
+            return Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
+        }
+
         var raw = call.Payload.ToByteArray();
         var digest = PayloadDigest.Compute(raw);
         var key = mutation ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
@@ -192,21 +206,37 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         {
             if (_inFlight.TryGetValue(key, out var running) && CenterRouting.SameClass(running, center))
             {
-                return Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
+                if (!link.Usable)
+                {
+                    return null;
+                }
+
+                return link.Stopping || node.Lifecycle.IsStopping
+                    ? Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk)
+                    : Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
             }
 
-            switch (node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, MethodName(method), digest, center, call.LogId)))
+            var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, MethodName(method), digest, center, call.LogId));
+            if (recorded is not null)
+            {
+                if (!link.Usable)
+                {
+                    return null;
+                }
+
+                if (link.Stopping || node.Lifecycle.IsStopping)
+                {
+                    return Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
+                }
+            }
+
+            switch (recorded)
             {
                 case { InProgress: true }:
                     return Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
                 case { Outcome: { } outcome }:
                     return Replayed(method, outcome, request, risk);
             }
-        }
-
-        if (link.Stopping || node.Lifecycle.IsStopping)
-        {
-            return Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
         }
 
         var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
@@ -216,7 +246,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         }
 
         var lifetime = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
-        var context = new RoutedContext(link, expires, lifetime, node.Clock);
+        var context = new RoutedContext(link, expires, lifetime, node.Clock, call.LogId);
         var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center.Clone())
         {
             CellsOrigin = CenterRouting.CellsOrigin(center, node.NodeId.Span),

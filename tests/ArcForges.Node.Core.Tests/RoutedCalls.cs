@@ -13,7 +13,7 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>
 /// The routed test seam of part N2b (decisions Q7): hands a call to a real node's <see cref="RoutedDispatcher"/> as N1's channel does after
 /// its verification (the pending <c>routed_call_log</c> row first, the final decision after the answer), without the channel or signatures,
-/// which the CloudLink tests cover with the FakeCenter. Callers are built as the center signs them into a call header.
+/// which the CloudLink tests cover with a mocked center. Callers are built as the center signs them into a call header.
 /// </summary>
 internal sealed class RoutedCalls(InProcessNode node)
 {

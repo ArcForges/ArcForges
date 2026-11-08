@@ -36,7 +36,7 @@ public sealed record NodeHostOptions
 
     /// <summary>
     /// Whether a local SCRIPT caller may submit a task (AD-0021 section 5): <see langword="null"/> (the host) derives it from
-    /// <see cref="TestMode"/> and <c>ARCFORGES_TEST_ALLOW_LOCAL_SCRIPT_SUBMIT</c> (<see cref="LocalSubmission.ScriptAllowed"/>); in-process
+    /// <see cref="TestMode"/> and <see cref="LocalSubmission.Variable"/> (<see cref="LocalSubmission.ScriptAllowed"/>); in-process
     /// test nodes set it.
     /// </summary>
     internal bool? AllowLocalScriptSubmit { get; init; }
