@@ -262,6 +262,8 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
         where T : class
     {
         ArgumentNullException.ThrowIfNull(context);
+        // Retain the session's binding throughout this call, even if its connection closes while signing is in flight.
+        var binding = command is null ? null : sessions.CliRelayBindingOf(context);
         if (_api.Stopping() is { } stopping)
         {
             return fail(stopping);
@@ -288,11 +290,21 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
         var requestDigest = digest(caller);
         for (var attempt = 0; attempt < 2; attempt++)
         {
+            context.CancellationToken.ThrowIfCancellationRequested();
             var signed = await cloud.SignBoundRelayAssertionAsync(origin, localSession, method, requestDigest, target, command, context.CancellationToken)
                 .ConfigureAwait(false);
             if (signed is null)
             {
                 return fail(Unavailable(cloud.AccountLinked ? "channel_not_connected" : "signed_out", correlation));
+            }
+
+            if (command is not null && (signed.Assertion.RelayingInstallationId is not { } installation
+                || binding is not null && !binding.TryBind(signed.Center.Url, installation.Value)))
+            {
+                // This delivery has not been sent. A caller with an earlier UNKNOWN must keep that uncertainty.
+                var changed = NodeErrors.InvalidState("cloud_link", "relay_binding_changed");
+                changed.CorrelationId = Validation.RequiredId(correlation, "correlation_id") is null ? correlation!.Clone() : CommandIds.New(node.Clock);
+                return fail(changed);
             }
 
             var left = context.Deadline - DateTime.UtcNow;

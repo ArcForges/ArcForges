@@ -14,6 +14,9 @@ namespace ArcForges.Client;
 public sealed class NodeChannel : IAsyncDisposable
 {
     private readonly LocalRpcClientChannel _channel;
+    private readonly Lock _connectionGate = new();
+    private int _connectionGeneration;
+    private int _connectionPins;
     private int _connected;
     private EndpointConnectException? _lastFailure;
 
@@ -77,14 +80,68 @@ public sealed class NodeChannel : IAsyncDisposable
     /// <inheritdoc />
     public ValueTask DisposeAsync() => _channel.DisposeAsync();
 
+    // A mutation retry must stay on the hello-checked connection whose node-side session retains its center binding.
+    internal int ConnectionGeneration => Volatile.Read(ref _connectionGeneration);
+
+    internal IDisposable? PinConnection(int expectedGeneration)
+    {
+        lock (_connectionGate)
+        {
+            if (expectedGeneration == 0 || _connectionGeneration != expectedGeneration)
+            {
+                return null;
+            }
+
+            _connectionPins++;
+            return new ConnectionPin(this);
+        }
+    }
+
+    private sealed class ConnectionPin(NodeChannel channel) : IDisposable
+    {
+        private NodeChannel? _channel = channel;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _channel, null) is not { } owner)
+            {
+                return;
+            }
+
+            lock (owner._connectionGate)
+            {
+                owner._connectionPins--;
+            }
+        }
+    }
+
     private async ValueTask<Stream> OpenAsync(CancellationToken cancellationToken)
     {
         try
         {
+            lock (_connectionGate)
+            {
+                if (_connectionPins != 0)
+                {
+                    throw new IOException("The node connection is pinned by an unresolved mutation.");
+                }
+            }
+
             var stream = await NodeConnector.OpenAsync(Endpoint, cancellationToken).ConfigureAwait(false);
-            Volatile.Write(ref _lastFailure, null);
-            Volatile.Write(ref _connected, 1);
-            return stream;
+            lock (_connectionGate)
+            {
+                // A pin may have been acquired while the OS connection was opening.
+                if (_connectionPins != 0)
+                {
+                    stream.Dispose();
+                    throw new IOException("The node connection is pinned by an unresolved mutation.");
+                }
+
+                Volatile.Write(ref _lastFailure, null);
+                Volatile.Write(ref _connected, 1);
+                Volatile.Write(ref _connectionGeneration, _connectionGeneration + 1);
+                return stream;
+            }
         }
         catch (EndpointConnectException exception)
         {

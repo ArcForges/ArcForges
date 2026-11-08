@@ -491,6 +491,13 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
         Func<TInner, ArcError?> innerErrorOf, Func<ArcError, TInner> fail, Id command, TimeSpan deadline, CancellationToken cancellationToken)
         where TInner : class, IMessage<TInner>
     {
+        // The server's CLI-session binding is valid only on the hello-checked local connection; never silently rebind after it is lost.
+        using var connection = session.PinConnection();
+        if (connection is null)
+        {
+            return fail(LocalConnectionChanged());
+        }
+
         var started = Stopwatch.GetTimestamp();
         var backoff = new LocalRpc.LocalRpcBackoff(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(2));
         var uncertain = false;
@@ -553,10 +560,18 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
             uncertain |= error.Effect == EffectCertainty.Unknown;
             var retryable = error.Retry?.Mode is RetryMode.SameCommand or RetryMode.AfterTime &&
-                (error.Code == "node_unreachable" || error.Code == "operation_failed" && error.Details?.State?.Reason == "command_in_progress");
+                (error.Code == "node_unreachable" || error.Code == "operation_failed" && error.Details?.State?.Reason == "command_in_progress"
+                    || uncertain && error.Code == "cloud_unreachable" && error.Effect == EffectCertainty.DidNotHappen);
             if (!retryable || retries >= MaximumRetries)
             {
                 return fail(uncertain && error.Effect == EffectCertainty.DidNotHappen ? Uncertain() : error);
+            }
+
+            // Do not spend the five mutation attempts while this node reconnects. Status reads and their waits use the same total budget;
+            // the server checks the original center/installation binding again before each actual relay send.
+            if (uncertain && !await AwaitOwnRelayAsync(started, cancellationToken).ConfigureAwait(false))
+            {
+                return fail(Uncertain());
             }
 
             var wait = backoff.Next(retries + 1);
@@ -577,6 +592,58 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
             cli.Output.Trace("retrying the same routed command " + IdText.Format(command));
             await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    internal async Task<bool> AwaitOwnRelayAsync(long started, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            var unary = unaryTimeout ?? TimeSpan.FromSeconds(5);
+            var limit = remaining < unary ? remaining : unary;
+            AccountServiceGetAccountStatusResponse response;
+            try
+            {
+                response = await session.Channel.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest { Meta = Cli.Meta() },
+                    deadline: DateTime.UtcNow + limit, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
+            }
+            catch (RpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded)
+            {
+                // In particular, a lost local connection cannot be replaced while this mutation remains uncertain.
+                return false;
+            }
+
+            if (response.Error is not null || response.Value?.Status is not { } status || !status.HasSignedIn || !status.SignedIn
+                || !status.HasCloudLinkEnabled || !status.CloudLinkEnabled || !status.HasRelay)
+            {
+                return false;
+            }
+
+            if (status.Relay == RelayState.Connected)
+            {
+                return true;
+            }
+
+            if (status.Relay is not (RelayState.Connecting or RelayState.Backoff))
+            {
+                return false;
+            }
+
+            remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            var pause = remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1);
+            await Task.Delay(pause, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -623,6 +690,17 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
         return result;
     }
+
+    private static ArcError LocalConnectionChanged() => new()
+    {
+        Category = ErrorCategory.State,
+        Code = "invalid_state",
+        MessageKey = "error.state.invalid_state",
+        Effect = EffectCertainty.DidNotHappen,
+        Retry = new RetryAdvice { Mode = RetryMode.Never },
+        CorrelationId = CommandIds.New(),
+        Details = new ErrorDetails { State = new StateFailure { State = "local_connection", Reason = "session_changed" } },
+    };
 
     private static ArcError Internal() => new()
     {

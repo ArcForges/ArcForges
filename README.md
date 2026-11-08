@@ -99,6 +99,8 @@ stdin is needed.
 A node that is signed out, cannot reach the center or has no channel exits 4 with diagnostic guidance. A target reported offline exits
 75. An uncertain routed mutation retains its command ID and request bytes for at most five transport retries within two minutes; if its
 outcome remains uncertain, the CLI prints the command ID so the existing operation can be investigated rather than submitted again.
+After an uncertain outcome, it waits within that window for its own node channel to reconnect before retrying. It does not resend a
+mutation under a different center or installation; if the local node connection is lost, it stops and keeps the outcome uncertain.
 An explicit `--wait-approval` may wait for a human decision separately and restart that retry window; its wait is not included in the
 two-minute transport bound.
 
