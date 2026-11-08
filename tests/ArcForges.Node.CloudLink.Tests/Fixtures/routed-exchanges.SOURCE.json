@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/ArcForges/Cloud",
-  "sourceCommit": "571fa8576a36f94a12190692553d9d38fe78466b",
+  "sourceCommit": "b7743b931aba21465aceb12861502c5fe27699e4",
   "sourcePath": "center/internal/hub/testdata/routed",
   "producer": "center/internal/hub/routed_capture_integration_test.go (REAL PostgreSQL, the REAL composed center and hub of Cloud E2b #147; the nodes are center/internal/nodetest; normalized placeholders; a committed file that differs fails the Cloud test)",
   "contractsCohort": "1.0.0-ci.437.1",

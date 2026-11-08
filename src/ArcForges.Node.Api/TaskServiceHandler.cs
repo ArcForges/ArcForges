@@ -232,9 +232,13 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var warnings = new List<string>();
         var sideEffect = spec.HasSideEffect ? spec.SideEffect : SideEffectClass.Unknown;
         var source = spec.HasSideEffect && sideEffect != SideEffectClass.Unknown ? SideEffectSource.Caller : SideEffectSource.Default;
-        if (caller.CellsOrigin == Origin.Agent && !settings.AcceptAgentAssertions && sideEffect is SideEffectClass.Pure or SideEffectClass.Idempotent)
+        if (caller.CellsOrigin == Origin.Agent && (caller.CenterCaller is not null || !settings.AcceptAgentAssertions)
+            && sideEffect is SideEffectClass.Pure or SideEffectClass.Idempotent)
         {
-            warnings.Add($"The agent's side-effect class {sideEffect.ToString().ToUpperInvariant()} is not accepted (retry_safety.accept_agent_assertions is false); the task is UNKNOWN.");
+            var reason = caller.CenterCaller is not null
+                ? "retry_safety.accept_agent_assertions is treated as false for a center-routed AGENT"
+                : "retry_safety.accept_agent_assertions is false";
+            warnings.Add($"The agent's side-effect class {sideEffect.ToString().ToUpperInvariant()} is not accepted ({reason}); the task is UNKNOWN.");
             sideEffect = SideEffectClass.Unknown;
             source = SideEffectSource.Default;
         }
