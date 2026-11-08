@@ -52,16 +52,16 @@ internal static class RunCommand
     public static Command Build(Func<ParseResult, Cli> factory)
     {
         var program = new Argument<string[]>("command") { Arity = ArgumentArity.OneOrMore, Description = "The program and its arguments (after --), or the script with --shell" };
-        var cwd = new Option<string?>("--cwd") { Description = "Working directory (default: the current directory)", HelpName = "dir" };
+        var cwd = new Option<string?>("--cwd") { Description = "Working directory (this node: current directory; another node: required absolute target path)", HelpName = "dir" };
         var pool = new Option<string?>("--pool") { Description = "Pool (default 'default')", HelpName = "p" };
         var priority = new Option<string?>("--priority") { Description = "interactive, high, normal, low or background", HelpName = "class" };
         priority.AcceptOnlyFromAmong("interactive", "high", "normal", "low", "background");
         var cpuLimit = new Option<string?>("--cpu-limit-time") { Description = "CPU-time limit (for example 10m)", HelpName = "dur" };
-        var env = new Option<string[]>("--env") { Description = "Set a variable (repeatable)", HelpName = "K=V" };
-        var inherit = new Option<string?>("--env-inherit") { Description = "caller (default), node or none", HelpName = "mode" };
+        var env = new Option<string[]>("--env") { Description = "Set a variable (repeatable; routed secrets and other-node values are refused)", HelpName = "K=V" };
+        var inherit = new Option<string?>("--env-inherit") { Description = "caller, node or none (routed default: node; --local default: caller)", HelpName = "mode" };
         inherit.AcceptOnlyFromAmong("caller", "node", "none");
         var unset = new Option<string[]>("--unset") { Description = "Remove an inherited variable (repeatable)", HelpName = "K" };
-        var stdin = new Option<string?>("--stdin") { Description = "none (default), file:<path> or stream", HelpName = "mode" };
+        var stdin = new Option<string?>("--stdin") { Description = "none (default), file:<target path> or stream", HelpName = "mode" };
         var label = new Option<string[]>("--label") { Description = "A label (repeatable)", HelpName = "k=v" };
         var title = new Option<string?>("--title") { Description = "Title shown in UIs" };
         var kind = new Option<string?>("--kind") { Description = "command (default) or service", HelpName = "kind" };
@@ -77,8 +77,10 @@ internal static class RunCommand
         var mem = new Option<string?>("--mem") { Description = "Expected memory (for example 512MiB)", HelpName = "size" };
         var memMax = new Option<string?>("--mem-max") { Description = "Memory ceiling (for example 4GiB)", HelpName = "size" };
         var require = new Option<string?>("--require-enforcement") { Description = "Refuse unless enforced: cpu,memory,pids", HelpName = "list" };
+        var nodeOption = new Option<string?>("--node") { Description = "Target node UUID or exact name (default: this node)", HelpName = "name-or-id" };
+        var localOption = new Option<bool>("--local") { Description = "Submit locally for HUMAN diagnostics" };
         var detach = new Option<bool>("--detach") { Description = "Submit and print the task ID without attaching" };
-        var wait = new Option<string?>("--wait") { Description = "With --detach: wait up to this long for the task to finish", HelpName = "dur" };
+        var wait = new Option<string?>("--wait") { Arity = ArgumentArity.ZeroOrOne, Description = "Attach (default); with --detach, wait up to the given duration", HelpName = "dur" };
         var sessionOption = new Option<string?>("--session") { Description = "The agent session (sessions arrive with their task)", HelpName = "id" };
         var agent = new Option<string?>("--agent") { Description = "The agent ID within the session", HelpName = "id" };
         var shell = new Option<string?>("--shell") { Description = "Run a script with bash, sh, pwsh, powershell or cmd", HelpName = "kind" };
@@ -92,20 +94,19 @@ internal static class RunCommand
         };
         var readyRegex = new Option<string?>("--ready-regex") { Description = "Service: ready when a line of output matches", HelpName = "regex" };
         var readyPort = new Option<int?>("--ready-port") { Description = "Service: ready when it listens on this localhost TCP port", HelpName = "port" };
-        var readyFile = new Option<string?>("--ready-file") { Description = "Service: ready when this file exists", HelpName = "path" };
+        var readyFile = new Option<string?>("--ready-file") { Description = "Service: ready when this target file exists", HelpName = "path" };
         var readyTimeout = new Option<string?>("--ready-timeout") { Description = "Service: how long to wait for readiness (default 120s)", HelpName = "dur" };
         var command = new Command("run", "Run a command under the node and mirror its output")
         {
             program, cwd, pool, priority, cpuLimit, env, inherit, unset, stdin, label, title, kind, sideEffect, retries, placement, clientTimeout, join,
-            cpu, mem, memMax, require, detach, wait, sessionOption, agent, shell, dependsOn, exclusive, shared, exclusiveWorkspace, readyRegex, readyPort, readyFile,
+            cpu, mem, memMax, require, nodeOption, localOption, detach, wait, sessionOption, agent, shell, dependsOn, exclusive, shared, exclusiveWorkspace, readyRegex, readyPort, readyFile,
             readyTimeout,
         };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             var spec = new TaskSpec
             {
-                WorkingDirectory = Path.GetFullPath(result.GetValue(cwd) ?? Directory.GetCurrentDirectory()),
-                Environment = Environment(result.GetValue(inherit), result.GetValue(env) ?? [], result.GetValue(unset) ?? []),
+                Environment = Environment(result.GetValue(inherit) ?? (result.GetValue(localOption) ? "caller" : "node"), result.GetValue(env) ?? [], result.GetValue(unset) ?? []),
             };
             var tokens = result.GetValue(program) ?? [];
             if (result.GetValue(shell) is { } shellName)
@@ -124,7 +125,7 @@ internal static class RunCommand
             {
                 "none" => new StdinSpec { Mode = StdinMode.None },
                 "stream" => new StdinSpec { Mode = StdinMode.Stream },
-                _ when stdinMode.StartsWith("file:", StringComparison.Ordinal) => new StdinSpec { Mode = StdinMode.File, FilePath = Path.GetFullPath(stdinMode[5..]) },
+                _ when stdinMode.StartsWith("file:", StringComparison.Ordinal) => new StdinSpec { Mode = StdinMode.File, FilePath = stdinMode[5..] },
                 _ => throw new UsageException("--stdin: none, file:<path> or stream."),
             };
             if (cli.Timeout is { } timeout)
@@ -176,7 +177,7 @@ internal static class RunCommand
 
             if (result.GetValue(readyFile) is { } readyPath)
             {
-                readiness.FileExists = Path.GetFullPath(readyPath);
+                readiness.FileExists = readyPath;
             }
 
             if ((result.GetValue(readyRegex) is not null ? 1 : 0) + (result.GetValue(readyPort) is not null ? 1 : 0) + (result.GetValue(readyFile) is not null ? 1 : 0) > 1)
@@ -249,10 +250,51 @@ internal static class RunCommand
             var waitFor = result.GetValue(wait) is { } waitText ? Duration(waitText, "--wait") : (TimeSpan?)null;
             if (waitFor is not null && !result.GetValue(detach))
             {
-                throw new UsageException("--wait needs --detach.");
+                throw new UsageException("--wait <duration> needs --detach.");
+            }
+
+            if (result.GetResult(wait) is not null && waitFor is null && result.GetValue(detach))
+            {
+                throw new UsageException("--wait without a duration cannot be combined with --detach.");
             }
 
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken, timeoutIsTaskLimit: true)
+                .ConfigureAwait(false);
+            if (route is null)
+            {
+                return routeExit;
+            }
+
+            // Paths describe the executor's filesystem. An explicit --node that resolves to this node keeps local path behavior;
+            // another node requires an explicit, fully qualified target path and validates it on that node's own OS.
+            var foreign = !route.NodeId.Equals(session.Hello.Node.Node.NodeId);
+            spec.WorkingDirectory = TargetPath(result.GetValue(cwd), "--cwd", foreign);
+            if (spec.Stdin.Mode == StdinMode.File)
+            {
+                spec.Stdin.FilePath = TargetPath(spec.Stdin.FilePath, "--stdin file:", foreign);
+            }
+
+            if (readiness.ConditionCase == ReadinessCondition.ConditionOneofCase.FileExists)
+            {
+                readiness.FileExists = TargetPath(readiness.FileExists, "--ready-file", foreign);
+            }
+
+            if (route.Local)
+            {
+                cli.Output.Error.WriteLine("arcforges: local diagnostic task; ordinary execution uses the center");
+            }
+            else
+            {
+                if (stdinMode == "stream")
+                {
+                    throw new UsageException("--stdin stream needs --local; routed input is not available.");
+                }
+
+                // Routed callers have no local process binding; a hand-off leaves the task running and names it explicitly.
+                request.CancelWhenCallerGone = false;
+            }
+
             foreach (var dependency in result.GetValue(dependsOn) ?? [])
             {
                 var colon = dependency.LastIndexOf(':');
@@ -264,7 +306,7 @@ internal static class RunCommand
                     "ready" => DependencyCondition.Ready,
                     _ => throw new UsageException($"--depends-on: '{conditionText}' is not succeeded, finished or ready."),
                 };
-                var (dependencyId, exit) = await TaskText.ResolveAsync(cli, session, idText, cancellationToken).ConfigureAwait(false);
+                var (dependencyId, exit) = await TaskText.ResolveAsync(cli, session, idText, cancellationToken, route).ConfigureAwait(false);
                 if (dependencyId is null)
                 {
                     return exit;
@@ -274,17 +316,20 @@ internal static class RunCommand
             }
 
             var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
-            var submitted = await cli.MutateAsync("SubmitTask", request.Meta.CommandId, action, r => session.Channel.Tasks.SubmitTaskAsync(r,
-                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
+            var submitted = route.Local
+                ? await cli.MutateAsync("SubmitTask", request.Meta.CommandId, action, r => session.Channel.Tasks.SubmitTaskAsync(r,
+                    deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false)
+                : await route.SubmitAsync(action.RequestForAttempt(), cancellationToken).ConfigureAwait(false);
             if (submitted.Error is { } error)
             {
-                return TaskText.Refused(error, request.Meta.CorrelationId, cli.Output);
+                return route.Local ? TaskText.Refused(error, request.Meta.CorrelationId, cli.Output)
+                    : TaskRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId, submission: true);
             }
 
             var taskId = submitted.Value.TaskId;
             foreach (var warning in submitted.Value.Warnings)
             {
-                cli.Output.Trace("warning: " + warning);
+                cli.Output.Trace("warning: " + Messages.Plain(warning));
             }
 
             cli.Output.Trace($"submitted task {IdText.Format(taskId)} ({TaskText.Word(submitted.Value.State)})");
@@ -300,13 +345,34 @@ internal static class RunCommand
                 }
 
                 return waitFor is { } budget
-                    ? await TaskCommands.WaitAsync(cli, session, taskId, WaitTarget.Terminal, budget, "none", cancellationToken).ConfigureAwait(false)
+                    ? await TaskCommands.WaitAsync(cli, session, taskId, WaitTarget.Terminal, budget, "none", cancellationToken, route).ConfigureAwait(false)
                     : ExitCodes.Success;
             }
 
-            return await AttachAsync(cli, session, taskId, stdinMode == "stream", handoff, fromStart: true, cancellationToken).ConfigureAwait(false);
+            return route.Local
+                ? await AttachAsync(cli, session, taskId, stdinMode == "stream", handoff, fromStart: true, cancellationToken).ConfigureAwait(false)
+                : await route.FollowAsync(taskId, handoff, cancellationToken).ConfigureAwait(false);
         });
         return command;
+    }
+
+    private static string TargetPath(string? value, string option, bool foreign)
+    {
+        if (!foreign)
+        {
+            return Path.GetFullPath(value ?? Directory.GetCurrentDirectory());
+        }
+
+        if (string.IsNullOrEmpty(value))
+        {
+            throw new UsageException($"{option} is required for another node; give an absolute path on the target node.");
+        }
+
+        // Accept POSIX absolute, Windows drive-absolute and UNC forms without rewriting them on the caller's OS. The target applies its
+        // own filesystem validation; drive-relative, rooted-without-drive and other relative paths are never guessed here.
+        var absolute = value[0] == '/' || value.Length >= 3 && char.IsAsciiLetter(value[0]) && value[1] == ':' && value[2] is '/' or '\\'
+            || value.StartsWith(@"\\", StringComparison.Ordinal);
+        return absolute ? value : throw new UsageException($"{option} must be an absolute path on the target node.");
     }
 
     /// <summary>
@@ -680,7 +746,8 @@ internal static class RunCommand
     private static (string Key, string Value) Pair(string text, string option)
     {
         var equals = text.IndexOf('=', StringComparison.Ordinal);
-        return equals > 0 ? (text[..equals], text[(equals + 1)..]) : throw new UsageException($"{option}: '{text}' is not NAME=VALUE.");
+        return equals > 0 ? (text[..equals], text[(equals + 1)..])
+            : throw new UsageException(option == "--env" ? "--env: expected NAME=VALUE." : $"{option}: '{text}' is not NAME=VALUE.");
     }
 
     private static ShellKind ShellKindOf(string name) => name switch
@@ -694,7 +761,7 @@ internal static class RunCommand
     };
 
     /// <summary>Counts Ctrl+C presses without letting them end the CLI (the first cancels the task, the second detaches).</summary>
-    private sealed class Interrupts : IDisposable
+    internal sealed class Interrupts : IDisposable
     {
         private readonly PosixSignalRegistration? _registration;
         private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
+using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.AspNetCore.Connections.Features;
 
@@ -26,6 +30,7 @@ public sealed record ClientSession(LocalRpcPeer Peer, ClientKind Kind, Origin Or
 public sealed class ClientSessions
 {
     private readonly ConcurrentDictionary<string, ClientSession> _sessions = new(StringComparer.Ordinal);
+    private readonly byte[] _relaySessionKey = RandomNumberGenerator.GetBytes(32);
 
     /// <summary>Open sessions.</summary>
     public int Count => _sessions.Count;
@@ -90,6 +95,18 @@ public sealed class ClientSessions
     {
         ArgumentNullException.ThrowIfNull(context);
         return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) ? session : null;
+    }
+
+    /// <summary>
+    /// An opaque ID for this local connection, stable for its lifetime and different across node restarts. It is derived by the node from
+    /// the actual LocalRpc connection, never accepted from the request, and binds relay assertions even before an optional client hello.
+    /// </summary>
+    internal Id RelaySessionIdOf(ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var connection = Encoding.UTF8.GetBytes(context.GetHttpContext().Connection.Id);
+        var digest = HMACSHA256.HashData(_relaySessionKey, connection);
+        return new Id { Value = ByteString.CopyFrom(digest, 0, 16) };
     }
 
     /// <summary>The origin of the call's connection: assigned at its hello, or SCRIPT for a connection that sent none.</summary>

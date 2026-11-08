@@ -45,7 +45,7 @@ public static class CliApplication
         // commands handle Ctrl+C themselves (once cancels the task, twice detaches; cli.md C-01), so no termination timeout applies to them.
         var command = result.CommandResult.Command;
         // `login` cancels its sign-in on Ctrl+C (CancelSignIn) and exits 130 (AF-CTR-04 N2).
-        var handlesInterrupts = command.Name is "run" or "login" || command.Parents.OfType<Command>().Any(parent => parent.Name == "tasks");
+        var handlesInterrupts = command.Name is "run" or "login" or "output" || command.Parents.OfType<Command>().Any(parent => parent.Name == "tasks");
         return await result.InvokeAsync(new InvocationConfiguration
         {
             Output = output,
@@ -63,6 +63,7 @@ public static class CliApplication
         var factory = new Func<ParseResult, Cli>(result => globals.Create(result, output, error));
         root.Subcommands.Add(RunCommand.Build(factory));
         root.Subcommands.Add(TaskCommands.Build(factory));
+        root.Subcommands.Add(TaskCommands.Output(factory));
         root.Subcommands.Add(StatusCommands.Status(factory));
         root.Subcommands.Add(ResourceCommands.Resources(factory));
         root.Subcommands.Add(ResourceCommands.Processes(factory));
@@ -110,7 +111,7 @@ internal sealed class GlobalOptions
     public Option<string?> WaitApproval { get; } = new("--wait-approval")
     {
         Recursive = true,
-        Description = "When a mutation needs an approval, wait this long for the decision and print the outcome (for example 10m)",
+        Description = "Wait for an approval decision (for example 10m); this human wait is outside the routed retry window",
         HelpName = "dur",
     };
 

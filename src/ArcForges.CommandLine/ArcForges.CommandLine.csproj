@@ -14,6 +14,7 @@
     <ProjectReference Include="../ArcForges.Client/ArcForges.Client.csproj" />
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="ArcForges.Contracts.Node" />
+    <PackageReference Include="ArcForges.Contracts.Fleet" />
     <InternalsVisibleTo Include="ArcForges.Client.Tests" />
   </ItemGroup>
 </Project>

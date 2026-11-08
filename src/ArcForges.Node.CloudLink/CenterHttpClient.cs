@@ -42,11 +42,12 @@ internal sealed class CenterHttpClient : IDisposable
             HttpClient = http,
             DisposeHttpClient = true,
             MaxReceiveMessageSize = 1024 * 1024,
-            MaxSendMessageSize = 64 * 1024,
+            MaxSendMessageSize = 256 * 1024,
             HttpVersion = HttpVersion.Version11,
             HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         });
         Fleet = new NodeEnrollmentService.NodeEnrollmentServiceClient(_channel);
+        RoutedFleet = new FleetService.FleetServiceClient(_channel);
     }
 
     /// <summary>The center this client may reach.</summary>
@@ -54,6 +55,9 @@ internal sealed class CenterHttpClient : IDisposable
 
     /// <summary>The generated fleet client over this channel.</summary>
     public NodeEnrollmentService.NodeEnrollmentServiceClient Fleet { get; }
+
+    /// <summary>The center-routed fleet client on the same guarded transport.</summary>
+    public FleetService.FleetServiceClient RoutedFleet { get; }
 
     /// <inheritdoc />
     public void Dispose() => _channel.Dispose();

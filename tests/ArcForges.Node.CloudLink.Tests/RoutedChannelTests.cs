@@ -122,6 +122,101 @@ public sealed class RoutedChannelTests
     }
 
     [Fact]
+    public async Task AVerificationRefusalIsNotSentAfterTheLinkIsSwitchedOffDuringKeyRefresh()
+    {
+        var dispatcher = new Recording();
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refusalAttempts = 0;
+        var (link, connection) = await ChannelTests.ConnectedAsync(configured =>
+        {
+            configured.Dispatcher = dispatcher;
+            configured.StepHook = async at =>
+            {
+                if (at == "refresh.completed")
+                {
+                    refreshed.TrySetResult();
+                    await resume.Task;
+                }
+                else if (at == "refusal.send")
+                {
+                    Interlocked.Increment(ref refusalAttempts);
+                }
+            };
+        });
+        await using (link)
+        {
+            var rotated = link.Center.Channel.CommandPublicKey;
+            rotated.Kid = "cmd-rotated-0002";
+            link.Center.CommandKeys.Add(rotated);
+            var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            link.Center.Script("RefreshNodeSession", new FakeFault.Hold(releaseRefresh));
+            try
+            {
+                var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec
+                {
+                    Method = RoutedMethod.GetNodeTask,
+                    FrameKid = rotated.Kid,
+                    HeaderKid = rotated.Kid,
+                });
+                await connection.SendCallAsync(call);
+                await Eventually.TrueAsync(() => link.Center.CallsOf("RefreshNodeSession").Count == 1, "the key refresh is held");
+                var switching = link.Service.SetCloudLinkAsync(false);
+                Assert.False(switching.IsCompleted);
+                releaseRefresh.TrySetResult();
+                await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(15), Cancel);
+                Assert.True(await switching.WaitAsync(TimeSpan.FromSeconds(15), Cancel));
+                Assert.Null(((IChannelHost)link.Service).Binding());
+                resume.TrySetResult();
+                await connection.Done.WaitAsync(TimeSpan.FromSeconds(15), Cancel);
+
+                Assert.Equal(0, dispatcher.Calls);
+                Assert.Empty(connection.VerifiedResults);
+                Assert.Equal(0, Volatile.Read(ref refusalAttempts));
+            }
+            finally
+            {
+                releaseRefresh.TrySetResult();
+                resume.TrySetResult();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AVerificationRefusalIsNotSentIfTheLinkIsSwitchedOffImmediatelyBeforeTheSend()
+    {
+        var dispatcher = new Recording();
+        LinkFixture? fixture = null;
+        var switched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (link, connection) = await ChannelTests.ConnectedAsync(configured =>
+        {
+            fixture = configured;
+            configured.Dispatcher = dispatcher;
+            configured.StepHook = async at =>
+            {
+                if (at == "refusal.send")
+                {
+                    Assert.True(await fixture!.Service.SetCloudLinkAsync(false));
+                    switched.TrySetResult();
+                }
+            };
+        });
+        await using (link)
+        {
+            var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec
+            {
+                Method = RoutedMethod.GetNodeTask,
+                TargetNodeId = CommandIds.New().Value.ToByteArray(),
+            });
+            await connection.SendCallAsync(call);
+            await switched.Task.WaitAsync(TimeSpan.FromSeconds(15), Cancel);
+            await connection.Done.WaitAsync(TimeSpan.FromSeconds(15), Cancel);
+            Assert.Equal(0, dispatcher.Calls);
+            Assert.Empty(connection.VerifiedResults);
+        }
+    }
+
+    [Fact]
     public async Task ThereIsNoBindingWhileTheLinkIsOff()
     {
         // N1 review A C-N1: Binding() is null while the cloud link is off (and after a sign-out), so a call in the close window is dropped

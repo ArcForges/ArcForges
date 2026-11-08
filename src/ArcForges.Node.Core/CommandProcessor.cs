@@ -115,6 +115,21 @@ public sealed class CommandProcessor : IAsyncDisposable
         return item.Completion.Task;
     }
 
+    /// <summary>Signals selected command IDs after enqueue in in-process tests; never populated by the host.</summary>
+    internal Dictionary<string, TaskCompletionSource>? EnqueuedForTests { get; set; }
+
+    /// <summary>Enqueues normally, then signals any in-process observer for this command ID.</summary>
+    internal Task<T> ExecuteTrackedAsync<T>(Func<CommandContext, T> command, ReadOnlyMemory<byte> commandId, CommitDurability durability)
+    {
+        var result = ExecuteAsync(command, durability);
+        if (EnqueuedForTests is { } observers && observers.TryGetValue(Convert.ToHexString(commandId.Span), out var observer))
+        {
+            observer.TrySetResult();
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// Runs a mutation at most once per command ID (24-hour window): a repeated ID with the same payload digest returns the stored
     /// response; with another digest, <c>CONFLICT/command_id_reused</c>. The response bytes are stored with the effects.
@@ -123,7 +138,7 @@ public sealed class CommandProcessor : IAsyncDisposable
         Func<CommandContext, byte[]> command, Func<CommandContext, ArcError?>? beforeDedup = null, Action<CommandContext>? afterComplete = null)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteAsync(context =>
+        return ExecuteTrackedAsync(context =>
         {
             if (beforeDedup?.Invoke(context) is { } refused)
             {
@@ -146,7 +161,7 @@ public sealed class CommandProcessor : IAsyncDisposable
                     afterComplete?.Invoke(context);
                     return new IdempotentOutcome(false, outcome, null);
             }
-        }, CommitDurability.Full);
+        }, commandId, CommitDurability.Full);
     }
 
     /// <summary>Stops accepting commands and waits until the queued ones ran.</summary>

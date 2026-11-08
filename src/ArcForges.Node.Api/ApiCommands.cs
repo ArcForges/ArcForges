@@ -344,7 +344,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         {
             var approvalAudited = false;
             var replayFound = false;
-            var result = await node.Processor.ExecuteAsync(context =>
+            var result = await node.Processor.ExecuteTrackedAsync(context =>
             {
                 caller.Routed?.BeforeReplay();
                 Approvals.Expire(context);
@@ -395,7 +395,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     ApprovalState.Denied => NodeErrors.PermissionDenied($"{gate.Method}: approval {id} was denied"),
                     _ => NodeErrors.PermissionDenied($"{gate.Method}: approval {id} was withdrawn"),
                 };
-            }, CommitDurability.Full).ConfigureAwait(false);
+            }, meta.CommandId.Value.Memory, CommitDurability.Full).ConfigureAwait(false);
             if (approvalAudited)
             {
                 caller.Routed?.MarkAudited();

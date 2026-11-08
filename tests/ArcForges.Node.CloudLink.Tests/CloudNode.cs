@@ -44,6 +44,9 @@ internal sealed class CloudNode : IAsyncDisposable
     /// </summary>
     public bool AllowLocalScriptSubmit { get; set; } = true;
 
+    /// <summary>Opt in to isolated test-mode image verification for a literal CLI PTY acceptance test.</summary>
+    public bool TestMode { get; set; }
+
     /// <summary>The wall clock for this node (the real clock unless a test supplies a controllable one).</summary>
     public TimeProvider Clock { get; set; } = TimeProvider.System;
 
@@ -95,6 +98,7 @@ internal sealed class CloudNode : IAsyncDisposable
         var options = new NodeHostOptions
         {
             ConfigPath = ConfigPath,
+            TestMode = TestMode,
             Clock = Clock,
             WrapRoutedDispatcher = WrapRoutedDispatcher,
             Endpoint = Endpoint,

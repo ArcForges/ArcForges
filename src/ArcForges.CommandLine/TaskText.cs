@@ -82,11 +82,11 @@ internal static class TaskText
             case TerminationReason.Exited:
                 return result.ExitCode;
             case TerminationReason.SpawnFailed:
-                output.Error.WriteLine("arcforges: the program could not be executed" + (result.HasDetail ? ": " + result.Detail : string.Empty));
+                output.Error.WriteLine("arcforges: the program could not be executed" + (result.HasDetail ? ": " + Messages.Plain(result.Detail) : string.Empty));
                 return SpawnFailed;
         }
 
-        output.Error.WriteLine($"arcforges: the task ended: {Word(result.TerminationReason)}" + (result.HasDetail && result.Detail.Length > 0 ? $" ({result.Detail})" : string.Empty));
+        output.Error.WriteLine($"arcforges: the task ended: {Word(result.TerminationReason)}" + (result.HasDetail && result.Detail.Length > 0 ? $" ({Messages.Plain(result.Detail)})" : string.Empty));
         if (!OperatingSystem.IsWindows() && result.HasSignal && result.Signal > 0)
         {
             return 128 + result.Signal;
@@ -103,7 +103,7 @@ internal static class TaskText
     }
 
     /// <summary>Resolves a full task ID or a unique prefix of at least 6 characters (exit 2, 4 or 1 otherwise).</summary>
-    public static async Task<(Id? Id, int Exit)> ResolveAsync(Cli cli, NodeSession session, string text, CancellationToken cancellationToken)
+    public static async Task<(Id? Id, int Exit)> ResolveAsync(Cli cli, NodeSession session, string text, CancellationToken cancellationToken, TaskRoute? route = null)
     {
         if (IdText.TryParse(text, out var full))
         {
@@ -120,11 +120,13 @@ internal static class TaskText
         for (var pages = 0; pages < 20; pages++)
         {
             var request = new TaskServiceListTasksRequest { Meta = Cli.Meta(), Page = page };
-            var response = await cli.CallAsync("ListTasks", request.Meta, () => session.Channel.Tasks.ListTasksAsync(request,
-                deadline: cli.Deadline(Unary), cancellationToken: cancellationToken)).ConfigureAwait(false);
+            var response = route is null || route.Local
+                ? await cli.CallAsync("ListTasks", request.Meta, () => session.Channel.Tasks.ListTasksAsync(request,
+                    deadline: cli.Deadline(Unary), cancellationToken: cancellationToken)).ConfigureAwait(false)
+                : await route.ListAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.Error is { } error)
             {
-                return (null, cli.Output.Fail(error, request.Meta.CorrelationId));
+                return (null, route is null || route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId));
             }
 
             matches.AddRange(response.Value.Tasks.Where(task => IdText.Format(task.TaskId).StartsWith(prefix, StringComparison.Ordinal)).Select(task => task.TaskId));

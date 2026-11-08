@@ -29,6 +29,22 @@ public sealed class StopBoundTests
         Assert.True(CloudLinkService.FlushReserve < NodeHost.OverrunGrace);
     }
 
+    [Fact(Timeout = 10000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task AnUnavailableFlushGateIsReportedWithoutExtendingTheReserve()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        await Eventually.TrueAsync(() => link.Service.Idle, "the link loop to become idle");
+        link.Log.Info("test.flush.setup");
+        using (await link.Service.EnterAsync(TestContext.Current.CancellationToken))
+        {
+            link.Service.BeginStop(TimeSpan.Zero);
+            await link.Service.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            Assert.Contains("cloud.credential_flush_skipped", SignInFlowTests.ReadLog(link), StringComparison.Ordinal);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

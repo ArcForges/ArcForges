@@ -26,6 +26,22 @@ public sealed class CommandLineTests
             "The hand-off time does not restart when the attach begins.");
     }
 
+    [Fact]
+    public async Task AnAlreadyExhaustedTaskWaitReportsTheTaskAndReturnsNine()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var task = CommandIds.New();
+
+        var exit = await TaskCommands.WaitAsync(cli, null!, task, WaitTarget.Terminal, TimeSpan.Zero, "none", CancellationToken.None);
+
+        Assert.Equal(9, exit);
+        Assert.Contains("the wait ended", error.ToString(), StringComparison.Ordinal);
+        Assert.Contains(IdText.Format(task), error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, output.ToString());
+    }
+
     [Theory]
     [InlineData("status")]
     [InlineData("status --json")]
@@ -48,6 +64,16 @@ public sealed class CommandLineTests
     [InlineData("jobs cancel 01m4zrxnr8e7d81pn7xnwfqw14")]
     [InlineData("version")]
     [InlineData("completion bash")]
+    [InlineData("run --wait -- /bin/echo ok")]
+    [InlineData("run --detach --wait 3s -- /bin/echo ok")]
+    [InlineData("run --node build-box -- /bin/echo ok")]
+    [InlineData("run --local -- /bin/echo ok")]
+    [InlineData("tasks")]
+    [InlineData("tasks list --local")]
+    [InlineData("tasks show 01m4zr --node build-box")]
+    [InlineData("tasks wait 01m4zr --node build-box")]
+    [InlineData("tasks cancel 01m4zr --node build-box")]
+    [InlineData("output 01m4zr --from-offset 42 --follow --node build-box")]
     [InlineData("status --test-mode")]
     public void TheSpecifiedGrammarParses(string line)
     {
@@ -107,6 +133,62 @@ public sealed class CommandLineTests
         using var version = new StringWriter();
         Assert.Equal(0, await CliApplication.RunAsync(["--version"], NoNode, version, error));
         Assert.Equal(NodeContract.ProductVersion, version.ToString().Trim());
+    }
+
+    [Theory]
+    [InlineData("run", "--node", "--local", "--wait")]
+    [InlineData("tasks", "--node", "--local", "list")]
+    [InlineData("output", "--node", "--local", "--from-offset")]
+    public async Task RoutedCommandHelpDescribesItsOptions(string command, string first, string second, string third)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(0, await CliApplication.RunAsync([command, "--help"], NoNode, output, error));
+        Assert.Contains(first, output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(second, output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(third, output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunHelpExplainsEnvironmentAndApprovalWaitBoundaries()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(0, await CliApplication.RunAsync(["run", "--help"], NoNode, output, error));
+        var help = System.Text.RegularExpressions.Regex.Replace(output.ToString(), @"\s+", " ");
+        Assert.Contains("routed default: node", help, StringComparison.Ordinal);
+        Assert.Contains("--local default: caller", help, StringComparison.Ordinal);
+        Assert.Contains("other-node values are refused", help, StringComparison.Ordinal);
+        Assert.Contains("human wait is outside the routed retry window", help, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not_signed_in", EffectCertainty.DidNotHappen, 4, "not signed in")]
+    [InlineData("cloud_unreachable", EffectCertainty.DidNotHappen, 4, "unavailable")]
+    [InlineData("node_offline", EffectCertainty.DidNotHappen, 75, "node_offline")]
+    [InlineData("node_unreachable", EffectCertainty.Unknown, 1, "may have run")]
+    public void RoutedStateExitsDistinguishOfflineFromUncertain(string code, EffectCertainty effect, int expected, string diagnostic)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var command = CommandIds.New();
+        var refusal = new ArcError { Category = ErrorCategory.State, Code = code, MessageKey = "error.state." + code, Effect = effect };
+        Assert.Equal(expected, TaskRoute.Fail(cli, refusal, null, command, submission: true));
+        Assert.Contains(diagnostic, error.ToString(), StringComparison.Ordinal);
+        if (effect == EffectCertainty.Unknown)
+        {
+            Assert.Contains(IdText.Format(command), error.ToString(), StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RoutedMutationAttemptsAreCappedByTheRemainingTwoMinuteBudget()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(25), TaskRoute.MutationAttemptBudget(TimeSpan.Zero, TimeSpan.FromSeconds(25)));
+        Assert.Equal(TimeSpan.FromSeconds(1), TaskRoute.MutationAttemptBudget(TimeSpan.FromSeconds(119), TimeSpan.FromSeconds(25)));
+        Assert.Equal(TimeSpan.FromMilliseconds(500), TaskRoute.MutationAttemptBudget(TimeSpan.FromMilliseconds(119_500), TimeSpan.FromSeconds(1)));
+        Assert.Equal(TimeSpan.Zero, TaskRoute.MutationAttemptBudget(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(25)));
     }
 
     [Theory]
@@ -384,6 +466,10 @@ public sealed class CommandLineTests
     [InlineData("arcforges config get ", "telemetryOptIn")]
     [InlineData("arcforges events --topic no", "notifications")]
     [InlineData("arcforges completion ", "pwsh")]
+    [InlineData("arcforges run --n", "--node")]
+    [InlineData("arcforges run --l", "--local")]
+    [InlineData("arcforges tasks wait --n", "--node")]
+    [InlineData("arcforges output --l", "--local")]
     public async Task TheSuggestDirectiveCompletesTheGrammar(string line, string expected)
     {
         using var output = new StringWriter();

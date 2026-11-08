@@ -130,7 +130,7 @@ public sealed class Cli
     /// Waits up to <paramref name="wait"/> for the approval's decision (cli.md section 5, <c>--wait-approval</c>), polling <c>GetApproval</c>
     /// every second. True when it was decided (executed, failed, denied, expired or withdrawn): the request is then sent again.
     /// </summary>
-    private async Task<bool> AwaitDecisionAsync(NodeSession session, Id approvalId, TimeSpan wait, CancellationToken cancellationToken)
+    internal async Task<bool> AwaitDecisionAsync(NodeSession session, Id approvalId, TimeSpan wait, CancellationToken cancellationToken)
     {
         Output.Error.WriteLine($"Waiting for approval {IdText.Format(approvalId)} (approve in ArcForges Desktop or with 'arcforges approvals approve {IdText.Format(approvalId)}')");
         var until = DateTime.UtcNow + wait;

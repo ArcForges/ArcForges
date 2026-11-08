@@ -19,6 +19,9 @@ namespace ArcForges.Node.CloudLink;
 /// <param name="InstallationId">The credential's installation ID (16 bytes).</param>
 internal sealed record ChannelTicket(CenterEndpoint Center, string AccessToken, long Generation, ReadOnlyMemory<byte> NodeId, ReadOnlyMemory<byte> InstallationId);
 
+/// <summary>An assertion and the immutable canonical center of the channel that issued its nonce and signed it.</summary>
+internal sealed record BoundRelayAssertion(RelayAssertion Assertion, CenterEndpoint Center);
+
 /// <summary>The link as the channel sees it (implemented by <see cref="CloudLinkService"/>).</summary>
 internal interface IChannelHost
 {
@@ -102,7 +105,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
     /// <summary>
     /// A test hook awaited at the named steps of a call's answer (<c>verified</c>: after the verification and its pending row; <c>dispatch</c>:
-    /// immediately before the dispatcher), so a test can flip the link's state at that step (AF-CTR-05 decisions B-3). Never set by the host.
+    /// immediately before the dispatcher), after a call's key refresh (<c>refresh.completed</c>), before sending a verification refusal
+    /// (<c>refusal.send</c>), or before registering a relay signing operation (<c>relay.before_register</c>). Never set by the host.
     /// </summary>
     internal Func<string, Task>? StepHook { get; init; }
 
@@ -273,7 +277,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
     /// Signs a relay assertion for a local caller with the node key over a fresh relay nonce of this node's open channel (Plan addendum
     /// D0-B1; the relaying itself is part N3's); <see langword="null"/> without an open channel or with fields of another layout.
     /// </summary>
-    public async Task<RelayAssertion?> SignRelayAssertionAsync(Contracts.Node.V1.Origin localOrigin, Id localSessionId, RoutedMethod method,
+    public async Task<BoundRelayAssertion?> SignRelayAssertionAsync(Contracts.Node.V1.Origin localOrigin, Id localSessionId, RoutedMethod method,
         ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(localSessionId);
@@ -288,9 +292,29 @@ internal sealed class ChannelLoop : IAsyncDisposable
             return null;
         }
 
-        // Review A N-7: the nonce, the ticket and the key are of one connection, and that connection keeps its key until the signing ends.
-        var signing = SignRelayAssertionAsync(session, localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken);
-        return session.Calls.Add(signing) ? await signing.ConfigureAwait(false) : null;
+        // Register before starting the signing task: a closing session refuses new work, while an accepted operation keeps the session key
+        // alive through its completion. In particular, there is no already-started task to abandon if registration is refused (N1 C-N2).
+        if (StepHook is { } beforeRegister)
+        {
+            await beforeRegister("relay.before_register").ConfigureAwait(false);
+        }
+
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!session.Calls.Add(finished.Task))
+        {
+            return null;
+        }
+
+        try
+        {
+            var assertion = await SignRelayAssertionAsync(session, localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
+                .ConfigureAwait(false);
+            return assertion is null ? null : new BoundRelayAssertion(assertion, session.Ticket.Center);
+        }
+        finally
+        {
+            finished.TrySetResult();
+        }
     }
 
     private async Task<RelayAssertion?> SignRelayAssertionAsync(Session session, Contracts.Node.V1.Origin localOrigin, Id localSessionId, RoutedMethod method,
@@ -298,7 +322,18 @@ internal sealed class ChannelLoop : IAsyncDisposable
     {
         await Task.Yield();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session.Token);
-        if (await RequestRelayNonceAsync(session, linked.Token).ConfigureAwait(false) is not { } nonce)
+        RelayNonce? nonce;
+        try
+        {
+            nonce = await RequestRelayNonceAsync(session, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (session.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Session loss is unavailable; a cancellation requested by the local caller must still propagate.
+            return null;
+        }
+
+        if (nonce is null)
         {
             return null;
         }
@@ -733,6 +768,11 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
                 session.RefreshedForKeys = true;
                 await RefreshKeysAsync(session).ConfigureAwait(false);
+                if (StepHook is { } refreshHook)
+                {
+                    await refreshHook("refresh.completed").ConfigureAwait(false);
+                }
+
                 return _host.Binding();
             }
 
@@ -743,6 +783,24 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 _nodeLog.Warning("cloud.channel.call_refused", new LogField("step", refusal.Step), new LogField("code", refusal.LogCode));
                 if (refusal.CallId is not null)
                 {
+                    // Verification may have waited on a key refresh while the link was switched off. A missing binding must drop the
+                    // refusal just as it drops a verified call: the old session is no longer allowed to answer.
+                    var refusalLink = new SessionLink(this, session);
+                    if (!refusalLink.Usable)
+                    {
+                        return;
+                    }
+
+                    if (StepHook is { } refusalHook)
+                    {
+                        await refusalHook("refusal.send").ConfigureAwait(false);
+                    }
+
+                    if (!refusalLink.Usable)
+                    {
+                        return;
+                    }
+
                     await session.Client.SendAsync(new RelayFrame { CallResult = signer.RefusedVerification(refusal) }, session.Token).ConfigureAwait(false);
                 }
 
